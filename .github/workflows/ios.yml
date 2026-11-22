@@ -14,10 +14,12 @@ on:
   workflow_dispatch:
 
 # The group name includes whether this run will actually do anything. A push that the job's
-# `if` skips lands in its own group, so it can no longer cancel a simulator run in flight.
+# `if` skips lands in its own group, so it cannot disturb a simulator run in flight.
+# A simulator run takes about half an hour, longer than the gap between pushes, so a run in
+# flight is never cancelled: a newer push waits (GitHub keeps only the newest waiting run).
 concurrency:
   group: ios-${{ github.ref }}-${{ github.event.repository.private == false || contains(github.event.head_commit.message, '[ios-qa]') || github.event_name == 'workflow_dispatch' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
