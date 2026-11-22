@@ -244,7 +244,8 @@ fn the_summary_keeps_amounts_and_recipients_while_sends_can_give() {
     // are recipients; free text with an `@handle` ("Also @alex") no longer is. Was
     // `To/Account: Send to: Checking ••••4521; Also @alex`.
     assert!(
-        sum.contains("To/Account: Send to: Checking ••••4521"),
+        // Eleventh review (F3a): a heading pair read from the screen's text is shown under `Screen says:`, never under `To/Account:` (only the form's recipient fields are).
+        sum.contains("Screen says: Send to: Checking ••••4521"),
         "{sum}"
     );
     assert!(!sum.contains("@alex"), "{sum}");
@@ -257,8 +258,11 @@ fn the_summary_keeps_amounts_and_recipients_while_sends_can_give() {
     // Tenth review: "Also @alex" is no recipient any more, the room it took flows to
     // `Sends:` (4 fields shown, was 3), and the other facts keep their reserved minimum,
     // which holds the options' count (was `Selected: Annual plan with…`).
-    assert!(sum.contains("Sends: 6 fields (4 shown)"), "{sum}");
-    assert!(sum.contains("Selected: 2 options"), "{sum}");
+    // Eleventh review: `Recipient not verified` takes room from `Sends:` (3 fields shown,
+    // was 4), which leaves the other facts room to quote the options shortened (was
+    // `Selected: 2 options`).
+    assert!(sum.contains("Sends: 6 fields (3 shown)"), "{sum}");
+    assert!(sum.contains("Selected: Annual plan with"), "{sum}");
 }
 
 /// Sent fields are listed recipient- and amount-like first, then the ones Jarvis typed,

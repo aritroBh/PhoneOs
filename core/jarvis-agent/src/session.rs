@@ -484,16 +484,12 @@ pub struct Session {
     /// (lower-cased bundle id): the only field values a confirmation summary may quote
     /// besides amounts. Tenth review: an app's entry being non-empty is the **"Jarvis typed
     /// here" state** — set when a `type` is carried out in that app (its text checked, or
-    /// not checkable), cleared once an owner-approved submit has been carried out there (see
-    /// [`Self::clears_typed`]); never cleared by switching apps. While it is set, a tap on a
-    /// control whose form holds any filled text input is presumed to submit it
-    /// (`jarvis_safety::presumed_submit`).
+    /// not checkable); never cleared by switching apps. Eleventh review: never cleared by an
+    /// approved submit either (an approved send in one form cleared it for every other form
+    /// of the app, so the text Jarvis typed there was submitted unasked): it lasts for the
+    /// task. While it is set, a tap on a control (or Return in a field) whose form holds any
+    /// filled text input is presumed to submit it (`jarvis_safety::presumed_submit`).
     typed: BTreeMap<String, Vec<TypedText>>,
-    /// An owner-approved submit being carried out (the app's key and the gated action): an
-    /// approved tap the gate presumed to submit or classified as sending, paying, posting or
-    /// purchasing, or an approved Return after typing. When it succeeds, that app's
-    /// "typed here" state is cleared; a failure keeps it (keeping it only costs a question).
-    clears_typed: Option<(String, Action)>,
 }
 
 /// The key of an app in [`Session::typed`].
@@ -655,7 +651,6 @@ impl Session {
             stale_approvals: 0,
             incoming_source: ScreenSource::Typed,
             typed: BTreeMap::new(),
-            clears_typed: None,
         }
     }
 
@@ -1375,16 +1370,6 @@ impl Session {
     /// equals the record.
     fn act_approved(&mut self, now: u64, mut look: ApprovalLook) -> Effect {
         if let Some(fresh) = self.recheck_approved(&look.pending, look.approved.as_ref()) {
-            self.clears_typed = look
-                .approved
-                .as_ref()
-                .filter(|a| self.submits_typed(&fresh, a))
-                .map(|_| {
-                    (
-                        app_key(&self.current.screen.app_bundle_id),
-                        fresh.gate.clone(),
-                    )
-                });
             return self.execute(fresh);
         }
         let asked = look.pending.bound.app_bundle_id.trim().to_owned();
@@ -2832,34 +2817,6 @@ impl Session {
         });
     }
 
-    /// Whether carrying out the approved `fresh` (approved as `approved`) submits what was
-    /// typed in the app in front, so its "typed here" state is cleared once it succeeds
-    /// (tenth review): Return after typing, or a tap, long press or tap point the gate
-    /// presumed to submit or classified as sending, paying, posting or purchasing.
-    fn submits_typed(&self, fresh: &Pending, approved: &ConfirmRequest) -> bool {
-        if fresh.stage == Stage::Return {
-            return true;
-        }
-        if !matches!(
-            fresh.gate,
-            Action::Tap { .. } | Action::LongPress { .. } | Action::TapPoint { .. }
-        ) {
-            return false;
-        }
-        matches!(
-            approved.category,
-            RiskCategory::SendMessage
-                | RiskCategory::PublicPost
-                | RiskCategory::Payment
-                | RiskCategory::Purchase
-        ) || jarvis_safety::presumed_submit(
-            &fresh.gate,
-            &self.current.screen,
-            Some(&self.tree()),
-            self.typed_here(),
-        )
-    }
-
     /// The refusal of an action whose every tap point is covered (sixth and seventh
     /// reviews), naming the target and what covers it from the prompt-safe screen: another
     /// listed element, a bar, the keyboard, or an unlisted node by its label.
@@ -3081,12 +3038,6 @@ impl Session {
     }
 
     fn record_success(&mut self, pending: &Pending, result: &str) {
-        // An approved submit carried out: what was typed there has been sent (tenth review).
-        if let Some((app, gate)) = self.clears_typed.take() {
-            if gate == pending.gate {
-                self.typed.remove(&app);
-            }
-        }
         self.declined_open = None;
         self.last_failed = None;
         self.history.push(
@@ -3110,8 +3061,6 @@ impl Session {
     }
 
     fn record_failure(&mut self, pending: &Pending, result: &str) {
-        // A submit that did not work out keeps the "typed here" state (tenth review).
-        self.clears_typed = None;
         self.repeat = None;
         // Reaching the end of a list is information, not a failed attempt.
         if result != prompt::RESULT_SCROLL_END {

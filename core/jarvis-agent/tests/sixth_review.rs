@@ -454,7 +454,8 @@ fn a_risky_send_asks_once_after_typing() {
     // "… after typing \"On my way\" in Chat …"; deliberate change).
     assert_eq!(
         c.summary,
-        "Press Return (\"send\") in \"Message\" in Chat, which sends the field's whole content: \"On my way\". Typed: \"On my way\". Amounts on screen: Gift $40.00. To/Account: To: alice@example.com"
+        // Eleventh review (F3a): a heading pair read from the screen's text is shown under `Screen says:`, never under `To/Account:` (only the form's recipient fields are).
+        "Press Return (\"send\") in \"Message\" in Chat, which sends the field's whole content: \"On my way\". Typed: \"On my way\". Amounts on screen: Gift $40.00. Recipient not verified. Screen says: To: alice@example.com"
     );
     let kinds: Vec<&str> = run
         .effects

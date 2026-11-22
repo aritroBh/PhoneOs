@@ -208,7 +208,8 @@ fn typed_text_amounts_and_other_fields() {
     // (was "Message (filled)" unless Jarvis typed it; deliberate change).
     assert_eq!(
         send(&typed),
-        "Tap \"Send\" in Example. Sends: Message: \"On my way\"; Subject (empty)"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Send\" in Example. Sends: Message: \"On my way\"; Subject (empty). Recipient not verified"
     );
     assert_eq!(send(&[]), send(&typed));
     let amounts = app_screen(vec![

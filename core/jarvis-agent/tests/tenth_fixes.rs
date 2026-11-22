@@ -117,16 +117,18 @@ fn pinned(app: &str) -> Screen {
     )
 }
 
-/// Clearing rule: once an approved send has been carried out, the app's "typed here" state
-/// is cleared, so a later "Done" beside a field Jarvis did not type into is not presumed to
-/// send. Without that approved submit (a scroll leads to the same screen) the state stays
-/// and "Done" asks, showing the field it would send.
+/// Eleventh review (F2): the app's "typed here" state lasts for the task. An approved send
+/// no longer clears it (it cleared it for every form of the app, so text Jarvis typed in
+/// another form was submitted unasked): a later "Done" beside a filled field asks, showing
+/// the field it would send (was: the approved send cleared the state and "Done" ran
+/// unasked; deliberate change, the cost is this question). Without the approved submit (a
+/// scroll leads to the same screen) the state stays and "Done" asks, as before.
 #[test]
-fn an_approved_send_clears_the_typed_here_state_and_nothing_else_does() {
+fn an_approved_send_keeps_the_typed_here_state() {
     let message = index_of(&compose(""), "Message");
     let send = index_of(&compose("On my way"), "Send");
     let done = index_of(&pinned("com.example.chat"), "Done");
-    // 1. Type, approved Send (carried out: the next screen), Done: one question.
+    // 1. Type, approved Send (carried out: the next screen), Done: asked too (declined).
     let mut typed = false;
     let r = run(
         config(),
@@ -150,15 +152,23 @@ fn an_approved_send_clears_the_typed_here_state_and_nothing_else_does() {
         ])
         .decisions(&[true]),
     );
-    assert_eq!(r.confirms.len(), 1, "{:#?}", r.confirms);
+    assert_eq!(r.confirms.len(), 2, "{:#?}", r.confirms);
     assert!(r.confirms[0]
         .summary
         .contains("Sends: Message: \"On my way\""));
+    assert_eq!(r.confirms[1].category, RiskCategory::SendMessage);
     assert!(
-        r.acts
+        r.confirms[1]
+            .summary
+            .contains("Sends: Note: \"Pinned by the owner\""),
+        "{}",
+        r.confirms[1].summary
+    );
+    assert!(
+        !r.acts
             .iter()
             .any(|a| taps(a, &pinned("com.example.chat"), "Done")),
-        "Done was tapped unasked"
+        "Done was tapped though the owner declined it"
     );
     // 2. Type, then scroll to the same next screen (no approved submit): Done asks.
     let r = run(

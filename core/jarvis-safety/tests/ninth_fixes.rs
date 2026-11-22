@@ -75,7 +75,8 @@ fn a_merchant_payee_anywhere_on_screen_is_listed_first() {
     ];
     let sum = pay_summary(s, 4);
     assert!(
-        sum.contains("To/Account: Pay to: Mallory's Merch LLC"),
+        // Eleventh review (F3a): a heading pair read from the screen's text is shown under `Screen says:`, never under `To/Account:` (only the form's recipient fields are).
+        sum.contains("Recipient not verified. Screen says: Pay to: Mallory's Merch LLC"),
         "{sum}"
     );
     // An email-shaped value in a field not named like a recipient is no payee.
@@ -97,7 +98,8 @@ fn a_recipient_heading_alone_takes_the_name_beside_it() {
     ];
     let sum = pay_summary(s, 4);
     assert!(
-        sum.contains("To/Account: Pay to: Northwind Traders"),
+        // Eleventh review (F3a): a heading pair read from the screen's text is shown under `Screen says:`, never under `To/Account:` (only the form's recipient fields are).
+        sum.contains("Screen says: Pay to: Northwind Traders"),
         "{sum}"
     );
 }
@@ -125,11 +127,14 @@ fn contact_fields_never_push_the_payee_or_the_total_out() {
     // tap sends) come first, the heading pair right after the first of them, and the slot
     // says the screen names several recipients. Was `To/Account: Pay to: @mallory_merch`
     // (the heading first).
+    // Eleventh review (F3a): the fields stay under `To/Account:` (30 different), the
+    // heading pair moves to `Screen says:` (was `To/Account (31 different): …; Pay to:
+    // @mallory_merch`).
     assert!(
-        sum.contains("To/Account (31 different): Send receipt to 0"),
+        sum.contains("To/Account (30 different): Send receipt to 0"),
         "{sum}"
     );
-    assert!(sum.contains("; Pay to: @mallory_merch"), "{sum}");
+    assert!(sum.contains("Screen says: Pay to: @mallory_merch"), "{sum}");
     assert!(sum.contains("Sends: 30 fields ("), "{sum}");
     assert!(sum.contains(" more"), "{sum}");
 }
@@ -189,7 +194,8 @@ fn a_delete_says_what_the_form_holds() {
     );
     assert_eq!(
         sum,
-        "Tap \"Delete account\" in Example. Sends: Note: \"rent\""
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Delete account\" in Example. Sends: Note: \"rent\". Recipient not verified"
     );
 }
 

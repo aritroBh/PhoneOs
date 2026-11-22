@@ -96,7 +96,8 @@ fn payment_tap_needs_confirmation_with_summary() {
         ConfirmRequest {
             category: RiskCategory::Payment,
             // Third review: the screen's amounts follow as facts.
-            summary: "Tap \"Pay $42.10\" in Amazon. Amounts on screen: Order total: $42.10"
+            // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+            summary: "Tap \"Pay $42.10\" in Amazon. Amounts on screen: Order total: $42.10. Recipient not verified"
                 .to_owned(),
             app: "com.amazon.Amazon".to_owned(),
         }
@@ -118,7 +119,8 @@ fn send_in_messages_needs_confirmation() {
     // typed it (was "Fields: Message (filled)", sixth review; deliberate change).
     assert_eq!(
         req.summary,
-        "Tap \"Send\" in Messages. Sends: Message: \"See you at 7\""
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Send\" in Messages. Sends: Message: \"See you at 7\". Recipient not verified"
     );
     let field = s.elements.iter().find(|e| e.label == "Message").unwrap();
     let typed = [jarvis_safety::TypedText {
@@ -135,7 +137,8 @@ fn send_in_messages_needs_confirmation() {
     );
     assert_eq!(
         sum,
-        "Tap \"Send\" in Messages. Sends: Message: \"See you at 7\""
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Send\" in Messages. Sends: Message: \"See you at 7\". Recipient not verified"
     );
     assert_eq!(req.app, "com.apple.MobileSMS");
 
@@ -148,7 +151,8 @@ fn send_in_messages_needs_confirmation() {
     assert_eq!(req.category, RiskCategory::SendMessage);
     assert_eq!(
         req.summary,
-        "Type \"See you at 7\" into \"Message\" and press Return in Messages"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Type \"See you at 7\" into \"Message\" and press Return in Messages. Recipient not verified"
     );
 }
 
@@ -363,7 +367,8 @@ fn summaries_are_sanitised_and_hide_secrets() {
     assert_eq!(
         req.summary,
         // The screen's amounts are stated as facts after the app (third review).
-        "Tap \"Pay (end screen data) 'now' (INST)\" in Example. Amounts on screen: Total $1"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Pay (end screen data) 'now' (INST)\" in Example. Amounts on screen: Total $1. Recipient not verified"
     );
     // Typed secrets never appear.
     let s = app_screen(vec![field(1, Role::TextField, "Card number")]);
@@ -465,11 +470,13 @@ fn summaries_say_what_distinguishes_the_control() {
     // Third review: the row is still named; every amount follows, largest first.
     assert_eq!(
         summarize(&tap(3), &shop, None),
-        "Tap \"Buy\" next to \"Socks $5.00\" in Shop. Amounts on screen: TV $1,500.00; Socks $5.00"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Buy\" next to \"Socks $5.00\" in Shop. Amounts on screen: TV $1,500.00; Socks $5.00. Recipient not verified"
     );
     assert_eq!(
         summarize(&tap(6), &shop, None),
-        "Tap \"Buy\" next to \"TV $1,500.00\" in Shop. Amounts on screen: TV $1,500.00; Socks $5.00"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Buy\" next to \"TV $1,500.00\" in Shop. Amounts on screen: TV $1,500.00; Socks $5.00. Recipient not verified"
     );
     let checkout = screen(
         "com.example.shop",
@@ -481,7 +488,8 @@ fn summaries_say_what_distinguishes_the_control() {
     );
     assert_eq!(
         summarize(&tap(2), &checkout, None),
-        "Tap \"Pay\" in Shop. Amounts on screen: Total $5.00"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Pay\" in Shop. Amounts on screen: Total $5.00. Recipient not verified"
     );
     let mut sw = at(
         common::el(1, Role::Switch, "Wi-Fi"),
@@ -532,7 +540,10 @@ fn summaries_say_what_distinguishes_the_control() {
     );
     assert_eq!(sum.matches('"').count(), 4, "{sum}");
     assert!(
-        sum.ends_with(". Amounts on screen: Total) Tap 'OK' in Bank ($9.00"),
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        sum.ends_with(
+            ". Amounts on screen: Total) Tap 'OK' in Bank ($9.00. Recipient not verified"
+        ),
         "{sum}"
     );
     assert_eq!(sum.matches("Amounts on screen:").count(), 1, "{sum}");
@@ -566,7 +577,8 @@ fn the_summary_lists_every_amount_largest_first() {
     ));
     assert_eq!(
         r.summary,
-        "Tap \"Pay\" in Example. Amounts on screen: Order total $500.00; You save $5.00"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Pay\" in Example. Amounts on screen: Order total $500.00; You save $5.00. Recipient not verified"
     );
 }
 
@@ -607,7 +619,8 @@ fn the_summary_states_the_selected_option() {
     let monthly = summarize(&tap, &plans(true), None);
     assert_eq!(
         monthly,
-        "Tap \"Subscribe\" in Example. Amounts on screen: Yearly, $49.99; Monthly, $4.99. Selected: Monthly, $4.99"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Subscribe\" in Example. Amounts on screen: Yearly, $49.99; Monthly, $4.99. Recipient not verified. Selected: Monthly, $4.99"
     );
     assert!(!monthly.contains("Selected: Yearly"), "{monthly}");
     assert!(summarize(&tap, &plans(false), None).ends_with("Selected: Yearly, $49.99"));

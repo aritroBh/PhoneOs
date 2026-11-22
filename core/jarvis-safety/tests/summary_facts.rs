@@ -158,7 +158,16 @@ fn the_largest_amount_is_always_listed() {
     els.push(button(8, "Join"));
     let sum = summarize(&tap(8), &app_screen(els), None);
     assert!(sum.contains("$899.00"), "{sum}");
-    assert!(sum.contains("and 2 more"), "{sum}");
+    // Eleventh review (F6): six distinct total-worded amounts switch to the compact form
+    // (the distinct totals without labels, largest first), and the largest amount, not a
+    // total, leads it with its label; everything fits, so nothing is counted (was the
+    // labelled form, `… and 2 more`).
+    assert!(
+        sum.contains(
+            "Amounts on screen (6 totals): Membership $899.00; $1.06 (nearest); $1.05; $1.04; $1.03; $1.02; $1.01."
+        ),
+        "{sum}"
+    );
     // Recurring wording counts as a charge: it ranks before larger amounts without it.
     let plan = |wording: &str| {
         let mut els: Vec<Element> = (1..=5)
@@ -204,7 +213,11 @@ fn recipient_decoys_cannot_drop_the_payee() {
     // form's recipient-named fields are recipients; text that merely mentions "to" or
     // "account" next to a number is not (was `To/Account: To account ••••9999; …`,
     // deliberate change). With the heading's colon it is, and the decoys are not.
-    assert!(!summary.contains("To/Account"), "{summary}");
+    // Eleventh review: no recipient under either marker.
+    assert!(
+        !summary.contains("To/Account") && !summary.contains("Screen says"),
+        "{summary}"
+    );
     let s = app_screen(vec![
         label(1, "Help: +1 (800) 555-0100"),
         label(2, "Reference 20261122"),
@@ -214,7 +227,8 @@ fn recipient_decoys_cannot_drop_the_payee() {
     ]);
     let summary = summarize(&tap(5), &s, None);
     assert!(
-        summary.ends_with("To/Account: To: account ••••9999"),
+        // Eleventh review (F3a): a heading pair read from the screen's text is shown under `Screen says:`, never under `To/Account:` (only the form's recipient fields are).
+        summary.ends_with("Recipient not verified. Screen says: To: account ••••9999"),
         "{summary}"
     );
     let s = app_screen(vec![
@@ -230,7 +244,8 @@ fn recipient_decoys_cannot_drop_the_payee() {
     // Was `Pay to ••••4521` (no colon) and the others counted (`and 2 more`): the
     // address, the handle and the reference numbers are no recipients now.
     assert!(
-        summary.ends_with("To/Account: Pay to: ••••4521"),
+        // Eleventh review (F3a): a heading pair read from the screen's text is shown under `Screen says:`, never under `To/Account:` (only the form's recipient fields are).
+        summary.ends_with("Recipient not verified. Screen says: Pay to: ••••4521"),
         "{summary}"
     );
     assert!(!summary.contains("more"), "{summary}");

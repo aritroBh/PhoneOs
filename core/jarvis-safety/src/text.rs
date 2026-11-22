@@ -43,7 +43,7 @@ pub(crate) fn is_invisible(c: char) -> bool {
 }
 
 /// True for combining marks, which are dropped before matching so `P\u{301}ay` reads `pay`.
-fn is_combining(c: char) -> bool {
+pub(crate) fn is_combining(c: char) -> bool {
     matches!(
         u32::from(c),
         0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F
@@ -214,6 +214,77 @@ pub(crate) fn bounded(text: &str) -> std::borrow::Cow<'_, str> {
     out.push(' ');
     out.extend(text.chars().skip(n.saturating_sub(tail)));
     std::borrow::Cow::Owned(out)
+}
+
+/// Whether `c` is shaped like a colon (eleventh review: the list is taken from Unicode's
+/// two-dots-stacked and colon punctuation, not from the look-alikes seen so far): ASCII
+/// and fullwidth colons, small and presentation forms (U+FE55, U+FE13, U+FE30), modifier
+/// letters (U+A789, U+02D0, U+02F8), the ratio (U+2236), the Hebrew sof pasuq (U+05C3),
+/// the Armenian full stop (U+0589), the Syriac colons (U+0703–U+0705, U+0708, U+0709), the
+/// Ethiopic wordspace and colons (U+1361, U+1365, U+1366), the Mongolian colon (U+1804),
+/// the Tibetan gter tsheg (U+0F14), two-dot punctuation (U+205A), vertical dot runs
+/// (U+205D, U+205E, U+22EE), the Lisu tone letter (U+A4FD), the Bamum colon (U+A6F4), the
+/// runic multiple punctuation (U+16EC), the Z notation type colon (U+2982) and the
+/// composition operator (U+2A3E).
+pub(crate) fn colon_shaped(c: char) -> bool {
+    matches!(
+        c,
+        ':' | '\u{FF1A}'
+            | '\u{FE55}'
+            | '\u{FE13}'
+            | '\u{FE30}'
+            | '\u{A789}'
+            | '\u{02D0}'
+            | '\u{02F8}'
+            | '\u{2236}'
+            | '\u{05C3}'
+            | '\u{0589}'
+            | '\u{0703}'
+            | '\u{0704}'
+            | '\u{0705}'
+            | '\u{0708}'
+            | '\u{0709}'
+            | '\u{0F14}'
+            | '\u{1361}'
+            | '\u{1365}'
+            | '\u{1366}'
+            | '\u{1804}'
+            | '\u{205A}'
+            | '\u{205D}'
+            | '\u{205E}'
+            | '\u{22EE}'
+            | '\u{A4FD}'
+            | '\u{A6F4}'
+            | '\u{16EC}'
+            | '\u{2982}'
+            | '\u{2A3E}'
+    )
+}
+
+/// Whether `c` is a letter (or a combining mark) outside ASCII: in page text before a
+/// colon it makes the run of words unable to be a heading Jarvis writes (eleventh review).
+pub(crate) fn non_ascii_letter(c: char) -> bool {
+    !c.is_ascii() && (c.is_alphabetic() || is_combining(c))
+}
+
+/// Eleventh review: whether a recipient value mixes scripts the owner cannot tell apart —
+/// ASCII letters together with letters that [`fold_char`] reads as ASCII ones (Cyrillic
+/// `а` in `bigbаnk`, a Greek `ο`, an accented `é`), or any non-ASCII letter in an email's
+/// host or an `@handle`. A name written wholly in another script (no ASCII letter) is not
+/// flagged.
+pub(crate) fn mixed_script(value: &str) -> bool {
+    let ascii = value.chars().any(|c| c.is_ascii_alphabetic());
+    let foldable = value
+        .chars()
+        .any(|c| !c.is_ascii() && c.is_alphabetic() && fold_char(c).is_ascii_alphabetic());
+    if ascii && foldable {
+        return true;
+    }
+    let tail = match value.trim().split_once('@') {
+        Some((_, host)) => host,
+        None => return false,
+    };
+    tail.chars().any(|c| !c.is_ascii() && c.is_alphabetic())
 }
 
 /// Whether a letter can be read by the phrase net: ASCII, foldable to ASCII, or Latin

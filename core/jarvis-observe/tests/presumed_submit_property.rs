@@ -29,13 +29,24 @@
 //! ninth review's rule (fingerprint or exact typed text of a listed or unlisted input)
 //! could not have found.
 //!
+//! **Eleventh review: Return after typing.** Sequences also hold `type … submit` (and a bare
+//! Return after earlier typing) into fields of every kind with the keyboard up and a
+//! neutral Return key ("go", "done", "return", "next"). Property, checked at every Return:
+//! once Jarvis typed in this app (the text being typed counts, and fills the field), when
+//! the field is not a search field and not a multi-line text view whose Return key only
+//! inserts a line break, and its form holds a filled, non-search, non-secure text input
+//! (the field included) outside narrowing (a), Return asks and its question says what is
+//! sent. The state is never cleared within a sequence (the session keeps it for the task;
+//! `jarvis-agent/tests/typed_state_property.rs` checks the session's side with owner
+//! approvals and declines in between).
+//!
 //! Seeded (xorshift); a failure names its seed (`SUBMIT_SEED=<seed>` runs it alone); the
 //! default is 20,000 sequences, `SUBMIT_SEQUENCES=<n>` changes it.
 
 use jarvis_observe::compact_view;
-use jarvis_proto::fixtures::{node, screen, text};
+use jarvis_proto::fixtures::{keyboard, node, screen, text};
 use jarvis_proto::{Action, Policy, Rect, Role, Screen, UiNode};
-use jarvis_safety::{evaluate_with, Decision, ScreenSource, ScreenTree, TypedText};
+use jarvis_safety::{evaluate_with, return_summary, Decision, ScreenSource, ScreenTree, TypedText};
 
 const W: f64 = 393.0;
 const H: f64 = 852.0;
@@ -241,6 +252,16 @@ type FieldFrames = Vec<((usize, usize), Rect)>;
 
 /// The screen, and its fields' frames.
 fn build(forms: &[Form], dy: f64) -> (Screen, FieldFrames) {
+    build_with(forms, dy, None)
+}
+
+/// The screen with the keyboard up (its Return key labelled `key`) and field `focus`
+/// focused, when `kb` is given (eleventh review).
+fn build_with(
+    forms: &[Form],
+    dy: f64,
+    kb: Option<(&str, (usize, usize))>,
+) -> (Screen, FieldFrames) {
     let mut y = 100.0 + dy;
     let mut containers = Vec::new();
     let mut frames = Vec::new();
@@ -256,6 +277,9 @@ fn build(forms: &[Form], dy: f64) -> (Screen, FieldFrames) {
             let frame = Rect::new(16.0, y, W - 32.0, h);
             frames.push(((fi, i), frame));
             let mut n = UiNode::new(f.role.clone(), frame);
+            if kb.is_some_and(|(_, at)| at == (fi, i)) {
+                n = n.focused(true);
+            }
             if f.labelled() {
                 n = n.with_label(&f.name);
             }
@@ -284,7 +308,10 @@ fn build(forms: &[Form], dy: f64) -> (Screen, FieldFrames) {
                 }
                 Look::LentLabel => {
                     let label = text(&f.name, Rect::new(16.0, y, 100.0, 20.0));
-                    let field = UiNode::new(f.role.clone(), Rect::new(120.0, y, W - 136.0, h));
+                    let mut field = UiNode::new(f.role.clone(), Rect::new(120.0, y, W - 136.0, h));
+                    if kb.is_some_and(|(_, at)| at == (fi, i)) {
+                        field = field.focused(true);
+                    }
                     let field = if f.value.is_empty() {
                         field
                     } else {
@@ -316,12 +343,69 @@ fn build(forms: &[Form], dy: f64) -> (Screen, FieldFrames) {
         y += 40.0;
     }
     let full = Rect::new(0.0, 0.0, W, H);
+    let mut window = vec![UiNode::new(Role::ScrollView, full).with_children(containers)];
+    if let Some((key, _)) = kb {
+        window.push(keyboard(key));
+    }
     let root = UiNode::new(Role::Application, full)
         .with_label("Shop")
-        .with_children(vec![UiNode::new(Role::Window, full).with_children(vec![
-            UiNode::new(Role::ScrollView, full).with_children(containers),
-        ])]);
-    (screen("com.example.shop", "Shop", root, false), frames)
+        .with_children(vec![UiNode::new(Role::Window, full).with_children(window)]);
+    (
+        screen("com.example.shop", "Shop", root, kb.is_some()),
+        frames,
+    )
+}
+
+/// Return keys of a multi-line text view that submit (the oracle's copy).
+const SUBMIT_KEYS: &[&str] = &[
+    "send", "go", "done", "join", "search", "continue", "route", "submit", "post", "reply",
+];
+
+/// What the oracle expects of Return in field `i` of form `f` (eleventh review). The form
+/// of a field is the nearest container holding another text input: its own form when that
+/// has one, else (a form of one field) the whole page.
+fn expected_return(forms: &[Form], f: usize, i: usize, key: &str) -> bool {
+    let own = &forms[f];
+    let page;
+    let form = if own.fields.len() > 1 {
+        own
+    } else {
+        page = Form {
+            fields: forms.iter().flat_map(|g| g.fields.clone()).collect(),
+            buttons: Vec::new(),
+            button_cells: false,
+        };
+        &page
+    };
+    let field = &own.fields[i];
+    if field.role == Role::SearchField || words(&field.name).contains(&"search".to_owned()) {
+        return false;
+    }
+    if field.role == Role::TextView && !SUBMIT_KEYS.contains(&key) {
+        return false;
+    }
+    let secure = form.fields.iter().any(|f| f.role == Role::SecureTextField);
+    let login = |f: &Field| {
+        let n = f.name.to_lowercase();
+        f.labelled()
+            && (words(&n).iter().any(|w| LOGIN_WORDS.contains(&w.as_str()))
+                || n.contains("email")
+                || n.contains("username"))
+    };
+    let filled_login_only = form
+        .fields
+        .iter()
+        .filter(|f| f.role != Role::SecureTextField && !f.value.is_empty())
+        .all(login);
+    if secure && filled_login_only {
+        return false;
+    }
+    form.fields.iter().any(|f| {
+        f.role != Role::SecureTextField
+            && f.role != Role::SearchField
+            && !words(&f.name).contains(&"search".to_owned())
+            && !f.value.is_empty()
+    })
 }
 
 /// What the app makes of the typed text (tenth review): kept, trimmed, capitalised, or
@@ -380,6 +464,9 @@ struct Tally {
     /// form carries a kept fingerprint or exactly a kept text).
     beyond_ninth: usize,
     owner_filled_only: usize,
+    returns: usize,
+    returns_expected: usize,
+    returns_bare: usize,
 }
 
 fn run(seed: u64, tally: &mut Tally) {
@@ -396,7 +483,7 @@ fn run(seed: u64, tally: &mut Tally) {
         let (s, frames) = build(&forms, dy);
         let view = compact_view(&s);
         let f = r.below(forms.len() as u64) as usize;
-        match r.below(10) {
+        match r.below(11) {
             0..=3 => {
                 // Jarvis types into a listed, non-secure field (found by its frame, as the
                 // session finds its target by index).
@@ -441,6 +528,96 @@ fn run(seed: u64, tally: &mut Tally) {
                 }
             }
             6 | 7 => dy = -f64::from(r.below(4) as u32) * 300.0,
+            10 => {
+                // Eleventh review: `type … submit` (or a bare Return after earlier typing)
+                // with a neutral Return key; the Return part is gated on the screen after
+                // the typing, with the keyboard up and the field focused.
+                let i = r.below(forms[f].fields.len() as u64) as usize;
+                if forms[f].fields[i].role == Role::SecureTextField {
+                    continue;
+                }
+                let bare = !kept.is_empty() && r.chance(30);
+                let key = *r.pick(&["go", "done", "return", "next"]);
+                let text = if bare {
+                    String::new()
+                } else {
+                    format!("helo {seed} ret {step}")
+                };
+                if !bare {
+                    forms[f].fields[i].value = reformat(r, &text);
+                }
+                let (s, frames) = build_with(&forms, dy, Some((key, (f, i))));
+                let view = compact_view(&s);
+                let Some(frame) = frames.iter().find(|(k, _)| *k == (f, i)).map(|(_, r)| *r) else {
+                    continue;
+                };
+                let c = frame.center();
+                let Some(e) = view
+                    .screen
+                    .elements
+                    .iter()
+                    .find(|e| e.role.is_text_input() && e.frame.contains(c))
+                else {
+                    continue;
+                };
+                if !bare {
+                    kept.push(TypedText {
+                        field: e.fingerprint,
+                        text: text.clone(),
+                    });
+                    jarvis.push((f, i));
+                }
+                tally.returns += 1;
+                if !expected_return(&forms, f, i, key) {
+                    continue;
+                }
+                tally.returns_expected += 1;
+                if bare {
+                    tally.returns_bare += 1;
+                }
+                let tree = ScreenTree {
+                    sources: &view.sources,
+                    parents: &view.parents,
+                    ends: &view.ends,
+                    bars: &view.bars,
+                    nodes: &view.nodes,
+                    inputs: &view.inputs,
+                };
+                let d = evaluate_with(
+                    &Policy::default(),
+                    &Action::Type {
+                        element: Some(e.index),
+                        text: text.clone(),
+                        submit: true,
+                    },
+                    &view.screen,
+                    None,
+                    ScreenSource::Typed,
+                    Some(&tree),
+                    &kept,
+                );
+                let Decision::Confirm(req) = &d else {
+                    panic!(
+                        "seed {seed} step {step}: Return ({key:?}) in {:?} after typing is \
+                         not asked: {d:?}\n(run alone: SUBMIT_SEED={seed})",
+                        forms[f].fields[i].name
+                    );
+                };
+                // The session asks Return's own question (`return_summary`).
+                let q = return_summary(
+                    e.index,
+                    &text,
+                    &view.screen,
+                    req.category,
+                    ScreenSource::Typed,
+                    Some(&tree),
+                    &kept,
+                );
+                assert!(
+                    q.contains("Sends:") || q.contains("which sends the field's whole content"),
+                    "seed {seed}: {q}"
+                );
+            }
             _ => {
                 let j = r.below(forms[f].buttons.len() as u64) as usize;
                 let b = forms[f].buttons[j].clone();
@@ -538,12 +715,17 @@ fn a_tap_after_typing_asks_while_its_form_holds_text() {
     }
     println!(
         "{n} sequences: {} taps, {} expected to ask ({} with a filled field off the list, {} \
-         the ninth review's rule could not find, {} with only text Jarvis did not type)",
+         the ninth review's rule could not find, {} with only text Jarvis did not type); {} \
+         Returns, {} expected to ask ({} bare)",
         tally.taps,
         tally.expected,
         tally.expected_unlisted,
         tally.beyond_ninth,
-        tally.owner_filled_only
+        tally.owner_filled_only,
+        tally.returns,
+        tally.returns_expected,
+        tally.returns_bare
     );
     assert!(tally.expected > 0 && tally.expected_unlisted > 0 && tally.beyond_ninth > 0);
+    assert!(tally.returns_expected > 0 && tally.returns_bare > 0);
 }

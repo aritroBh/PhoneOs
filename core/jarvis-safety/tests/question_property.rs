@@ -44,6 +44,31 @@
 //!    say that their facts come from the elements nearest the target, and keep the real
 //!    total and the payee.
 //!
+//! **Eleventh review.** The question shows evidence with its provenance. The oracle knows
+//! the real recipient apart from the page text: the form's recipient-named field when the
+//! action sends it, else none. Invariants added or changed:
+//!
+//! - `To/Account:` lists only real recipient field values; with none, a paying or sending
+//!   question says `Recipient not verified`; heading pairs ("Pay to: …") appear only under
+//!   `Screen says:` (invariant 3);
+//! - transcript cells whose whole text is a heading pair, in a scroller apart from the
+//!   target, never appear under either marker; in the target's own scroller they may
+//!   appear, only under `Screen says:`;
+//! - an email recipient shown under `To/Account:` keeps `@` and its host (up to 40 whole,
+//!   else its first 12 + `…` + last 24), says how many characters are not shown when cut,
+//!   is not repeated under `Sends:` (`(shown above)`), and carries `(look-alike letters)`
+//!   exactly when it mixes scripts;
+//! - decoy exact totals nearer the target than the real one and a larger decoy: with at
+//!   most 6 distinct total-worded amounts the real total's amount is shown;
+//! - look-alikes now include Cherokee, Lisu, Armenian, Georgian and mathematical letters
+//!   and every colon-shaped character; and page text spelling any of the question's
+//!   markers (`jarvis_safety::QUESTION_HEADINGS` and `QUESTION_MARKERS`, the composer's own
+//!   list) right after a forging tag never reproduces it in the question;
+//! - a payee heading far from the target on a page of thousands of elements, with a decoy
+//!   heading pair near the target, is still shown (`large_pages_compose_in_bounded_time`);
+//! - thousands of listed inputs compose within a time bound
+//!   (`many_listed_inputs_compose_in_bounded_time`).
+//!
 //! The generator is seeded (xorshift, as `jarvis-observe/tests/digest_agreement.rs`); a
 //! failure names its seed, and `QUESTION_SEED=<seed>` runs that one form alone. The default
 //! count keeps a debug run short; `QUESTION_FORMS=50000` runs the full sweep
@@ -52,8 +77,11 @@
 mod common;
 
 use common::{app_screen, button, el, label};
-use jarvis_proto::{Action, CompactScreen, Element, RawInput, RiskCategory, Role};
-use jarvis_safety::{return_summary, summary_with, ScreenSource, ScreenTree, TypedText};
+use jarvis_proto::{Action, CompactScreen, Element, RawInput, RawNode, Rect, RiskCategory, Role};
+use jarvis_safety::{
+    return_summary, summary_with, ScreenSource, ScreenTree, TypedText, QUESTION_HEADINGS,
+    QUESTION_MARKERS,
+};
 
 /// Forms checked by default (debug build); `QUESTION_FORMS` overrides (the full sweep is
 /// 50,000).
@@ -149,7 +177,50 @@ const LOOKALIKES: &[(char, char)] = &[
     ('E', 'Ε'),
     (':', '∶'),
     (':', '\u{FE55}'),
+    // Eleventh review: Cherokee, Lisu, Armenian, Georgian letters, and every colon-shaped
+    // character (the test's own copy of the list).
+    ('A', '\u{13AA}'),
+    ('S', '\u{13DA}'),
+    ('E', '\u{13AC}'),
+    ('T', '\u{13A2}'),
+    ('C', '\u{13DF}'),
+    ('A', '\u{A4EE}'),
+    ('S', '\u{A4E2}'),
+    ('E', '\u{A4F0}'),
+    ('T', '\u{A4D4}'),
+    ('C', '\u{A4DA}'),
+    ('o', '\u{0585}'),
+    ('u', '\u{057D}'),
+    ('y', '\u{10E7}'),
+    ('S', '\u{10BD}'),
+    (':', '\u{A4FD}'),
+    (':', '\u{0589}'),
+    (':', '\u{05C3}'),
+    (':', '\u{0703}'),
+    (':', '\u{0704}'),
+    (':', '\u{1804}'),
+    (':', '\u{205A}'),
+    (':', '\u{16EC}'),
+    (':', '\u{FE13}'),
+    (':', '\u{2982}'),
+    (':', '\u{2A3E}'),
+    (':', '\u{A789}'),
+    (':', '\u{02D0}'),
+    (':', '\u{02F8}'),
+    (':', '\u{1361}'),
+    (':', '\u{FE30}'),
 ];
+
+/// A mathematical bold letter for an ASCII letter (eleventh review).
+fn math_letter(c: char) -> Option<char> {
+    if c.is_ascii_uppercase() {
+        char::from_u32(0x1D400 + (u32::from(c) - u32::from('A')))
+    } else if c.is_ascii_lowercase() {
+        char::from_u32(0x1D41A + (u32::from(c) - u32::from('a')))
+    } else {
+        None
+    }
+}
 
 /// `s` with some characters replaced by look-alikes or their fullwidth forms.
 fn lookalike(r: &mut Rng, s: &str) -> String {
@@ -165,6 +236,11 @@ fn lookalike(r: &mut Rng, s: &str) -> String {
                 .collect();
             if !alts.is_empty() && r.chance(70) {
                 return *r.pick(&alts);
+            }
+            if r.chance(20) {
+                if let Some(m) = math_letter(c) {
+                    return m;
+                }
             }
             if c.is_ascii_graphic() && r.chance(50) {
                 return char::from_u32(u32::from(c) + 0xFEE0).unwrap_or(c);
@@ -182,6 +258,12 @@ fn fold(s: &str) -> String {
                 return *a;
             }
             let u = u32::from(c);
+            if (0x1D400..0x1D41A).contains(&u) {
+                return char::from_u32(u - 0x1D400 + u32::from('A')).unwrap_or(c);
+            }
+            if (0x1D41A..0x1D434).contains(&u) {
+                return char::from_u32(u - 0x1D41A + u32::from('a')).unwrap_or(c);
+            }
             if (0xFF01..=0xFF5E).contains(&u) {
                 return char::from_u32(u - 0xFEE0).unwrap_or(c);
             }
@@ -194,10 +276,28 @@ fn fold(s: &str) -> String {
 const MARKERS: &[&str] = &[
     "Amounts on screen:",
     "To/Account:",
+    "Screen says:",
     "Typed:",
     "Selected:",
     "Fields:",
 ];
+
+/// The tag the generator writes right before a marker it forges (eleventh review): the
+/// composer never writes it, so a marker right after it in a question was reproduced from
+/// page text.
+const FORGE: &str = "Zf";
+
+/// A forged marker for page text: one of the composer's own headings (with a colon) or
+/// other markers, after [`FORGE`], maybe in look-alike letters.
+fn forged_marker(r: &mut Rng) -> String {
+    let m = if r.chance(50) {
+        format!("{}: x", r.pick(QUESTION_HEADINGS))
+    } else {
+        r.pick(QUESTION_MARKERS).to_string()
+    };
+    let m = if r.chance(40) { lookalike(r, &m) } else { m };
+    format!("{FORGE}{m}")
+}
 
 /// The oracle's copy of the words that make a field recipient-named.
 const RECIPIENT_WORDS: &[&str] = &[
@@ -273,6 +373,11 @@ fn noise(r: &mut Rng, len: usize) -> String {
     ];
     let mut s = String::new();
     while s.chars().count() < len {
+        if r.chance(5) {
+            s.push_str(&forged_marker(r));
+            s.push(' ');
+            continue;
+        }
         let part = r.pick(PARTS).to_string();
         // Tenth review: markers in look-alike letters too.
         if r.chance(30) {
@@ -291,6 +396,9 @@ fn value(r: &mut Rng, kind: Kind, k: usize) -> (String, bool) {
     }
     if kind == Kind::Amount && r.chance(60) {
         return (r.pick(MONEY).to_string(), true);
+    }
+    if kind == Kind::Recipient && r.chance(40) {
+        return (email(r, k), false);
     }
     let v = match r.below(10) {
         0 => String::new(),
@@ -314,6 +422,35 @@ fn value(r: &mut Rng, kind: Kind, k: usize) -> (String, bool) {
     // field is amount-named).
     let money = kind == Kind::Amount && v == "482913";
     (v, money)
+}
+
+/// An email recipient (eleventh review): a local part of 3 to 70 characters and a host of
+/// 8 to 80 ending in a benign suffix (`…@pay-bigbank.com`), sometimes with a Cyrillic
+/// letter in the host or a mixed-script local part.
+fn email(r: &mut Rng, k: usize) -> String {
+    let local: String = (0..3 + r.below(68))
+        .map(|i| {
+            if i % 7 == 6 {
+                '.'
+            } else {
+                char::from(b'a' + (i % 26) as u8)
+            }
+        })
+        .collect();
+    let mut host = String::new();
+    while host.chars().count() < 4 + r.below(66) as usize {
+        host.push_str(r.pick(&["pay-", "accounts.", "secure-", "mail.", "x"]));
+    }
+    host.push_str(&format!("bigbank{k}.com"));
+    if r.chance(15) {
+        host = host.replacen('a', "\u{430}", 1);
+    }
+    let local = if r.chance(10) {
+        local.replacen('a', "\u{430}", 1)
+    } else {
+        local
+    };
+    format!("{local}@{host}")
 }
 
 fn field(r: &mut Rng, k: usize) -> Field {
@@ -392,6 +529,16 @@ struct Case {
     unlisted_open: usize,
     /// Listed amount facts (excluding the target).
     amounts: Vec<u32>,
+    /// Eleventh review: the drawn raw nodes the summary reads roles from (the transcript's
+    /// scroller).
+    nodes: Vec<RawNode>,
+    /// Transcript cells (heading pairs holding "bubble") were placed in a scroller; whether
+    /// the scroller also holds the target.
+    transcript: bool,
+    transcript_holds_target: bool,
+    /// The recipient fields' names and values (listed, and unlisted with the tree), for the
+    /// email and look-alike invariants.
+    recipient_values: Vec<(String, String)>,
 }
 
 const CATEGORIES: &[RiskCategory] = &[
@@ -519,6 +666,12 @@ fn case(seed: u64) -> Case {
         e.selected = true;
         els.push(e);
     }
+    if r.chance(20) {
+        // Eleventh review: a label spelling one of the composer's markers.
+        let i = next();
+        let t = forged_marker(r);
+        els.push(label(i, &t));
+    }
     if r.chance(15) {
         // Hostile labels with look-alike markers (no amounts).
         for m in [
@@ -601,7 +754,8 @@ fn case(seed: u64) -> Case {
         }
     }
     if r.chance(40) {
-        // The real total: an exact phrase, nearest the target, neither first nor largest.
+        // The real total: an exact phrase, neither first nor largest (tenth review: nearest
+        // the target; eleventh review: sometimes with exact-phrase decoys nearer still).
         let (v, _) = money(r, 1, 99);
         let phrase = *r.pick(&["Order total", "Amount due", "Total", "Grand total"]);
         total = Some(v.clone());
@@ -609,9 +763,40 @@ fn case(seed: u64) -> Case {
         let i = next();
         els.push(label(i, &format!("{phrase} {v}")));
         amounts.push(i);
+        if r.chance(40) {
+            // Seller-named rows near the button: exact total phrases, small, and maybe one
+            // larger than everything.
+            for k in 0..1 + r.below(6) {
+                let (v, _) = if k == 0 && r.chance(40) {
+                    money(r, 1_000, 9_999)
+                } else {
+                    money(r, 1, 9)
+                };
+                total_values.push(v.clone());
+                let i = next();
+                els.push(label(i, &format!("Total {v}")));
+                amounts.push(i);
+            }
+        }
     }
     total_values.sort();
     total_values.dedup();
+    // Eleventh review: a transcript of chat cells whose whole text is a heading pair, in a
+    // scroller (a collection view) that holds the target or not.
+    let transcript = r.chance(30);
+    let transcript_holds_target = transcript && r.chance(40);
+    let mut transcript_els: Vec<u32> = Vec::new();
+    if transcript {
+        for k in 0..1 + r.below(3) {
+            let i = next();
+            let t = format!(
+                "{} bubble{k} Mom",
+                r.pick(&["To:", "Pay to:", "Recipient:"])
+            );
+            els.push(label(i, &t));
+            transcript_els.push(i);
+        }
+    }
     let target = next();
     let target_label = *r.pick(TARGETS);
     els.push(button(target, target_label));
@@ -624,20 +809,52 @@ fn case(seed: u64) -> Case {
         // The app's name is screen-controlled text too.
         screen.app_name = Some(lookalike(r, "Sends: Example"));
     }
-    // The raw tree: 0 root, 1 the form, the listed elements, then the unlisted inputs.
+    // The raw tree: 0 root, 1 the form, the listed elements (the transcript inside a
+    // scroller node, with the target when it holds it), then the unlisted inputs.
     let n = screen.elements.len() as u32;
-    let total_nodes = 2 + n + unlisted.len() as u32;
-    let sources: Vec<u32> = (0..n).map(|k| 2 + k).collect();
+    let scroller_nodes = u32::from(transcript);
+    let total_nodes = 2 + n + scroller_nodes + unlisted.len() as u32;
+    let mut sources: Vec<u32> = Vec::new();
     let mut parents = vec![u32::MAX, 0];
     let mut ends = vec![total_nodes, total_nodes];
-    for k in 2..total_nodes {
+    let mut nodes: Vec<RawNode> = Vec::new();
+    let mut scroller: Option<u32> = None;
+    for e in &screen.elements {
+        let in_scroller =
+            transcript_els.contains(&e.index) || (transcript_holds_target && e.index == target);
+        if in_scroller && scroller.is_none() {
+            let id = parents.len() as u32;
+            parents.push(1);
+            ends.push(id + 1);
+            nodes.push(RawNode {
+                node: id,
+                role: Role::CollectionView,
+                frame: Rect::new(0.0, 0.0, 393.0, 600.0),
+                label: None,
+                text: false,
+                keyboard: false,
+            });
+            scroller = Some(id);
+        }
+        let id = parents.len() as u32;
+        match (in_scroller, scroller) {
+            (true, Some(sc)) => {
+                parents.push(sc);
+                ends[sc as usize] = id + 1;
+            }
+            _ => parents.push(1),
+        }
+        ends.push(id + 1);
+        sources.push(id);
+    }
+    for k in parents.len() as u32..total_nodes {
         parents.push(1);
         ends.push(k + 1);
     }
     let mut inputs: Vec<RawInput> = Vec::new();
     for e in screen.elements.iter().filter(|e| e.role.is_text_input()) {
         inputs.push(RawInput {
-            node: 1 + e.index,
+            node: sources[(e.index - 1) as usize],
             role: e.role.clone(),
             label: Some(e.label.clone()),
             identifier: None,
@@ -661,7 +878,7 @@ fn case(seed: u64) -> Case {
             });
         }
         inputs.push(RawInput {
-            node: 2 + n + k as u32,
+            node: 2 + n + scroller_nodes + k as u32,
             role: if f.secure {
                 Role::SecureTextField
             } else {
@@ -724,6 +941,12 @@ fn case(seed: u64) -> Case {
             }
         }
     };
+    let mut recipient_values: Vec<(String, String)> = Vec::new();
+    for f in &fields {
+        if f.kind == Kind::Recipient && !f.secure && names_someone(&f.value) {
+            recipient_values.push((f.name.clone(), f.value.clone()));
+        }
+    }
     let return_recipient = return_field
         .and_then(|f| screen.get(f))
         .filter(|e| {
@@ -754,6 +977,10 @@ fn case(seed: u64) -> Case {
         listed_inputs,
         unlisted_open,
         amounts,
+        nodes,
+        transcript,
+        transcript_holds_target,
+        recipient_values,
     }
 }
 
@@ -794,16 +1021,71 @@ fn items_after(s: &str, head: &str) -> Vec<String> {
     out
 }
 
-/// The `To/Account` heading of a summary (plain, or with the count of different
-/// recipients), if any.
-fn recipients_head(sum: &str) -> Option<String> {
-    if sum.contains(". To/Account: ") {
-        return Some(". To/Account: ".to_owned());
+/// The heading of `mark` in a summary (plain, or with a count: `(N different)`), if any.
+fn marker_head(sum: &str, mark: &str) -> Option<String> {
+    let plain = format!(". {mark}: ");
+    if sum.contains(&plain) {
+        return Some(plain);
     }
-    let at = sum.find(". To/Account (")?;
+    let at = sum.find(&format!(". {mark} ("))?;
     let rest = &sum[at..];
     let end = rest.find("): ")?;
     Some(rest[..end + 3].to_owned())
+}
+
+/// The `To/Account` heading of a summary (plain, or with the count of different
+/// recipients), if any.
+fn recipients_head(sum: &str) -> Option<String> {
+    marker_head(sum, "To/Account")
+}
+
+/// The items listed after `mark`, the trailing `and N more` taken off the last.
+fn marker_items(sum: &str, mark: &str) -> (Vec<String>, bool) {
+    let Some(h) = marker_head(sum, mark) else {
+        return (Vec::new(), false);
+    };
+    let mut items = items_after(sum, &h);
+    let mut more = false;
+    if let Some(last) = items.last_mut() {
+        if let Some((a, b)) = last.rsplit_once(" and ") {
+            if b.ends_with(" more") {
+                *last = a.to_owned();
+                more = true;
+            }
+        }
+    }
+    (items, more)
+}
+
+/// The field name an item (`Name: "value"…`) starts with, and whether it was cut (`…`).
+fn item_name(item: &str) -> (String, bool) {
+    let name = item.split(": \"").next().unwrap_or_default();
+    let cut = name.trim_end_matches('\'').ends_with('…');
+    (norm(name), cut)
+}
+
+/// Whether an item names the field `name` (its whole name, or a cut name's start).
+fn item_is(item: &str, name: &str) -> bool {
+    let (n, cut) = item_name(item);
+    let want = norm(name);
+    if cut {
+        !n.is_empty() && want.starts_with(&n)
+    } else {
+        n == want
+    }
+}
+
+/// `value`'s host when it reads as an email (one `@`, a dot in the host).
+fn email_host(value: &str) -> Option<&str> {
+    if value.matches('@').count() != 1 {
+        return None;
+    }
+    let host = value.split_once('@')?.1;
+    (host.contains('.')
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && !host.chars().any(char::is_whitespace))
+    .then_some(host)
 }
 
 /// How often each invariant had something to check.
@@ -813,8 +1095,15 @@ struct Seen {
     totals_ambiguous: usize,
     payee: usize,
     recipient_fields: usize,
+    unverified: usize,
     decoys: usize,
+    transcript_apart: usize,
+    transcript_inside: usize,
+    emails: usize,
+    emails_cut: usize,
+    emails_mixed: usize,
     lookalike_markers: usize,
+    forged: usize,
     sends: usize,
     sends_capped: usize,
     amounts: usize,
@@ -827,7 +1116,7 @@ fn check(seed: u64, seen: &mut Seen) -> std::time::Duration {
         parents: &c.parents,
         ends: &c.ends,
         bars: &[],
-        nodes: &[],
+        nodes: &c.nodes,
         inputs: &c.inputs,
     };
     let tree = c.with_tree.then_some(&tree);
@@ -846,11 +1135,16 @@ fn check(seed: u64, seen: &mut Seen) -> std::time::Duration {
         seen.lookalike_markers += 1;
     }
     for m in MARKERS {
-        let extra = match *m {
-            "Amounts on screen:" => folded.matches("totals):").count(),
-            "To/Account:" => folded.matches("different):").count(),
-            _ => 0,
-        };
+        // `Heading (N …):` counts as the heading too.
+        let open = format!("{} (", m.trim_end_matches(':'));
+        let extra = folded
+            .match_indices(&open)
+            .filter(|(at, _)| {
+                let rest = &folded[at + open.len()..];
+                rest.find(')')
+                    .is_some_and(|close| close < 30 && rest[close + 1..].starts_with(':'))
+            })
+            .count();
         assert!(folded.matches(m).count() + extra <= 1, "{m}: {}", ctx());
     }
     assert!(
@@ -858,6 +1152,27 @@ fn check(seed: u64, seen: &mut Seen) -> std::time::Duration {
         "{}",
         ctx()
     );
+    // Eleventh review: no marker of the composer's own list is reproduced from page text
+    // (the generator writes each right after the forging tag).
+    if c.screen
+        .elements
+        .iter()
+        .any(|e| e.label.contains(FORGE) || e.value.as_deref().is_some_and(|v| v.contains(FORGE)))
+        || c.inputs
+            .iter()
+            .any(|r| r.value.as_deref().is_some_and(|v| v.contains(FORGE)))
+    {
+        seen.forged += 1;
+    }
+    let squeezed: String = folded.split_whitespace().collect::<Vec<_>>().join(" ");
+    for h in QUESTION_HEADINGS {
+        let forged = format!("{FORGE}{h}:");
+        assert!(!squeezed.contains(&forged), "{forged:?}: {}", ctx());
+    }
+    for m in QUESTION_MARKERS {
+        let forged = format!("{FORGE}{m}");
+        assert!(!squeezed.contains(&forged), "{forged:?}: {}", ctx());
+    }
     // 5. No secret.
     for s in &c.secrets {
         assert!(!sum.contains(s.as_str()), "secret {s:?}: {}", ctx());
@@ -870,33 +1185,101 @@ fn check(seed: u64, seen: &mut Seen) -> std::time::Duration {
         Action::TapPoint { .. } => c.screen.elements.last().map(|e| e.index),
         _ => None,
     };
-    // 2. The total: the exact-phrase total nearest the target; the count of totals.
+    // 2. The total (eleventh review: the real exact-phrase total, with decoy exact totals
+    // nearer the target and a larger one). With at most 3 distinct totals (the labelled
+    // form, every distinct exact total first) it is shown. With more (the compact form,
+    // the distinct totals largest first, the nearest always) no total smaller than it is
+    // shown while it is left out (the nearest excepted), and with at most 6 distinct
+    // totals and the room for them all it is shown.
     if let (true, Some(t)) = (in_app, &c.total) {
-        seen.total += 1;
-        assert!(sum.contains(t.as_str()), "total {t}: {}", ctx());
+        let value = |s: &str| -> Option<f64> {
+            let s = s.rsplit_once('$').map_or(s, |(_, a)| a);
+            let digits: String = s
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',')
+                .filter(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            digits.parse().ok()
+        };
+        let real = value(t).unwrap();
+        if c.totals <= 3 {
+            seen.total += 1;
+            assert!(sum.contains(t.as_str()), "total {t}: {}", ctx());
+        } else if !sum.contains(t.as_str()) {
+            let head = format!("Amounts on screen ({} totals): ", c.totals);
+            let shown: Vec<String> = items_after(&sum, &head);
+            for item in &shown {
+                let item = item.split(" and ").next().unwrap_or_default();
+                // Bare totals (the compact form) and total-worded labelled entries.
+                let lower = item.to_lowercase();
+                let total_worded = lower.contains("total") || lower.contains("due");
+                if item.contains("(nearest)")
+                    || (item.chars().any(char::is_alphabetic) && !total_worded)
+                {
+                    continue;
+                }
+                let v = value(item).unwrap_or(f64::MAX);
+                assert!(
+                    v > real,
+                    "a smaller total {item:?} is shown, the real {t} is not: {}",
+                    ctx()
+                );
+            }
+            assert!(
+                c.totals > 6 || shown.len() < c.totals,
+                "total {t} left out though every total had room: {}",
+                ctx()
+            );
+        } else {
+            seen.total += 1;
+        }
     }
     if in_app && c.totals > 1 {
         seen.totals_ambiguous += 1;
         let head = format!("Amounts on screen ({} totals): ", c.totals);
         assert!(sum.contains(&head), "{head:?}: {}", ctx());
     }
-    // 3. The recipients.
+    // 3. The recipients (eleventh review: with their provenance).
     let pays = matches!(
         c.category,
-        RiskCategory::Payment | RiskCategory::SendMessage | RiskCategory::Purchase
+        RiskCategory::Payment
+            | RiskCategory::SendMessage
+            | RiskCategory::Purchase
+            | RiskCategory::PublicPost
     );
-    let head = recipients_head(&sum);
-    let slot: String = head
-        .as_deref()
-        .map(|h| items_after(&sum, h).join("; "))
-        .unwrap_or_default();
+    let (to_items, _) = marker_items(&sum, "To/Account");
+    let (says_items, says_more) = marker_items(&sum, "Screen says");
+    let says_head = marker_head(&sum, "Screen says");
+    let to_slot = to_items.join("; ");
+    let says_slot = says_items.join("; ");
     if c.decoys {
         seen.decoys += 1;
-        assert!(
-            !slot.contains("decoy") && !slot.contains("quote"),
-            "a decoy is listed as a recipient ({slot:?}): {}",
-            ctx()
-        );
+        for slot in [&to_slot, &says_slot] {
+            assert!(
+                !slot.contains("decoy") && !slot.contains("quote"),
+                "a decoy is listed as a recipient ({slot:?}): {}",
+                ctx()
+            );
+        }
+    }
+    // Transcript cells: never under `To/Account:`; under `Screen says:` only when their
+    // scroller holds the target (the button) and the tree is known.
+    if c.transcript {
+        assert!(!to_slot.contains("bubble"), "{}", ctx());
+        let button = c.screen.elements.last().map(|e| e.index);
+        let inside = c.transcript_holds_target && c.with_tree && target_idx == button;
+        if inside {
+            if says_slot.contains("bubble") {
+                seen.transcript_inside += 1;
+            }
+        } else if c.with_tree && in_app {
+            seen.transcript_apart += 1;
+            assert!(
+                !says_slot.contains("bubble"),
+                "a transcript cell apart from the target is shown: {}",
+                ctx()
+            );
+        }
     }
     let sends = sum.contains(". Sends: ")
         || sum.contains(". The form holds: ")
@@ -909,36 +1292,99 @@ fn check(seed: u64, seen: &mut Seen) -> std::time::Duration {
     } else {
         Vec::new()
     };
+    // Every `To/Account:` entry is a real recipient field the action sends.
+    for item in &to_items {
+        assert!(
+            fields.iter().any(|f| item_is(item, f)),
+            "a To/Account entry is not a sent recipient field ({fields:?}): {item:?}: {}",
+            ctx()
+        );
+    }
     if in_app && pays && !fields.is_empty() {
         seen.recipient_fields += 1;
-        let h = head
-            .clone()
-            .unwrap_or_else(|| panic!("no To/Account: {}", ctx()));
-        let first = items_after(&sum, &h).first().cloned().unwrap_or_default();
-        let first = norm(&first);
+        assert!(!to_items.is_empty(), "no To/Account: {}", ctx());
+    }
+    if in_app && pays && fields.is_empty() {
+        seen.unverified += 1;
         assert!(
-            fields.iter().any(|f| {
-                let n = norm(f);
-                let k = n.len().min(6);
-                first.starts_with(&n[..k])
-            }),
-            "the first To/Account entry is not a sent recipient field ({fields:?}): {}",
+            sum.contains(". Recipient not verified") && to_items.is_empty(),
+            "{}",
             ctx()
         );
     }
     if let (true, true, Some(p)) = (in_app, pays, &c.payee) {
         seen.payee += 1;
-        assert!(head.is_some(), "{}", ctx());
-        let several = head.as_deref().is_some_and(|h| h.contains("different)"));
-        if fields.is_empty() || !several {
-            let start: String = p.chars().take(9).collect();
-            let n = p.chars().count();
-            let tail: String = p.chars().skip(n.saturating_sub(12)).collect();
+        let start: String = p.chars().take(9).collect();
+        let n = p.chars().count();
+        let tail: String = p.chars().skip(n.saturating_sub(12)).collect();
+        let shown = says_slot.contains(start.trim_end()) && says_slot.contains(tail.trim_start());
+        // Left out only by a count, and only when the screen names several.
+        let counted = says_head
+            .as_deref()
+            .is_some_and(|h| h.contains("different)"))
+            && (says_more || sum.contains("Screen says: ") && says_slot.ends_with("not shown"));
+        // Behind the runner-text warning with every slot at its minimum, the count itself
+        // may be cut (marked `…`, the documented scaling gap).
+        let only_count = sum.contains(". Screen says: ")
+            && (says_slot.ends_with(" not shown")
+                || (c.source == ScreenSource::RunnerText && says_slot.ends_with('…')));
+        assert!(shown || counted || only_count, "payee {p:?}: {}", ctx());
+        let name = p.split_once(": ").map_or(p.as_str(), |(_, n)| n);
+        assert!(
+            !to_slot.contains(&format!(": {name}")),
+            "payee under To/Account: {}",
+            ctx()
+        );
+    }
+    // Email recipients under `To/Account:`: `@` and the host stay (whole up to 40, else
+    // first 12 + … + last 24), a cut says how much it left out, the value is not repeated
+    // under `Sends:`, and look-alike letters are flagged exactly when mixed.
+    let (sends_items, _) = marker_items(&sum, "Sends");
+    let sends_items: Vec<String> = if sends_items.is_empty() {
+        items_after(&sum, " shown): ")
+    } else {
+        sends_items
+    };
+    for item in &to_items {
+        let Some((name, value)) = c.recipient_values.iter().find(|(n, _)| item_is(item, n)) else {
+            continue;
+        };
+        let Some(host) = email_host(value) else {
+            continue;
+        };
+        seen.emails += 1;
+        let hn = host.chars().count();
+        let expected = if hn <= 40 {
+            format!("@{host}\"")
+        } else {
+            let h: String = host.chars().take(12).collect();
+            let t: String = host.chars().skip(hn - 24).collect();
+            format!("@{h}…{t}\"")
+        };
+        if !item.contains(&format!("\"{value}\"")) {
+            seen.emails_cut += 1;
             assert!(
-                slot.contains(start.trim_end()) && slot.contains(tail.trim_start()),
-                "payee {p:?}: {}",
+                item.contains(&expected),
+                "{expected:?} in {item:?}: {}",
                 ctx()
             );
+            assert!(item.contains(" not shown)"), "{item:?}: {}", ctx());
+        }
+        let mixed = value.contains('\u{430}');
+        if mixed {
+            seen.emails_mixed += 1;
+        }
+        assert_eq!(
+            item.contains("(look-alike letters)"),
+            mixed,
+            "{item:?}: {}",
+            ctx()
+        );
+        if let Some(sent) = sends_items.iter().find(|i| {
+            let n = norm(i.split(" (").next().unwrap_or_default());
+            n == norm(name)
+        }) {
+            assert!(sent.contains("(shown above)"), "{sent:?}: {}", ctx());
         }
     }
     // 4. Counts. What is sent: the header's count is the form's fields.
@@ -1051,14 +1497,22 @@ fn every_question_keeps_the_charge_and_the_payee_and_announces_what_it_leaves_ou
     }
     println!(
         "{forms} forms; slowest summary {slowest:?}; checked: total {}, several totals {}, \
-         payee {}, recipient fields {}, decoys {}, look-alike markers {}, sends {} ({} \
-         capped), amounts {}",
+         payee {}, recipient fields {}, recipient not verified {}, decoys {}, transcript \
+         apart {} / inside shown {}, emails {} ({} cut, {} mixed), look-alike markers {}, \
+         forged markers {}, sends {} ({} capped), amounts {}",
         seen.total,
         seen.totals_ambiguous,
         seen.payee,
         seen.recipient_fields,
+        seen.unverified,
         seen.decoys,
+        seen.transcript_apart,
+        seen.transcript_inside,
+        seen.emails,
+        seen.emails_cut,
+        seen.emails_mixed,
         seen.lookalike_markers,
+        seen.forged,
         seen.sends,
         seen.sends_capped,
         seen.amounts
@@ -1068,8 +1522,16 @@ fn every_question_keeps_the_charge_and_the_payee_and_announces_what_it_leaves_ou
     assert!(
         seen.totals_ambiguous > 0
             && seen.recipient_fields > 0
+            && seen.unverified > 0
             && seen.decoys > 0
             && seen.lookalike_markers > 0
+            && seen.forged > 0
+    );
+    assert!(
+        seen.transcript_apart > 0
+            && seen.transcript_inside > 0
+            && seen.emails_cut > 0
+            && seen.emails_mixed > 0
     );
     // 7. Bounded time (a debug build; generous).
     assert!(slowest.as_secs() < 2, "{slowest:?}");
@@ -1089,8 +1551,10 @@ fn large_pages_compose_in_bounded_time() {
     for seed in 1..=pages {
         let r = &mut Rng::new(seed ^ 0x5EED);
         let n = 2_000 + r.below(2_001) as u32;
-        let mut els = Vec::new();
-        for i in 1..=n {
+        // Eleventh review (F7): the payee heading is the farthest element from the target,
+        // beyond the 250 nearest, with a decoy heading pair right above the button.
+        let mut els = vec![label(1, "Pay to: Northwind Traders ••••4471")];
+        for i in 2..=n {
             let len = match r.below(3) {
                 0 => r.below(100),
                 1 => r.below(1_000),
@@ -1105,7 +1569,7 @@ fn large_pages_compose_in_bounded_time() {
             };
             els.push(label(i, &text));
         }
-        els.push(label(n + 1, "Pay to: Northwind Traders ••••4471"));
+        els.push(label(n + 1, "To: Eve Decoy"));
         els.push(label(n + 2, "Order total $512.40"));
         let mut f = el(n + 3, Role::TextField, "Note");
         f.value = Some("thanks".to_owned());
@@ -1127,6 +1591,10 @@ fn large_pages_compose_in_bounded_time() {
         assert!(sum.chars().count() <= BOUND, "{ctx}");
         assert!(sum.contains("$512.40"), "{ctx}");
         assert!(sum.contains("Pay to: Northwind"), "{ctx}");
+        assert!(
+            sum.contains("Screen says (2 different): To: Eve Decoy; Pay to: Northwind"),
+            "{ctx}"
+        );
         assert!(sum.contains("Facts from the 250 nearest elements"), "{ctx}");
         let folded = fold(&sum);
         assert!(folded.matches("To/Account").count() <= 1, "{ctx}");
@@ -1140,4 +1608,36 @@ fn large_pages_compose_in_bounded_time() {
     // A debug build; the tenth review's probe of 3,000 elements of 2,000 characters takes
     // about 0.1 s for the question.
     assert!(slowest.as_millis() < 1_000, "{slowest:?}");
+}
+
+/// Eleventh review (F9): thousands of listed text inputs in the target's form compose
+/// within a time bound (was quadratic), the count of fields stays exact, and the question
+/// reads at most 200 of them.
+#[test]
+fn many_listed_inputs_compose_in_bounded_time() {
+    for n in [1_000u32, 5_000, 20_000] {
+        let mut els = vec![label(1, "Total $5.00")];
+        for i in 0..n {
+            let mut f = el(2 + i, Role::TextField, &format!("Note {i}"));
+            f.value = Some(format!("value {i:014}"));
+            els.push(f);
+        }
+        els.push(button(n + 2, "Pay"));
+        let s = app_screen(els);
+        let t0 = std::time::Instant::now();
+        let sum = summary_with(
+            &Action::Tap { element: n + 2 },
+            &s,
+            RiskCategory::Payment,
+            ScreenSource::Typed,
+            None,
+            &[],
+        );
+        let took = t0.elapsed();
+        println!("{n} listed inputs: {took:?}");
+        assert!(sum.chars().count() <= BOUND, "{sum}");
+        assert!(sum.contains(&format!("Sends: {n} fields (")), "{sum}");
+        assert!(sum.contains("$5.00"), "{sum}");
+        assert!(took.as_millis() < 1_000, "{n}: {took:?}");
+    }
 }

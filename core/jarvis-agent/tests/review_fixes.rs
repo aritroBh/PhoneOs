@@ -812,7 +812,8 @@ fn an_approval_for_one_buy_does_not_buy_its_twin() {
     let (asked, e) = approve_then_look(config(), &before, i, &shop_list(&[("TV", "$1,500.00")]));
     assert_eq!(
         asked,
-        "Tap \"Buy\" next to \"Socks $5.00\" in Shop. Amounts on screen: TV $1,500.00; Socks $5.00"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Buy\" next to \"Socks $5.00\" in Shop. Amounts on screen: TV $1,500.00; Socks $5.00. Recipient not verified"
     );
     assert!(
         !matches!(e, Effect::Act(_)),
@@ -841,7 +842,11 @@ fn an_approval_at_one_amount_does_not_pay_another() {
     let before = pay("$5.00");
     let i = index_of(&before, "Pay");
     let (asked, e) = approve_then_look(config(), &before, i, &pay("$500.00"));
-    assert_eq!(asked, "Tap \"Pay\" in Shop. Amounts on screen: Total $5.00");
+    // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+    assert_eq!(
+        asked,
+        "Tap \"Pay\" in Shop. Amounts on screen: Total $5.00. Recipient not verified"
+    );
     assert!(
         !matches!(e, Effect::Act(_)),
         "approved '{asked}' but paid: {e:?}"
@@ -865,7 +870,8 @@ fn an_approved_switch_that_flipped_meanwhile_is_not_tapped() {
         .unwrap()
         .index;
     let (asked, e) = approve_then_look(c.clone(), &before, sw, &wifi_screen(true));
-    assert_eq!(asked, "Turn on \"Wi-Fi\" in Settings");
+    // Eleventh review (F3c): on a typed tree the action line names the screen's title (the navigation bar's text).
+    assert_eq!(asked, "Turn on \"Wi-Fi\" in Settings, screen \"Wi-Fi\"");
     assert!(!matches!(e, Effect::Act(_)), "approved '{asked}': {e:?}");
     // Unchanged: it runs.
     let (_, e) = approve_then_look(c, &before, sw, &wifi_screen(false));
@@ -1191,7 +1197,8 @@ fn a_list_shifted_by_one_card_is_not_acted_on() {
     let (asked, e) = approve_then_look(config(), &before, i, &order_cards(1002));
     assert_eq!(
         asked,
-        "Tap \"Delete order\" under \"Order #1001, Placed Nov 20\" in Shop"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Delete order\" under \"Order #1001, Placed Nov 20\" in Shop. Recipient not verified"
     );
     assert!(!matches!(e, Effect::Act(_)), "deleted Order #1002: {e:?}");
     let Effect::Infer(req) = e else {

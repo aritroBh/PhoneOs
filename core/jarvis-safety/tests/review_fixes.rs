@@ -530,7 +530,11 @@ fn tap_point_summary_names_the_pressable_element() {
     match evaluate(&Policy::default(), &a, &s, None) {
         Decision::Confirm(c) => {
             assert_eq!(c.category, Payment);
-            assert_eq!(c.summary, "Tap at (50%, 50%) on \"Pay $500.00\" in Example");
+            // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+            assert_eq!(
+                c.summary,
+                "Tap at (50%, 50%) on \"Pay $500.00\" in Example. Recipient not verified"
+            );
         }
         other => panic!("{other:?}"),
     }
@@ -1327,7 +1331,11 @@ fn a_long_label_keeps_both_ends_and_its_amount_in_the_summary() {
     assert!(sum.contains("renewal"), "{sum}");
     // Short labels are untouched.
     let s = app_screen(vec![button(1, "Pay $5")]);
-    assert_eq!(summarize(&tap(1), &s, None), "Tap \"Pay $5\" in Example");
+    // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+    assert_eq!(
+        summarize(&tap(1), &s, None),
+        "Tap \"Pay $5\" in Example. Recipient not verified"
+    );
 }
 
 // --- Third review: the approval covers the whole screen ------------------------------------
@@ -1436,7 +1444,8 @@ fn amounts_that_swap_roles_void_the_approval_and_read_differently() {
     // Fourth review: amounts with total / due / pay / charge / billed wording come first.
     assert_eq!(
         s_before,
-        "Tap \"Pay\" in Example. Amounts on screen: Total $5.00; Gift wrap $500.00; Shipping $0.00"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Pay\" in Example. Amounts on screen: Total $5.00; Gift wrap $500.00; Shipping $0.00. Recipient not verified"
     );
     assert_ne!(s_before, s_after);
     assert!(!holds(&before, &tap(5), &after));
@@ -1718,7 +1727,8 @@ fn the_summary_names_the_card_stacked_above_the_target() {
     let s = summarize(&tap(3), &order_cards(1001), None);
     assert_eq!(
         s,
-        "Tap \"Delete order\" under \"Order #1001, Placed Nov 20\" in Example"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Delete order\" under \"Order #1001, Placed Nov 20\" in Example. Recipient not verified"
     );
     let s = summarize(&tap(6), &order_cards(1001), None);
     assert!(s.contains("under \"Order #1002, Placed Nov 20\""), "{s}");
@@ -1874,7 +1884,8 @@ fn the_charge_is_listed_before_larger_decoys() {
     ]);
     assert_eq!(
         summarize(&tap(5), &s, None),
-        "Tap \"Place order\" in Example. Amounts on screen: Due today $199.00; Compare at $1,200.00; Was $999.00; You save $800.00"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Place order\" in Example. Amounts on screen: Due today $199.00; Compare at $1,200.00; Was $999.00; You save $800.00. Recipient not verified"
     );
 }
 
@@ -1910,7 +1921,8 @@ fn many_amounts_with_total_wording_list_the_total_first() {
         ),
         "{sum}"
     );
-    assert!(sum.ends_with("and 2 more"), "{sum}");
+    // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+    assert!(sum.ends_with("and 2 more. Recipient not verified"), "{sum}");
     assert!(sum.chars().count() <= 320, "{sum}");
 }
 
@@ -1944,7 +1956,8 @@ fn the_selected_plan_is_listed_before_decoy_switches() {
     ]);
     assert_eq!(
         summarize(&tap(4), &s, None),
-        "Tap \"Subscribe\" in Example. Selected: Email receipts; Annual plan, billed yearly; Remember me"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Subscribe\" in Example. Recipient not verified. Selected: Email receipts; Annual plan, billed yearly; Remember me"
     );
     // With prices: the priced plan comes first, then the rest.
     let mut plan = at5(
@@ -1996,7 +2009,8 @@ fn a_venmo_like_payment_states_who_how_much_and_what_for() {
     // gap; "To/Account: @alex-smith-42" was dropped, deliberate change).
     assert_eq!(
         sum,
-        "Tap \"Pay\" in Example. Sends: Amount: \"120\"; 'What\u{2019}s it for?': \"Concert tickets\". Amounts on screen: Amount: 120"
+        // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
+        "Tap \"Pay\" in Example. Sends: Amount: \"120\"; 'What\u{2019}s it for?': \"Concert tickets\". Amounts on screen: Amount: 120. Recipient not verified"
     );
     // Sixth review: the note shows only when Jarvis typed it (was always quoted; deliberate
     // change, see `summary_with`).
@@ -2062,7 +2076,8 @@ fn a_card_list_names_the_paying_account() {
         at5(button(4, "Send money"), 16.0, 700.0, 361.0, 50.0),
     ]);
     let sum = summarize(&tap(4), &s, None);
-    assert!(sum.contains("To/Account: To: +1 (555) 010-0100"), "{sum}");
+    // Eleventh review (F3a): a heading pair read from the screen's text is shown under `Screen says:`, never under `To/Account:` (only the form's recipient fields are).
+    assert!(sum.contains("Screen says: To: +1 (555) 010-0100"), "{sum}");
     assert!(!sum.contains("alex@example.com"), "{sum}");
     let s = app_screen(vec![
         at5(label(1, "+1 (555) 010-0100"), 16.0, 100.0, 361.0, 22.0),

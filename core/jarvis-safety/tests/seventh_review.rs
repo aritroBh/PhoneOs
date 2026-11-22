@@ -9,7 +9,7 @@
 //! regressions, with the additions the fix called for.
 mod common;
 use common::{app_screen, button, el, label};
-use jarvis_proto::{Action, Element, Policy, Role};
+use jarvis_proto::{Action, Element, Policy, RiskCategory, Role};
 use jarvis_safety::{evaluate_from, Decision, ScreenSource};
 
 fn tf(index: u32, name: &str, value: &str) -> Element {
@@ -176,9 +176,15 @@ fn return_reads_the_field_name_and_the_typed_text() {
     risky.label = "Type DELETE to erase all".to_owned();
     let d = return_in(risky, "DELETE", "search", "Photos");
     assert!(matches!(d, Decision::Confirm(_)), "{d:?}");
-    // Plain text into a plain field with a plain Return key still does not ask.
+    // Eleventh review (F1): Return in a single-line field after typing is presumed to
+    // submit what the form holds (the typing sets the "typed here" state), whatever the
+    // Return key says: it asks as a send (was `Allow` for a plain field and a plain key;
+    // deliberate change).
     let d = return_in(tf(2, "Notes", ""), "groceries", "return", "My notes");
-    assert_eq!(d, Decision::Allow);
+    match d {
+        Decision::Confirm(r) => assert_eq!(r.category, RiskCategory::SendMessage, "{r:?}"),
+        other => panic!("{other:?}"),
+    }
 }
 
 /// Return in a multi-line text view with a plain "return" key inserts a line break: the

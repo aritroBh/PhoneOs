@@ -741,12 +741,27 @@ fn return_on_a_send_key_asks_end_to_end() {
     assert!(!user.contains("Button \"send\""), "{user}");
 }
 
-/// A plain "return" key keeps today's behaviour: nothing to ask in a plain composer.
+/// A plain "return" key in a single-line composer. Eleventh review (F1): Return after
+/// `type` in a single-line field is presumed to submit what was typed, whatever the key
+/// says, so it asks as a send showing the content, and a decline presses nothing (was: no
+/// question, Return pressed; deliberate change). The model still sees no key label.
 #[test]
 fn return_on_a_plain_return_key_does_not_ask() {
     let run = chat_run("return");
-    assert!(run.confirms.is_empty(), "{:?}", run.confirms);
-    assert!(pressed_return(&run), "{:?}", run.acts);
+    assert_eq!(run.confirms.len(), 1, "{:?}", run.confirms);
+    assert_eq!(run.confirms[0].category, RiskCategory::SendMessage);
+    assert!(
+        run.confirms[0]
+            .summary
+            .contains("which sends the field's whole content: \"on my way\""),
+        "{}",
+        run.confirms[0].summary
+    );
+    assert!(
+        !pressed_return(&run),
+        "declined: nothing sent; {:?}",
+        run.acts
+    );
     assert!(!run.requests[0].user.contains("Return key:"));
 }
 
