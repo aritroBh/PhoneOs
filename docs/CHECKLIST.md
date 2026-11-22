@@ -47,6 +47,17 @@ In progress — first compiled on a macOS runner:
 - [ ] Artifacts per step: compact screen, raw tree, screenshot, transcript
 - [ ] Green run on an iPhone 17 Pro Max simulator
 
+## Skills, workflows, remote control
+
+- [ ] `jarvis-skills`: skill store, trigger matcher with slots, `SkillContext` in sessions, app confinement
+- [ ] `jarvis-skills`: workflows (triggers, steps, sans-IO run, schedule maths)
+- [ ] `jarvis-remote`: pairing, AEAD frames, hub + client state machines, adversarial tests
+- [ ] FFI surface for skills, workflows, remote
+- [ ] Swift: skill and workflow stores, local-network listener, App Intent entry for automations
+- [ ] App screens: Skills, skill detail, Workflows, Apps (ways in + trust), Control, Remote control
+- [x] Design: canvas with nine screens (Astryx conventions, Lucide on web / SF Symbols on iOS)
+- [ ] Human security review of the remote protocol
+
 ## Core follow-ups
 
 - [ ] `Event` for "observation failed" (today the driver cancels; run is logged as cancelled)

@@ -133,6 +133,19 @@ An agent with full control of the phone that reads untrusted screens is a real r
 
 ---
 
+### 2.7 Skills, workflows, remote control
+
+Added after the first plan. All three sit on top of the same session loop and can only narrow what the policy allows, never widen it.
+
+| Feature | What it is | Where it lives | Limits |
+|---|---|---|---|
+| **Skill** | A named capability: trigger phrases (with `{slots}`), owner-written guidance, the apps it works in, optional learned flows that replay without the model. Kinds: learned, written, built in. | `core/jarvis-skills` (store, matcher); `SkillContext` on `SessionConfig` feeds the prompt and can confine a session to the skill's apps. | A skill never grants trust or skips a confirmation. |
+| **Workflow** | A trigger plus ordered steps: run skill, run task, ask owner, notify, wait, stop-unless. Triggers: manual, phrase, schedule, external key. | `core/jarvis-skills` (sans-IO `WorkflowRun`); the shell owns timers and maps iOS automations to external keys. | iOS gives no general background triggers: schedule/arrival/charger triggers arrive through Shortcuts automations calling an App Intent **[U]**. Each step is an ordinary session under the owner's policy. |
+| **Remote control** | Start, watch and stop tasks from another of the owner's devices on the same network. | `core/jarvis-remote` (pairing, AEAD frames, hub state machine, client half); the shell carries bytes over a local listener. | Approvals stay on the phone unless switched on per device, and never for payment, purchase, credential, account change or delete. Needs the app alive on the phone (section 3). Protocol is unaudited. |
+| **App access** | Three ways into an app, cheapest first (2.3): direct system frameworks, app actions (App Intents / Shortcuts), the screen through the runner. | Tool router + per-app trust level (Trusted / Guarded / Step by step / Denied). | Screen access to "any app" depends on the runner spike (S1, S5). |
+
+App structure: tabs **Ask · Skills · Workflows · Apps · Control**; Activity and Remote control open from Ask and Control. Visual language follows Astryx (Meta's open design system): neutral graphite surfaces, 1px bezel, colour only for state, SF Symbols on iOS per its native icon mapping.
+
 ## 3. "Works when I close my phone"
 
 | State | Works? |
