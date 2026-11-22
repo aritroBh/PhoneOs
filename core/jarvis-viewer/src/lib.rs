@@ -17,6 +17,8 @@
 //! - [`geometry`]: points, sizes, rectangles and the screen → view mapping.
 //! - [`approval`]: the approval sheet's picture of a pending confirmation (the evaluated
 //!   observation's key and the target's frame), never part of the timeline.
+//! - [`delta`]: the timeline as a bounded stream of deltas for a paired remote
+//!   controller ([`DeltaEncoder`] on the phone, [`DeltaDecoder`] on the controller).
 //! - [`live`]: all of the above behind one value ([`LiveView`]): one call per driver
 //!   update, one per drawn frame.
 
@@ -33,6 +35,7 @@
 
 pub mod approval;
 pub mod cursor;
+pub mod delta;
 pub mod geometry;
 pub mod live;
 pub mod privacy;
@@ -44,6 +47,10 @@ pub mod wire;
 
 pub use approval::{ApprovalMark, ApprovalTarget};
 pub use cursor::{Phase, Pose, Timing};
+pub use delta::{
+    Applied, DeltaDecoder, DeltaEncoder, DeltaError, DeltaHeader, ResyncReason, StreamCursor,
+    ViewerDelta, MAX_DELTA_BYTES, MAX_SNAPSHOT_BYTES, SNAPSHOT_STEPS,
+};
 pub use geometry::{ViewerMapping, ViewerPoint, ViewerRect, ViewerSize};
 pub use live::{Frame, LiveView, ReplayAction, ViewGeometry};
 pub use reducer::{Change, Reducer, ReducerConfig, Update};

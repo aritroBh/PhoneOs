@@ -757,53 +757,74 @@ impl ViewerTimeline {
         if self.screens.len() > MAX_SCREENS {
             return Err(WireError::TooLarge("screens"));
         }
-        let text_ok = |s: &str| s.len() <= MAX_WIRE_TEXT || s.chars().count() <= MAX_WIRE_TEXT;
-        let opt_ok = |s: &Option<String>| s.as_deref().is_none_or(text_ok);
-        let element_ok = |e: &ViewerElement| text_ok(&e.role) && opt_ok(&e.label);
-        if !text_ok(&self.task_id) || !text_ok(self.activity.tag()) {
+        if !text_ok(&self.task_id) || !activity_ok(&self.activity) {
             return Err(WireError::TooLarge("text"));
         }
-        if let Activity::UsingTool(t) | Activity::WaitingForApproval(t) = &self.activity {
-            if !text_ok(t) {
-                return Err(WireError::TooLarge("text"));
-            }
-        }
-        for step in &self.steps {
-            let gesture_ok = match &step.gesture {
-                Gesture::Type(t) => opt_ok(t),
-                Gesture::Key(t)
-                | Gesture::Launch(t)
-                | Gesture::OpenUrl(t)
-                | Gesture::Unknown(t) => text_ok(t),
-                _ => true,
-            };
-            if !gesture_ok
-                || !text_ok(&step.caption)
-                || !text_ok(step.state.tag())
-                || !step.state.title().is_none_or(text_ok)
-                || !step.target.as_ref().is_none_or(element_ok)
-            {
-                return Err(WireError::TooLarge("text"));
-            }
+        if !self.steps.iter().all(step_ok) {
+            return Err(WireError::TooLarge("text"));
         }
         for screen in &self.screens {
             if screen.elements.len() > MAX_ELEMENTS {
                 return Err(WireError::TooLarge("elements"));
             }
-            if !opt_ok(&screen.app_name)
-                || !text_ok(&screen.bundle_id)
-                || !text_ok(screen.source.tag())
-                || !screen
-                    .frame_key
-                    .as_ref()
-                    .is_none_or(|k| text_ok(&k.task_id))
-                || !screen.elements.iter().all(element_ok)
-            {
+            if !screen_ok(screen) {
                 return Err(WireError::TooLarge("text"));
             }
         }
         Ok(())
     }
+}
+
+/// A string within [`MAX_WIRE_TEXT`] characters.
+pub(crate) fn text_ok(s: &str) -> bool {
+    s.len() <= MAX_WIRE_TEXT || s.chars().count() <= MAX_WIRE_TEXT
+}
+
+fn opt_ok(s: &Option<String>) -> bool {
+    s.as_deref().is_none_or(text_ok)
+}
+
+fn element_ok(e: &ViewerElement) -> bool {
+    text_ok(&e.role) && opt_ok(&e.label)
+}
+
+/// The activity's strings are within bounds.
+pub(crate) fn activity_ok(a: &Activity) -> bool {
+    if !text_ok(a.tag()) {
+        return false;
+    }
+    match a {
+        Activity::UsingTool(t) | Activity::WaitingForApproval(t) => text_ok(t),
+        _ => true,
+    }
+}
+
+/// The step's strings are within bounds.
+pub(crate) fn step_ok(step: &ViewerStep) -> bool {
+    let gesture_ok = match &step.gesture {
+        Gesture::Type(t) => opt_ok(t),
+        Gesture::Key(t) | Gesture::Launch(t) | Gesture::OpenUrl(t) | Gesture::Unknown(t) => {
+            text_ok(t)
+        }
+        _ => true,
+    };
+    gesture_ok
+        && text_ok(&step.caption)
+        && text_ok(step.state.tag())
+        && step.state.title().is_none_or(text_ok)
+        && step.target.as_ref().is_none_or(element_ok)
+}
+
+/// The screen's strings are within bounds (the element count is checked separately).
+pub(crate) fn screen_ok(screen: &ViewerScreen) -> bool {
+    opt_ok(&screen.app_name)
+        && text_ok(&screen.bundle_id)
+        && text_ok(screen.source.tag())
+        && screen
+            .frame_key
+            .as_ref()
+            .is_none_or(|k| text_ok(&k.task_id))
+        && screen.elements.iter().all(element_ok)
 }
 
 #[derive(Serialize)]

@@ -7,6 +7,7 @@
 //! fresh scrubber that follows live.
 
 use crate::cursor;
+use crate::delta::{Applied, DeltaDecoder};
 use crate::geometry::{ViewerMapping, ViewerPoint, ViewerRect, ViewerSize};
 use crate::reducer::{Change, Reducer, ReducerConfig, Update};
 use crate::replay::{ReplayState, Speed};
@@ -114,6 +115,10 @@ pub struct LiveView {
     fresh: bool,
     /// Bumped by every update that changed something.
     generation: u64,
+    /// Runs started (`Update::Started` seen).
+    runs: u64,
+    /// A remote controller's stream position ([`LiveView::apply_delta`]).
+    decoder: DeltaDecoder,
 }
 
 impl Default for LiveView {
@@ -143,6 +148,8 @@ impl LiveView {
             synced_generation: None,
             fresh: true,
             generation: 0,
+            runs: 0,
+            decoder: DeltaDecoder::new(),
         }
     }
 
@@ -171,13 +178,47 @@ impl LiveView {
         self.generation
     }
 
+    /// Runs started so far (each `Update::Started`): what a
+    /// [`crate::delta::DeltaEncoder`] takes to tell a new run from a continued one.
+    pub fn runs(&self) -> u64 {
+        self.runs
+    }
+
     /// Feeds one driver update.
     pub fn apply(&mut self, update: Update) -> Change {
         let started = matches!(update, Update::Started { .. });
         let change = self.reducer.apply(update);
         if started {
             self.fresh = true;
+            self.runs = self.runs.wrapping_add(1);
         }
+        self.after_change(change, started);
+        change
+    }
+
+    /// A remote controller's view: applies one delta from the phone's stream
+    /// ([`crate::delta`]) to this view's timeline (one call per received delta). On
+    /// [`Applied::NeedsResync`] ask the phone for a snapshot; a `reset` starts a fresh
+    /// scrubber following live.
+    pub fn apply_delta(&mut self, bytes: &[u8]) -> Applied {
+        let applied = self.decoder.apply(self.reducer.timeline_mut(), bytes);
+        if let Applied::Changed(change) = applied {
+            // Only a reset changes all three at once: the scrubber starts again.
+            let reset = change.steps && change.screens && change.activity;
+            if reset {
+                self.fresh = true;
+            }
+            self.after_change(change, reset);
+        }
+        applied
+    }
+
+    /// Whether this view (as a remote controller) waits for a snapshot.
+    pub fn needs_resync(&self) -> bool {
+        self.decoder.needs_resync()
+    }
+
+    fn after_change(&mut self, change: Change, started: bool) {
         if change.steps {
             let steps = &self.reducer.timeline().steps;
             let same = steps.len() == self.numbers.len()
@@ -192,7 +233,6 @@ impl LiveView {
         if change.any() || started {
             self.generation += 1;
         }
-        change
     }
 
     /// Brings the scrubber up to date at `now_ms` and advances playback.

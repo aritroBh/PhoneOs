@@ -354,6 +354,11 @@ impl Reducer {
         &self.timeline
     }
 
+    /// The timeline, for a remote controller's decoder ([`crate::delta`]).
+    pub(crate) fn timeline_mut(&mut self) -> &mut ViewerTimeline {
+        &mut self.timeline
+    }
+
     /// The configuration (with the clamped cap).
     pub fn config(&self) -> &ReducerConfig {
         &self.config

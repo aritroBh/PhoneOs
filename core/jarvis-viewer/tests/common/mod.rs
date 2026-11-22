@@ -6,6 +6,8 @@
 use jarvis_proto as p;
 use jarvis_viewer::{Reducer, ReducerConfig, Update, ViewerTimeline};
 
+pub mod random;
+
 pub const PHONE: p::Size = p::Size {
     width: 393.0,
     height: 852.0,

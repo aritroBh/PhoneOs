@@ -8,6 +8,7 @@
 //! zeroized on drop; serde's intermediate buffers while encoding and decoding are not
 //! (serde_json offers no way to do that), nor are copies the shell makes.
 
+use std::collections::BTreeSet;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -105,11 +106,27 @@ struct DeviceJson {
     key: Zeroizing<String>,
     permissions: RemotePermissions,
     paired_at_ms: u64,
+    /// The `watch_screen` permission (Live view over remote control). Absent in records
+    /// written before it existed, which load with it off; written only when on, so a
+    /// store without it is byte for byte what older versions wrote.
+    #[serde(default, skip_serializing_if = "is_false")]
+    watch_screen: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl DeviceStore {
     /// Serializes the store, keys included (see the module docs: Keychain only).
     pub fn to_json(&self) -> Zeroizing<String> {
+        self.to_json_with_watch(&BTreeSet::new())
+    }
+
+    /// [`DeviceStore::to_json`] plus the devices holding the `watch_screen` permission
+    /// (kept beside [`RemotePermissions`], see [`crate::RemoteHub::watch_screen`]).
+    pub fn to_json_with_watch(&self, watch_screen: &BTreeSet<DeviceId>) -> Zeroizing<String> {
         let doc = StoreJson {
             schema_version: DEVICE_STORE_VERSION,
             nonce_lease: self.nonce_lease,
@@ -122,6 +139,7 @@ impl DeviceStore {
                     key: to_hex_secret(d.key.as_bytes()),
                     permissions: d.permissions,
                     paired_at_ms: d.paired_at_ms,
+                    watch_screen: watch_screen.contains(&d.id),
                 })
                 .collect(),
         };
@@ -131,6 +149,12 @@ impl DeviceStore {
     /// Loads a store written by [`DeviceStore::to_json`]. Corrupt, unknown-version or
     /// inconsistent input is an error; nothing is partially loaded.
     pub fn from_json(json: &str) -> Result<Self, PersistError> {
+        Self::from_json_with_watch(json).map(|(store, _)| store)
+    }
+
+    /// [`DeviceStore::from_json`] plus the devices holding the `watch_screen` permission
+    /// (none for records written before it existed).
+    pub fn from_json_with_watch(json: &str) -> Result<(Self, BTreeSet<DeviceId>), PersistError> {
         let probe: serde_json::Value =
             serde_json::from_str(json).map_err(|e| PersistError::corrupt(&e))?;
         let version = probe
@@ -145,7 +169,11 @@ impl DeviceStore {
         let doc: StoreJson =
             serde_json::from_value(probe).map_err(|e| PersistError::corrupt(&e))?;
         let mut devices: Vec<DeviceRecord> = Vec::with_capacity(doc.devices.len());
+        let mut watch = BTreeSet::new();
         for d in doc.devices {
+            if d.watch_screen {
+                watch.insert(d.id);
+            }
             let key_bytes: [u8; 32] = from_hex(&d.key)
                 .and_then(|b| b.as_slice().try_into().ok())
                 .ok_or_else(|| PersistError::Invalid("invalid key".into()))?;
@@ -162,7 +190,7 @@ impl DeviceStore {
             nonce_lease: doc.nonce_lease,
         };
         store.validate()?;
-        Ok(store)
+        Ok((store, watch))
     }
 
     /// Checks the invariants [`DeviceStore::from_json`] enforces: at most

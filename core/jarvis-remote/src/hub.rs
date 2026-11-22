@@ -31,6 +31,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use jarvis_proto::{ConfirmRequest, Outcome, OutcomeStatus, Progress, RiskCategory};
+use jarvis_viewer::delta::DeltaClass;
+use jarvis_viewer::{DeltaEncoder, ViewerTimeline};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -49,6 +51,10 @@ use crate::store::{
     clean_name, DeviceInfo, DeviceRecord, DeviceStore, MAX_DEVICES, MAX_DEVICE_NAME_BYTES,
 };
 use crate::text::{clean_text, redact_text};
+use crate::viewer::{
+    ViewerEndReason, ViewerMessage, ViewerRequest, MIN_SCREEN_INTERVAL_MS, VIEWER_QUEUE_BYTES,
+    VIEWER_WINDOW_BYTES,
+};
 
 /// The shell's identifier for one transport connection.
 pub type ConnId = u64;
@@ -416,7 +422,82 @@ enum Phase {
         subscribed: bool,
         window_start_ms: u64,
         window_count: u32,
+        /// The Live view stream, while this connection watches.
+        watch: Option<Box<Watch>>,
+        /// Bytes of `Send` effects the shell has not yet reported written.
+        in_flight: usize,
     },
+}
+
+/// One connection's Live view stream (see [`crate::viewer`]).
+#[derive(Debug, Default)]
+struct Watch {
+    /// The next thing to send is a snapshot (start, resync, overflow).
+    needs_snapshot: bool,
+    /// `viewer_delta` plaintexts, sealed when handed out (in order).
+    queue: VecDeque<Vec<u8>>,
+    queued_bytes: usize,
+    /// A screen held back by the rate limit (a newer one replaces it).
+    pending_screen: Option<Vec<u8>>,
+    last_screen_ms: Option<u64>,
+}
+
+impl Watch {
+    /// Queues a message; on overflow drops the queue and asks for a snapshot instead.
+    fn enqueue(&mut self, msg: Vec<u8>) {
+        if self.needs_snapshot {
+            return;
+        }
+        if self.queued_bytes.saturating_add(msg.len()) > VIEWER_QUEUE_BYTES {
+            self.resync();
+            return;
+        }
+        self.queued_bytes += msg.len();
+        self.queue.push_back(msg);
+    }
+
+    /// Offers one delta of the live stream.
+    fn offer(&mut self, class: DeltaClass, msg: &[u8], now: u64) {
+        if self.needs_snapshot {
+            return;
+        }
+        match class {
+            // A held-back screen of the old generation must not follow the new reset.
+            DeltaClass::Reset => {
+                self.pending_screen = None;
+                self.enqueue(msg.to_vec());
+            }
+            DeltaClass::Side => {
+                if self.pending_screen.is_none() && self.screen_due(now) {
+                    self.last_screen_ms = Some(now);
+                    self.enqueue(msg.to_vec());
+                } else {
+                    self.pending_screen = Some(msg.to_vec());
+                }
+            }
+            _ => self.enqueue(msg.to_vec()),
+        }
+    }
+
+    fn screen_due(&self, now: u64) -> bool {
+        self.last_screen_ms
+            .is_none_or(|l| now.saturating_sub(l) >= MIN_SCREEN_INTERVAL_MS)
+    }
+
+    /// Drops what is queued: the next thing sent is a snapshot (coalesced).
+    fn resync(&mut self) {
+        self.queue.clear();
+        self.queued_bytes = 0;
+        self.pending_screen = None;
+        self.needs_snapshot = true;
+    }
+}
+
+/// What the pump does next for one watching connection.
+enum PumpStep {
+    Snapshot,
+    Send(Vec<u8>),
+    Done,
 }
 
 #[derive(Debug)]
@@ -480,6 +561,10 @@ pub struct RemoteHub {
     nonce_lease: u64,
     recent_connects: VecDeque<(DeviceId, [u8; NONCE_LEN])>,
     preauth: PreAuthAudit,
+    /// Devices holding the `watch_screen` permission.
+    watch_allowed: BTreeSet<DeviceId>,
+    /// The Live view stream's encoder (fed by [`RemoteHub::viewer_update`]).
+    viewer: DeltaEncoder,
 }
 
 impl RemoteHub {
@@ -516,18 +601,115 @@ impl RemoteHub {
             nonce_lease: store.nonce_lease,
             recent_connects: VecDeque::new(),
             preauth: PreAuthAudit::default(),
+            watch_allowed: BTreeSet::new(),
+            viewer: DeltaEncoder::new(),
         }
     }
 
     /// Restores a hub from [`RemoteHub::to_json`] output.
     pub fn from_json(phone_name: &str, json: &str) -> Result<Self, PersistError> {
-        Self::with_store(phone_name, DeviceStore::from_json(json)?)
+        let (store, watch) = DeviceStore::from_json_with_watch(json)?;
+        let mut hub = Self::with_store(phone_name, store)?;
+        hub.watch_allowed = watch;
+        Ok(hub)
     }
 
-    /// The persisted state, keys included, for the Keychain (see [`DeviceStore`]).
-    /// Devices whose pairing is not yet confirmed are not included.
+    /// The persisted state, keys included, for the Keychain (see [`DeviceStore`]), with
+    /// the `watch_screen` permissions. Devices whose pairing is not yet confirmed are not
+    /// included.
     pub fn to_json(&self) -> Zeroizing<String> {
-        self.store().to_json()
+        self.store().to_json_with_watch(&self.watch_allowed)
+    }
+
+    /// Whether a device holds the `watch_screen` permission: it may receive the Live view
+    /// (wireframes, cursor and captions; never pixels). Off by default and for devices
+    /// stored before it existed; independent of `see_progress`. Kept beside
+    /// [`RemotePermissions`]; change it with [`RemoteHub::set_watch_screen`].
+    pub fn watch_screen(&self, device_id: DeviceId) -> bool {
+        self.watch_allowed.contains(&device_id)
+    }
+
+    /// The owner turned the `watch_screen` permission on or off for a device (persist on
+    /// the returned `StoreChanged`). Off stops that device's streams in this call. An
+    /// unknown device or no change returns nothing.
+    pub fn set_watch_screen(
+        &mut self,
+        device_id: DeviceId,
+        allowed: bool,
+        now_ms: u64,
+    ) -> Vec<HubEffect> {
+        let mut fx = Vec::new();
+        self.expire(now_ms, &mut fx);
+        self.watch_screen_changed(device_id, allowed, &mut fx);
+        fx
+    }
+
+    /// Whether `conn_id` currently receives the Live view.
+    pub fn is_watching(&self, conn_id: ConnId) -> bool {
+        self.watch_ref(conn_id).is_some()
+    }
+
+    /// The Live view changed: one call per driver update on the phone, after feeding it to
+    /// the view (`jarvis_viewer::LiveView`), with the view's `runs()` and `timeline()`
+    /// (the reducer's post-privacy state, never raw updates). The hub diffs it into deltas
+    /// and queues them for every connection that watches with the permission. Never
+    /// blocks and never holds more than [`VIEWER_QUEUE_BYTES`] per connection (see
+    /// [`crate::viewer`]).
+    pub fn viewer_update(
+        &mut self,
+        now_ms: u64,
+        run: u64,
+        timeline: &ViewerTimeline,
+    ) -> Vec<HubEffect> {
+        let mut fx = Vec::new();
+        let now = self.expire(now_ms, &mut fx);
+        let deltas = self.viewer.feed(run, timeline);
+        let live: Vec<ConnId> = self
+            .watcher_ids()
+            .into_iter()
+            .filter(|id| self.watch_ref(*id).is_some_and(|w| !w.needs_snapshot))
+            .collect();
+        if !deltas.is_empty() && !live.is_empty() {
+            let mut encoded = Vec::with_capacity(deltas.len());
+            let mut broken = false;
+            for d in &deltas {
+                match ViewerMessage::delta(&d.encode()).and_then(|m| m.to_bytes()) {
+                    Ok(msg) => encoded.push((d.header().class, msg)),
+                    // Not expected for the encoder's deltas; leaving one out would open a
+                    // gap, so resync instead.
+                    Err(_) => broken = true,
+                }
+            }
+            for id in live {
+                if let Some(w) = self.watch_mut(id) {
+                    if broken {
+                        w.resync();
+                    }
+                    for (class, msg) in &encoded {
+                        w.offer(*class, msg, now);
+                    }
+                }
+            }
+        }
+        self.pump_all(now, &mut fx);
+        fx
+    }
+
+    /// The transport wrote `bytes` of this connection's `Send` effects (report it from the
+    /// write completion). The Live view is handed out only while fewer than
+    /// [`VIEWER_WINDOW_BYTES`] are unconfirmed; over-reporting only loosens that window.
+    pub fn written(&mut self, conn_id: ConnId, bytes: usize, now_ms: u64) -> Vec<HubEffect> {
+        let mut fx = Vec::new();
+        let now = self.expire(now_ms, &mut fx);
+        if let Some(Conn {
+            phase: Phase::Established { in_flight, .. },
+            ..
+        }) = self.conns.get_mut(&conn_id)
+        {
+            *in_flight = in_flight.saturating_sub(bytes);
+        }
+        self.pump(conn_id, now, &mut fx);
+        fx
     }
 
     /// A copy of the persisted state, keys included.
@@ -757,7 +939,9 @@ impl RemoteHub {
     /// point applies it too.
     pub fn tick(&mut self, now_ms: u64) -> Vec<HubEffect> {
         let mut fx = Vec::new();
-        self.expire(now_ms, &mut fx);
+        let now = self.expire(now_ms, &mut fx);
+        // Screens held back by the Live view's rate limit.
+        self.pump_all(now, &mut fx);
         fx
     }
 
@@ -965,6 +1149,7 @@ impl RemoteHub {
         }
         self.device_lockouts.remove(&device_id);
         self.recent_connects.retain(|(d, _)| *d != device_id);
+        self.watch_allowed.remove(&device_id);
         fx.push(HubEffect::StoreChanged);
         self.audit(None, Some(device_id), AuditEvent::Revoked, fx);
         let ids: Vec<ConnId> = self
@@ -1393,6 +1578,8 @@ impl RemoteHub {
                 subscribed: false,
                 window_start_ms: now,
                 window_count: 0,
+                watch: None,
+                in_flight: 0,
             };
         }
     }
@@ -1468,6 +1655,12 @@ impl RemoteHub {
         }
         match decoded {
             Ok(msg) => self.handle_message(conn_id, device_id, msg, fx),
+            Err(MessageError::UnknownType(t)) if ViewerRequest::TYPES.contains(&t.as_str()) => {
+                match ViewerRequest::from_bytes(&plaintext) {
+                    Ok(req) => self.handle_viewer(conn_id, device_id, req, now, fx),
+                    Err(_) => self.reject(conn_id, device_id, None, ErrorCode::Malformed, fx),
+                }
+            }
             Err(MessageError::UnknownType(t)) => {
                 self.reject(conn_id, device_id, Some(t), ErrorCode::UnknownMessage, fx);
             }
@@ -1785,19 +1978,282 @@ impl RemoteHub {
                 Err(_) => return,
             },
         };
+        self.seal_and_send(conn_id, &bytes, fx);
+    }
+
+    /// Seals plaintext for one connection, emits it and counts it as in flight.
+    fn seal_and_send(&mut self, conn_id: ConnId, plaintext: &[u8], fx: &mut Vec<HubEffect>) {
         let Some(Conn {
-            phase: Phase::Established { channel, .. },
+            phase: Phase::Established {
+                channel, in_flight, ..
+            },
             ..
         }) = self.conns.get_mut(&conn_id)
         else {
             return;
         };
-        match channel.seal(&bytes) {
-            Ok(body) => fx.push(HubEffect::Send {
-                conn_id,
-                bytes: encode_record(Kind::Data, &body),
-            }),
+        match channel.seal(plaintext) {
+            Ok(body) => {
+                let bytes = encode_record(Kind::Data, &body);
+                *in_flight = in_flight.saturating_add(bytes.len());
+                fx.push(HubEffect::Send { conn_id, bytes });
+            }
             Err(_) => self.close(conn_id, CloseReason::Internal, fx),
+        }
+    }
+
+    fn send_viewer(&mut self, conn_id: ConnId, msg: &ViewerMessage, fx: &mut Vec<HubEffect>) {
+        if let Ok(bytes) = msg.to_bytes() {
+            self.seal_and_send(conn_id, &bytes, fx);
+        }
+    }
+
+    // ---- Live view stream -----------------------------------------------------------
+
+    fn watch_ref(&self, conn_id: ConnId) -> Option<&Watch> {
+        match &self.conns.get(&conn_id)?.phase {
+            Phase::Established { watch, .. } => watch.as_deref(),
+            Phase::Handshake { .. } => None,
+        }
+    }
+
+    fn watch_mut(&mut self, conn_id: ConnId) -> Option<&mut Watch> {
+        match &mut self.conns.get_mut(&conn_id)?.phase {
+            Phase::Established { watch, .. } => watch.as_deref_mut(),
+            Phase::Handshake { .. } => None,
+        }
+    }
+
+    /// Connections watching whose device still holds the permission.
+    fn watcher_ids(&self) -> Vec<ConnId> {
+        self.conns
+            .iter()
+            .filter_map(|(id, c)| match &c.phase {
+                Phase::Established {
+                    device_id,
+                    watch: Some(_),
+                    ..
+                } if self.watch_allowed.contains(device_id) => Some(*id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn pump_all(&mut self, now: u64, fx: &mut Vec<HubEffect>) {
+        for id in self.watcher_ids() {
+            self.pump(id, now, fx);
+        }
+    }
+
+    /// Hands Live view messages to the shell while the window allows: a snapshot first
+    /// when one is due, then a held-back screen once it is due, then deltas in order.
+    fn pump(&mut self, conn_id: ConnId, now: u64, fx: &mut Vec<HubEffect>) {
+        loop {
+            let step = {
+                let Some(Conn {
+                    phase:
+                        Phase::Established {
+                            watch: Some(w),
+                            in_flight,
+                            device_id,
+                            ..
+                        },
+                    ..
+                }) = self.conns.get_mut(&conn_id)
+                else {
+                    return;
+                };
+                if !self.watch_allowed.contains(device_id) || *in_flight >= VIEWER_WINDOW_BYTES {
+                    return;
+                }
+                if !w.needs_snapshot && w.screen_due(now) {
+                    if let Some(screen) = w.pending_screen.take() {
+                        w.last_screen_ms = Some(now);
+                        w.enqueue(screen);
+                    }
+                }
+                if w.needs_snapshot {
+                    PumpStep::Snapshot
+                } else if let Some(msg) = w.queue.pop_front() {
+                    w.queued_bytes = w.queued_bytes.saturating_sub(msg.len());
+                    PumpStep::Send(msg)
+                } else {
+                    PumpStep::Done
+                }
+            };
+            match step {
+                PumpStep::Done => return,
+                PumpStep::Send(msg) => self.seal_and_send(conn_id, &msg, fx),
+                PumpStep::Snapshot => {
+                    let parts = self.viewer.snapshot();
+                    let n = u32::try_from(parts.len()).unwrap_or(u32::MAX);
+                    let msgs: Vec<Vec<u8>> = parts
+                        .iter()
+                        .zip(0u32..)
+                        .filter_map(|(d, i)| {
+                            ViewerMessage::snapshot(&d.encode(), i, n)
+                                .and_then(|m| m.to_bytes())
+                                .ok()
+                        })
+                        .collect();
+                    if let Some(w) = self.watch_mut(conn_id) {
+                        w.queue.clear();
+                        w.queued_bytes = 0;
+                        w.pending_screen = None;
+                        w.needs_snapshot = false;
+                        // The snapshot carries the current screen.
+                        w.last_screen_ms = Some(now);
+                    }
+                    for msg in msgs {
+                        self.seal_and_send(conn_id, &msg, fx);
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_viewer(
+        &mut self,
+        conn_id: ConnId,
+        device_id: DeviceId,
+        req: ViewerRequest,
+        now: u64,
+        fx: &mut Vec<HubEffect>,
+    ) {
+        let request = req.name();
+        let allowed = self.watch_allowed.contains(&device_id);
+        match req {
+            ViewerRequest::StartWatching => {
+                if !allowed {
+                    return self.viewer_deny(conn_id, device_id, request, fx);
+                }
+                if let Some(Conn {
+                    phase: Phase::Established { watch, .. },
+                    ..
+                }) = self.conns.get_mut(&conn_id)
+                {
+                    // A repeated start restarts the stream with a snapshot.
+                    *watch = Some(Box::new(Watch {
+                        needs_snapshot: true,
+                        ..Watch::default()
+                    }));
+                }
+                self.accept(conn_id, device_id, request, None, fx);
+                self.pump(conn_id, now, fx);
+            }
+            ViewerRequest::StopWatching => {
+                let was = match self.conns.get_mut(&conn_id) {
+                    Some(Conn {
+                        phase: Phase::Established { watch, .. },
+                        ..
+                    }) => watch.take().is_some(),
+                    _ => false,
+                };
+                self.send_viewer(
+                    conn_id,
+                    &ViewerMessage::ViewerEnded {
+                        reason: ViewerEndReason::Stopped,
+                    },
+                    fx,
+                );
+                if was {
+                    self.accept(conn_id, device_id, request, None, fx);
+                }
+            }
+            ViewerRequest::ViewerResync => {
+                if !allowed {
+                    return self.viewer_deny(conn_id, device_id, request, fx);
+                }
+                // Coalesced: one snapshot however often it is asked for.
+                if let Some(w) = self.watch_mut(conn_id) {
+                    w.resync();
+                }
+                self.pump(conn_id, now, fx);
+            }
+        }
+    }
+
+    /// `viewer_denied { not_permitted }`, audited like every refusal.
+    fn viewer_deny(
+        &mut self,
+        conn_id: ConnId,
+        device_id: DeviceId,
+        request: &str,
+        fx: &mut Vec<HubEffect>,
+    ) {
+        let reason = DenyReason::NotPermitted;
+        self.send_viewer(conn_id, &ViewerMessage::ViewerDenied { reason }, fx);
+        self.audit(
+            Some(conn_id),
+            Some(device_id),
+            AuditEvent::Denied {
+                request: request.to_owned(),
+                reason,
+            },
+            fx,
+        );
+    }
+
+    fn watch_screen_changed(
+        &mut self,
+        device_id: DeviceId,
+        allowed: bool,
+        fx: &mut Vec<HubEffect>,
+    ) {
+        if !self.devices.iter().any(|d| d.id == device_id) {
+            return;
+        }
+        let changed = if allowed {
+            self.watch_allowed.insert(device_id)
+        } else {
+            self.watch_allowed.remove(&device_id)
+        };
+        if !changed {
+            return;
+        }
+        fx.push(HubEffect::StoreChanged);
+        self.audit(
+            None,
+            Some(device_id),
+            AuditEvent::Accepted {
+                request: "watch_screen_permission".to_owned(),
+                detail: Some(if allowed { "on" } else { "off" }.to_owned()),
+            },
+            fx,
+        );
+        if allowed {
+            return;
+        }
+        // Stop every stream of this device now, in this call.
+        let stopped: Vec<ConnId> = self
+            .conns
+            .iter_mut()
+            .filter_map(|(id, c)| match &mut c.phase {
+                Phase::Established {
+                    device_id: d,
+                    watch,
+                    ..
+                } if *d == device_id => watch.take().map(|_| *id),
+                _ => None,
+            })
+            .collect();
+        for id in stopped {
+            self.send_viewer(
+                id,
+                &ViewerMessage::ViewerEnded {
+                    reason: ViewerEndReason::PermissionRevoked,
+                },
+                fx,
+            );
+            self.audit(
+                Some(id),
+                Some(device_id),
+                AuditEvent::Accepted {
+                    request: "stop_watching".to_owned(),
+                    detail: Some("permission revoked".to_owned()),
+                },
+                fx,
+            );
         }
     }
 

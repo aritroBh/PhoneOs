@@ -615,6 +615,7 @@ dependencies = [
  "hmac",
  "jarvis-proto",
  "jarvis-safety",
+ "jarvis-viewer",
  "serde",
  "serde_json",
  "sha2",

@@ -263,7 +263,7 @@ impl ServerMessage {
     }
 }
 
-fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>, MessageError> {
+pub(crate) fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>, MessageError> {
     let bytes = serde_json::to_vec(msg).map_err(|e| MessageError::Malformed(e.to_string()))?;
     if bytes.len() > MAX_PLAINTEXT_LEN {
         return Err(MessageError::TooLarge);
@@ -271,7 +271,7 @@ fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>, MessageError> {
     Ok(bytes)
 }
 
-fn decode<T: DeserializeOwned + Serialize>(
+pub(crate) fn decode<T: DeserializeOwned + Serialize>(
     bytes: &[u8],
     known: &[&str],
 ) -> Result<T, MessageError> {

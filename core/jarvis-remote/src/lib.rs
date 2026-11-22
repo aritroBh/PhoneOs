@@ -189,8 +189,9 @@ pub mod pairing;
 pub mod permissions;
 pub mod store;
 mod text;
+pub mod viewer;
 
-pub use client::{ClientCredentials, ClientEvent, RemoteClient, CREDENTIALS_VERSION};
+pub use client::{ClientCredentials, ClientEvent, Received, RemoteClient, CREDENTIALS_VERSION};
 pub use codec::{
     DeviceId, MAX_BUFFERED_BYTES, MAX_PLAINTEXT_LEN, MAX_RECORD_LEN, PROTOCOL_VERSION,
 };
@@ -212,4 +213,8 @@ pub use permissions::{remotely_approvable, RemotePermissions, NEVER_REMOTE_APPRO
 pub use store::{
     clean_name, DeviceInfo, DeviceRecord, DeviceStore, DEVICE_STORE_VERSION, MAX_DEVICES,
     MAX_DEVICE_NAME_BYTES,
+};
+pub use viewer::{
+    ViewerEndReason, ViewerEvent, ViewerMessage, ViewerRequest, MAX_DELTA_BASE64, MAX_DELTA_BYTES,
+    MAX_SNAPSHOT_BYTES, MIN_SCREEN_INTERVAL_MS, VIEWER_QUEUE_BYTES, VIEWER_WINDOW_BYTES,
 };
