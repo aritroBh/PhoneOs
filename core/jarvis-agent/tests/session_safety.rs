@@ -234,6 +234,58 @@ fn stuck_detection_hints_once_then_fails() {
         .contains("same action on the same screen 3 times"));
 }
 
+/// Simulator run 9: a page that had not loaded yet was "stuck" after four waits. Waiting on
+/// an unchanged screen is what `wait` is for, so it gets more repetitions than a tap.
+#[test]
+fn waiting_for_a_slow_screen_is_not_stuck() {
+    let wait = r#"{"action":"wait","ms":1000}"#;
+    let done = r#"{"action":"done","summary":"General is listed"}"#;
+    let run = run(
+        config(),
+        "Open General",
+        MemoryStore::new(),
+        Phone::still(settings_screen()),
+        Script::model(&[wait, wait, wait, wait, wait, wait, done]),
+    );
+    assert_eq!(
+        run.outcome.status,
+        OutcomeStatus::Success,
+        "{}",
+        run.outcome.summary
+    );
+    assert_eq!(run.acts.len(), 6, "every wait ran");
+    assert!(!run.all_prompt_text().contains("did not change. Waiting"));
+}
+
+#[test]
+fn endless_waiting_is_hinted_then_stuck() {
+    let mut c = config();
+    c.policy.max_consecutive_failures = 20;
+    let wait = r#"{"action":"wait","ms":1000}"#;
+    let run = run(
+        c,
+        "Open General",
+        MemoryStore::new(),
+        Phone::still(settings_screen()),
+        Script::model(&[wait; 12]),
+    );
+    assert_eq!(run.outcome.status, OutcomeStatus::Failed);
+    assert!(
+        run.outcome.summary.starts_with("Stuck"),
+        "{}",
+        run.outcome.summary
+    );
+    assert_eq!(run.acts.len(), 7, "the eighth wait is not executed");
+    assert_eq!(run.infers(), 9);
+    assert!(
+        run.requests[8]
+            .user
+            .contains("Waiting longer will not help"),
+        "{}",
+        run.requests[8].user
+    );
+}
+
 #[test]
 fn step_budget_ends_the_session() {
     let mut c = config();

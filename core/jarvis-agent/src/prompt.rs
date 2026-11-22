@@ -113,6 +113,10 @@ pub(crate) fn divergence_note(reason: &str) -> String {
 pub(crate) const STUCK_HINT: &str =
     "You chose the same action on the same screen 3 times and nothing changed. Try something different, scroll, go back, or use fail.";
 
+/// The same for `wait`, which is allowed more repetitions (a page may still be loading).
+pub(crate) const STUCK_WAIT_HINT: &str =
+    "You waited several times and the screen did not change. Waiting longer will not help. Try something different, scroll, go back, or use fail.";
+
 /// History result for an executed step (followed by what changed, see `crate::changes`).
 pub(crate) const RESULT_OK: &str = "ok";
 

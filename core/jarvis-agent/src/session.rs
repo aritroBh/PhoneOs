@@ -98,6 +98,10 @@ use crate::typing::{check_typed, correction_deletes, TypedVerdict};
 const MIN_ACTIONABLE: usize = 2;
 /// Identical (screen, action) pairs that count as stuck.
 const STUCK_REPEATS: u32 = 3;
+/// The same for `wait`. Waiting is the one action whose point is that the screen has not
+/// changed yet (a page still loading, a sheet still animating), so it gets more room; the
+/// step and time budgets still bound it.
+const STUCK_WAIT_REPEATS: u32 = 8;
 /// The same action on the same control, working each time, this many times in a row on a
 /// changing screen draws the first warning ([`RepeatRun`]).
 const REPEAT_WARN: u32 = 3;
@@ -1297,7 +1301,13 @@ impl Session {
             self.last_repeat_key = Some(key.clone());
             let count = self.repeats.entry(key).or_insert(0);
             *count = count.saturating_add(1);
-            if *count >= STUCK_REPEATS {
+            let waiting = matches!(action, Action::Wait { .. });
+            let limit = if waiting {
+                STUCK_WAIT_REPEATS
+            } else {
+                STUCK_REPEATS
+            };
+            if *count >= limit {
                 if self.stuck_hinted {
                     return self.finish(
                         now,
@@ -1310,7 +1320,14 @@ impl Session {
                 self.last_failed = Some(format!("{described} -> {}", prompt::RESULT_STUCK));
                 self.history
                     .push(described, prompt::RESULT_STUCK, source == Source::Replay);
-                self.notes.push(prompt::STUCK_HINT.to_owned());
+                self.notes.push(
+                    if waiting {
+                        prompt::STUCK_WAIT_HINT
+                    } else {
+                        prompt::STUCK_HINT
+                    }
+                    .to_owned(),
+                );
                 self.budget.record_failure();
                 self.log_step(&action, false);
                 if source == Source::Replay {
