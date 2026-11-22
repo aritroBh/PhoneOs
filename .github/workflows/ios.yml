@@ -88,9 +88,9 @@ jobs:
       - name: Swift package tests (Mac host)
         timeout-minutes: 10
         working-directory: Shell
-        run: |
-          swift build
-          swift test
+        # On a failure or a crash of the test process the script reruns each suite on its own
+        # and prints the newest crash report, so the log names the suite and the frames.
+        run: scripts/host-test.sh
 
       - name: Install xcodegen
         run: command -v xcodegen >/dev/null || brew install xcodegen
