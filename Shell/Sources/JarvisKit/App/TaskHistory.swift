@@ -5,6 +5,8 @@ import JarvisCore
 public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
     public enum Status: String, Codable, Sendable {
         case success, failed, cancelled, blocked
+        /// The phone stayed locked past the limit; nothing is wrong with the task.
+        case interrupted
 
         public init(_ status: OutcomeStatus) {
             switch status {
@@ -12,6 +14,7 @@ public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
             case .failed: self = .failed
             case .cancelled: self = .cancelled
             case .blocked: self = .blocked
+            case .interrupted: self = .interrupted
             }
         }
     }

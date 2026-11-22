@@ -15,7 +15,7 @@ public enum RunEvent: Sendable, Equatable {
 /// SwiftUI view only renders it.
 public struct LiveRun: Sendable, Equatable {
     public enum Status: String, Sendable, Equatable {
-        case standingBy, driving, replaying, needsYou, done, stopped
+        case standingBy, driving, replaying, needsYou, locked, done, stopped
 
         public var title: String {
             switch self {
@@ -23,6 +23,7 @@ public struct LiveRun: Sendable, Equatable {
             case .driving: "Driving"
             case .replaying: "Replaying"
             case .needsYou: "Needs you"
+            case .locked: "Unlock to continue"
             case .done: "Done"
             case .stopped: "Stopped"
             }
@@ -65,6 +66,11 @@ public struct LiveRun: Sendable, Equatable {
     public var result: RunResult?
     /// Notes and IO failures, newest last.
     public var notes: [String] = []
+    /// While `status == .locked`: why the session waits, and for how long so far.
+    public var lockReason: String?
+    public var lockedWaitMs: UInt64 = 0
+    /// Lock waits in this run so far.
+    public var lockWaits: Int = 0
 
     private var modelChoseSinceLastAct = false
     private var lastReplyAction: String?
@@ -76,7 +82,7 @@ public struct LiveRun: Sendable, Equatable {
 
     public var isRunning: Bool {
         switch status {
-        case .driving, .replaying, .needsYou: true
+        case .driving, .replaying, .needsYou, .locked: true
         case .standingBy, .done, .stopped: false
         }
     }
@@ -123,6 +129,18 @@ public struct LiveRun: Sendable, Equatable {
             self = LiveRun(task: spec.text, maxSteps: budget)
             status = .driving
         case .effect(let effect, _):
+            if case .awaitUnlock(let reason, let waited) = effect {
+                if status != .locked { lockWaits += 1 }
+                status = .locked
+                lockReason = reason
+                lockedWaitMs = waited
+                return
+            }
+            if status == .locked {
+                status = .driving
+                lockReason = nil
+                lockedWaitMs = 0
+            }
             switch effect {
             case .act, .callTool:
                 let source: Source
@@ -132,7 +150,7 @@ public struct LiveRun: Sendable, Equatable {
                 status = source == .replay ? .replaying : .driving
             case .confirm, .askUser:
                 status = .needsYou
-            case .observe, .infer, .finished:
+            case .observe, .infer, .finished, .awaitUnlock:
                 break
             }
         case .progress(let p):

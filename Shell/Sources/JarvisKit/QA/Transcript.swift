@@ -162,6 +162,7 @@ public final class Transcript: Sendable {
         case .confirm: "confirm"
         case .askUser: "ask_user"
         case .finished: "finished"
+        case .awaitUnlock: "await_unlock"
         }
     }
 
@@ -175,6 +176,7 @@ public final class Transcript: Sendable {
         case .confirm(let r): "confirm(\(r.category), app: \(r.app), \"\(r.summary)\")"
         case .askUser(let q): "ask_user(\"\(q)\")"
         case .finished(let o): "finished(\(o.status), \"\(o.summary)\", steps: \(o.steps), \(o.durationMs) ms)"
+        case .awaitUnlock(let reason, let waited): "await_unlock(\"\(reason)\", waited: \(waited) ms)"
         }
     }
 
@@ -196,16 +198,21 @@ public final class Transcript: Sendable {
         switch event {
         case .start: "start"
         case .observed(let o):
-            "observed(app: \(o.screen.appBundleId), nodes: \(countNodes(o.screen.root)), keyboard: \(o.screen.keyboardVisible), screenshot: \(o.screenshot?.id ?? "none"))"
+            "observed(app: \(o.screen.appBundleId), nodes: \(countNodes(o.screen.root)), keyboard: \(o.screen.keyboardVisible), locked: \(o.deviceLocked), screenshot: \(o.screenshot?.id ?? "none"))"
         case .observedRunnerText(let s):
-            "observed_runner_text(app: \(s.appBundleId), \(s.source.count) chars, screenshot: \(s.screenshot?.id ?? "none"))"
+            "observed_runner_text(app: \(s.appBundleId), \(s.source.count) chars, locked: \(s.deviceLocked), screenshot: \(s.screenshot?.id ?? "none"))"
         case .modelOutput(let output): "model_output(\(output.text))"
         case .modelFailed(let error): "model_failed(\(error))"
-        case .actResult(let r): r.ok ? "act_result(ok)" : "act_result(failed: \(r.error ?? "?"))"
+        case .actResult(let r):
+            r.ok ? "act_result(ok)" : "act_result(failed\(r.failure == .deviceLocked ? " [device locked]" : ""): \(r.error ?? "?"))"
         case .toolResult(let r): r.ok ? "tool_result(ok, \(r.output))" : "tool_result(failed: \(r.error ?? "?"))"
         case .userDecision(let approved): "user_decision(\(approved ? "approved" : "declined"))"
         case .userAnswer(let text): "user_answer(\(text))"
         case .cancel: "cancel"
+        case .deviceLocked: "device_locked"
+        case .deviceUnlocked: "device_unlocked"
+        case .tick: "tick"
+        case .observeFailed(let reason): "observe_failed(\(reason))"
         }
     }
 
