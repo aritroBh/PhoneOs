@@ -17,6 +17,7 @@
 )]
 
 pub mod action;
+pub mod compact;
 pub mod geometry;
 pub mod model;
 pub mod policy;
@@ -30,6 +31,7 @@ pub mod ui;
 pub mod fixtures;
 
 pub use action::{Action, Direction};
+pub use compact::{CompactScreen, Element};
 pub use geometry::{Point, Rect, Size};
 pub use model::{Mark, ModelOutput, ModelProfile, ModelRequest, RequestKind};
 pub use policy::{Policy, RiskCategory, PASSWORDS_BUNDLE_ID, WALLET_BUNDLE_ID};
