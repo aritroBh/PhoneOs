@@ -35,15 +35,22 @@ struct DriverFailureTests {
         #expect(h.memory.saves.count == 1)
     }
 
-    @Test("a runner that cannot be read ends the run as runnerUnavailable")
-    func runnerUnavailable() async throws {
+    @Test("a runner that cannot be read: observeFailed until the core's budget, then Failed (not cancelled)")
+    func unreadableScreen() async throws {
         let h = Harness()
-        h.phone.state.withLock { $0.failingSnapshots = 100 }
+        h.phone.state.withLock { $0.failingSnapshots = 1_000 }
         let (result, updates) = try await h.run()
-        #expect(result.endReason == .runnerUnavailable("runner snapshot failed"))
-        #expect(result.outcome.status == .cancelled)
-        #expect(h.phone.snapshots == 3)
-        #expect(updates.filter(\.isIOFailure).count == 3)
+        let budget = Int(try defaultPolicy().maxConsecutiveFailures)
+        #expect(result.endReason == .sessionFinished)
+        #expect(result.outcome.status == .failed)
+        #expect(result.outcome.summary.contains("Could not read the screen"), "\(result.outcome.summary)")
+        #expect(h.phone.snapshots == 3 * budget, "3 attempts per observe, \(budget) observes")
+        #expect(updates.filter(\.isIOFailure).count == 3 * budget)
+        let failedEvents = updates.filter {
+            if case .effectCompleted(_, .observeFailed(let reason)) = $0 { return reason == "runner snapshot failed" }
+            return false
+        }
+        #expect(failedEvents.count == budget)
         #expect(h.model.callCount == 0)
         #expect(h.memory.saves.count == 1)
     }

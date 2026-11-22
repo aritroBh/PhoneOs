@@ -129,18 +129,6 @@ public struct LiveRun: Sendable, Equatable {
             self = LiveRun(task: spec.text, maxSteps: budget)
             status = .driving
         case .effect(let effect, _):
-            if case .awaitUnlock(let reason, let waited) = effect {
-                if status != .locked { lockWaits += 1 }
-                status = .locked
-                lockReason = reason
-                lockedWaitMs = waited
-                return
-            }
-            if status == .locked {
-                status = .driving
-                lockReason = nil
-                lockedWaitMs = 0
-            }
             switch effect {
             case .act, .callTool:
                 let source: Source
@@ -161,6 +149,17 @@ public struct LiveRun: Sendable, Equatable {
             }
         case .confirmationPending, .questionPending:
             status = .needsYou
+        case .awaitingUnlock(let reason, let waited):
+            if status != .locked { lockWaits += 1 }
+            status = .locked
+            lockReason = reason
+            lockedWaitMs = waited
+        case .lockDetected(let kind):
+            notes.append("the phone locked while waiting for \(kind.rawValue)")
+        case .unlockWaitEnded:
+            if status == .locked { status = .driving }
+            lockReason = nil
+            lockedWaitMs = 0
         case .ioFailed(let kind, let message, _):
             notes.append("\(kind.rawValue): \(message)")
         case .note(let note):

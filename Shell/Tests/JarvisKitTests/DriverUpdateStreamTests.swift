@@ -48,8 +48,10 @@ struct DriverUpdateStreamTests {
                     pendingConfirm = false
                 }
                 open = nil
-            case .questionPending, .ioFailed, .note:
+            case .questionPending, .ioFailed, .note, .awaitingUnlock, .lockDetected:
                 #expect(open != nil)
+            case .unlockWaitEnded:
+                #expect(sawProgressForOpen)
             case .started, .finished:
                 Issue.record("\(update) in the middle of the stream")
             }

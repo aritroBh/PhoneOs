@@ -11,7 +11,7 @@ public final class Transcript: Sendable {
         public var seq: Int
         /// Milliseconds since the transcript was created.
         public var tMs: Int
-        /// `task`, `observation`, `prompt`, `reply`, `script`, `effect`, `event`, `progress`,
+        /// `task`, `observation`, `prompt`, `reply`, `script`, `effect`, `event`, `progress`, `lock`,
         /// `confirm`, `question`, `note`, `io_failed`, `owner`, `result`, `error`.
         public var kind: String
         /// Short title.
@@ -94,6 +94,12 @@ public final class Transcript: Sendable {
             record("io_failed", "\(kind.rawValue) failed\(willRetry ? ", retrying" : "")", message)
         case .note(let note):
             record("note", "note", note)
+        case .awaitingUnlock(let reason, let waited):
+            record("lock", "awaiting unlock (waited \(waited) ms)", reason)
+        case .lockDetected(let kind):
+            record("lock", "lock detected while waiting for \(kind.rawValue)")
+        case .unlockWaitEnded:
+            record("lock", "unlock wait ended")
         case .effectCompleted(let effect, let event):
             record("event", "\(Self.describe(event)) (for \(Self.effectName(effect)))")
         case .finished(let result):
@@ -114,6 +120,7 @@ public final class Transcript: Sendable {
             case "owner": lines.append("owner: \(Self.oneLine(e.title, 160))")
             case "io_failed": lines.append("io failed: \(Self.oneLine(e.title + " " + (e.text ?? ""), 200))")
             case "interruption": lines.append("interruption: \(Self.oneLine(e.text ?? "", 160))")
+            case "lock": lines.append("lock: \(Self.oneLine(e.title, 160))")
             default: break
             }
         }

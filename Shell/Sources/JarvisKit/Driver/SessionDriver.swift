@@ -15,6 +15,8 @@ public struct DriverDependencies: Sendable {
     public var memory: any MemoryPersisting
     /// Where screenshots are kept for the model (share it with the model backend).
     public var screenshots: ScreenshotStore
+    /// Reaches the owner when the phone must be unlocked.
+    public var attention: any OwnerAttention
     /// Timestamps for the core's events.
     public var clock: any MonotonicClock
 
@@ -26,6 +28,7 @@ public struct DriverDependencies: Sendable {
         human: any HumanGate,
         memory: any MemoryPersisting,
         screenshots: ScreenshotStore,
+        attention: any OwnerAttention = NoOwnerAttention(),
         clock: any MonotonicClock = SystemMonotonicClock()
     ) {
         self.runner = runner
@@ -34,6 +37,7 @@ public struct DriverDependencies: Sendable {
         self.human = human
         self.memory = memory
         self.screenshots = screenshots
+        self.attention = attention
         self.clock = clock
     }
 }
@@ -41,9 +45,16 @@ public struct DriverDependencies: Sendable {
 /// Runs one Jarvis session: feeds the core's effects to the IO dependencies and their
 /// results back to the core as events until the core reports `Effect.finished`.
 ///
-/// - Every IO failure becomes the matching failure event (`modelFailed`, a failed
-///   `actResult` / `toolResult`, a declined `userDecision`); see the README's table. Nothing
-///   throws out of `run()`.
+/// - Every IO failure becomes the matching failure event (`observeFailed` after the
+///   observe retries, `modelFailed`, a failed `actResult` / `toolResult`, a declined
+///   `userDecision`); see the README's table. Nothing throws out of `run()`.
+/// - Locked phone (docs/ARCHITECTURE.md, *Locked phone*): a locked snapshot goes to the core
+///   as a locked observation and a locked refusal as `RunnerFailure.deviceLocked`; a lock
+///   noticed while waiting for the model, a tool or the owner (`lockWatchInterval`) abandons
+///   that wait with `Event.deviceLocked`. `Effect.awaitUnlock` tells `OwnerAttention` once
+///   per wait, then polls `PhoneRunner.lockState()` every `unlockPollInterval` and answers
+///   `tick` (still locked), `deviceUnlocked`, or a fresh observation when the runner cannot
+///   tell. Cancellation works throughout.
 /// - Each IO has a deadline (`DriverConfiguration`).
 /// - `cancel()`, or cancelling the task that runs `run()`, delivers `Event.cancel` promptly,
 ///   also while an IO is in flight (the IO is abandoned).
@@ -76,6 +87,7 @@ public actor SessionDriver {
     private var stopReason: EndReason?
     private var cancelInFlightIO: (@Sendable () -> Void)?
     private var lastObservationIssue: String?
+    private var waitingForUnlock = false
 
     /// Creates the session. Throws when the core rejects `memoryJSON` (corrupt or from an
     /// incompatible core); quarantine that memory and retry with `""` (fresh memory).
@@ -151,6 +163,7 @@ public actor SessionDriver {
             if let progress = try? session.progress() {
                 emit(.progress(progress))
             }
+            if case .awaitUnlock = effect {} else { await endUnlockWait() }
             if case .finished(let finished) = effect {
                 outcome = finished
                 break
@@ -174,6 +187,7 @@ public actor SessionDriver {
             emit(.effectCompleted(effect, event: next))
             event = next
         }
+        await endUnlockWait()
         let memory = await persistMemory()
         let result = RunResult(
             outcome: outcome ?? Outcome(status: .failed, summary: "No outcome.", steps: 0, durationMs: 0),
@@ -202,6 +216,8 @@ public actor SessionDriver {
             return await confirm(request)
         case .askUser(let question):
             return await ask(question)
+        case .awaitUnlock(let reason, let waitedMs):
+            return await awaitUnlock(reason: reason, waitedMs: waitedMs)
         case .finished:
             return stop(.cancelled) // unreachable: the loop ends on .finished
         }
@@ -234,15 +250,18 @@ public actor SessionDriver {
                 }
             }
         }
-        return stop(.runnerUnavailable(lastError))
+        // The core counts unreadable screens itself (`max_consecutive_failures`) and
+        // finishes Failed; while it waits for an unlock it does not count them.
+        return .observeFailed(reason: lastError)
     }
 
     private func infer(_ request: ModelRequest) async -> Event {
         let model = deps.model
         do {
-            let text = try await io(.infer, configuration.inferTimeout) {
+            let watched = try await ioWatchingLock(.infer, configuration.inferTimeout) {
                 try await model.generate(request)
             }
+            guard case .value(let text) = watched else { return lockDetected(.infer) }
             return .modelOutput(output: ModelOutput(text: text))
         } catch let error where isOurCancellation(error) {
             return stop(.cancelled)
@@ -272,9 +291,10 @@ public actor SessionDriver {
     private func callTool(_ call: ToolCall) async -> Event {
         let tools = deps.tools
         do {
-            let result = try await io(.tool, configuration.toolTimeout) {
+            let watched = try await ioWatchingLock(.tool, configuration.toolTimeout) {
                 await tools.execute(call)
             }
+            guard case .value(let result) = watched else { return lockDetected(.tool) }
             return .toolResult(result: result)
         } catch let error where isOurCancellation(error) {
             return stop(.cancelled)
@@ -289,9 +309,11 @@ public actor SessionDriver {
         emit(.confirmationPending(request))
         let human = deps.human
         do {
-            let approved = try await io(.confirm, configuration.humanTimeout) {
+            let watched = try await ioWatchingLock(.confirm, configuration.humanTimeout) {
                 try await human.confirm(request)
             }
+            // A lock while the owner decides: the core asks again after the unlock.
+            guard case .value(let approved) = watched else { return lockDetected(.confirm) }
             return .userDecision(approved: approved)
         } catch let error where isOurCancellation(error) {
             return stop(.cancelled)
@@ -306,9 +328,10 @@ public actor SessionDriver {
         emit(.questionPending(question))
         let human = deps.human
         do {
-            let answer = try await io(.answer, configuration.humanTimeout) {
+            let watched = try await ioWatchingLock(.answer, configuration.humanTimeout) {
                 try await human.answer(question)
             }
+            guard case .value(let answer) = watched else { return lockDetected(.answer) }
             return .userAnswer(text: answer)
         } catch let error where isOurCancellation(error) {
             return stop(.cancelled)
@@ -318,6 +341,93 @@ public actor SessionDriver {
             emit(.ioFailed(.answer, message: message, willRetry: false))
             return stop(.noAnswer(message))
         }
+    }
+
+    // MARK: - Locked phone
+
+    private func awaitUnlock(reason: String, waitedMs: UInt64) async -> Event {
+        emit(.awaitingUnlock(reason: reason, waitedMs: waitedMs))
+        if !waitingForUnlock {
+            waitingForUnlock = true
+            await tellOwner { await $0.awaitUnlock(reason: reason, waitedMs: waitedMs) }
+        }
+        let delay = configuration.unlockPollInterval
+        do {
+            try await io(.awaitUnlock, nil) { try await Task.sleep(for: delay) }
+        } catch {
+            if isOurCancellation(error) { return stop(.cancelled) }
+        }
+        let runner = deps.runner
+        let state: DeviceLockState
+        do {
+            state = try await io(.lockState, configuration.observeTimeout) { try await runner.lockState() }
+        } catch let error where isOurCancellation(error) {
+            return stop(.cancelled)
+        } catch {
+            emit(.ioFailed(.lockState, message: describe(error), willRetry: false))
+            state = .unknown
+        }
+        switch state {
+        case .locked: return .tick
+        case .unlocked: return .deviceUnlocked
+        // The runner cannot tell: a fresh observation answers (locked: keep waiting).
+        case .unknown: return await observe(screenshot: false)
+        }
+    }
+
+    private func endUnlockWait() async {
+        guard waitingForUnlock else { return }
+        waitingForUnlock = false
+        emit(.unlockWaitEnded)
+        await tellOwner { await $0.unlockWaitEnded() }
+    }
+
+    /// Calls `OwnerAttention` with a short deadline, outside the run's cancellation (so a
+    /// cancelled run still clears its "unlock to continue" notice).
+    private func tellOwner(_ call: @escaping @Sendable (any OwnerAttention) async -> Void) async {
+        let attention = deps.attention
+        await Task.detached {
+            try? await IORace<Void>().run(kind: .attention, timeout: .seconds(5)) { await call(attention) }
+        }.value
+    }
+
+    private func lockDetected(_ kind: IOKind) -> Event {
+        emit(.lockDetected(kind))
+        return .deviceLocked
+    }
+
+    private enum Watched<T: Sendable>: Sendable {
+        case value(T)
+        case locked
+    }
+
+    /// `io`, raced against the runner reporting a lock (polled every
+    /// `lockWatchInterval`): the wait for the model, a tool or the owner is abandoned when
+    /// the phone locks, and the core gets `Event.deviceLocked` in its place.
+    private func ioWatchingLock<T: Sendable>(
+        _ kind: IOKind,
+        _ timeout: Duration?,
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> Watched<T> {
+        guard let interval = configuration.lockWatchInterval else {
+            return .value(try await io(kind, timeout, operation))
+        }
+        if cancelRequested || Task.isCancelled { throw CancellationError() }
+        let race = IORace<Watched<T>>()
+        cancelInFlightIO = { race.cancel() }
+        defer { cancelInFlightIO = nil }
+        let runner = deps.runner
+        let watcher = Task {
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: interval) } catch { return }
+                if (try? await runner.lockState()) == .locked {
+                    race.resolve(.locked)
+                    return
+                }
+            }
+        }
+        defer { watcher.cancel() }
+        return try await race.run(kind: kind, timeout: timeout) { .value(try await operation()) }
     }
 
     // MARK: - Helpers
