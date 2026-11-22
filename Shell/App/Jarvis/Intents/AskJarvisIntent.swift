@@ -30,7 +30,8 @@ struct JarvisShortcuts: AppShortcutsProvider {
                 "Give \(.applicationName) a task",
             ],
             shortTitle: "Ask Jarvis",
-            systemImageName: JarvisIcon.ask.rawValue
+            // A literal: App Shortcut metadata is read at build time (same symbol as JarvisIcon.ask).
+            systemImageName: "message"
         )
     }
 }
