@@ -105,6 +105,14 @@ fn fold_confusable(c: char) -> char {
     }
 }
 
+/// Folds one character for look-alike-insensitive comparison: fullwidth and styled forms
+/// to ASCII, lowercase, then Cyrillic/Greek/accented look-alikes to ASCII letters.
+pub(crate) fn fold_char(c: char) -> char {
+    let c = fold_styled(fold_fullwidth(c));
+    let lower = c.to_lowercase().next().unwrap_or(c);
+    fold_confusable(lower)
+}
+
 /// True for apostrophe-like characters, which are deleted inside words (`don't` → `dont`).
 fn is_apostrophe(c: char) -> bool {
     matches!(c, '\'' | '’' | '‘' | 'ʼ' | '`' | '´')

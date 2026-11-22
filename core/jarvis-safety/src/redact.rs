@@ -21,14 +21,16 @@ use crate::text::fold_fullwidth;
 /// Replacement for a card number.
 pub const CARD_MASK: &str = "[redacted card]";
 /// Replacement for a one-time code.
-pub const CODE_MASK: &str = "[redacted code]";
+pub const CODE_MASK: &str = "[redacted number]";
 /// Replacement for an API key or token.
 pub const KEY_MASK: &str = "[redacted key]";
 /// Replacement for a labelled secret or a secure field's value.
 pub const SECRET_MASK: &str = "[redacted secret]";
 
 /// Masks card numbers, one-time codes, API keys and labelled secrets in `text`.
-/// Idempotent: masks themselves are never re-masked.
+///
+/// The masks contain no digits or trigger words, so re-redacting never alters an existing
+/// mask (it can, rarely, mask a code that has moved closer to its keyword).
 pub fn redact(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let spans = find_spans(&chars);
@@ -39,6 +41,8 @@ pub fn redact(text: &str) -> String {
     let mut pos = 0usize;
     for (start, end, mask) in spans {
         if start < pos {
+            // Overlaps the previous mask: swallow the tail too.
+            pos = pos.max(end);
             continue;
         }
         out.extend(chars.get(pos..start).unwrap_or_default());
@@ -313,20 +317,23 @@ fn is_key_like(tok: &str) -> bool {
             return true;
         }
     }
-    let core = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric());
-    if core.len() < 32 {
-        return false;
-    }
+    // Generic: one long random-looking part. Splitting on separators keeps URLs, slugs
+    // (`Some-Article-2024`) and UUIDs out.
+    tok.split(['-', '_', '.', '/']).any(is_random_part)
+}
+
+/// Whether one separator-free part looks random: 24+ characters mixing upper, lower and
+/// digits with high entropy, or 32+ hex characters mixing letters and digits.
+fn is_random_part(part: &str) -> bool {
+    let core = part.trim_matches(|c: char| !c.is_ascii_alphanumeric());
     let has_digit = core.bytes().any(|b| b.is_ascii_digit());
     let has_lower = core.bytes().any(|b| b.is_ascii_lowercase());
     let has_upper = core.bytes().any(|b| b.is_ascii_uppercase());
-    let hex_like = core
-        .bytes()
-        .all(|b| b.is_ascii_hexdigit() || b == b'-' || b == b'_');
-    if hex_like {
-        return has_digit && (has_lower || has_upper) && entropy(core) >= 3.0;
+    let hex = core.bytes().all(|b| b.is_ascii_hexdigit());
+    if hex {
+        return core.len() >= 32 && has_digit && (has_lower || has_upper) && entropy(core) >= 3.0;
     }
-    has_digit && has_lower && has_upper && entropy(core) >= 3.5
+    core.len() >= 24 && has_digit && has_lower && has_upper && entropy(core) >= 3.5
 }
 
 /// API keys and tokens.
@@ -374,8 +381,6 @@ const CODE_KEYWORDS: &[&str] = &[
     "auth",
     "one-time",
     "onetime",
-    "login",
-    "security",
 ];
 
 /// Words that, right before `code`, make it something other than a one-time code.
