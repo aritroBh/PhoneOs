@@ -52,8 +52,8 @@ In progress — first compiled on a macOS runner:
 - [x] `jarvis-skills`: skill store, trigger matcher with slots, `SkillContext` in sessions, app confinement
 - [x] `jarvis-skills`: workflows (triggers, steps, sans-IO run, schedule maths)
 - [x] `jarvis-remote`: pairing, AEAD frames, hub + client state machines, adversarial tests
-- [ ] Independent adversarial review of both crates (running)
-- [ ] FFI surface for skills, workflows, remote
+- [x] Independent adversarial review of both crates: 22 findings, 22 fixed with regression tests
+- [x] FFI surface for skills, workflows, remote
 - [ ] Swift: skill and workflow stores, local-network listener, App Intent entry for automations
 - [ ] App screens: Skills, skill detail, Workflows, Apps (ways in + trust), Control, Remote control
 - [x] Design: canvas with nine screens (Astryx conventions, Lucide on web / SF Symbols on iOS)
@@ -62,15 +62,18 @@ In progress — first compiled on a macOS runner:
 ## Locked-phone operation
 
 - [x] Research with sources (runner source, Apple docs): PLAN 3.2
-- [ ] Core: lock awareness (pause, "unlock to continue", re-observe before acting), `ObserveFailed`, typed-text verification
-- [ ] Swift driver: report lock state, handle `AwaitUnlock`, notification + Live Activity
+- [x] Core: lock awareness (pause, "unlock to continue", re-observe before acting), `ObserveFailed`, typed-text verification
+- [x] Swift driver: report lock state, handle `AwaitUnlock`, notification (Linux-tested; simulator run pending)
+- [ ] Live Activity for runs and unlock prompts
 - [ ] Away mode in the app
 - [ ] Audio-session interruption recovery, before-first-unlock detection
 - [ ] Siri AI `ToolIntent` + app skills bundle experiment
 
 ## Core follow-ups
 
-- [ ] Local-model eval on the simulated phone (in progress)
+- [x] Local-model eval on the simulated phone (`docs/MODEL-EVAL.md`)
+- [ ] Model-readiness fixes from that eval (state deltas, deny check before icon taps, narrower purchase rule, scroll cue, on/off switches, neutral examples)
+- [ ] Re-run the eval after the fixes; add a model of 2B or less and constrained decoding
 - [ ] First-use approval for `OpenUrl` and tools with no declared app
 - [ ] Non-English safety phrases
 
