@@ -694,7 +694,18 @@ fn a_hostile_label_cannot_forge_the_facts() {
     );
     let sum = summarize(&Action::Tap { element: 2 }, &s, None);
     println!("{sum}");
-    assert_eq!(sum.matches("Amounts on screen:").count(), 1, "{sum}");
+    // Tenth review (M4): two texts with total wording make the heading say so
+    // ("Amounts on screen (2 totals):"); still exactly one heading. Was a count of
+    // "Amounts on screen:" alone.
+    assert_eq!(
+        sum.matches("Amounts on screen:").count() + sum.matches("totals):").count(),
+        1,
+        "{sum}"
+    );
+    assert!(
+        sum.contains("Amounts on screen (2 totals): Total $900.00"),
+        "{sum}"
+    );
     assert_eq!(sum.matches("Selected:").count(), 0, "{sum}");
     assert!(sum.contains("Total $900.00"), "{sum}");
     assert!(!sum.contains('\n'), "{sum}");

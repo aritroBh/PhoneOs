@@ -6,21 +6,34 @@
 )]
 //! Ninth review, property test 3: a tap after Jarvis typed is presumed to submit.
 //!
-//! Random sequences of type / clear / owner edit / scroll / tap over random forms (one or
-//! two form containers in a page scroller, fields of every kind — message, login, search,
+//! Random sequences of type / clear / owner edit / scroll / tap over random forms (one to
+//! three form containers in a page scroller, fields of every kind — message, login, search,
 //! secure — and buttons, neutral, icon-named or from the table of controls that clearly do
-//! not submit). Property, checked at every tap on a listed button: if Jarvis typed into a
-//! non-search, non-secure field of the button's form and that field still holds the text
-//! (listed or scrolled out of the list), and the button is not in the not-a-submit table and
-//! not excluded by narrowing (a) (a login form: a secure field, and only email or username
-//! fields filled), the tap asks. The oracle is written here (its own copy of the table and
-//! of the login words), not with the rule's helpers.
+//! not submit). The oracle is written here (its own copy of the table and of the login
+//! words), not with the rule's helpers.
+//!
+//! **Tenth review: the "Jarvis typed here" state.** The rule no longer re-identifies the
+//! field Jarvis typed in (its fingerprint hashes the row's merged label and context, so it
+//! changed when a self-drawn placeholder hid or a counter moved). The generator now makes
+//! exactly those fields: fields inside cells with a self-drawn placeholder text that
+//! disappears once text is in, a counter text that follows the typed length ("12/500"),
+//! unlabelled text views, a label lent from the row (a static text beside an unlabelled
+//! field), the app reformatting what was typed (trimmed, capitalised, autocorrected),
+//! scrolling between typing and tapping, buttons inside cells, and up to three forms.
+//! Property, checked at every tap on a listed button: once Jarvis typed anything in this
+//! app (the state the session keeps; here: any `type` so far), when the button's form holds
+//! a filled, non-search, non-secure text input (whoever filled it, listed or scrolled out
+//! of the list), and the button is not in the not-a-submit table and not excluded by
+//! narrowing (a) (a login form: a secure field, and only email or username fields filled),
+//! the tap asks and its question says `Sends:`. The tally counts how many of those asks the
+//! ninth review's rule (fingerprint or exact typed text of a listed or unlisted input)
+//! could not have found.
 //!
 //! Seeded (xorshift); a failure names its seed (`SUBMIT_SEED=<seed>` runs it alone); the
 //! default is 20,000 sequences, `SUBMIT_SEQUENCES=<n>` changes it.
 
 use jarvis_observe::compact_view;
-use jarvis_proto::fixtures::{node, screen};
+use jarvis_proto::fixtures::{node, screen, text};
 use jarvis_proto::{Action, Policy, Rect, Role, Screen, UiNode};
 use jarvis_safety::{evaluate_with, Decision, ScreenSource, ScreenTree, TypedText};
 
@@ -42,6 +55,9 @@ impl Rng {
     }
     fn below(&mut self, n: u64) -> u64 {
         self.next() % n.max(1)
+    }
+    fn chance(&mut self, pct: u64) -> bool {
+        self.below(100) < pct
     }
     fn pick<'a, T>(&mut self, xs: &'a [T]) -> &'a T {
         &xs[self.below(xs.len() as u64) as usize]
@@ -118,17 +134,41 @@ const BUTTONS: &[&str] = &[
     "chevron.right",
 ];
 
+/// How a field is drawn (tenth review).
+#[derive(Clone, Copy, PartialEq)]
+enum Look {
+    /// A labelled field on its own.
+    Plain,
+    /// A labelled field in a cell.
+    Cell,
+    /// An unlabelled field in a cell with a self-drawn placeholder text (hidden once
+    /// filled) and, maybe, a counter text that follows the length.
+    Placeholder { counter: bool },
+    /// An unlabelled field in a cell whose name is a static text beside it.
+    LentLabel,
+}
+
 #[derive(Clone)]
 struct Field {
+    /// The field's name (its label, or for unlabelled fields the text that shows it).
     name: String,
     role: Role,
+    look: Look,
     value: String,
+}
+
+impl Field {
+    fn labelled(&self) -> bool {
+        matches!(self.look, Look::Plain | Look::Cell)
+    }
 }
 
 #[derive(Clone)]
 struct Form {
     fields: Vec<Field>,
     buttons: Vec<String>,
+    /// Buttons sit in cells.
+    button_cells: bool,
 }
 
 fn words(s: &str) -> Vec<String> {
@@ -142,21 +182,46 @@ fn gen_form(r: &mut Rng, f: usize) -> Form {
     let n = 1 + r.below(5) as usize;
     let fields = (0..n)
         .map(|i| {
-            let (name, role) = match r.below(8) {
-                0 => ("Email", Role::TextField),
-                1 => ("Username", Role::TextField),
-                2 => ("Search", Role::SearchField),
-                3 => ("Password", Role::SecureTextField),
-                4 => ("Your review", Role::TextView),
-                5 => ("Phone", Role::TextField),
+            let (name, role, free) = match r.below(8) {
+                0 => ("Email", Role::TextField, false),
+                1 => ("Username", Role::TextField, false),
+                2 => ("Search", Role::SearchField, false),
+                3 => ("Password", Role::SecureTextField, false),
+                4 => ("Your review", Role::TextView, true),
+                5 => ("Phone", Role::TextField, false),
                 _ => (
                     *r.pick(&["Message", "Comment", "Note", "Subject"]),
                     Role::TextField,
+                    true,
                 ),
+            };
+            // Message-like fields may be drawn the ways that changed their fingerprint
+            // (login, search and secure fields stay labelled: the narrowings read names).
+            let look = if !free {
+                if r.chance(30) {
+                    Look::Cell
+                } else {
+                    Look::Plain
+                }
+            } else {
+                match r.below(5) {
+                    0 => Look::Plain,
+                    1 => Look::Cell,
+                    2 | 3 => Look::Placeholder {
+                        counter: r.chance(50),
+                    },
+                    _ => Look::LentLabel,
+                }
+            };
+            let role = if free && r.chance(40) {
+                Role::TextView
+            } else {
+                role
             };
             Field {
                 name: format!("{name} {f}{i}"),
                 role,
+                look,
                 value: String::new(),
             }
         })
@@ -164,34 +229,84 @@ fn gen_form(r: &mut Rng, f: usize) -> Form {
     let buttons = (0..1 + r.below(4))
         .map(|j| format!("{} {f}{j}", r.pick(BUTTONS)))
         .collect();
-    Form { fields, buttons }
+    Form {
+        fields,
+        buttons,
+        button_cells: r.chance(30),
+    }
 }
 
-fn build(forms: &[Form], dy: f64) -> Screen {
+/// For every field (form, index), the frame of its input node.
+type FieldFrames = Vec<((usize, usize), Rect)>;
+
+/// The screen, and its fields' frames.
+fn build(forms: &[Form], dy: f64) -> (Screen, FieldFrames) {
     let mut y = 100.0 + dy;
     let mut containers = Vec::new();
-    for form in forms {
+    let mut frames = Vec::new();
+    for (fi, form) in forms.iter().enumerate() {
         let top = y;
         let mut kids = Vec::new();
-        for f in &form.fields {
+        for (i, f) in form.fields.iter().enumerate() {
             let h = if f.role == Role::TextView {
                 160.0
             } else {
                 44.0
             };
-            let mut n =
-                UiNode::new(f.role.clone(), Rect::new(16.0, y, W - 32.0, h)).with_label(&f.name);
+            let frame = Rect::new(16.0, y, W - 32.0, h);
+            frames.push(((fi, i), frame));
+            let mut n = UiNode::new(f.role.clone(), frame);
+            if f.labelled() {
+                n = n.with_label(&f.name);
+            }
             if !f.value.is_empty() {
                 n = n.with_value(&f.value);
             }
             if f.role == Role::SecureTextField {
                 n = n.secure(true);
             }
-            kids.push(n);
+            let cell = Rect::new(0.0, y - 6.0, W, h + 12.0);
+            match f.look {
+                Look::Plain => kids.push(n),
+                Look::Cell => kids.push(UiNode::new(Role::Cell, cell).with_children(vec![n])),
+                Look::Placeholder { counter } => {
+                    let mut row = vec![n];
+                    if f.value.is_empty() {
+                        row.push(text(&f.name, Rect::new(24.0, y + 8.0, 300.0, 20.0)));
+                    }
+                    if counter {
+                        row.push(text(
+                            &format!("{}/500", f.value.chars().count()),
+                            Rect::new(W - 80.0, y + h - 22.0, 60.0, 18.0),
+                        ));
+                    }
+                    kids.push(UiNode::new(Role::Cell, cell).with_children(row));
+                }
+                Look::LentLabel => {
+                    let label = text(&f.name, Rect::new(16.0, y, 100.0, 20.0));
+                    let field = UiNode::new(f.role.clone(), Rect::new(120.0, y, W - 136.0, h));
+                    let field = if f.value.is_empty() {
+                        field
+                    } else {
+                        field.with_value(&f.value)
+                    };
+                    frames.pop();
+                    frames.push(((fi, i), Rect::new(120.0, y, W - 136.0, h)));
+                    kids.push(UiNode::new(Role::Cell, cell).with_children(vec![label, field]));
+                }
+            }
             y += h + 16.0;
         }
         for b in &form.buttons {
-            kids.push(node(Role::Button, b, Rect::new(16.0, y, W - 32.0, 50.0)));
+            let button = node(Role::Button, b, Rect::new(16.0, y, W - 32.0, 50.0));
+            if form.button_cells {
+                kids.push(
+                    UiNode::new(Role::Cell, Rect::new(0.0, y - 4.0, W, 58.0))
+                        .with_children(vec![button]),
+                );
+            } else {
+                kids.push(button);
+            }
             y += 66.0;
         }
         containers.push(
@@ -206,26 +321,44 @@ fn build(forms: &[Form], dy: f64) -> Screen {
         .with_children(vec![UiNode::new(Role::Window, full).with_children(vec![
             UiNode::new(Role::ScrollView, full).with_children(containers),
         ])]);
-    screen("com.example.shop", "Shop", root, false)
+    (screen("com.example.shop", "Shop", root, false), frames)
 }
 
-/// What the oracle expects of a tap on button `b` of form `f`.
-fn expected_ask(form: &Form, b: &str, typed: &[(String, String)]) -> bool {
+/// What the app makes of the typed text (tenth review): kept, trimmed, capitalised, or
+/// "autocorrected".
+fn reformat(r: &mut Rng, typed: &str) -> String {
+    match r.below(4) {
+        0 => typed.to_owned(),
+        1 => typed.trim().to_owned(),
+        2 => {
+            let mut c = typed.trim_start().chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().chain(c).collect(),
+                None => String::new(),
+            }
+        }
+        _ => typed.replace("helo", "hello").replace("teh", "the"),
+    }
+}
+
+/// What the oracle expects of a tap on button `b` of form `f` once Jarvis typed here.
+fn expected_ask(form: &Form, b: &str) -> bool {
     if words(b).iter().any(|w| NOT_SUBMIT.contains(&w.as_str())) {
         return false;
     }
     let secure = form.fields.iter().any(|f| f.role == Role::SecureTextField);
-    let login = |name: &str| {
-        let n = name.to_lowercase();
-        words(&n).iter().any(|w| LOGIN_WORDS.contains(&w.as_str()))
-            || n.contains("email")
-            || n.contains("username")
+    let login = |f: &Field| {
+        let n = f.name.to_lowercase();
+        f.labelled()
+            && (words(&n).iter().any(|w| LOGIN_WORDS.contains(&w.as_str()))
+                || n.contains("email")
+                || n.contains("username"))
     };
     let filled_login_only = form
         .fields
         .iter()
         .filter(|f| f.role != Role::SecureTextField && !f.value.is_empty())
-        .all(|f| login(&f.name));
+        .all(login);
     if secure && filled_login_only {
         return false;
     }
@@ -234,7 +367,6 @@ fn expected_ask(form: &Form, b: &str, typed: &[(String, String)]) -> bool {
             && f.role != Role::SearchField
             && !words(&f.name).contains(&"search".to_owned())
             && !f.value.is_empty()
-            && typed.iter().any(|(n, t)| *n == f.name && *t == f.value)
     })
 }
 
@@ -244,39 +376,58 @@ struct Tally {
     taps: usize,
     expected: usize,
     expected_unlisted: usize,
+    /// Expected asks the ninth review's rule could not have found (no filled input of the
+    /// form carries a kept fingerprint or exactly a kept text).
+    beyond_ninth: usize,
+    owner_filled_only: usize,
 }
 
 fn run(seed: u64, tally: &mut Tally) {
     let r = &mut Rng::new(seed);
-    let mut forms: Vec<Form> = (0..1 + r.below(2) as usize)
+    let mut forms: Vec<Form> = (0..1 + r.below(3) as usize)
         .map(|f| gen_form(r, f))
         .collect();
     let mut dy = 0.0;
-    // (field name, text) Jarvis typed, and the `TypedText` the session keeps.
-    let mut typed: Vec<(String, String)> = Vec::new();
+    // The `TypedText` the session keeps; non-empty is the "typed here" state.
     let mut kept: Vec<TypedText> = Vec::new();
+    // Which fields Jarvis typed into (form, field).
+    let mut jarvis: Vec<(usize, usize)> = Vec::new();
     for step in 0..4 + r.below(10) {
-        let s = build(&forms, dy);
+        let (s, frames) = build(&forms, dy);
         let view = compact_view(&s);
         let f = r.below(forms.len() as u64) as usize;
         match r.below(10) {
             0..=3 => {
-                // Jarvis types into a listed, non-secure field.
+                // Jarvis types into a listed, non-secure field (found by its frame, as the
+                // session finds its target by index).
                 let i = r.below(forms[f].fields.len() as u64) as usize;
                 let field = forms[f].fields[i].clone();
                 if field.role == Role::SecureTextField {
                     continue;
                 }
-                let Some(e) = view.screen.elements.iter().find(|e| e.label == field.name) else {
+                let Some(frame) = frames.iter().find(|(k, _)| *k == (f, i)).map(|(_, r)| *r) else {
                     continue;
                 };
-                let text = format!("hello {seed} {step}");
+                let c = frame.center();
+                let Some(e) = view
+                    .screen
+                    .elements
+                    .iter()
+                    .find(|e| e.role.is_text_input() && e.frame.contains(c))
+                else {
+                    continue;
+                };
+                let text = format!(
+                    "{}helo {seed} teh {step}{}",
+                    if r.chance(30) { "  " } else { "" },
+                    if r.chance(30) { " " } else { "" }
+                );
                 kept.push(TypedText {
                     field: e.fingerprint,
                     text: text.clone(),
                 });
-                typed.push((field.name.clone(), text.clone()));
-                forms[f].fields[i].value = text;
+                jarvis.push((f, i));
+                forms[f].fields[i].value = reformat(r, &text);
             }
             4 => {
                 let i = r.below(forms[f].fields.len() as u64) as usize;
@@ -297,15 +448,43 @@ fn run(seed: u64, tally: &mut Tally) {
                     continue;
                 };
                 tally.taps += 1;
-                if !expected_ask(&forms[f], &b, &typed) {
+                if kept.is_empty() || !expected_ask(&forms[f], &b) {
                     continue;
                 }
                 tally.expected += 1;
-                let unlisted = forms[f].fields.iter().any(|fl| {
-                    !fl.value.is_empty() && !view.screen.elements.iter().any(|e| e.label == fl.name)
+                let unlisted = forms[f].fields.iter().zip(0..).any(|(fl, i)| {
+                    !fl.value.is_empty()
+                        && frames
+                            .iter()
+                            .find(|(k, _)| *k == (f, i))
+                            .is_some_and(|(_, fr)| {
+                                !view.screen.elements.iter().any(|e| {
+                                    e.role.is_text_input() && e.frame.contains(fr.center())
+                                })
+                            })
                 });
                 if unlisted {
                     tally.expected_unlisted += 1;
+                }
+                // Could the ninth review's rule have found a typed field here?
+                let ninth = view.inputs.iter().any(|ri| {
+                    ri.value.as_deref().is_some_and(|v| {
+                        !v.trim().is_empty()
+                            && kept.iter().any(|t| {
+                                ri.fingerprint == Some(t.field) || t.text.trim() == v.trim()
+                            })
+                    })
+                });
+                if !ninth {
+                    tally.beyond_ninth += 1;
+                }
+                if !forms[f]
+                    .fields
+                    .iter()
+                    .zip(0..)
+                    .any(|(fl, i)| !fl.value.is_empty() && jarvis.contains(&(f, i)))
+                {
+                    tally.owner_filled_only += 1;
                 }
                 let tree = ScreenTree {
                     sources: &view.sources,
@@ -341,7 +520,7 @@ fn run(seed: u64, tally: &mut Tally) {
 }
 
 #[test]
-fn a_tap_after_typing_asks_until_the_text_is_gone() {
+fn a_tap_after_typing_asks_while_its_form_holds_text() {
     if let Some(seed) = std::env::var("SUBMIT_SEED")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -358,8 +537,13 @@ fn a_tap_after_typing_asks_until_the_text_is_gone() {
         run(seed, &mut tally);
     }
     println!(
-        "{n} sequences: {} taps, {} expected to ask ({} with a typed field off the list)",
-        tally.taps, tally.expected, tally.expected_unlisted
+        "{n} sequences: {} taps, {} expected to ask ({} with a filled field off the list, {} \
+         the ninth review's rule could not find, {} with only text Jarvis did not type)",
+        tally.taps,
+        tally.expected,
+        tally.expected_unlisted,
+        tally.beyond_ninth,
+        tally.owner_filled_only
     );
-    assert!(tally.expected > 0 && tally.expected_unlisted > 0);
+    assert!(tally.expected > 0 && tally.expected_unlisted > 0 && tally.beyond_ninth > 0);
 }

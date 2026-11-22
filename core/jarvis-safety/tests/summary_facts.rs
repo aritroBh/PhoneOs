@@ -200,8 +200,21 @@ fn recipient_decoys_cannot_drop_the_payee() {
         button(5, "Send"),
     ]);
     let summary = summarize(&tap(5), &s, None);
+    // Tenth review (H2): only proper heading pairs (a heading, a colon, a name) and the
+    // form's recipient-named fields are recipients; text that merely mentions "to" or
+    // "account" next to a number is not (was `To/Account: To account ••••9999; …`,
+    // deliberate change). With the heading's colon it is, and the decoys are not.
+    assert!(!summary.contains("To/Account"), "{summary}");
+    let s = app_screen(vec![
+        label(1, "Help: +1 (800) 555-0100"),
+        label(2, "Reference 20261122"),
+        label(3, "Send $500.00"),
+        label(4, "To: account ••••9999"),
+        button(5, "Send"),
+    ]);
+    let summary = summarize(&tap(5), &s, None);
     assert!(
-        summary.contains("To/Account: To account ••••9999;"),
+        summary.ends_with("To/Account: To: account ••••9999"),
         "{summary}"
     );
     let s = app_screen(vec![
@@ -209,16 +222,21 @@ fn recipient_decoys_cannot_drop_the_payee() {
         label(2, "Support 18005550100"),
         label(3, "alex@example.com"),
         label(4, "@sam"),
-        label(5, "Pay to ••••4521"),
+        label(5, "Pay to: ••••4521"),
         label(6, "$5.00"),
         button(7, "Pay"),
     ]);
     let summary = summarize(&tap(7), &s, None);
-    assert!(summary.contains("Pay to ••••4521"), "{summary}");
-    assert!(summary.contains("and 2 more"), "{summary}");
+    // Was `Pay to ••••4521` (no colon) and the others counted (`and 2 more`): the
+    // address, the handle and the reference numbers are no recipients now.
+    assert!(
+        summary.ends_with("To/Account: Pay to: ••••4521"),
+        "{summary}"
+    );
+    assert!(!summary.contains("more"), "{summary}");
     assert!(
         !summary.contains("1234567890"),
-        "references rank last: {summary}"
+        "references are no recipients: {summary}"
     );
 }
 

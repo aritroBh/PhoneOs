@@ -25,6 +25,18 @@
 //!   scrolled under B (a page-sized scrollable ancestor; no modal ancestor; not in a later
 //!   window than B; for a bottom bar, the scroller before B in the tree).
 //!
+//! Tenth review: the generator adds overlays taller than 320 pt, nested scrollers (rows
+//! holding a carousel or an inner list, some page-sized), landscape and iPad-sized screens,
+//! bar children reaching outside their bar, and a same-window overlay holding a page-sized
+//! scroller without a modal role. For that last shape the oracle does not copy the rule's
+//! exception: it knows which scroller is the generated page (an identifier the rule does
+//! not read), excuses page content only, and counts every node an overlay's scroller gets
+//! through as the documented known gap ([`Excuse::OverlayScroller`], ARCHITECTURE.md
+//! "Known gaps"); anything else getting through fails. The additions found one defect, now
+//! fixed: a target in one system bar was tapped at a point inside another system bar
+//! overlapping it (a landscape screen whose keyboard cut a full-screen toolbar down to a
+//! top bar's shape).
+//!
 //! And the converse sanity check: on screens where nothing overlaps, every control gets its
 //! centre. Seeded (xorshift); a failure names its seed (`TAP_SEED=<seed>` runs it alone);
 //! the default is 50,000 screens (about 15 s in a debug build), `TAP_SCREENS=<n>` changes
@@ -36,10 +48,36 @@ use jarvis_proto::fixtures::{node, screen, text};
 use jarvis_proto::{Rect, Role, Screen, UiNode};
 use jarvis_safety::{tap_spot, ScreenTree};
 
-const W: f64 = 393.0;
-const H: f64 = 852.0;
 /// Screens checked by default (about 15 s in a debug build); `TAP_SCREENS` overrides.
 const DEFAULT_SCREENS: u64 = 50_000;
+
+/// Screen sizes (tenth review): iPhone portrait and landscape, iPad portrait and
+/// landscape.
+const SIZES: &[(f64, f64)] = &[
+    (393.0, 852.0),
+    (852.0, 393.0),
+    (1024.0, 1366.0),
+    (1366.0, 1024.0),
+];
+
+thread_local! {
+    /// The size of the screen being generated and checked (iPhone portrait by default).
+    static SIZE: std::cell::Cell<(f64, f64)> = const { std::cell::Cell::new((393.0, 852.0)) };
+}
+
+/// The current screen's width.
+fn sw() -> f64 {
+    SIZE.with(|s| s.get().0)
+}
+
+/// The current screen's height.
+fn sh() -> f64 {
+    SIZE.with(|s| s.get().1)
+}
+
+/// Marks the generator's own page scroller, for the oracle (an identifier, which the rule
+/// does not read).
+const PAGE_ID: &str = "oracle.page";
 
 struct Rng(u64);
 impl Rng {
@@ -92,10 +130,44 @@ fn control(r: &mut Rng, role: Role, frame: Rect, k: usize) -> UiNode {
 /// One row of the page at `y`.
 fn row(r: &mut Rng, k: usize, y: f64) -> UiNode {
     let x = if r.chance(10) { r.f(-60.0, 0.0) } else { 16.0 };
-    let w = if r.chance(10) { W + 80.0 } else { W - 32.0 };
+    let w = if r.chance(10) {
+        sw() + 80.0
+    } else {
+        sw() - 32.0
+    };
     let h = r.f(36.0, 120.0);
     let f = Rect::new(x, y, w, h);
-    let mut n = match r.below(9) {
+    let mut n = match r.below(10) {
+        9 => {
+            // Tenth review: a nested scroller — a carousel of cards across the row, or an
+            // inner list — that may reach outside the row.
+            let inner_role = r
+                .pick(&[Role::ScrollView, Role::CollectionView, Role::Table])
+                .clone();
+            let tall = r.chance(30);
+            let sf = if tall {
+                Rect::new(0.0, y, sw(), r.f(200.0, sh()))
+            } else {
+                Rect::new(x, y, w, h)
+            };
+            let n_items = 2 + r.below(3) as usize;
+            let items = if tall {
+                controls_in(r, sf, n_items, Role::Button, k * 10 + 2000)
+            } else {
+                let iw = r.f(100.0, 220.0);
+                (0..n_items)
+                    .map(|i| {
+                        control(
+                            r,
+                            Role::Button,
+                            Rect::new(x + 8.0 + (iw + 8.0) * i as f64, y + 4.0, iw, h - 8.0),
+                            k * 10 + 2000 + i,
+                        )
+                    })
+                    .collect()
+            };
+            UiNode::new(inner_role, sf).with_children(items)
+        }
         0 | 1 => control(r, Role::Button, f, k),
         2 => UiNode::new(Role::Cell, f).with_children(vec![
             text(
@@ -184,8 +256,10 @@ fn controls_in(r: &mut Rng, f: Rect, n: usize, role: Role, base: usize) -> Vec<U
 
 /// A random overlay (menu, popover, banner, action sheet) at a random place.
 fn overlay(r: &mut Rng, base: usize) -> UiNode {
-    let (w, h) = (r.f(120.0, W), r.f(60.0, 320.0));
-    let f = Rect::new(r.f(0.0, W - w), r.f(0.0, H - h), w, h);
+    // Tenth review: overlays taller than 320 pt too (up to the whole screen).
+    let tall = if r.chance(30) { sh() } else { 320.0 };
+    let (w, h) = (r.f(120.0, sw()), r.f(60.0, tall));
+    let f = Rect::new(r.f(0.0, sw() - w), r.f(0.0, sh() - h), w, h);
     let role = r
         .pick(&[
             Role::Other("Menu".into()),
@@ -209,14 +283,24 @@ fn bar(r: &mut Rng, role: Role, f: Rect, base: usize) -> UiNode {
     let kids: Vec<UiNode> = (0..n)
         .map(|i| {
             let tab = role == Role::TabBar && r.chance(50);
+            // Tenth review: a bar child reaching outside the bar (above, below or both).
+            let (dy, dh) = if r.chance(15) {
+                *r.pick(&[
+                    (-30.0, 30.0),
+                    (0.0, f.height + 30.0),
+                    (-20.0, f.height + 40.0),
+                ])
+            } else {
+                (0.0, 0.0)
+            };
             control(
                 r,
                 if tab { Role::Tab } else { Role::Button },
                 Rect::new(
                     f.x + w * i as f64 + 4.0,
-                    f.y + 4.0,
+                    f.y + 4.0 + dy,
                     44.0_f64.min(w - 8.0),
-                    40.0,
+                    40.0 + dh,
                 ),
                 base + i,
             )
@@ -227,11 +311,25 @@ fn bar(r: &mut Rng, role: Role, f: Rect, base: usize) -> UiNode {
 
 fn random_screen(seed: u64) -> Screen {
     let r = &mut Rng::new(seed);
-    let full = Rect::new(0.0, 0.0, W, H);
+    // Tenth review: landscape and iPad-sized screens too.
+    let size = if r.chance(60) {
+        SIZES[0]
+    } else {
+        *r.pick(SIZES)
+    };
+    SIZE.with(|s| s.set(size));
+    let full = Rect::new(0.0, 0.0, sw(), sh());
+    let nav_y = if sh() < 500.0 {
+        0.0
+    } else if sw() > 500.0 {
+        24.0
+    } else {
+        59.0
+    };
     // The page.
     let page_frame = match r.below(10) {
-        0 => Rect::new(0.0, 0.0, W * 0.6, H),
-        1 => Rect::new(0.0, 300.0, W, 120.0),
+        0 => Rect::new(0.0, 0.0, sw() * 0.6, sh()),
+        1 => Rect::new(0.0, 300.0, sw(), 120.0),
         _ => full,
     };
     let page_role = r
@@ -248,29 +346,31 @@ fn random_screen(seed: u64) -> Screen {
         rows.push(row(r, k, y));
         y += r.f(20.0, 130.0);
     }
-    let page = UiNode::new(page_role, page_frame).with_children(rows);
+    let page = UiNode::new(page_role, page_frame)
+        .with_identifier(PAGE_ID)
+        .with_children(rows);
     let mut win = Vec::new();
     let nav = r.chance(70).then(|| {
         let h = *r.pick(&[44.0, 54.0, 96.0, 106.0, 400.0]);
-        let w = if r.chance(85) { W } else { W * 0.7 };
+        let w = if r.chance(85) { sw() } else { sw() * 0.7 };
         let role = if r.chance(85) {
             Role::NavigationBar
         } else {
             Role::Toolbar
         };
-        bar(r, role, Rect::new(0.0, 59.0, w, h), 100)
+        bar(r, role, Rect::new(0.0, nav_y, w, h), 100)
     });
     let bottom = r.chance(70).then(|| {
         let (role, h) = if r.chance(60) {
             (Role::TabBar, 83.0)
         } else {
-            (Role::Toolbar, *r.pick(&[49.0, 86.0, H]))
+            (Role::Toolbar, *r.pick(&[49.0, 86.0, sh()]))
         };
-        let w = if r.chance(90) { W } else { W * 0.5 };
-        let f = if h >= H {
+        let w = if r.chance(90) { sw() } else { sw() * 0.5 };
+        let f = if h >= sh() {
             full
         } else {
-            Rect::new(0.0, H - h, w, h)
+            Rect::new(0.0, sh() - h, w, h)
         };
         bar(r, role, f, 200)
     });
@@ -292,9 +392,26 @@ fn random_screen(seed: u64) -> Screen {
     if r.chance(25) {
         win.push(overlay(r, 300));
     }
+    if r.chance(10) {
+        // Tenth review: a same-window overlay holding a page-sized scroller (a sheet the
+        // tree types as a plain scroll view, without a modal role), drawn after the bars,
+        // its controls reaching up under the navigation bar. The documented known gap.
+        let top = r.f(0.0, nav_y + 40.0);
+        let f = Rect::new(0.0, top, sw(), sh() - top);
+        let n = 2 + r.below(5) as usize;
+        let kh = r.f(120.0, f.height);
+        let kids = controls_in(r, Rect::new(0.0, top, sw(), kh), n, Role::Button, 600);
+        let scroller = UiNode::new(r.pick(&[Role::ScrollView, Role::CollectionView]).clone(), f)
+            .with_children(kids);
+        win.push(if r.chance(50) {
+            UiNode::new(Role::Other("Other".into()), f).with_children(vec![scroller])
+        } else {
+            scroller
+        });
+    }
     if r.chance(3) {
         // An action sheet as an alert-like overlay (scopes the screen to itself).
-        let f = Rect::new(8.0, H - 300.0, W - 16.0, 290.0);
+        let f = Rect::new(8.0, sh() - 300.0, sw() - 16.0, 290.0);
         win.push(UiNode::new(Role::Sheet, f).with_children(controls_in(
             r,
             f,
@@ -309,8 +426,8 @@ fn random_screen(seed: u64) -> Screen {
     }
     let keyboard = r.chance(20);
     if keyboard {
-        let kb = Rect::new(0.0, H - 336.0, W, 336.0);
-        let bar_f = Rect::new(0.0, kb.y - 44.0, W, 44.0);
+        let kb = Rect::new(0.0, sh() - 336.0, sw(), 336.0);
+        let bar_f = Rect::new(0.0, kb.y - 44.0, sw(), 44.0);
         let mut assistant_kids = vec![UiNode::new(Role::Other("Other".into()), bar_f)
             .with_children(vec![node(
                 Role::Button,
@@ -322,7 +439,7 @@ fn random_screen(seed: u64) -> Screen {
             assistant_kids.push(node(
                 Role::Button,
                 "Buy coins $99.99",
-                Rect::new(16.0, r.f(100.0, 400.0), W - 32.0, 64.0),
+                Rect::new(16.0, r.f(100.0, 400.0), sw() - 32.0, 64.0),
             ));
         }
         let assistant = UiNode::new(Role::Other("Other".into()), bar_f)
@@ -343,7 +460,12 @@ fn random_screen(seed: u64) -> Screen {
     let root = UiNode::new(Role::Application, full)
         .with_label("App")
         .with_children(windows);
-    screen("com.example.app", "App", root, keyboard)
+    let mut s = screen("com.example.app", "App", root, keyboard);
+    s.size = jarvis_proto::Size::new(sw(), sh());
+    if sw() > sh() {
+        s.orientation = jarvis_proto::Orientation::LandscapeLeft;
+    }
+    s
 }
 
 // ---- The oracle: written from the raw tree, without the rule's helpers ------------------
@@ -457,7 +579,7 @@ fn clip(f: Rect) -> Option<Rect> {
     if f.is_empty() {
         return None;
     }
-    f.intersection(&Rect::new(0.0, 0.0, W, H))
+    f.intersection(&Rect::new(0.0, 0.0, sw(), sh()))
 }
 
 fn holds(outer: &Rect, inner: &Rect) -> bool {
@@ -556,10 +678,10 @@ fn world(s: &Screen) -> World<'_> {
             let Some(f) = shown(flat[i].node.frame) else {
                 continue;
             };
-            let top = f.y <= 0.15 * H && f.height <= (0.2 * H).max(100.0);
-            let bottom = f.max_y() >= 0.9 * H && f.height <= (0.15 * H).max(100.0);
-            if f.width >= 0.9 * W && (top || bottom) {
-                let is_bottom = !top || (bottom && f.center().y >= H / 2.0);
+            let top = f.y <= 0.15 * sh() && f.height <= (0.2 * sh()).max(100.0);
+            let bottom = f.max_y() >= 0.9 * sh() && f.height <= (0.15 * sh()).max(100.0);
+            if f.width >= 0.9 * sw() && (top || bottom) {
+                let is_bottom = !top || (bottom && f.center().y >= sh() / 2.0);
                 bars.push((i, f, is_bottom));
             }
         }
@@ -584,29 +706,78 @@ fn window_of(w: &World<'_>, i: usize) -> usize {
     at
 }
 
-/// The exception: `n` is page content scrolled under bar `b` (see the module docs).
-fn scrolled_under(w: &World<'_>, n: usize, b: (usize, Rect, bool)) -> bool {
+/// The shape the bar rule reads as page content scrolled under bar `b` (see the module
+/// docs): the page-sized scrollable ancestors of `n` that qualify. Tenth review: the
+/// oracle then tells, from how the screen was generated, whether that scroller *is* the
+/// page (or inside it) — the exception — or an overlay that only looks like one — the
+/// documented known gap, counted as such.
+fn scrolled_under(w: &World<'_>, n: usize, b: (usize, Rect, bool)) -> Vec<usize> {
     let (bi, bf, bottom) = b;
     if inside(&w.flat, n, bi) || window_of(w, n) > window_of(w, bi) {
-        return false;
+        return Vec::new();
     }
     let anc = ancestors(&w.flat, n);
     if anc.iter().any(|a| modal(&w.flat[*a].node.role)) {
-        return false;
+        return Vec::new();
     }
-    anc.iter().any(|&a| {
-        let s = w.flat[a].node;
-        scroller(&s.role)
-            && w.drawn[a]
-            && clip(s.frame).is_some_and(|f| f.width >= 0.9 * W && f.height >= 2.0 * bf.height)
-            && (!bottom || (a < bi && !inside(&w.flat, bi, a)))
-    })
+    anc.into_iter()
+        .filter(|&a| {
+            let s = w.flat[a].node;
+            scroller(&s.role)
+                && w.drawn[a]
+                && clip(s.frame)
+                    .is_some_and(|f| f.width >= 0.9 * sw() && f.height >= 2.0 * bf.height)
+                && (!bottom || (a < bi && !inside(&w.flat, bi, a)))
+        })
+        .collect()
+}
+
+/// Whether raw node `a` is the generator's page scroller or inside it.
+fn in_page(w: &World<'_>, a: usize) -> bool {
+    std::iter::once(a)
+        .chain(ancestors(&w.flat, a))
+        .any(|i| w.flat[i].node.identifier.as_deref() == Some(PAGE_ID))
+}
+
+/// Why a node over the point does not count against the target.
+#[derive(Clone, Copy, PartialEq)]
+enum Excuse {
+    /// Nothing: it counts.
+    None,
+    /// Page content scrolled under the target's bar: the bar rule's exception.
+    Page,
+    /// KNOWN GAP (ARCHITECTURE.md, Known gaps): an overlay in the bar's window holding a
+    /// page-sized scroller without a modal role is taken for page content scrolled under
+    /// the bar. Allowed, and counted.
+    OverlayScroller,
+}
+
+fn excuse(w: &World<'_>, n: usize, home: Option<(usize, Rect, bool)>) -> Excuse {
+    let Some(b) = home else {
+        return Excuse::None;
+    };
+    let qualifying = scrolled_under(w, n, b);
+    if qualifying.is_empty() {
+        Excuse::None
+    } else if qualifying.iter().any(|&a| in_page(w, a)) {
+        Excuse::Page
+    } else {
+        Excuse::OverlayScroller
+    }
 }
 
 /// What the oracle finds wrong with point `p` for the target listed from raw node `t` with
 /// listed frame `tf`, if anything.
-fn violation(w: &World<'_>, t: usize, tf: Rect, p: jarvis_proto::Point) -> Option<String> {
-    if !tf.contains(p) || p.x < 0.0 || p.y < 0.0 || p.x > W || p.y > H {
+///
+/// Uses of the documented known gap ([`Excuse::OverlayScroller`]) are added to `gap`.
+fn violation(
+    w: &World<'_>,
+    t: usize,
+    tf: Rect,
+    p: jarvis_proto::Point,
+    gap: &mut usize,
+) -> Option<String> {
+    if !tf.contains(p) || p.x < 0.0 || p.y < 0.0 || p.x > sw() || p.y > sh() {
         return Some(format!("{p:?} outside the target {tf:?} or the screen"));
     }
     let home = w
@@ -637,7 +808,8 @@ fn violation(w: &World<'_>, t: usize, tf: Rect, p: jarvis_proto::Point) -> Optio
         if !clip(n.frame).is_some_and(|f| f.contains(p)) {
             continue;
         }
-        let excused = home.is_some_and(|b| scrolled_under(w, i, b));
+        let why = excuse(w, i, home);
+        let excused = why != Excuse::None;
         if takes_taps(n) {
             if inside(&w.flat, i, t) {
                 let refined = n.role == tnode.role && holds(&n.frame, &tf);
@@ -650,21 +822,44 @@ fn violation(w: &World<'_>, t: usize, tf: Rect, p: jarvis_proto::Point) -> Optio
                 continue;
             }
             if !excused {
+                let path: Vec<String> = ancestors(&w.flat, i)
+                    .iter()
+                    .map(|a| {
+                        format!(
+                            "#{a} {:?} {:?}",
+                            w.flat[*a].node.role, w.flat[*a].node.frame
+                        )
+                    })
+                    .collect();
                 return Some(format!(
-                    "{p:?} is on control #{i} {:?} {:?}",
-                    n.role, n.label
+                    "{p:?} is on control #{i} {:?} {:?} {:?} (in {}); target #{t} in {:?}; bars {:?}; size {:?}",
+                    n.role,
+                    n.label,
+                    n.frame,
+                    path.join(" < "),
+                    ancestors(&w.flat, t),
+                    w.bars,
+                    (sw(), sh())
                 ));
+            }
+            if why == Excuse::OverlayScroller {
+                *gap += 1;
             }
             continue;
         }
         let labelled = n.label.as_deref().is_some_and(|l| !l.trim().is_empty())
             || (!n.secure && n.value.as_deref().is_some_and(|v| !v.trim().is_empty()));
         let later = i >= w.flat[t].end;
-        if labelled && later && !container(&n.role) && !excused {
-            return Some(format!(
-                "{p:?} is on labelled content #{i} {:?} {:?} drawn later",
-                n.role, n.label
-            ));
+        if labelled && later && !container(&n.role) {
+            if !excused {
+                return Some(format!(
+                    "{p:?} is on labelled content #{i} {:?} {:?} drawn later",
+                    n.role, n.label
+                ));
+            }
+            if why == Excuse::OverlayScroller {
+                *gap += 1;
+            }
         }
     }
     None
@@ -694,6 +889,12 @@ struct Tally {
     points: usize,
     refused: usize,
     in_bars: usize,
+    /// Nodes the documented known gap let through (an overlay's page-sized scroller taken
+    /// for page content under a bar), and the screens where it did.
+    known_gap: usize,
+    gap_screens: usize,
+    /// Screens of other sizes than iPhone portrait.
+    other_sizes: usize,
 }
 
 fn check(seed: u64, tally: &mut Tally) {
@@ -709,6 +910,10 @@ fn check(seed: u64, tally: &mut Tally) {
     };
     let w = world(&s);
     assert_eq!(w.flat.len(), view.parents.len(), "seed {seed}: node order");
+    if (sw(), sh()) != SIZES[0] {
+        tally.other_sizes += 1;
+    }
+    let gap_before = tally.known_gap;
     for e in &view.screen.elements {
         let t = view.sources[(e.index - 1) as usize] as usize;
         if !takes_taps(w.flat[t].node) {
@@ -724,15 +929,27 @@ fn check(seed: u64, tally: &mut Tally) {
                 {
                     tally.in_bars += 1;
                 }
-                if let Some(v) = violation(&w, t, e.frame, p) {
+                if let Some(v) = violation(&w, t, e.frame, p, &mut tally.known_gap) {
                     panic!(
-                        "seed {seed}: [{}] {:?} {:?} at {:?}: {v}\n(run alone: TAP_SEED={seed})",
-                        e.index, e.role, e.label, e.frame
+                        "seed {seed}: [{}] {:?} {:?} at {:?} (raw #{t} in {:?}): {v}\nthe rule's \
+                         bars: {:?}\n(run alone: TAP_SEED={seed})",
+                        e.index,
+                        e.role,
+                        e.label,
+                        e.frame,
+                        ancestors(&w.flat, t)
+                            .iter()
+                            .map(|a| (*a, w.flat[*a].node.role.clone()))
+                            .collect::<Vec<_>>(),
+                        view.bars
                     );
                 }
             }
             Err(_) => tally.refused += 1,
         }
+    }
+    if tally.known_gap > gap_before {
+        tally.gap_screens += 1;
     }
 }
 
@@ -760,10 +977,19 @@ fn every_tap_point_lands_on_its_control_alone() {
         }
     }
     println!(
-        "{screens} screens: {} controls, {} points ({} inside their bar), {} refused",
-        tally.controls, tally.points, tally.in_bars, tally.refused
+        "{screens} screens ({} landscape or iPad): {} controls, {} points ({} inside their \
+         bar), {} refused; the known gap (an overlay's page-sized scroller under a bar) let \
+         {} nodes through on {} screens",
+        tally.other_sizes,
+        tally.controls,
+        tally.points,
+        tally.in_bars,
+        tally.refused,
+        tally.known_gap,
+        tally.gap_screens
     );
     assert!(tally.points > tally.refused && tally.in_bars > 0 && tally.refused > 0);
+    assert!(tally.other_sizes > 0 && tally.known_gap > 0);
 }
 
 /// The converse: where nothing overlaps (a grid of controls, no bars, no keyboard, no
@@ -779,7 +1005,7 @@ fn without_overlap_every_control_gets_its_centre() {
         let r = &mut Rng::new(seed);
         let cols = 1 + r.below(3) as usize;
         let rows = 1 + r.below(10) as usize;
-        let (cw, ch) = (W / cols as f64, (H - 100.0) / rows as f64);
+        let (cw, ch) = (sw() / cols as f64, (sh() - 100.0) / rows as f64);
         let mut kids = Vec::new();
         for i in 0..rows {
             for j in 0..cols {
@@ -801,7 +1027,7 @@ fn without_overlap_every_control_gets_its_centre() {
                 });
             }
         }
-        let full = Rect::new(0.0, 0.0, W, H);
+        let full = Rect::new(0.0, 0.0, sw(), sh());
         let root = UiNode::new(Role::Application, full).with_children(vec![UiNode::new(
             Role::Window,
             full,

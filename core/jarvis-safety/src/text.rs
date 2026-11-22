@@ -191,6 +191,19 @@ pub(crate) const MAX_LABEL_CHARS: usize = 1024;
 /// and last quarter of that budget joined by a space. Keeps all matching linear and
 /// bounded per element.
 pub(crate) fn bounded(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.len() <= MAX_LABEL_CHARS {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    if text.is_ascii() {
+        let n = text.len();
+        let head = MAX_LABEL_CHARS / 4 * 3;
+        let tail = MAX_LABEL_CHARS / 4;
+        let mut out = String::with_capacity(MAX_LABEL_CHARS + 1);
+        out.push_str(text.get(..head).unwrap_or_default());
+        out.push(' ');
+        out.push_str(text.get(n.saturating_sub(tail)..).unwrap_or_default());
+        return std::borrow::Cow::Owned(out);
+    }
     let n = text.chars().count();
     if n <= MAX_LABEL_CHARS {
         return std::borrow::Cow::Borrowed(text);
@@ -370,6 +383,37 @@ pub(crate) fn tokens(text: &str) -> Vec<String> {
     // Class of the previous kept character: 0 none, 1 lower, 2 upper, 3 digit.
     let mut prev_class = 0u8;
     for raw in text.chars() {
+        // ASCII needs no folding (tenth review: the same result without the per-character
+        // folding calls, which made a page of long labels cost seconds in a debug build).
+        if raw.is_ascii() {
+            if (raw.is_ascii_control() && !raw.is_ascii_whitespace()) || raw == '\'' || raw == '`' {
+                continue;
+            }
+            if !raw.is_ascii_alphanumeric() {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                prev_class = 0;
+                continue;
+            }
+            let class = if raw.is_ascii_digit() {
+                3
+            } else if raw.is_ascii_uppercase() {
+                2
+            } else {
+                1
+            };
+            let split = !cur.is_empty()
+                && ((prev_class == 1 && class == 2)
+                    || (prev_class == 3 && class != 3)
+                    || (prev_class != 3 && prev_class != 0 && class == 3));
+            if split {
+                out.push(std::mem::take(&mut cur));
+            }
+            cur.push(raw.to_ascii_lowercase());
+            prev_class = class;
+            continue;
+        }
         if is_invisible(raw) || is_combining(raw) || is_apostrophe(raw) {
             continue;
         }
@@ -465,6 +509,44 @@ pub(crate) const CURRENCY_WORDS: &[&str] = &[
 /// next to a digit (`$42.10`, `42,10 €`), or a number next to a currency code or word
 /// (`42 USD`, `EUR 10`, `20 dollars`).
 pub(crate) fn has_money(text: &str) -> bool {
+    has_money_in(text, None)
+}
+
+/// [`has_money`] reusing `text`'s [`tokens`] when the caller has them.
+pub(crate) fn has_money_in(text: &str, toks: Option<&[String]>) -> bool {
+    let words = |t: &str| match toks {
+        Some(k) => money_tokens(k),
+        None => money_tokens(&tokens(t)),
+    };
+    // Plain ASCII without control characters (tenth review, the same result faster): the
+    // only currency symbol is `$`, and a money token needs an ASCII digit.
+    let b = text.as_bytes();
+    if text.is_ascii()
+        && !b
+            .iter()
+            .any(|c| c.is_ascii_control() && !c.is_ascii_whitespace())
+    {
+        if !b.iter().any(u8::is_ascii_digit) {
+            return false;
+        }
+        let digit_near = |a: Option<&u8>, z: Option<&u8>| match (a, z) {
+            (Some(a), _) if a.is_ascii_digit() => true,
+            (Some(b' ' | b'-'), Some(z)) => z.is_ascii_digit(),
+            _ => false,
+        };
+        for (i, c) in b.iter().enumerate() {
+            if *c != b'$' {
+                continue;
+            }
+            let at = |j: Option<usize>| j.and_then(|j| b.get(j));
+            if digit_near(at(i.checked_add(1)), at(i.checked_add(2)))
+                || digit_near(at(i.checked_sub(1)), at(i.checked_sub(2)))
+            {
+                return true;
+            }
+        }
+        return words(text);
+    }
     let chars: Vec<char> = text
         .chars()
         .filter(|c| !is_invisible(*c))
@@ -489,7 +571,11 @@ pub(crate) fn has_money(text: &str) -> bool {
             return true;
         }
     }
-    let toks = tokens(text);
+    words(text)
+}
+
+/// Whether `toks` hold a currency code or word next to a number (see [`has_money`]).
+fn money_tokens(toks: &[String]) -> bool {
     toks.iter().enumerate().any(|(i, t)| {
         CURRENCY_WORDS.contains(&t.as_str()) && {
             let is_num = |j: Option<usize>| {

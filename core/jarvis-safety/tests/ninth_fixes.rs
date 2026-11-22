@@ -121,7 +121,15 @@ fn contact_fields_never_push_the_payee_or_the_total_out() {
     let sum = pay_summary(els, 33);
     assert!(sum.chars().count() <= 480, "{sum}");
     assert!(sum.contains("$1,249.00"), "{sum}");
-    assert!(sum.contains("To/Account: Pay to: @mallory_merch"), "{sum}");
+    // Tenth review (H2): the form's recipient-named fields ("Send receipt to N", what the
+    // tap sends) come first, the heading pair right after the first of them, and the slot
+    // says the screen names several recipients. Was `To/Account: Pay to: @mallory_merch`
+    // (the heading first).
+    assert!(
+        sum.contains("To/Account (31 different): Send receipt to 0"),
+        "{sum}"
+    );
+    assert!(sum.contains("; Pay to: @mallory_merch"), "{sum}");
     assert!(sum.contains("Sends: 30 fields ("), "{sum}");
     assert!(sum.contains(" more"), "{sum}");
 }

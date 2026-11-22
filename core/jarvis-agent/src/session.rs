@@ -480,9 +480,25 @@ pub struct Session {
     stale_approvals: u32,
     /// Where the observation being handled came from (`Observed` or `ObservedRunnerText`).
     incoming_source: ScreenSource,
-    /// What the session typed into which field during the task (placeholders kept): the
-    /// only field values a confirmation summary may quote besides amounts.
-    typed: Vec<TypedText>,
+    /// What the session typed into which field during the task (placeholders kept), per app
+    /// (lower-cased bundle id): the only field values a confirmation summary may quote
+    /// besides amounts. Tenth review: an app's entry being non-empty is the **"Jarvis typed
+    /// here" state** — set when a `type` is carried out in that app (its text checked, or
+    /// not checkable), cleared once an owner-approved submit has been carried out there (see
+    /// [`Self::clears_typed`]); never cleared by switching apps. While it is set, a tap on a
+    /// control whose form holds any filled text input is presumed to submit it
+    /// (`jarvis_safety::presumed_submit`).
+    typed: BTreeMap<String, Vec<TypedText>>,
+    /// An owner-approved submit being carried out (the app's key and the gated action): an
+    /// approved tap the gate presumed to submit or classified as sending, paying, posting or
+    /// purchasing, or an approved Return after typing. When it succeeds, that app's
+    /// "typed here" state is cleared; a failure keeps it (keeping it only costs a question).
+    clears_typed: Option<(String, Action)>,
+}
+
+/// The key of an app in [`Session::typed`].
+fn app_key(bundle_id: &str) -> String {
+    bundle_id.trim().to_lowercase()
 }
 
 impl std::fmt::Debug for Session {
@@ -638,8 +654,17 @@ impl Session {
             lock_uncertain: false,
             stale_approvals: 0,
             incoming_source: ScreenSource::Typed,
-            typed: Vec::new(),
+            typed: BTreeMap::new(),
+            clears_typed: None,
         }
+    }
+
+    /// What the session typed in the app in front (see [`Self::typed`]); non-empty is the
+    /// "Jarvis typed here" state the gate reads.
+    fn typed_here(&self) -> &[TypedText] {
+        self.typed
+            .get(&app_key(&self.current.screen.app_bundle_id))
+            .map_or(&[][..], Vec::as_slice)
     }
 
     /// Feeds one event and returns the one thing the shell must do next.
@@ -1350,6 +1375,16 @@ impl Session {
     /// equals the record.
     fn act_approved(&mut self, now: u64, mut look: ApprovalLook) -> Effect {
         if let Some(fresh) = self.recheck_approved(&look.pending, look.approved.as_ref()) {
+            self.clears_typed = look
+                .approved
+                .as_ref()
+                .filter(|a| self.submits_typed(&fresh, a))
+                .map(|_| {
+                    (
+                        app_key(&self.current.screen.app_bundle_id),
+                        fresh.gate.clone(),
+                    )
+                });
             return self.execute(fresh);
         }
         let asked = look.pending.bound.app_bundle_id.trim().to_owned();
@@ -1485,7 +1520,7 @@ impl Session {
             None,
             self.current.source,
             Some(&self.tree()),
-            &self.typed,
+            self.typed_here(),
         ) {
             Decision::Allow => {
                 if approved.is_some() {
@@ -1653,9 +1688,16 @@ impl Session {
                 category,
                 source,
                 Some(&tree),
-                &self.typed,
+                self.typed_here(),
             ),
-            _ => summary_with(gate, screen, category, source, Some(&tree), &self.typed),
+            _ => summary_with(
+                gate,
+                screen,
+                category,
+                source,
+                Some(&tree),
+                self.typed_here(),
+            ),
         }
     }
 
@@ -2267,7 +2309,7 @@ impl Session {
             tool,
             self.current.source,
             Some(&self.tree()),
-            &self.typed,
+            self.typed_here(),
         );
         if let Decision::Deny(reason) = &decision {
             return Err(Reject::Failed(format!("not allowed: {reason}")));
@@ -2512,9 +2554,10 @@ impl Session {
                 return self.decide(now);
             }
             TypedVerdict::Match | TypedVerdict::Unverifiable => {
-                if verdict == TypedVerdict::Match {
-                    self.remember_typed(&pending, field_fp);
-                }
+                // Tenth review: a typing that could not be checked was carried out too, so
+                // it sets the app's "typed here" state as well (the text is quoted only
+                // while a field holds exactly it).
+                self.remember_typed(&pending, field_fp);
                 if pending.stage != Stage::Typing {
                     return self.verify(now, pending);
                 }
@@ -2697,7 +2740,7 @@ impl Session {
             None,
             self.current.source,
             Some(&self.tree()),
-            &self.typed,
+            self.typed_here(),
         );
         let home = if is_springboard(&screen.app_bundle_id) {
             home_launch(&gate, screen, &self.apps)
@@ -2769,7 +2812,8 @@ impl Session {
     }
 
     /// Remembers that the session typed `pending`'s text into the field `field` (placeholders
-    /// kept): summaries may then quote that field's value while it is exactly that text.
+    /// kept) in the app in front: summaries may then quote that field's value while it is
+    /// exactly that text, and the app's "typed here" state is set (tenth review).
     fn remember_typed(&mut self, pending: &Pending, field: Option<u64>) {
         let (Some(field), Action::Type { text, .. }) = (field, &pending.action) else {
             return;
@@ -2777,11 +2821,43 @@ impl Session {
         if text.trim().is_empty() {
             return;
         }
-        self.typed.retain(|t| t.field != field);
-        self.typed.push(TypedText {
+        let here = self
+            .typed
+            .entry(app_key(&self.current.screen.app_bundle_id))
+            .or_default();
+        here.retain(|t| t.field != field);
+        here.push(TypedText {
             field,
             text: text.clone(),
         });
+    }
+
+    /// Whether carrying out the approved `fresh` (approved as `approved`) submits what was
+    /// typed in the app in front, so its "typed here" state is cleared once it succeeds
+    /// (tenth review): Return after typing, or a tap, long press or tap point the gate
+    /// presumed to submit or classified as sending, paying, posting or purchasing.
+    fn submits_typed(&self, fresh: &Pending, approved: &ConfirmRequest) -> bool {
+        if fresh.stage == Stage::Return {
+            return true;
+        }
+        if !matches!(
+            fresh.gate,
+            Action::Tap { .. } | Action::LongPress { .. } | Action::TapPoint { .. }
+        ) {
+            return false;
+        }
+        matches!(
+            approved.category,
+            RiskCategory::SendMessage
+                | RiskCategory::PublicPost
+                | RiskCategory::Payment
+                | RiskCategory::Purchase
+        ) || jarvis_safety::presumed_submit(
+            &fresh.gate,
+            &self.current.screen,
+            Some(&self.tree()),
+            self.typed_here(),
+        )
     }
 
     /// The refusal of an action whose every tap point is covered (sixth and seventh
@@ -3005,6 +3081,12 @@ impl Session {
     }
 
     fn record_success(&mut self, pending: &Pending, result: &str) {
+        // An approved submit carried out: what was typed there has been sent (tenth review).
+        if let Some((app, gate)) = self.clears_typed.take() {
+            if gate == pending.gate {
+                self.typed.remove(&app);
+            }
+        }
         self.declined_open = None;
         self.last_failed = None;
         self.history.push(
@@ -3028,6 +3110,8 @@ impl Session {
     }
 
     fn record_failure(&mut self, pending: &Pending, result: &str) {
+        // A submit that did not work out keeps the "typed here" state (tenth review).
+        self.clears_typed = None;
         self.repeat = None;
         // Reaching the end of a list is information, not a failed attempt.
         if result != prompt::RESULT_SCROLL_END {

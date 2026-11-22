@@ -240,17 +240,25 @@ fn the_summary_keeps_amounts_and_recipients_while_sends_can_give() {
         sum.contains("Amounts on screen: Due today $199.00; Compare at $1,200.00"),
         "{sum}"
     );
+    // Tenth review (H2): only proper heading pairs and the form's recipient-named fields
+    // are recipients; free text with an `@handle` ("Also @alex") no longer is. Was
+    // `To/Account: Send to: Checking ••••4521; Also @alex`.
     assert!(
-        sum.contains("To/Account: Send to: Checking ••••4521; Also @alex"),
+        sum.contains("To/Account: Send to: Checking ••••4521"),
         "{sum}"
     );
+    assert!(!sum.contains("@alex"), "{sum}");
     // (c) gave up characters, saying so: the list is capped, values are cut with a count.
     assert!(sum.contains("Sends: 6 fields ("), "{sum}");
     assert!(sum.contains("more characters not shown)"), "{sum}");
     // (d) Ninth review: the other facts have a reserved slot of their own (minimum 48,
     // maximum 160 characters), so the selected options are quoted, shortened (was counted:
     // "Selected: 2 options", when the other facts shrank first; deliberate change).
-    assert!(sum.contains("Selected: Annual plan with"), "{sum}");
+    // Tenth review: "Also @alex" is no recipient any more, the room it took flows to
+    // `Sends:` (4 fields shown, was 3), and the other facts keep their reserved minimum,
+    // which holds the options' count (was `Selected: Annual plan with…`).
+    assert!(sum.contains("Sends: 6 fields (4 shown)"), "{sum}");
+    assert!(sum.contains("Selected: 2 options"), "{sum}");
 }
 
 /// Sent fields are listed recipient- and amount-like first, then the ones Jarvis typed,

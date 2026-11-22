@@ -255,7 +255,7 @@ fn signal_of(el: &Element, tables: &[&[Phrase]]) -> Signal {
     let text = element_text(el);
     let toks = tokens(&text);
     let cat = match_tokens(&toks, tables).category;
-    let money = has_money(&text);
+    let money = crate::text::has_money_in(&text, Some(&toks));
     Signal {
         risk: if money {
             max_risk(cat, RiskCategory::Payment)

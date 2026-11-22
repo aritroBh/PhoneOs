@@ -432,36 +432,72 @@ fn clean(s: &str, max: usize) -> String {
     defang(&sanitize_screen_text_with_limit(&redact(s), max).replace('"', "'"))
 }
 
+/// The words that end a summary's fact headings (see [`defang`]).
+const HEADING_WORDS: &[&str] = &[
+    "screen", "selected", "account", "fields", "sends", "holds", "typed",
+];
+
+/// Whether `c` reads as a colon: `:` and its look-alikes (ratio, modifier letter, small and
+/// presentation forms; the fullwidth one is folded by sanitising before this).
+fn colon_like(c: char) -> bool {
+    matches!(
+        c,
+        ':' | '\u{2236}' | '\u{A789}' | '\u{02D0}' | '\u{02F8}' | '\u{FE13}' | '\u{FE55}'
+    )
+}
+
+/// The letters at the end of `folded` (look-alike folded, lower case), skipping trailing
+/// whitespace.
+fn last_word(folded: &[char]) -> String {
+    let end = folded
+        .iter()
+        .rposition(|c| !c.is_whitespace())
+        .map_or(0, |p| p + 1);
+    let head = folded.get(..end).unwrap_or_default();
+    let start = head
+        .iter()
+        .rposition(|c| !c.is_alphabetic())
+        .map_or(0, |p| p + 1);
+    head.get(start..).unwrap_or_default().iter().collect()
+}
+
 /// Screen text cannot pose as a summary's fact headings: a colon after the word "screen",
 /// "selected", "account", "fields", "sends", "holds" or "typed" ("Amounts on screen:",
 /// "Selected:", "To/Account:", "Fields:", "Sends:", "The form holds:", "Typed:"; the last
-/// three since the ninth review) is dropped.
+/// three since the ninth review) is dropped. Tenth review: the letters are compared after
+/// look-alike folding ([`crate::text::fold_char`]: Cyrillic, Greek, fullwidth and styled
+/// letters), colon look-alikes count as colons, and a heading word followed by a
+/// parenthesis ("To/Account (2 different):", "Amounts on screen (3 totals):", "Sends: 4
+/// fields (2 shown):") loses its colon too.
 fn defang(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
+    let mut folded: Vec<char> = Vec::with_capacity(s.len());
     for c in s.chars() {
-        if c == ':' {
-            let word: String = out
-                .trim_end()
-                .chars()
-                .rev()
-                .take_while(|c| c.is_alphabetic())
-                .collect::<Vec<char>>()
-                .into_iter()
-                .rev()
-                .flat_map(char::to_lowercase)
-                .collect();
+        if colon_like(c) {
+            let mut word = last_word(&folded);
+            if word.is_empty() {
+                // "… (2 different):": the word before the parenthesis.
+                let end = folded
+                    .iter()
+                    .rposition(|c| !c.is_whitespace())
+                    .map_or(0, |p| p + 1);
+                if end > 0 && folded.get(end - 1) == Some(&')') {
+                    if let Some(open) = folded
+                        .get(..end)
+                        .and_then(|h| h.iter().rposition(|c| *c == '('))
+                    {
+                        word = last_word(folded.get(..open).unwrap_or_default());
+                    }
+                }
+            }
             // The word may be glued to what is before it ("xSends:"): a heading's word at
             // the end of the letters before the colon is enough (ninth review).
-            if [
-                "screen", "selected", "account", "fields", "sends", "holds", "typed",
-            ]
-            .iter()
-            .any(|h| word.ends_with(h))
-            {
+            if HEADING_WORDS.iter().any(|h| word.ends_with(h)) {
                 continue;
             }
         }
         out.push(c);
+        folded.push(crate::text::fold_char(c));
     }
     out
 }
@@ -677,7 +713,8 @@ fn describe_with(el: &Element, max: usize) -> String {
         .find(|t| !t.trim().is_empty());
     match text {
         Some(t) => format!("\"{}\"", clean_label(t, max)),
-        None => format!("{} #{}", el.role.as_str(), el.index),
+        // An `Other` role's name is the tree's text (tenth review: cleaned like a label).
+        None => format!("{} #{}", clean(el.role.as_str(), 24), el.index),
     }
 }
 
@@ -893,6 +930,133 @@ struct AmountFact {
     charge: bool,
     /// The screen's own total: total wording in a text the app shows (not a field's value).
     total: bool,
+    /// Tenth review: the text is an exact total phrase ([`TOTAL_PHRASES`]) and its amount,
+    /// nothing else ("Order total $512.40"; not "Bundle total value $9,000.00").
+    exact: bool,
+    /// How close it is to the target ([`Closeness`]).
+    near: Closeness,
+}
+
+/// How close an element is to the target, smaller first: not in the target's row band,
+/// the depth (in the target's raw ancestors, innermost 0) of the nearest container holding
+/// both (0 for every element without the raw tree), and the distance between their
+/// centres.
+#[derive(Clone, Copy)]
+struct Closeness {
+    off_row: bool,
+    container: usize,
+    distance: f64,
+}
+
+impl Closeness {
+    fn cmp(&self, other: &Closeness) -> std::cmp::Ordering {
+        self.off_row
+            .cmp(&other.off_row)
+            .then(self.container.cmp(&other.container))
+            .then(self.distance.total_cmp(&other.distance))
+    }
+}
+
+/// The target and its raw ancestors (innermost first), for [`closeness`].
+struct Anchor<'a, 't> {
+    target: Option<&'a Element>,
+    ancestors: Vec<u32>,
+    tree: Option<&'a ScreenTree<'t>>,
+}
+
+impl<'a, 't> Anchor<'a, 't> {
+    fn new(target: Option<&'a Element>, tree: Option<&'a ScreenTree<'t>>) -> Self {
+        let ancestors = match (target, tree) {
+            (Some(t), Some(tr)) => tr.ancestors(t),
+            _ => Vec::new(),
+        };
+        Anchor {
+            target,
+            ancestors,
+            tree,
+        }
+    }
+
+    /// How close `e` is to the target (everything is equally close without a target).
+    fn closeness(&self, e: &Element) -> Closeness {
+        let Some(t) = self.target else {
+            return Closeness {
+                off_row: false,
+                container: 0,
+                distance: 0.0,
+            };
+        };
+        let off_row = t.frame.is_empty() || e.frame.is_empty() || !same_row(&t.frame, &e.frame);
+        let container = match self.tree {
+            Some(tr) => self
+                .ancestors
+                .iter()
+                .position(|a| tr.inside(e, *a))
+                .unwrap_or(self.ancestors.len()),
+            None => 0,
+        };
+        let distance = if t.frame.is_empty() || e.frame.is_empty() {
+            f64::MAX
+        } else {
+            let (a, b) = (t.frame.center(), e.frame.center());
+            let d = (a.x - b.x).hypot(a.y - b.y);
+            if d.is_finite() {
+                d
+            } else {
+                f64::MAX
+            }
+        };
+        Closeness {
+            off_row,
+            container,
+            distance,
+        }
+    }
+}
+
+/// Exact total phrases (tenth review): a text that is one of these and its amount, nothing
+/// else, is the screen's total before any sentence that merely contains "total".
+const TOTAL_PHRASES: &[&str] = &[
+    "total",
+    "order total",
+    "amount due",
+    "grand total",
+    "total due",
+    "you pay",
+    "pay",
+    "total amount",
+    "amount to pay",
+    "total to pay",
+    "due today",
+    "total due today",
+    "total today",
+    "balance due",
+    "estimated total",
+];
+
+/// Whether `text` is an exact total phrase with its amounts ([`TOTAL_PHRASES`]): its words
+/// outside the amounts, look-alike folded, are one of the phrases.
+fn exact_total(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let ranges = amount_ranges(&chars);
+    if ranges.is_empty() {
+        return false;
+    }
+    let mut rest = String::new();
+    let mut at = 0usize;
+    for &(a, b) in &ranges {
+        rest.extend(chars.get(at..a).unwrap_or_default());
+        rest.push(' ');
+        at = b;
+    }
+    rest.extend(chars.get(at..).unwrap_or_default());
+    let folded: String = rest.chars().map(crate::text::fold_char).collect();
+    let phrase = folded
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    TOTAL_PHRASES.contains(&phrase.as_str())
 }
 
 /// Whether `text` has charge wording: a word starting with total, due, pay, charge, bill
@@ -989,16 +1153,29 @@ fn max_amount(chars: &[char], ranges: &[(usize, usize)]) -> f64 {
 ///   as `Name: value` (sixth review: no other field's value is listed here, see
 ///   `summary_with`).
 ///
-/// Order: the charge first (field amounts, and texts with charge wording, see
-/// `has_charge_words`), then the rest; largest first within each (ties: screen order). The
-/// facts list shows the first [`MAX_LISTED_AMOUNTS`] and always the largest amount on the
-/// screen, whatever its wording (see `facts_suffix`).
-fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountFact> {
+/// Order (tenth review): exact total phrases ([`TOTAL_PHRASES`]), then other texts with
+/// total wording, each nearest the target first ([`Closeness`]); then the other charges
+/// (field amounts, and texts with charge wording, see `has_charge_words`); then the rest;
+/// largest first after that (ties: screen order). The slot shows the first
+/// [`MAX_LISTED_AMOUNTS`], always with the first, the nearest total and the largest amount
+/// on the screen (see `amounts_slot`).
+fn amount_facts(screen: &CompactScreen, anchor: &Anchor<'_, '_>) -> Vec<AmountFact> {
+    let target = anchor.target;
     let mut out: Vec<AmountFact> = Vec::new();
-    let push = |out: &mut Vec<AmountFact>, text: String, value: f64, charge: bool, field: bool| {
-        if !out.iter().any(|f| f.text == text) {
+    // Each text once (tenth review: a set, not a scan of what is already listed).
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut push = |out: &mut Vec<AmountFact>,
+                    e: &Element,
+                    text: String,
+                    value: f64,
+                    charge: bool,
+                    field: bool| {
+        if seen.insert(text.clone()) {
+            let exact = !field && exact_total(&text);
             out.push(AmountFact {
-                total: !field && has_total_words(&text),
+                total: !field && (exact || has_total_words(&text)),
+                exact,
+                near: anchor.closeness(e),
                 text,
                 value: if value.is_finite() { value } else { -1.0 },
                 charge,
@@ -1041,7 +1218,7 @@ fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountF
                 } else {
                     format!("{name}: {v}")
                 };
-                push(&mut out, text, value, true, true);
+                push(&mut out, e, text, value, true, true);
             }
             continue;
         }
@@ -1127,15 +1304,35 @@ fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountF
             row.join(" ")
         };
         let charge = has_charge_words(&text);
-        push(&mut out, text, value, charge, false);
+        push(&mut out, e, text, value, charge, false);
     }
     // Stable: equal keys keep screen order. The screen's own total first (ninth review: a
     // text with total wording, never a field's value), then the other charges, then the
-    // rest; largest first within each.
+    // rest. Tenth review: among the totals, exact total phrases ("Order total $512.40")
+    // before sentences that merely contain "total", and within each the nearest to the
+    // target first (same row, same container, distance), not the largest; the other
+    // charges and the rest largest first.
+    let tier = |f: &AmountFact| -> u8 {
+        if f.exact {
+            0
+        } else if f.total {
+            1
+        } else if f.charge {
+            2
+        } else {
+            3
+        }
+    };
     out.sort_by(|a, b| {
-        b.total
-            .cmp(&a.total)
-            .then(b.charge.cmp(&a.charge))
+        let (ta, tb) = (tier(a), tier(b));
+        ta.cmp(&tb)
+            .then_with(|| {
+                if ta <= 1 {
+                    a.near.cmp(&b.near)
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
             .then(b.value.total_cmp(&a.value))
     });
     out
@@ -1328,57 +1525,6 @@ fn fact_text(el: &Element) -> String {
     }
 }
 
-/// Whether `word` looks like who is paid or messaged: a phone number (7 to 15 digits with
-/// `+ ( ) - .` and spaces), a masked account or card suffix (`••••4521`, `****4521`,
-/// `x4521`), an email address or an `@handle`.
-fn recipient_word(word: &str) -> bool {
-    let w = word.trim_matches(|c: char| matches!(c, ',' | ';' | '(' | ')' | '.' | ':'));
-    if w.is_empty() {
-        return false;
-    }
-    // Email address or @handle.
-    if let Some(at) = w.find('@') {
-        let (user, domain) = (w.get(..at).unwrap_or(""), w.get(at + 1..).unwrap_or(""));
-        let handle = user.is_empty()
-            && domain.chars().count() >= 2
-            && domain
-                .chars()
-                .all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '-'));
-        let email = !user.is_empty() && domain.contains('.') && !domain.starts_with('.');
-        return handle || email;
-    }
-    // Masked suffix: mask characters followed by 2 to 6 digits.
-    let masks = |c: char| matches!(c, '•' | '*' | '·' | '●' | '∙' | 'x' | 'X' | '…');
-    let digits_after_mask = w.trim_start_matches(masks);
-    digits_after_mask.len() < w.len()
-        && (2..=6).contains(&digits_after_mask.chars().count())
-        && digits_after_mask.chars().all(|c| c.is_ascii_digit())
-}
-
-/// Whether `text` contains a phone number: a run of 7 to 15 digits written with only
-/// `+ ( ) - .` and single spaces between them.
-fn has_phone_number(text: &str) -> bool {
-    let mut digits = 0usize;
-    let mut prev_space = false;
-    for c in text.chars().chain(std::iter::once('|')) {
-        if c.is_ascii_digit() {
-            digits += 1;
-            prev_space = false;
-        } else if matches!(c, '+' | '(' | ')' | '-' | '.')
-            || (c == ' ' && !prev_space && digits > 0)
-        {
-            prev_space = c == ' ';
-        } else {
-            if (7..=15).contains(&digits) {
-                return true;
-            }
-            digits = 0;
-            prev_space = false;
-        }
-    }
-    false
-}
-
 /// Words that say who is paid or messaged ("To", "Pay to", "Recipient", "Send to",
 /// "Account").
 const RECIPIENT_WORDS: &[&str] = &[
@@ -1390,21 +1536,6 @@ const RECIPIENT_WORDS: &[&str] = &[
     "account",
     "acct",
     "iban",
-];
-/// Words next to which a long number is a reference, not a recipient.
-const REFERENCE_WORDS: &[&str] = &[
-    "order",
-    "reference",
-    "ref",
-    "invoice",
-    "help",
-    "support",
-    "tracking",
-    "confirmation",
-    "booking",
-    "receipt",
-    "ticket",
-    "case",
 ];
 
 /// Headings that introduce who is paid or messaged, lower case ("Pay to: Mallory's Merch
@@ -1460,18 +1591,38 @@ fn has_word(text: &str, table: &[&str]) -> bool {
         .any(|w| table.contains(&w.as_str()))
 }
 
-/// The texts on `screen` (not the target's, never a secure or protected field's) that say
-/// who is paid or messaged: phone numbers, masked account or card suffixes, email
-/// addresses, `@handles`. Money texts are left to the amounts. Ranked: texts with
-/// recipient wording (to, pay to, recipient, send to, account) first, then other
-/// recipients, and last a 7–15 digit number next to order / reference / invoice / help
-/// wording; within each, a selected option (the chosen card or account) first, then the
-/// closest to the target (screen order without a target). All
-/// are returned: the list shows [`MAX_LISTED_RECIPIENTS`] and counts the rest.
-fn recipient_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<String> {
-    let mut ranked: Vec<(u8, bool, f64, usize, String)> = Vec::new();
+/// Starts of a quoted message's header lines (tenth review): a text starting with one of
+/// these (whole words, look-alikes folded), or holding the word "wrote", is never a
+/// recipient ("From: dave@…", "Sent from alice@…", "Cc: carol@…", "On Mon, bob@… wrote:").
+const QUOTE_STARTS: &[&str] = &["from", "sent from", "cc", "bcc", "reply to", "reply-to"];
+
+/// Whether `text` reads as a quoted message's header line ([`QUOTE_STARTS`]).
+fn quoted_header(text: &str) -> bool {
+    let folded: String = text.trim().chars().map(crate::text::fold_char).collect();
+    let starts = QUOTE_STARTS.iter().any(|q| {
+        folded
+            .strip_prefix(q)
+            .is_some_and(|rest| !rest.chars().next().is_some_and(char::is_alphanumeric))
+    });
+    starts || has_word(&folded, &["wrote"])
+}
+
+/// The proper recipient headings on `screen` (not the target, never a secure or protected
+/// field's text), nearest to the target first (screen order without a target): a recipient
+/// heading followed by a colon and a name ("Pay to: Mallory's Merch LLC", "To: Alice
+/// Smith"), or a heading alone ("Pay to") joined with the static text beside it or right
+/// under it. Tenth review: nothing else is a recipient — free text that merely mentions
+/// "to" or "account" next to an address, a phone number or an `@handle` (a chat bubble,
+/// a quoted mail line) is not, and a quoted header ([`quoted_header`]) never is; the
+/// fields of the target's form named like a recipient are listed before these (see
+/// `summarize_with`). Money texts are left to the amounts. All are returned: the list
+/// shows [`MAX_LISTED_RECIPIENTS`] and counts the rest.
+fn recipient_facts(screen: &CompactScreen, anchor: &Anchor<'_, '_>) -> Vec<String> {
+    let target = anchor.target;
+    let mut ranked: Vec<(Closeness, usize, String)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let els = &screen.elements;
-    let mut joined: Vec<u32> = Vec::new();
+    let mut joined: std::collections::HashSet<u32> = std::collections::HashSet::new();
     for (k, e) in els.iter().enumerate().filter(|(_, e)| {
         !e.secure
             && e.role != Role::Key
@@ -1494,45 +1645,29 @@ fn recipient_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<Stri
                             && n.frame.y - e.frame.max_y() <= STACKED_LABEL_GAP))
             }) {
                 t = format!("{}: {}", t.trim_end_matches(':').trim(), n.label.trim());
-                joined.push(n.index);
+                joined.insert(n.index);
             }
         }
-        if t.is_empty() || has_money(&t) || ranked.iter().any(|(_, _, _, _, x)| *x == t) {
+        if t.is_empty() || has_money(&t) || !recipient_heading(&t) || quoted_header(&t) {
             continue;
         }
-        let heading = recipient_heading(&t);
-        let word = t.split_whitespace().any(recipient_word);
-        let phone = has_phone_number(&t);
-        if !word && !phone && !heading {
+        if !seen.insert(t.clone()) {
             continue;
         }
-        let tier = if heading || has_word(&t, RECIPIENT_WORDS) {
-            0
-        } else if !word && has_word(&t, REFERENCE_WORDS) {
-            2
-        } else {
-            1
-        };
-        let distance = target
-            .filter(|tg| !tg.frame.is_empty() && !e.frame.is_empty())
-            .map_or(0.0, |tg| {
-                let (a, b) = (tg.frame.center(), e.frame.center());
-                let d = (a.x - b.x).hypot(a.y - b.y);
-                if d.is_finite() {
-                    d
-                } else {
-                    f64::MAX
-                }
-            });
-        ranked.push((tier, !e.selected, distance, k, t));
+        ranked.push((anchor.closeness(e), k, t));
     }
-    ranked.sort_by(|a, b| {
-        a.0.cmp(&b.0)
-            .then(a.1.cmp(&b.1))
-            .then(a.2.total_cmp(&b.2))
-            .then(a.3.cmp(&b.3))
-    });
-    ranked.into_iter().map(|(_, _, _, _, t)| t).collect()
+    ranked.sort_by(|a, b| a.0.distance.total_cmp(&b.0.distance).then(a.1.cmp(&b.1)));
+    ranked.into_iter().map(|(_, _, t)| t).collect()
+}
+
+/// The name a recipient entry gives, for counting distinct recipients (tenth review): a
+/// heading pair's name after its heading, a field's value; letters, digits and `@`,
+/// look-alike folded. Empty when it names no one.
+fn recipient_key(name: &str) -> String {
+    name.chars()
+        .map(crate::text::fold_char)
+        .filter(|c| c.is_alphanumeric() || *c == '@')
+        .collect()
 }
 
 /// One fact entry for the summary: cleaned like a label (amounts kept when shortened), with
@@ -1547,6 +1682,9 @@ struct Facts {
     recipients: Vec<String>,
     selected: Vec<String>,
     fields: Vec<String>,
+    /// Tenth review: the facts were read from part of a large screen only
+    /// ([`MAX_FACT_ELEMENTS`]): says so, first among the other facts.
+    note: String,
 }
 
 /// `Heading: a; b; c and N more` with at most `max` entries, each `entry`-formatted; with
@@ -1592,16 +1730,6 @@ fn hard_cut(s: &str, n: usize) -> String {
     out
 }
 
-/// `s`'s first `n` characters, followed by `…` when it is longer.
-fn prefix_cut(s: &str, n: usize) -> String {
-    if n_chars(s) <= n {
-        return s.to_owned();
-    }
-    let mut out: String = s.chars().take(n).collect();
-    out.push('…');
-    out
-}
-
 /// A slot's text within its allotment (see `summarize_with`).
 fn fit_slot(text: String, allot: usize) -> String {
     debug_assert!(
@@ -1635,11 +1763,16 @@ fn amount_alone(f: &AmountFact) -> String {
 
 /// Slot 2 (ninth review): `. Amounts on screen: Total $5,000.00; …; and N more`, within
 /// `budget` characters. The entries are the first [`MAX_LISTED_AMOUNTS`] in rank order
-/// (total wording first, then other charges, then the rest; see `amount_facts`), with the
-/// largest amount on the screen always among them. Shrinking: each entry to 40, 30, 24
-/// characters, then to its amount alone, then fewer entries — never the first (the total)
-/// nor the largest. What is left out is counted (`and N more`). Its minimum (two amounts
-/// alone and the count) fits [`SLOT_AMOUNTS`]'s minimum.
+/// (exact total phrases first, then other total wording, then other charges, then the rest;
+/// see `amount_facts`), with three always among them: the first, the total-worded amount
+/// nearest the target (tenth review) and the largest amount on the screen. When the screen
+/// shows more than one distinct total-worded amount the heading says how many
+/// (`. Amounts on screen (3 totals): …`, tenth review), so the owner is told the page names
+/// several totals rather than one being picked silently. Shrinking: each entry to 40, 30,
+/// 24 characters, then to its amount alone, then fewer entries — never one of the three.
+/// What is left out is counted (`and N more`). Its minimum (three amounts alone, the
+/// heading and the count) fits [`SLOT_AMOUNTS`]'s minimum for amounts of up to 13
+/// characters.
 fn amounts_slot(amounts: &[AmountFact], budget: usize) -> String {
     if amounts.is_empty() {
         return String::new();
@@ -1652,13 +1785,45 @@ fn amounts_slot(amounts: &[AmountFact], budget: usize) -> String {
             _ => Some((k, f.value)),
         })
         .map_or(0, |(k, _)| k);
-    let mut picked: Vec<usize> = (0..amounts.len().min(MAX_LISTED_AMOUNTS)).collect();
-    if largest >= MAX_LISTED_AMOUNTS {
-        if let Some(last) = picked.last_mut() {
-            *last = largest;
+    let nearest_total = amounts
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.total)
+        .min_by(|(_, a), (_, b)| a.near.cmp(&b.near))
+        .map(|(k, _)| k);
+    let mut keep: Vec<usize> = vec![0];
+    for k in nearest_total.into_iter().chain(std::iter::once(largest)) {
+        if !keep.contains(&k) {
+            keep.push(k);
         }
     }
-    let render = |idx: &[usize], entry: usize| -> String {
+    keep.sort_unstable();
+    let mut picked: Vec<usize> = (0..amounts.len().min(MAX_LISTED_AMOUNTS)).collect();
+    for &k in &keep {
+        if !picked.contains(&k) {
+            if let Some(pos) = picked.iter().rposition(|i| !keep.contains(i)) {
+                if let Some(slot) = picked.get_mut(pos) {
+                    *slot = k;
+                }
+            }
+        }
+    }
+    picked.sort_unstable();
+    // Distinct total-worded amounts (by value).
+    let mut totals: Vec<f64> = amounts
+        .iter()
+        .filter(|f| f.total)
+        .map(|f| f.value)
+        .collect();
+    totals.sort_by(f64::total_cmp);
+    totals.dedup_by(|a, b| a.total_cmp(b).is_eq());
+    let plain = ". Amounts on screen: ";
+    let heading = if totals.len() > 1 {
+        format!(". Amounts on screen ({} totals): ", totals.len())
+    } else {
+        plain.to_owned()
+    };
+    let render_with = |idx: &[usize], entry: usize, heading: &str| -> String {
         let shown: Vec<String> = idx
             .iter()
             .filter_map(|&k| amounts.get(k))
@@ -1676,20 +1841,16 @@ fn amounts_slot(amounts: &[AmountFact], budget: usize) -> String {
         } else {
             String::new()
         };
-        format!(". Amounts on screen: {}{tail}", shown.join("; "))
+        format!("{heading}{}{tail}", shown.join("; "))
     };
+    let render = |idx: &[usize], entry: usize| render_with(idx, entry, &heading);
     for entry in [40, 30, 24, 0] {
         let t = render(&picked, entry);
         if n_chars(&t) <= budget {
             return t;
         }
     }
-    // Fewer entries, amounts alone: never the first nor the largest.
-    let keep: Vec<usize> = if largest == 0 {
-        vec![0]
-    } else {
-        vec![0, largest]
-    };
+    // Fewer entries, amounts alone: never the first, the nearest total nor the largest.
     for k in (keep.len()..picked.len()).rev() {
         let mut idx: Vec<usize> = picked
             .iter()
@@ -1704,34 +1865,67 @@ fn amounts_slot(amounts: &[AmountFact], budget: usize) -> String {
             return t;
         }
     }
-    render(&keep, 0)
+    let t = render(&keep, 0);
+    if n_chars(&t) <= budget {
+        return t;
+    }
+    // Very long amounts: the plain heading (the count of totals goes first).
+    render_with(&keep, 0, plain)
 }
 
-/// Slot 3 (ninth review): `. To/Account: Pay to: Mallory's Merch LLC; To: "@mallory"`,
-/// within `budget` characters: the recipient facts read from the screen first, then the
-/// sent fields named like a recipient (`entries`, already cleaned). At most
-/// [`MAX_LISTED_RECIPIENTS`] entries, each cut from its end (a payee's name starts it) to
-/// 60, then 40 characters, then fewer entries, never fewer than the first at 40; the rest
-/// counted (`and N more`). Returns the text and, per entry, whether it was shown whole.
-fn recipients_slot(entries: &[String], budget: usize) -> (String, Vec<bool>) {
+/// Characters kept from the end of a recipient entry that must be cut (tenth review): an
+/// account's or card's distinguishing suffix ("… ending 4471").
+const RECIPIENT_TAIL_CHARS: usize = 12;
+
+/// `s` within `n` characters keeping its start and its last [`RECIPIENT_TAIL_CHARS`]
+/// characters (`Acme Payments Ltd … ending 4471`; tenth review: a payee is no longer cut
+/// from its end only, so the suffix that tells two accounts apart survives).
+fn ends_cut(s: &str, n: usize) -> String {
+    let len = n_chars(s);
+    if len <= n {
+        return s.to_owned();
+    }
+    let tail = RECIPIENT_TAIL_CHARS.min(n / 2);
+    let head = n.saturating_sub(tail + 3);
+    let h: String = s.chars().take(head).collect();
+    let t: String = s.chars().skip(len - tail).collect();
+    format!("{} … {}", h.trim_end(), t.trim_start())
+}
+
+/// Slot 3 (ninth review): `. To/Account: To: "@mallory"; Pay to: Mallory's Merch LLC`,
+/// within `budget` characters (`entries`, already cleaned, in the order of
+/// `summarize_with`: tenth review, what the action sends first). At most
+/// [`MAX_LISTED_RECIPIENTS`] entries, each cut to 60, then 40 characters keeping its start
+/// and its last [`RECIPIENT_TAIL_CHARS`] ([`ends_cut`]), then fewer entries, then the first
+/// at 32 and 24; the rest counted (`and N more`). When the entries name more than one
+/// distinct recipient (`distinct`) the heading says so: `. To/Account (2 different): …`
+/// (tenth review: never a silent pick). Returns the text and, per entry, whether it was
+/// shown whole.
+fn recipients_slot(entries: &[String], distinct: usize, budget: usize) -> (String, Vec<bool>) {
     let mut whole = vec![false; entries.len()];
     if entries.is_empty() {
         return (String::new(), whole);
     }
+    let heading = if distinct > 1 {
+        format!(". To/Account ({distinct} different): ")
+    } else {
+        ". To/Account: ".to_owned()
+    };
     let render = |k: usize, cap: usize| -> String {
-        let shown: Vec<String> = entries.iter().take(k).map(|e| prefix_cut(e, cap)).collect();
+        let shown: Vec<String> = entries.iter().take(k).map(|e| ends_cut(e, cap)).collect();
         let more = entries.len().saturating_sub(k);
         let tail = if more > 0 {
             format!(" and {more} more")
         } else {
             String::new()
         };
-        format!(". To/Account: {}{tail}", shown.join("; "))
+        format!("{heading}{}{tail}", shown.join("; "))
     };
     let most = entries.len().min(MAX_LISTED_RECIPIENTS);
     let mut steps: Vec<(usize, usize)> = vec![(most, 60), (most, 40)];
     steps.extend((1..most).rev().map(|k| (k, 40)));
-    let mut chosen = (1, 40);
+    steps.extend([(1, 32), (1, 24)]);
+    let mut chosen = (1, 24);
     for (k, cap) in steps {
         if n_chars(&render(k, cap)) <= budget {
             chosen = (k, cap);
@@ -1765,7 +1959,8 @@ fn other_slot(next_to: &str, under: &str, facts: &Facts, budget: usize) -> (Stri
         if !under.is_empty() && u > 0 {
             inline.push_str(&format!(" under \"{}\"", clean_label(under, u)));
         }
-        let mut rest = String::new();
+        // The cap note first: it is the last to be cut.
+        let mut rest = facts.note.clone();
         if !facts.selected.is_empty() {
             let part = if sel == 0 {
                 Some(format!("Selected: {} options", facts.selected.len()))
@@ -2302,9 +2497,15 @@ fn what_is_sent<'a>(
             .and_then(|r| r.value.as_deref())
             .map_or(0, n_chars)
     };
+    // Evidence that Jarvis typed in a field (its place in `Sends:` only, tenth review): the
+    // fingerprint taken when typing, or its value being a text Jarvis typed.
     let typed_in = |e: &Element| {
-        raw.get(e.index)
-            .is_some_and(|r| typed.iter().any(|x| x.field == r.fingerprint))
+        raw.get(e.index).is_some_and(|r| {
+            let v = r.value.as_deref().map(str::trim).unwrap_or_default();
+            typed
+                .iter()
+                .any(|x| x.field == r.fingerprint || (!v.is_empty() && x.text.trim() == v))
+        })
     };
     let form = || form_of(t, screen, tree);
     let (form, mode, first) = match action {
@@ -2539,6 +2740,17 @@ fn sends_slot(sent: &Sent<'_>, above: &[bool], budget: usize) -> String {
 /// holds a secure field, and every filled non-secure field is named like an account —
 /// email, username, user, login, ID, account, phone, mobile) a tap is not presumed to send
 /// what was typed; its own label is still classified.
+///
+/// **Tenth review: the "Jarvis typed here" state.** The typed field is no longer
+/// re-identified: its fingerprint hashes the row's merged label and context, so a
+/// self-drawn placeholder that hides once text is in, a counter "0/500" → "12/500", or the
+/// app reformatting the text lost the presumption. Now `typed` being non-empty *is* the
+/// state — the session passes the texts it typed in the app in front, and clears them for
+/// that app once an approved submit has been carried out (see the agent's
+/// `Session::typed_here`) — and while it is set a tap on a control (exclusions as above)
+/// whose form holds **any** filled, non-search, non-secure text input, listed or not, is
+/// presumed to submit it. The fingerprint and typed-text matches only order `Sends:`
+/// (typed fields first).
 pub fn presumed_submit(
     action: &Action,
     screen: &CompactScreen,
@@ -2586,14 +2798,14 @@ pub fn presumed_submit(
             || has_word(name, &["search"])
             || has_word(placeholder.unwrap_or_default(), &["search"])
     };
+    // Tenth review: any filled, non-search, non-secure text input of the form, listed or
+    // not — the typed field is no longer re-identified (its fingerprint changes when a
+    // placeholder hides or a counter moves, the app reformats the text, …).
     let listed = form.listed.iter().any(|e| {
         !search_named(&e.role, &field_name(e), e.placeholder.as_deref())
-            && !e.secure
+            && !is_secure_input(e)
             && field_value(e).is_some()
-            && typed.iter().any(|x| x.field == e.fingerprint)
     });
-    // Ninth review: the typed field may have scrolled out of the list; it is still in the
-    // form's unlisted inputs, found by its fingerprint or by the text Jarvis typed.
     listed
         || form.unlisted.iter().any(|r| {
             let name = r
@@ -2604,7 +2816,8 @@ pub fn presumed_submit(
                 .unwrap_or_default();
             !search_named(&r.role, name, r.placeholder.as_deref())
                 && !r.secure
-                && raw_typed(r, typed)
+                && r.role != Role::SecureTextField
+                && r.value.as_deref().is_some_and(|v| !v.trim().is_empty())
         })
 }
 
@@ -2711,6 +2924,111 @@ fn read_capped(raw: &CompactScreen) -> CompactScreen {
     out
 }
 
+/// Most elements a question reads its facts from besides the text inputs and the target
+/// (tenth review): on a larger screen the ones nearest the target (the first ones without a
+/// target), and the question says so (`. Facts from the 250 nearest elements`).
+const MAX_FACT_ELEMENTS: usize = 250;
+/// Most characters of one element's label, value or placeholder read for the facts (tenth
+/// review; the target's and the text inputs' excepted): a longer text keeps its first three
+/// quarters and its last quarter of this, so a trailing amount is still read.
+const MAX_FACT_TEXT_CHARS: usize = 500;
+
+/// `s` within [`MAX_FACT_TEXT_CHARS`] characters: its head and its tail.
+fn fact_cap(s: &str) -> String {
+    if s.len() <= MAX_FACT_TEXT_CHARS {
+        return s.to_owned();
+    }
+    let n = n_chars(s);
+    if n <= MAX_FACT_TEXT_CHARS {
+        return s.to_owned();
+    }
+    let head = MAX_FACT_TEXT_CHARS * 3 / 4;
+    let tail = MAX_FACT_TEXT_CHARS - head - 1;
+    let mut out: String = s.chars().take(head).collect();
+    out.push(' ');
+    out.extend(s.chars().skip(n - tail));
+    out
+}
+
+/// The part of `raw` a question reads (tenth review, bounded work): every text input (what
+/// a submit sends is never cut; their values are bounded by [`MAX_READ_VALUE_CHARS`]), the
+/// target, and the [`MAX_FACT_ELEMENTS`] other elements nearest the target by distance
+/// between centres (ties: screen order; the first ones without a target), in screen order,
+/// with the texts of the others cut to [`MAX_FACT_TEXT_CHARS`]. Also whether elements were
+/// left out.
+fn fact_screen(raw: &CompactScreen, target: Option<u32>) -> (CompactScreen, bool) {
+    let anchor = target
+        .and_then(|i| raw.get(i))
+        .filter(|t| !t.frame.is_empty())
+        .map(|t| t.frame.center());
+    let mut others: Vec<(f64, usize)> = raw
+        .elements
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| !e.role.is_text_input() && Some(e.index) != target)
+        .map(|(k, e)| {
+            let d = match anchor {
+                Some(a) if !e.frame.is_empty() => {
+                    let c = e.frame.center();
+                    let d = (a.x - c.x).hypot(a.y - c.y);
+                    if d.is_finite() {
+                        d
+                    } else {
+                        f64::MAX
+                    }
+                }
+                Some(_) => f64::MAX,
+                None => 0.0,
+            };
+            (d, k)
+        })
+        .collect();
+    let capped = others.len() > MAX_FACT_ELEMENTS;
+    let long = |s: &str| s.len() > MAX_FACT_TEXT_CHARS;
+    let any_long = raw.elements.iter().any(|e| {
+        long(&e.label)
+            || e.value.as_deref().is_some_and(long)
+            || e.placeholder.as_deref().is_some_and(long)
+    });
+    if !capped && !any_long {
+        return (raw.clone(), false);
+    }
+    if capped {
+        others.select_nth_unstable_by(MAX_FACT_ELEMENTS, |a, b| {
+            a.0.total_cmp(&b.0).then(a.1.cmp(&b.1))
+        });
+        others.truncate(MAX_FACT_ELEMENTS);
+    }
+    let kept: std::collections::HashSet<usize> = others.into_iter().map(|(_, k)| k).collect();
+    let elements = raw
+        .elements
+        .iter()
+        .enumerate()
+        .filter_map(|(k, e)| {
+            if e.role.is_text_input() || Some(e.index) == target {
+                return Some(e.clone());
+            }
+            if !kept.contains(&k) {
+                return None;
+            }
+            let mut e = e.clone();
+            e.label = fact_cap(&e.label);
+            e.value = e.value.as_deref().map(fact_cap);
+            e.placeholder = e.placeholder.as_deref().map(fact_cap);
+            Some(e)
+        })
+        .collect();
+    let out = CompactScreen {
+        app_bundle_id: raw.app_bundle_id.clone(),
+        app_name: raw.app_name.clone(),
+        size: raw.size,
+        keyboard_visible: raw.keyboard_visible,
+        elements,
+        cues: raw.cues.clone(),
+    };
+    (out, capped)
+}
+
 /// A sent field as a `To/Account:` entry: `Name: "value"`.
 fn recipient_entry(f: &SentField) -> String {
     match f.value.as_deref() {
@@ -2740,22 +3058,24 @@ fn summarize_with(
     return_only: bool,
     max: usize,
 ) -> String {
-    // Facts and quoted labels come from the prompt's label-aware redaction, of values cut
-    // to a bounded length first (ninth review).
-    let redacted = redact_screen(&read_capped(raw));
-    let screen = &redacted;
     // Actions in the foreground app state the screen's facts after the action itself.
-    let target = match action {
+    let target_index = match action {
         Action::Tap { element } | Action::LongPress { element, .. } | Action::Clear { element } => {
-            screen.get(*element)
+            Some(*element)
         }
-        Action::Type { element, .. } => type_target(*element, screen),
-        Action::Scroll { element, .. } | Action::Swipe { element, .. } => {
-            element.and_then(|i| screen.get(i))
-        }
-        Action::TapPoint { x, y } => crate::classify::tap_point(*x, *y, screen).1,
+        Action::Type { element, .. } => type_target(*element, raw).map(|e| e.index),
+        Action::Scroll { element, .. } | Action::Swipe { element, .. } => *element,
+        Action::TapPoint { x, y } => crate::classify::tap_point(*x, *y, raw).1.map(|e| e.index),
         _ => None,
     };
+    // Facts and quoted labels come from the prompt's label-aware redaction, of values cut
+    // to a bounded length first (ninth review), on a bounded part of the screen (tenth
+    // review: the text inputs, the target and the elements nearest it, see `fact_screen`).
+    let (reduced, capped) = fact_screen(raw, target_index);
+    let redacted = redact_screen(&read_capped(&reduced));
+    let screen = &redacted;
+    let target = target_index.and_then(|i| screen.get(i));
+    let anchor = Anchor::new(target, tree);
     let mut sent = what_is_sent(
         action,
         target,
@@ -2775,14 +3095,19 @@ fn summarize_with(
     );
     let facts = if with_facts {
         Facts {
-            amounts: amount_facts(screen, target),
+            amounts: amount_facts(screen, &anchor),
             recipients: if pays {
-                recipient_facts(screen, target)
+                recipient_facts(screen, &anchor)
             } else {
                 Vec::new()
             },
             selected: selected_facts(screen, target),
             fields: field_facts(screen, raw, target, typed, &sent.listed),
+            note: match (capped, target) {
+                (false, _) => String::new(),
+                (true, Some(_)) => format!(". Facts from the {MAX_FACT_ELEMENTS} nearest elements"),
+                (true, None) => format!(". Facts from the first {MAX_FACT_ELEMENTS} elements"),
+            },
         }
     } else {
         Facts {
@@ -2790,22 +3115,60 @@ fn summarize_with(
             recipients: Vec::new(),
             selected: Vec::new(),
             fields: Vec::new(),
+            note: String::new(),
         }
     };
-    // `To/Account:` entries: the recipients read from the screen, then the sent fields
-    // named like a recipient.
+    // `To/Account:` entries (tenth review), most trustworthy first: (1) what the action
+    // sends — the form's fields named like a recipient, with their values; (2) the proper
+    // recipient headings on the screen, nearest to the target first. Nothing else.
     let cap = crate::sanitize::MAX_SCREEN_TEXT_CHARS;
-    let mut entries: Vec<String> = facts
-        .recipients
-        .iter()
-        .map(|t| clean(t, cap).replace(';', ","))
-        .collect();
-    let mut entry_field: Vec<Option<usize>> = vec![None; entries.len()];
+    let mut entries: Vec<String> = Vec::new();
+    let mut entry_field: Vec<Option<usize>> = Vec::new();
+    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // A recipient-named field that names no one (empty, or hidden) is listed after the
+    // heading pairs: it must not take the place of a payee the screen names.
+    let mut unnamed: Vec<(String, usize)> = Vec::new();
     if pays {
         for (i, f) in sent.fields.iter().enumerate().filter(|(_, f)| f.recipient) {
+            let key = recipient_key(f.value.as_deref().unwrap_or_default());
+            if key.is_empty() {
+                unnamed.push((recipient_entry(f), i));
+                continue;
+            }
             entries.push(recipient_entry(f));
             entry_field.push(Some(i));
+            names.insert(key);
         }
+    }
+    for t in &facts.recipients {
+        let entry = clean(t, cap).replace(';', ",");
+        if entries.contains(&entry) {
+            continue;
+        }
+        let key = recipient_key(
+            split_recipient_heading(t)
+                .unwrap_or(t)
+                .trim_start()
+                .trim_start_matches(':'),
+        );
+        if !key.is_empty() {
+            names.insert(key);
+        }
+        entries.push(entry);
+        entry_field.push(None);
+    }
+    // When both tiers hold entries, the nearest heading pair is shown second, right after
+    // the first sent field: a disagreement shows both sides within the first two entries.
+    let fields_n = entry_field.iter().filter(|f| f.is_some()).count();
+    if fields_n > 1 && fields_n < entries.len() {
+        let e = entries.remove(fields_n);
+        entries.insert(1, e);
+        let f = entry_field.remove(fields_n);
+        entry_field.insert(1, f);
+    }
+    for (e, i) in unnamed {
+        entries.push(e);
+        entry_field.push(Some(i));
     }
     let (next_to, under) = match (action, target) {
         (Action::Tap { .. } | Action::LongPress { .. }, Some(t)) => press_context(t, screen, tree),
@@ -2814,7 +3177,8 @@ fn summarize_with(
     let other = !(next_to.is_empty()
         && under.is_empty()
         && facts.selected.is_empty()
-        && facts.fields.is_empty());
+        && facts.fields.is_empty()
+        && facts.note.is_empty());
     let present = [
         true,
         !facts.amounts.is_empty(),
@@ -2841,7 +3205,7 @@ fn summarize_with(
     room = room.saturating_sub(n_chars(&amounts));
     // (3) The recipients.
     let a3 = slots.allot(2, room);
-    let (recipients, whole) = recipients_slot(&entries, a3);
+    let (recipients, whole) = recipients_slot(&entries, names.len(), a3);
     let recipients = fit_slot(recipients, a3);
     room = room.saturating_sub(n_chars(&recipients));
     let mut above = vec![false; sent.fields.len()];
@@ -3093,7 +3457,9 @@ fn action_line(
                         serde_json::Value::String(s) => s.clone(),
                         other => other.to_string(),
                     };
-                    parts.push(format!("{}: {}", clean(k, 30), clean(&v, 40)));
+                    // The colon is ours: a key named like a heading ("Sends") must not
+                    // make one (tenth review).
+                    parts.push(defang(&format!("{}: {}", clean(k, 30), clean(&v, 40))));
                 }
             }
             if parts.is_empty() {

@@ -1991,9 +1991,12 @@ fn a_venmo_like_payment_states_who_how_much_and_what_for() {
     // for? (filled)"; deliberate change). Ninth review: a sent field's name has its quotes
     // neutralised and is put in single quotes when it holds more than letters, digits and
     // spaces (was `What's it for?: "…"`; deliberate change).
+    // Tenth review (H2): a payee shown without a heading and not in a form field (a name
+    // and handle under an avatar) is no longer listed as a recipient (a documented known
+    // gap; "To/Account: @alex-smith-42" was dropped, deliberate change).
     assert_eq!(
         sum,
-        "Tap \"Pay\" in Example. Sends: Amount: \"120\"; 'What\u{2019}s it for?': \"Concert tickets\". Amounts on screen: Amount: 120. To/Account: @alex-smith-42"
+        "Tap \"Pay\" in Example. Sends: Amount: \"120\"; 'What\u{2019}s it for?': \"Concert tickets\". Amounts on screen: Amount: 120"
     );
     // Sixth review: the note shows only when Jarvis typed it (was always quoted; deliberate
     // change, see `summary_with`).
@@ -2034,10 +2037,10 @@ fn a_card_list_names_the_paying_account() {
         at5(button(4, "Pay now"), 16.0, 700.0, 361.0, 50.0),
     ]);
     let sum = summarize(&tap(4), &s, None);
-    assert!(
-        sum.contains("To/Account: Visa ••••4521; Mastercard ••••9907"),
-        "{sum}"
-    );
+    // Tenth review (H2): card rows are not recipient headings; the paying card shows as
+    // the selected option (was also `To/Account: Visa ••••4521; Mastercard ••••9907`,
+    // deliberate change).
+    assert!(!sum.contains("To/Account"), "{sum}");
     assert!(sum.contains("Selected: Visa ••••4521"), "{sum}");
     assert!(sum.contains("Amounts on screen: Total $64.00"), "{sum}");
     // Phone numbers and email addresses count too, only for payments and messages.
@@ -2048,12 +2051,19 @@ fn a_card_list_names_the_paying_account() {
         at5(button(4, "Send money"), 16.0, 700.0, 361.0, 50.0),
     ]);
     let sum = summarize(&tap(4), &s, None);
-    // Fifth review: ranked by closeness to the target (the email sits closer to "Send
-    // money"), so the order changed; both are listed.
-    assert!(
-        sum.contains("To/Account: alex@example.com; +1 (555) 010-0100"),
-        "{sum}"
-    );
+    // Tenth review (H2): a bare phone number or address is not a recipient (was
+    // `To/Account: alex@example.com; +1 (555) 010-0100`, deliberate change); with a
+    // heading it is.
+    assert!(!sum.contains("To/Account"), "{sum}");
+    let s = app_screen(vec![
+        at5(label(1, "To: +1 (555) 010-0100"), 16.0, 100.0, 361.0, 22.0),
+        at5(label(2, "alex@example.com"), 16.0, 130.0, 361.0, 22.0),
+        at5(label(3, "$25.00"), 16.0, 200.0, 361.0, 22.0),
+        at5(button(4, "Send money"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    let sum = summarize(&tap(4), &s, None);
+    assert!(sum.contains("To/Account: To: +1 (555) 010-0100"), "{sum}");
+    assert!(!sum.contains("alex@example.com"), "{sum}");
     let s = app_screen(vec![
         at5(label(1, "+1 (555) 010-0100"), 16.0, 100.0, 361.0, 22.0),
         at5(button(2, "Delete contact"), 16.0, 700.0, 361.0, 50.0),
@@ -2081,7 +2091,9 @@ fn hostile_text_cannot_forge_the_new_facts() {
     ]);
     let sum = summarize(&tap(5), &s, None);
     println!("{sum}");
-    assert_eq!(sum.matches("To/Account:").count(), 1, "{sum}");
+    // Tenth review (H2): "@mallory" alone is no recipient, so no real heading either (was
+    // a count of 1); the forged one in the note is still neutralised.
+    assert_eq!(sum.matches("To/Account:").count(), 0, "{sum}");
     // Seventh review: Pay sends the note, quoted whole under "Sends:" (was listed under
     // "Fields:"); its forged headings and quotes are still neutralised.
     assert_eq!(sum.matches("Fields:").count(), 0, "{sum}");

@@ -651,11 +651,12 @@ fn blocker(
     // Precedence holds only where the bar is drawn: a control the tree puts inside a bar but
     // that lies outside the bar's frame at `p` is ordinary content there.
     let home = bar_of(target, screen, tree).filter(|(h, _)| h.frame.contains(p));
-    if home.is_none() {
-        if let Some((_, kind, _)) = system_bars(screen, tree).find(|(b, _, _)| b.frame.contains(p))
-        {
-            return Some(CoveredBy::Bar(kind));
-        }
+    // A system bar the target is not in takes the point, also where it overlaps the
+    // target's own bar (tenth review: two overlapping bars let the tap through).
+    if let Some((_, kind, _)) = system_bars(screen, tree)
+        .find(|(b, _, _)| b.frame.contains(p) && !tree.is_some_and(|t| t.inside(target, b.node)))
+    {
+        return Some(CoveredBy::Bar(kind));
     }
     // Inside its bar, a target gives way to everything but page content scrolled under the
     // bar (ninth review): the bar's own nodes, the keyboard, overlays drawn over the bar.
