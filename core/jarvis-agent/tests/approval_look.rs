@@ -380,7 +380,7 @@ fn the_stale_count_rises_once_per_approval_not_per_look() {
     assert_eq!(o.status, OutcomeStatus::Failed);
     assert!(
         o.summary
-            .contains(&format!("approved an action {MAX_STALE_APPROVALS} times")),
+            .contains(&format!("after you approved ({MAX_STALE_APPROVALS} times")),
         "{}",
         o.summary
     );

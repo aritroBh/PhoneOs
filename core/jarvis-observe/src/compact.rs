@@ -614,7 +614,7 @@ const RETURN_KEY_LABELS: &[&str] = &[
 /// (what UIKit reports), else the one whose whole label is a known Return-key label. Hidden
 /// and area-less keys are ignored; whitespace is collapsed and the label bounded. Keys stay
 /// out of the element list either way: this is a fact about the screen, not a control.
-fn return_key_label(keyboard: &UiNode) -> Option<String> {
+pub(crate) fn return_key_label(keyboard: &UiNode) -> Option<String> {
     let mut by_label = None;
     let mut stack: Vec<(&UiNode, usize)> = vec![(keyboard, 0)];
     while let Some((n, depth)) = stack.pop() {

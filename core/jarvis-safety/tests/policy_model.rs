@@ -159,7 +159,8 @@ fn call_placing_rows_and_urls_are_call() {
         other => panic!("{other:?}"),
     };
     assert_eq!(req.category, RiskCategory::Call);
-    assert_eq!(req.summary, "Tap \"Mom\" in Phone");
+    // Fourth review: the text stacked above the target names its group.
+    assert_eq!(req.summary, "Tap \"Mom\" under \"Favorites\" in Phone");
     let s = screen(
         "com.apple.facetime",
         "FaceTime",

@@ -38,6 +38,9 @@ pub(crate) struct Pending {
     pub before: CompactScreen,
     /// The prompt-safe copy of `before` (for describing what changed in the history).
     pub before_safe: CompactScreen,
+    /// The exact digest of the raw tree `before` was compacted from: an approval holds only
+    /// on a fresh look with the same digest.
+    pub before_digest: jarvis_observe::ScreenDigest,
     /// Prompt-safe description for the history.
     pub described: String,
     /// Verification must see a change for the step to count as a success.
@@ -145,8 +148,9 @@ pub(crate) enum ObservePurpose {
     /// The first screen after an unlock, with a confirmation that was pending when the
     /// phone locked (see [`Resume::Reconsider`]).
     Reconsider(Box<Pending>),
-    /// A fresh look after the owner approved an action: it runs only if the fresh screen's
-    /// content record equals the approved one (see [`ApprovalLook`]).
+    /// A fresh look after the owner approved an action: it runs only if the fresh raw
+    /// tree's digest equals the approved one and the target is the same (see
+    /// [`ApprovalLook`]).
     Approved(Box<ApprovalLook>),
     /// One more look at the home screen's search results after typing, before the held-back
     /// Return (which opens the top hit) is pressed.

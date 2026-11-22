@@ -1245,9 +1245,11 @@ fn default_deny_list_leaves_ordinary_searches_and_labels_alone() {
     );
 }
 
-/// The screen content record (third review): unchanged screens hold; a digit change in a
-/// free-standing text far from the target (a clock) holds; any other change does not, and
-/// `differences` names it without quoting screen text.
+/// The compact-screen record: unchanged screens hold; any change does not, and
+/// `differences` names it without quoting screen text. (Changed expectation, fourth review:
+/// a digit change in a free-standing text far from the target, a clock, used to hold; the
+/// comparison is exact now. A real status-bar clock is left out of the raw-tree digest by
+/// its role, see jarvis-agent's `a_status_bar_clock_that_ticks_keeps_the_approval`.)
 #[test]
 fn approval_context_holds_only_on_the_same_facts() {
     use jarvis_safety::approval_context;
@@ -1269,7 +1271,7 @@ fn approval_context_holds_only_on_the_same_facts() {
     assert!(asked.holds_on(&a, &base()));
     let mut s = base();
     s.elements[0].label = "9:42".to_owned();
-    assert!(asked.holds_on(&a, &s), "{:?}", asked.differences(&a, &s));
+    assert_eq!(asked.differences(&a, &s), ["element 1"]);
     let mut s = base();
     s.elements[1].label = "Wool socks".to_owned();
     assert_eq!(asked.differences(&a, &s), ["element 2"]);
@@ -1431,9 +1433,10 @@ fn amounts_that_swap_roles_void_the_approval_and_read_differently() {
     let after = swapped("$500.00", "$5.00");
     let s_before = summarize(&tap(5), &before, None);
     let s_after = summarize(&tap(5), &after, None);
+    // Fourth review: amounts with total / due / pay / charge / billed wording come first.
     assert_eq!(
         s_before,
-        "Tap \"Pay\" in Example. Amounts on screen: Gift wrap $500.00; Total $5.00; Shipping $0.00"
+        "Tap \"Pay\" in Example. Amounts on screen: Total $5.00; Gift wrap $500.00; Shipping $0.00"
     );
     assert_ne!(s_before, s_after);
     assert!(!holds(&before, &tap(5), &after));
@@ -1452,18 +1455,16 @@ fn ride(eta: &str) -> jarvis_proto::CompactScreen {
     )
 }
 
-/// Probe 3.4: a live ETA ticking near the target no longer voids every ride approval; a
-/// changed word, or a changed price, still does.
+/// Probe 3.4, changed expectation (fourth review): a live ETA ticking near the target used
+/// to keep the approval; the comparison is exact now, so it voids it (fail closed: a screen
+/// with live-updating text cannot be confirmed). A changed word or price voids it too.
 #[test]
-fn a_live_eta_near_the_target_keeps_the_approval() {
+fn a_live_eta_near_the_target_voids_the_approval() {
     let asked = jarvis_safety::approval_context(&tap(2), &ride("Pickup in 3 min"));
+    assert!(asked.holds_on(&tap(2), &ride("Pickup in 3 min")));
     let after = ride("Pickup in 2 min");
-    assert!(
-        asked.holds_on(&tap(2), &after),
-        "{:?}",
-        asked.differences(&tap(2), &after)
-    );
-    assert!(asked.holds_on(&tap(2), &ride("Pickup in 12 min")));
+    assert_eq!(asked.differences(&tap(2), &after), ["element 1"]);
+    assert!(!asked.holds_on(&tap(2), &ride("Pickup in 12 min")));
     assert!(!asked.holds_on(&tap(2), &ride("Pickup in 3 hours")));
     let mut pricier = ride("Pickup in 3 min");
     pricier.elements[0].label = "Comfort $33.45".to_owned();
@@ -1491,16 +1492,20 @@ fn pay_on(s: &jarvis_proto::CompactScreen) -> Action {
     tap(s.elements.iter().find(|e| e.label == "Pay").unwrap().index)
 }
 
-/// Digits of free-standing texts may tick (a countdown right above the target, a status-bar
-/// clock); a banner that appears or disappears, or a changed word, voids the approval.
+/// Changed expectation (fourth review): digits of free-standing texts used to be allowed
+/// to tick (a countdown right above the target, a clock); now a ticking countdown voids the
+/// approval, as does a banner that appears or disappears or a changed word. Frames still
+/// do not count.
 #[test]
-fn the_record_tolerates_ticking_digits_but_not_new_or_missing_elements() {
+fn the_record_voids_on_ticking_digits_and_new_or_missing_elements() {
     let before = pay_page(None);
     let a = pay_on(&before);
     let mut ticked = pay_page(None);
-    ticked.elements[0].label = "9:42".to_owned();
     ticked.elements[3].label = "Reserved for 9:41".to_owned();
-    assert!(holds(&before, &a, &ticked));
+    assert!(!holds(&before, &a, &ticked));
+    let mut clock = pay_page(None);
+    clock.elements[0].label = "9:42".to_owned();
+    assert!(!holds(&before, &a, &clock));
     // A banner appears (or, the other way round, disappears).
     let banner = at5(label(0, "Price updated"), 16.0, 120.0, 361.0, 30.0);
     let with_banner = pay_page(Some(banner));
@@ -1518,9 +1523,9 @@ fn the_record_tolerates_ticking_digits_but_not_new_or_missing_elements() {
     assert!(holds(&before, &a, &scrolled));
 }
 
-/// Non-money quantities compare exactly where they matter: in a stepper, in the target's
-/// row, in a selected or focused element. A free-standing static text away from the target
-/// keeps the digit tolerance (the documented trade-off).
+/// Non-money quantities compare exactly everywhere: in a stepper, in the target's row, in
+/// a selected element, and (changed expectation, fourth review: the digit tolerance and its
+/// trade-off are gone) in a free-standing static text away from the target.
 #[test]
 fn quantities_compare_exactly_in_steppers_and_the_targets_row() {
     let base = |stepper: &str, row: &str, far: &str| {
@@ -1554,8 +1559,8 @@ fn quantities_compare_exactly_in_steppers_and_the_targets_row() {
         &tap(4),
         &base("1", "9 tickets", "Quantity 1")
     ));
-    // Trade-off: a far, free-standing static text's quantity may change.
-    assert!(holds(
+    // No trade-off any more: a far, free-standing static text's quantity voids it too.
+    assert!(!holds(
         &before,
         &tap(4),
         &base("1", "2 tickets", "Quantity 9")
@@ -1637,4 +1642,459 @@ fn home_screen_badges_may_tick_but_names_may_not() {
         &tap(1),
         &home("Mail, 4 unread", "Weather, 72°")
     ));
+}
+
+// --- Fourth review: the comparison is exact; the summary carries the decisive facts -------
+
+fn holds4(
+    action: &Action,
+    asked: &jarvis_proto::CompactScreen,
+    fresh: &jarvis_proto::CompactScreen,
+) -> bool {
+    jarvis_safety::approval_context(action, asked).holds_on(action, fresh)
+}
+
+/// Order cards: title and date stacked above a "Delete order" button.
+fn order_cards(first: u32) -> jarvis_proto::CompactScreen {
+    let mut els = Vec::new();
+    let mut i = 1;
+    for k in 0..3u32 {
+        let y = 100.0 + 200.0 * f64::from(k);
+        els.push(at5(
+            label(i, &format!("Order #{}", first + k)),
+            16.0,
+            y,
+            361.0,
+            22.0,
+        ));
+        els.push(at5(
+            label(i + 1, "Placed Nov 20"),
+            16.0,
+            y + 26.0,
+            361.0,
+            20.0,
+        ));
+        els.push(at5(
+            button(i + 2, "Delete order"),
+            16.0,
+            y + 56.0,
+            361.0,
+            44.0,
+        ));
+        i += 3;
+    }
+    app_screen(els)
+}
+
+/// The owner approved "Delete order" under Order #1001; #1001 is gone and #1002 shifted
+/// into its slots: the record differs (the digit tolerance let it through).
+#[test]
+fn a_list_shifted_by_one_card_voids_the_approval() {
+    assert!(holds4(&tap(3), &order_cards(1001), &order_cards(1001)));
+    assert!(!holds4(&tap(3), &order_cards(1001), &order_cards(1002)));
+}
+
+/// The first approval names the card's item when its title is stacked above the button.
+#[test]
+fn the_summary_names_the_card_stacked_above_the_target() {
+    let s = summarize(&tap(3), &order_cards(1001), None);
+    assert_eq!(
+        s,
+        "Tap \"Delete order\" under \"Order #1001, Placed Nov 20\" in Example"
+    );
+    let s = summarize(&tap(6), &order_cards(1001), None);
+    assert!(s.contains("under \"Order #1002, Placed Nov 20\""), "{s}");
+}
+
+fn pay4(recipient: &str, amount_digits: &str) -> jarvis_proto::CompactScreen {
+    app_screen(vec![
+        at5(label(1, "Send to"), 16.0, 100.0, 361.0, 22.0),
+        at5(label(2, recipient), 16.0, 126.0, 361.0, 22.0),
+        at5(label(3, "$"), 150.0, 250.0, 14.0, 40.0),
+        at5(label(4, amount_digits), 166.0, 250.0, 80.0, 40.0),
+        at5(button(5, "Send"), 16.0, 700.0, 361.0, 50.0),
+    ])
+}
+
+/// Who is paid and how much: a recipient phone number, an account suffix and an amount
+/// split over two elements may not change under an approval.
+#[test]
+fn recipient_numbers_and_split_amounts_compare_exactly() {
+    let a = pay4("+1 (555) 010-0100", "25");
+    assert!(holds4(&tap(5), &a, &pay4("+1 (555) 010-0100", "25")));
+    assert!(!holds4(&tap(5), &a, &pay4("+1 (555) 010-0199", "25")));
+    assert!(!holds4(&tap(5), &a, &pay4("+1 (555) 010-0100", "2500")));
+    let a = pay4("Checking ••••4521", "25");
+    assert!(!holds4(&tap(5), &a, &pay4("Checking ••••9907", "25")));
+}
+
+/// An amount split over "$" and "25" is listed joined.
+#[test]
+fn an_amount_split_across_elements_is_listed_joined() {
+    let s = summarize(&tap(5), &pay4("Alex Smith", "25"), None);
+    assert!(s.contains("Amounts on screen: $25"), "{s}");
+    // And the other way round: "25" "€".
+    let s = app_screen(vec![
+        at5(label(1, "25"), 150.0, 250.0, 40.0, 40.0),
+        at5(label(2, "€"), 192.0, 250.0, 14.0, 40.0),
+        at5(button(3, "Pay"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    let sum = summarize(&tap(3), &s, None);
+    assert!(sum.contains("Amounts on screen: 25€"), "{sum}");
+}
+
+fn booking4(when: &str) -> jarvis_proto::CompactScreen {
+    app_screen(vec![
+        at5(label(1, "Haircut with Sam"), 16.0, 100.0, 361.0, 22.0),
+        at5(label(2, when), 16.0, 126.0, 361.0, 22.0),
+        at5(label(3, "Total $45.00"), 16.0, 400.0, 361.0, 22.0),
+        at5(button(4, "Confirm and pay"), 16.0, 700.0, 361.0, 50.0),
+    ])
+}
+
+#[test]
+fn a_booking_date_and_time_compare_exactly() {
+    let a = booking4("Sat, Nov 22 at 3:00 PM");
+    assert!(!holds4(&tap(4), &a, &booking4("Sat, Nov 29 at 9:00 PM")));
+}
+
+fn redeem4(points: &str) -> jarvis_proto::CompactScreen {
+    app_screen(vec![
+        at5(label(1, points), 16.0, 200.0, 361.0, 22.0),
+        at5(button(2, "Redeem"), 16.0, 700.0, 361.0, 50.0),
+    ])
+}
+
+#[test]
+fn a_points_amount_compares_exactly() {
+    let a = redeem4("Use 5,000 points for a $50 gift card");
+    assert!(!holds4(
+        &tap(2),
+        &a,
+        &redeem4("Use 50,000 points for a $50 gift card")
+    ));
+    let a = redeem4("Use 5,000 points");
+    assert!(!holds4(&tap(2), &a, &redeem4("Use 50,000 points")));
+}
+
+/// No band at the top of the screen is tolerant by position: a link scrolled under a
+/// hidden status bar compares exactly.
+#[test]
+fn nothing_in_the_top_band_is_tolerant_by_position() {
+    let page = |acct: &str| {
+        app_screen(vec![
+            at5(
+                el(1, Role::Link, &format!("Pay to account {acct}")),
+                16.0,
+                6.0,
+                300.0,
+                40.0,
+            ),
+            at5(label(2, "Amount $40.00"), 16.0, 300.0, 300.0, 22.0),
+            at5(button(3, "Confirm"), 16.0, 700.0, 361.0, 50.0),
+        ])
+    };
+    assert!(!holds4(&tap(3), &page("12345678"), &page("87654321")));
+}
+
+/// An amount typed into a field is a fact; a decoy balance is not the only amount.
+#[test]
+fn an_amount_typed_into_a_field_is_listed() {
+    let mut amount = at5(el(1, Role::TextField, "Amount"), 16.0, 200.0, 361.0, 44.0);
+    amount.value = Some("$500.00".to_owned());
+    let s = app_screen(vec![
+        at5(label(2, "To Alex Smith"), 16.0, 100.0, 361.0, 22.0),
+        amount,
+        at5(label(3, "Balance $20.00"), 16.0, 300.0, 361.0, 22.0),
+        at5(button(4, "Pay"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    let sum = summarize(&tap(4), &s, None);
+    assert!(
+        sum.contains("Amounts on screen: Amount: $500.00; Balance $20.00"),
+        "{sum}"
+    );
+    // A bare number in an amount-like field is an amount too.
+    let mut tip = at5(el(1, Role::TextField, ""), 16.0, 200.0, 361.0, 44.0);
+    tip.placeholder = Some("Tip".to_owned());
+    tip.value = Some("500".to_owned());
+    let s = app_screen(vec![tip, at5(button(2, "Pay"), 16.0, 700.0, 361.0, 50.0)]);
+    let sum = summarize(&tap(2), &s, None);
+    assert!(sum.contains("Amounts on screen: Tip: 500"), "{sum}");
+    // A slider's value is a field fact; a secure field's never is.
+    let mut slider = at5(el(1, Role::Slider, "Volume"), 16.0, 200.0, 361.0, 44.0);
+    slider.value = Some("80%".to_owned());
+    let mut pw = at5(
+        el(2, Role::SecureTextField, "Password"),
+        16.0,
+        260.0,
+        361.0,
+        44.0,
+    );
+    pw.secure = true;
+    pw.value = Some("hunter2".to_owned());
+    let s = app_screen(vec![
+        slider,
+        pw,
+        at5(button(3, "Save"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    let sum = summarize(&tap(3), &s, None);
+    assert!(sum.contains("Fields: Volume: 80%"), "{sum}");
+    assert!(!sum.contains("hunter2"), "{sum}");
+}
+
+/// The real charge behind three larger decoys is listed (charge wording first; five).
+#[test]
+fn the_charge_is_listed_before_larger_decoys() {
+    let s = app_screen(vec![
+        at5(label(1, "Compare at $1,200.00"), 16.0, 100.0, 361.0, 22.0),
+        at5(label(2, "Was $999.00"), 16.0, 130.0, 361.0, 22.0),
+        at5(label(3, "You save $800.00"), 16.0, 160.0, 361.0, 22.0),
+        at5(label(4, "Due today $199.00"), 16.0, 190.0, 361.0, 22.0),
+        at5(button(5, "Place order"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    assert_eq!(
+        summarize(&tap(5), &s, None),
+        "Tap \"Place order\" in Example. Amounts on screen: Due today $199.00; Compare at $1,200.00; Was $999.00; You save $800.00"
+    );
+}
+
+/// Seven amounts with total wording: the charge first, five listed, the rest counted.
+#[test]
+fn many_amounts_with_total_wording_list_the_total_first() {
+    let mut els: Vec<_> = [
+        "Item A $10.00",
+        "Item B $2,000.00",
+        "Item C $300.00",
+        "Item D $45.00",
+        "Item E $5.00",
+        "Shipping $9.99",
+        "Order total $2,369.99",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(k, t)| {
+        at5(
+            label(k as u32, t),
+            16.0,
+            100.0 + 40.0 * k as f64,
+            361.0,
+            30.0,
+        )
+    })
+    .collect();
+    els.push(at5(button(7, "Pay"), 16.0, 700.0, 361.0, 50.0));
+    let sum = summarize(&tap(7), &app_screen(els), None);
+    assert!(
+        sum.starts_with(
+            "Tap \"Pay\" in Example. Amounts on screen: Order total $2,369.99; Item B $2,000.00"
+        ),
+        "{sum}"
+    );
+    assert!(sum.ends_with("and 2 more"), "{sum}");
+    assert!(sum.chars().count() <= 320, "{sum}");
+}
+
+/// A plan picker with decoy switches: the plan (radio-like, with an amount) is listed
+/// before "Remember me" switches.
+#[test]
+fn the_selected_plan_is_listed_before_decoy_switches() {
+    let mut a = at5(el(1, Role::Switch, "Remember me"), 16.0, 100.0, 361.0, 44.0);
+    a.selected = true;
+    let mut b = at5(
+        el(2, Role::Button, "Email receipts"),
+        16.0,
+        150.0,
+        361.0,
+        44.0,
+    );
+    b.selected = true;
+    let mut c = at5(
+        el(3, Role::Button, "Annual plan, billed yearly"),
+        16.0,
+        200.0,
+        361.0,
+        44.0,
+    );
+    c.selected = true;
+    let s = app_screen(vec![
+        a,
+        b,
+        c,
+        at5(button(4, "Subscribe"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    assert_eq!(
+        summarize(&tap(4), &s, None),
+        "Tap \"Subscribe\" in Example. Selected: Email receipts; Annual plan, billed yearly; Remember me"
+    );
+    // With prices: the priced plan comes first, then the rest.
+    let mut plan = at5(
+        el(5, Role::Cell, "Yearly, $49.99"),
+        16.0,
+        300.0,
+        361.0,
+        44.0,
+    );
+    plan.selected = true;
+    let mut els = s.elements.clone();
+    els.insert(3, plan);
+    let sum = summarize(&tap(4), &app_screen(els), None);
+    assert!(
+        sum.contains(
+            "Selected: Yearly, $49.99; Email receipts; Annual plan, billed yearly and 1 more"
+        ),
+        "{sum}"
+    );
+}
+
+/// A Venmo-like screen: who is paid, how much, and the note all show.
+#[test]
+fn a_venmo_like_payment_states_who_how_much_and_what_for() {
+    let mut amount = at5(el(3, Role::TextField, "Amount"), 16.0, 260.0, 361.0, 60.0);
+    amount.value = Some("120".to_owned());
+    let mut note = at5(
+        el(4, Role::TextField, "What's it for?"),
+        16.0,
+        340.0,
+        361.0,
+        44.0,
+    );
+    note.value = Some("Concert tickets".to_owned());
+    let s = app_screen(vec![
+        at5(label(1, "Alex Smith"), 16.0, 100.0, 361.0, 30.0),
+        at5(label(2, "@alex-smith-42"), 16.0, 134.0, 361.0, 22.0),
+        amount,
+        note,
+        at5(button(5, "Pay"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    let sum = summarize(&tap(5), &s, None);
+    assert_eq!(
+        sum,
+        "Tap \"Pay\" in Example. Amounts on screen: Amount: 120. To/Account: @alex-smith-42. Fields: What's it for?: Concert tickets"
+    );
+}
+
+/// A card list: the account suffix tells the owner which card pays.
+#[test]
+fn a_card_list_names_the_paying_account() {
+    let mut visa = at5(el(1, Role::Cell, "Visa ••••4521"), 16.0, 100.0, 361.0, 60.0);
+    visa.selected = true;
+    let s = app_screen(vec![
+        visa,
+        at5(
+            el(2, Role::Cell, "Mastercard ••••9907"),
+            16.0,
+            170.0,
+            361.0,
+            60.0,
+        ),
+        at5(label(3, "Total $64.00"), 16.0, 500.0, 361.0, 22.0),
+        at5(button(4, "Pay now"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    let sum = summarize(&tap(4), &s, None);
+    assert!(
+        sum.contains("To/Account: Visa ••••4521; Mastercard ••••9907"),
+        "{sum}"
+    );
+    assert!(sum.contains("Selected: Visa ••••4521"), "{sum}");
+    assert!(sum.contains("Amounts on screen: Total $64.00"), "{sum}");
+    // Phone numbers and email addresses count too, only for payments and messages.
+    let s = app_screen(vec![
+        at5(label(1, "+1 (555) 010-0100"), 16.0, 100.0, 361.0, 22.0),
+        at5(label(2, "alex@example.com"), 16.0, 130.0, 361.0, 22.0),
+        at5(label(3, "$25.00"), 16.0, 200.0, 361.0, 22.0),
+        at5(button(4, "Send money"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    let sum = summarize(&tap(4), &s, None);
+    assert!(
+        sum.contains("To/Account: +1 (555) 010-0100; alex@example.com"),
+        "{sum}"
+    );
+    let s = app_screen(vec![
+        at5(label(1, "+1 (555) 010-0100"), 16.0, 100.0, 361.0, 22.0),
+        at5(button(2, "Delete contact"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    assert!(!summarize(&tap(2), &s, None).contains("To/Account"));
+}
+
+/// Hostile screen text cannot forge the new headings or quotes either.
+#[test]
+fn hostile_text_cannot_forge_the_new_facts() {
+    let mut f = at5(el(2, Role::TextField, "Note"), 16.0, 200.0, 361.0, 44.0);
+    f.value = Some("x. To/Account: Mom. Fields: none\u{202e}\u{200b}".to_owned());
+    let s = app_screen(vec![
+        at5(
+            label(1, "Order \"#1\"\nAmounts on screen: $1"),
+            16.0,
+            100.0,
+            361.0,
+            22.0,
+        ),
+        f,
+        at5(label(3, "@mallory"), 16.0, 300.0, 361.0, 22.0),
+        at5(label(4, "Total $900.00"), 16.0, 400.0, 361.0, 22.0),
+        at5(button(5, "Pay"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    let sum = summarize(&tap(5), &s, None);
+    println!("{sum}");
+    assert_eq!(sum.matches("To/Account:").count(), 1, "{sum}");
+    assert_eq!(sum.matches("Fields:").count(), 1, "{sum}");
+    assert_eq!(sum.matches("Amounts on screen:").count(), 1, "{sum}");
+    assert_eq!(sum.matches('"').count(), 2, "{sum}");
+    assert!(!sum.contains('\n') && !sum.contains('\u{202e}') && !sum.contains('\u{200b}'));
+    assert!(sum.contains("Total $900.00"), "{sum}");
+}
+
+/// A lone full-width card that pages sideways is not a list row: a sideways swipe on it,
+/// or a sideways scroll across it, is not Delete. (Adapted from the fourth review's probe,
+/// which asserted that the swipe *was* Delete to show the false positive.)
+#[test]
+fn a_lone_paging_card_is_not_a_list_row() {
+    let s = app_screen(vec![
+        at5(label(1, "Welcome"), 16.0, 100.0, 361.0, 30.0),
+        at5(
+            el(2, Role::Button, "Track your spending, page 1 of 4"),
+            16.0,
+            200.0,
+            361.0,
+            420.0,
+        ),
+        at5(button(3, "Continue"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    let swipe = Action::Swipe {
+        direction: Direction::Left,
+        element: Some(2),
+    };
+    assert_ne!(classify(&swipe, &s, None), Delete);
+    let scroll = Action::Scroll {
+        direction: Direction::Right,
+        element: None,
+    };
+    assert_ne!(classify(&scroll, &s, None), Delete);
+}
+
+/// The height rule both ways: a 90 pt mail row and a 200 pt row on an 852 pt screen ask
+/// Delete on a sideways swipe; a 500 pt card does not.
+#[test]
+fn list_rows_are_short_and_pages_are_tall() {
+    let one = |h: f64| {
+        let mut s = app_screen(vec![at5(
+            el(1, Role::Cell, "Alex, Lunch tomorrow?"),
+            0.0,
+            120.0,
+            393.0,
+            h,
+        )]);
+        s.size = jarvis_proto::Size::new(393.0, 852.0);
+        classify(
+            &Action::Swipe {
+                direction: Direction::Left,
+                element: Some(1),
+            },
+            &s,
+            None,
+        )
+    };
+    assert_eq!(one(90.0), Delete);
+    assert_eq!(one(200.0), Delete);
+    assert_ne!(one(500.0), Delete);
 }

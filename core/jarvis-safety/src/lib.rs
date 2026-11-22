@@ -55,7 +55,7 @@ pub use app::{
     app_level, check_app, check_app_name, denied_app_names, is_springboard, label_names_denied_app,
     matching_rule, mode_level, search_names_denied_app, widget_names_denied_app, Verdict,
 };
-pub use approval::{approval_context, ApprovalContext, STATUS_BAR_HEIGHT};
+pub use approval::{approval_context, ApprovalContext};
 pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;
 pub use confine::check_confinement;

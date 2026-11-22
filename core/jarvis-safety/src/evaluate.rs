@@ -1,7 +1,8 @@
 //! The single entry point the agent calls before executing an action.
 
 use jarvis_proto::{
-    Action, CompactScreen, ConfirmRequest, Element, Policy, RiskCategory, ToolSpec, TrustLevel,
+    Action, CompactScreen, ConfirmRequest, Element, Policy, RiskCategory, Role, ToolSpec,
+    TrustLevel,
 };
 
 use crate::app::{app_level, check_app, is_springboard, mode_level, Verdict};
@@ -26,7 +27,7 @@ pub enum Decision {
 /// Longest quoted fragment (label, typed text, argument) in a summary, in characters.
 const MAX_QUOTE_CHARS: usize = 60;
 /// Longest summary, in characters.
-const MAX_SUMMARY_CHARS: usize = 200;
+const MAX_SUMMARY_CHARS: usize = 320;
 
 /// Whether the action touches or reads the foreground app (and so is blocked inside a
 /// denied app). Leaving the app (`PressHome`, `OpenApp`...) stays possible.
@@ -208,8 +209,9 @@ fn clean(s: &str, max: usize) -> String {
     defang(&sanitize_screen_text_with_limit(&redact(s), max).replace('"', "'"))
 }
 
-/// Screen text cannot pose as a summary's fact headings: a colon after the word "screen"
-/// or "selected" ("Amounts on screen:", "Selected:") is dropped.
+/// Screen text cannot pose as a summary's fact headings: a colon after the word "screen",
+/// "selected", "account" or "fields" ("Amounts on screen:", "Selected:", "To/Account:",
+/// "Fields:") is dropped.
 fn defang(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -224,7 +226,7 @@ fn defang(s: &str) -> String {
                 .rev()
                 .flat_map(char::to_lowercase)
                 .collect();
-            if word == "screen" || word == "selected" {
+            if matches!(word.as_str(), "screen" | "selected" | "account" | "fields") {
                 continue;
             }
         }
@@ -437,49 +439,78 @@ fn clean_label(s: &str, max: usize) -> String {
 }
 
 /// How long the screen-text parts of a summary may be (characters). A summary is built
-/// with the first set of limits whose result fits [`MAX_SUMMARY_CHARS`].
+/// with the first set of limits whose result fits [`MAX_SUMMARY_CHARS`]. Amounts shrink
+/// last: every other text is shortened (and then dropped) first.
 #[derive(Clone, Copy)]
 struct Limits {
     /// The target's quoted label.
     label: usize,
     /// The row text after "next to".
     next_to: usize,
+    /// The item text after "under" (0: left out).
+    under: usize,
     /// The app name.
     app: usize,
     /// Each entry of "Amounts on screen" (0: the amount alone).
     amount_entry: usize,
+    /// Each entry of "To/Account" (0: left out).
+    recipient_entry: usize,
     /// Each entry of "Selected" (0: only the count).
     selected_entry: usize,
+    /// Each entry of "Fields" (0: left out).
+    field_entry: usize,
 }
 
-const LIMITS: [Limits; 4] = [
+const LIMITS: [Limits; 5] = [
     Limits {
         label: MAX_QUOTE_CHARS,
         next_to: MAX_NEIGHBOUR_CHARS,
+        under: MAX_NEIGHBOUR_CHARS,
         app: MAX_QUOTE_CHARS,
         amount_entry: 40,
+        recipient_entry: 40,
         selected_entry: 40,
+        field_entry: 40,
     },
     Limits {
         label: 40,
         next_to: 24,
+        under: 30,
         app: 30,
-        amount_entry: 24,
+        amount_entry: 30,
+        recipient_entry: 30,
         selected_entry: 24,
+        field_entry: 24,
     },
     Limits {
         label: 30,
         next_to: 16,
+        under: 24,
+        app: 24,
+        amount_entry: 24,
+        recipient_entry: 24,
+        selected_entry: 16,
+        field_entry: 0,
+    },
+    Limits {
+        label: 30,
+        next_to: 16,
+        under: 20,
         app: 24,
         amount_entry: 0,
+        recipient_entry: 20,
         selected_entry: 16,
+        field_entry: 0,
     },
     Limits {
         label: 24,
         next_to: 0,
+        under: 0,
         app: 20,
         amount_entry: 0,
+        recipient_entry: 0,
         selected_entry: 0,
+        field_entry: 0,
     },
 ];
 
@@ -507,31 +538,57 @@ fn describe_index(screen: &CompactScreen, index: u32) -> String {
         .map_or_else(|| format!("element {index}"), describe)
 }
 
+/// A role in plain words for messages ("button", "text", "text field"; another role's
+/// name cleaned and bounded).
+pub(crate) fn role_words(role: &Role) -> String {
+    match role {
+        Role::StaticText => "text".to_owned(),
+        Role::TextField | Role::TextView => "text field".to_owned(),
+        Role::SecureTextField => "password field".to_owned(),
+        Role::SearchField => "search field".to_owned(),
+        Role::Cell => "row".to_owned(),
+        Role::Other(name) => clean(name, 24).to_lowercase(),
+        other => other.as_str().replace('_', " "),
+    }
+}
+
+/// Screen text for a quote in a message: cleaned like a summary label (redacted,
+/// sanitised, `"` → `'`, shortened from the middle keeping amounts).
+pub(crate) fn clean_quote(s: &str, max: usize) -> String {
+    clean_label(s, max)
+}
+
 /// Longest row text quoted after "next to", in characters.
 const MAX_NEIGHBOUR_CHARS: usize = 40;
 /// Most amounts listed after "Amounts on screen:"; more are counted ("and 2 more").
-pub(crate) const MAX_LISTED_AMOUNTS: usize = 3;
+pub(crate) const MAX_LISTED_AMOUNTS: usize = 5;
 /// Most selected options listed after "Selected:"; more are counted.
-pub(crate) const MAX_LISTED_SELECTED: usize = 2;
+pub(crate) const MAX_LISTED_SELECTED: usize = 3;
+/// Most recipient or account texts listed after "To/Account:".
+pub(crate) const MAX_LISTED_RECIPIENTS: usize = 2;
+/// Most field values listed after "Fields:"; more are counted.
+pub(crate) const MAX_LISTED_FIELDS: usize = 2;
+/// Most static texts that name the target's item after "under".
+const MAX_ITEM_TEXTS: usize = 2;
+/// How far above the target (points from its top to a text's bottom) a text may sit to
+/// name its item (a card's title stacked above its button).
+const ITEM_REACH: f64 = 160.0;
 /// Elements taller than this share of the screen (scroll and web views, side bars) overlap
 /// every row and do not label one.
 const MAX_ROW_ITEM_HEIGHT: f64 = 0.5;
 /// Largest gap (points) between a bare amount and a static text right above it for that
 /// text to label it in the summary's facts.
 const STACKED_LABEL_GAP: f64 = 8.0;
+/// Field labels (or placeholders) whose bare number is an amount ("Amount: 500").
+const AMOUNT_FIELD_WORDS: &[&str] = &["amount", "total", "price", "tip", "quantity", "qty"];
+/// Word starts that mark an amount as the charge (listed first): total, due, pay,
+/// charge, billed.
+const CHARGE_WORD_STARTS: &[&str] = &["total", "due", "pay", "charg", "bill", "subtotal"];
 
 /// Whether `el` is an on/off switch, and if so whether it is on (`value` "1"/"on"/"true"
 /// or "0"/"off"/"false"; any other value is unknown).
 pub(crate) fn switch_is_on(el: &Element) -> Option<bool> {
-    let switch = match &el.role {
-        jarvis_proto::Role::Switch => true,
-        jarvis_proto::Role::Other(name) => {
-            let n = name.to_lowercase();
-            n.contains("switch") || n.contains("toggle")
-        }
-        _ => false,
-    };
-    if !switch {
+    if !is_switch_like(&el.role) {
         return None;
     }
     match el
@@ -543,6 +600,37 @@ pub(crate) fn switch_is_on(el: &Element) -> Option<bool> {
         Some("1" | "on" | "true") => Some(true),
         Some("0" | "off" | "false") => Some(false),
         _ => None,
+    }
+}
+
+/// Switches, toggles and checkboxes (an option that is on or off by itself, not one of a
+/// group).
+fn is_switch_like(role: &Role) -> bool {
+    match role {
+        Role::Switch => true,
+        Role::Other(name) => {
+            let n = name.to_lowercase();
+            n.contains("switch") || n.contains("toggle") || n.contains("checkbox")
+        }
+        _ => false,
+    }
+}
+
+/// Controls whose value the owner sets and that are not on/off switches: text inputs,
+/// sliders, steppers, pickers, segmented controls.
+fn is_value_field(el: &Element) -> bool {
+    if el.secure || el.role == Role::SecureTextField {
+        return false;
+    }
+    match &el.role {
+        Role::Slider | Role::Picker => true,
+        Role::Other(name) => {
+            let n = name.to_lowercase();
+            ["stepper", "slider", "picker", "segmented"]
+                .iter()
+                .any(|k| n.contains(k))
+        }
+        r => r.is_text_input(),
     }
 }
 
@@ -564,59 +652,230 @@ fn row_texts<'a>(el: &Element, screen: &'a CompactScreen) -> Vec<&'a str> {
     screen
         .elements
         .iter()
-        .filter(|e| e.index != el.index && e.role == jarvis_proto::Role::StaticText)
+        .filter(|e| e.index != el.index && e.role == Role::StaticText)
         .filter(|e| row_sized(e, screen) && same_row(&e.frame, &el.frame))
         .map(|e| e.label.trim())
         .filter(|l| !l.is_empty() && !own.contains(&l.to_lowercase()))
         .collect()
 }
 
+/// The static texts that name `el`'s item when they are stacked above it (a card: "Order
+/// #1001" / "Placed Nov 20" / [Delete order]): the texts between the previous control and
+/// `el` in screen order that sit above it (bottom within [`ITEM_REACH`] of its top),
+/// overlap it horizontally, are not in its row band and show no amount (amounts are
+/// listed as facts); the first [`MAX_ITEM_TEXTS`].
+fn item_texts<'a>(el: &Element, screen: &'a CompactScreen) -> Vec<&'a str> {
+    let Some(pos) = screen.elements.iter().position(|e| e.index == el.index) else {
+        return Vec::new();
+    };
+    let mut found: Vec<&'a str> = Vec::new();
+    for e in screen.elements.iter().take(pos).rev() {
+        if e.role.is_interactive() {
+            break;
+        }
+        let f = e.frame;
+        let above = f.max_y() <= el.frame.y + 1.0 && el.frame.y - f.max_y() <= ITEM_REACH;
+        let overlaps = f.x < el.frame.max_x() && el.frame.x < f.max_x();
+        if e.role == Role::StaticText
+            && row_sized(e, screen)
+            && above
+            && overlaps
+            && !same_row(&f, &el.frame)
+            && !e.label.trim().is_empty()
+            && !has_money(&e.label)
+        {
+            found.push(e.label.trim());
+        }
+    }
+    found.reverse();
+    found.truncate(MAX_ITEM_TEXTS);
+    found
+}
+
 /// One amount on the screen, for the summary: the text it is shown with (its element's
-/// own text, or, for a bare amount, the static texts of its row before it), and its value.
+/// own text, a field's name and value, or, for a bare amount, the static texts of its
+/// row), its value, and whether it reads as the charge.
 struct AmountFact {
     text: String,
     value: f64,
+    charge: bool,
 }
 
-/// Every element of `screen` that shows an amount (keys, secure fields and the target
-/// itself, whose label the summary already quotes, excepted), with the label text of its
-/// row, largest first (ties: screen order), each text once. A bare amount ("$5.00") is
-/// labelled by the static texts of its row band; with none, by a static text stacked right
-/// on top of it (a product name above its price).
+/// Whether `text` has charge wording (a word starting with total, due, pay, charge, bill).
+fn has_charge_words(text: &str) -> bool {
+    text.split(|c: char| !c.is_alphanumeric())
+        .map(str::to_lowercase)
+        .any(|w| CHARGE_WORD_STARTS.iter().any(|s| w.starts_with(s)))
+}
+
+/// Whether `field`'s name (label or placeholder) is amount-like.
+fn amount_like_field(el: &Element) -> bool {
+    let name = format!(
+        "{} {}",
+        el.label,
+        el.placeholder.as_deref().unwrap_or_default()
+    )
+    .to_lowercase();
+    name.split(|c: char| !c.is_alphanumeric())
+        .any(|w| AMOUNT_FIELD_WORDS.contains(&w))
+}
+
+/// A field's name for its fact: its label, else its placeholder.
+fn field_name(el: &Element) -> String {
+    let label = el.label.trim();
+    if label.is_empty() {
+        el.placeholder
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    } else {
+        label.to_owned()
+    }
+}
+
+/// A field's value worth stating: set, not blank, not its placeholder.
+fn field_value(el: &Element) -> Option<&str> {
+    el.value
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty() && Some(*v) != el.placeholder.as_deref().map(str::trim))
+}
+
+/// A lone currency symbol or code shown as its own element ("$", "€", "USD"): no digits,
+/// and money once a number is put next to it.
+fn lone_currency(text: &str) -> bool {
+    let t = text.trim();
+    !t.is_empty()
+        && t.chars().count() <= 4
+        && !t.chars().any(|c| c.is_ascii_digit())
+        && (has_money(&format!("{t}5")) || has_money(&format!("5 {t}")))
+}
+
+/// The largest amount value among `ranges` of `chars`.
+fn max_amount(chars: &[char], ranges: &[(usize, usize)]) -> f64 {
+    ranges
+        .iter()
+        .filter_map(|&(a, b)| {
+            amount_value(
+                &chars
+                    .get(a..b)
+                    .unwrap_or_default()
+                    .iter()
+                    .collect::<String>(),
+            )
+        })
+        .fold(f64::MIN, f64::max)
+}
+
+/// Every amount on `screen` (keys, secure fields and the target itself, whose label the
+/// summary already quotes, excepted), each text once:
+///
+/// - an element that shows an amount, with the label text of its row: its own words, else
+///   the static texts of its row band, else a static text stacked right on top of it;
+/// - an amount split over two elements of one row ("$" and "25") is joined ("$25");
+/// - a value field (text input, slider, stepper, picker) whose value is an amount, or whose
+///   name is amount-like (amount, total, price, tip, quantity, qty) and whose value holds a
+///   number, as `Name: value`.
+///
+/// Order: the charge first (field amounts, and texts with total / due / pay / charge /
+/// billed wording), then the rest; largest first within each (ties: screen order).
 fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountFact> {
     let mut out: Vec<AmountFact> = Vec::new();
+    let push = |out: &mut Vec<AmountFact>, text: String, value: f64, charge: bool| {
+        if !out.iter().any(|f| f.text == text) {
+            out.push(AmountFact {
+                text,
+                value: if value.is_finite() { value } else { -1.0 },
+                charge,
+            });
+        }
+    };
+    // Elements joined into a split amount (the number after or before a lone symbol).
+    let mut joined: Vec<u32> = Vec::new();
     // The last static text seen, in screen order (a candidate stacked label).
     let mut last_text: Option<&Element> = None;
-    for e in screen.elements.iter() {
-        let above = if e.role == jarvis_proto::Role::StaticText {
+    let els = &screen.elements;
+    for (k, e) in els.iter().enumerate() {
+        let above = if e.role == Role::StaticText {
             last_text.replace(e)
         } else {
             last_text
         };
         if e.secure
-            || e.role == jarvis_proto::Role::Key
+            || e.role == Role::Key
             || target.is_some_and(|t| t.index == e.index)
+            || joined.contains(&e.index)
         {
             continue;
         }
-        let own = crate::classify::element_text(e);
+        if is_value_field(e) {
+            if let Some(v) = field_value(e) {
+                let chars: Vec<char> = v.chars().collect();
+                let ranges = amount_ranges(&chars);
+                let number = v.chars().any(|c| c.is_ascii_digit()) && amount_like_field(e);
+                if !ranges.is_empty() || number {
+                    let value = if ranges.is_empty() {
+                        amount_value(v).unwrap_or(-1.0)
+                    } else {
+                        max_amount(&chars, &ranges)
+                    };
+                    let name = field_name(e);
+                    let text = if name.is_empty() {
+                        v.to_owned()
+                    } else {
+                        format!("{name}: {v}")
+                    };
+                    push(&mut out, text, value, true);
+                }
+            }
+            continue;
+        }
+        let mut own = crate::classify::element_text(e);
+        // "$" + "25" (or "25" + "€") as two elements of one row: one amount.
+        if e.role == Role::StaticText && lone_currency(&e.label) {
+            let next = els.get(k.saturating_add(1)).filter(|n| {
+                n.role == Role::StaticText
+                    && is_number(n.label.trim())
+                    && same_row(&n.frame, &e.frame)
+                    && !target.is_some_and(|t| t.index == n.index)
+            });
+            match next {
+                Some(n) => {
+                    let sym = e.label.trim();
+                    let sep = if sym.chars().all(char::is_alphabetic) {
+                        " "
+                    } else {
+                        ""
+                    };
+                    own = format!("{sym}{sep}{}", n.label.trim());
+                    joined.push(n.index);
+                }
+                None => continue,
+            }
+        } else if e.role == Role::StaticText && is_number(e.label.trim()) {
+            if let Some(n) = els.get(k.saturating_add(1)).filter(|n| {
+                n.role == Role::StaticText
+                    && lone_currency(&n.label)
+                    && same_row(&n.frame, &e.frame)
+                    && !target.is_some_and(|t| t.index == n.index)
+            }) {
+                let sym = n.label.trim();
+                let sep = if sym.chars().all(char::is_alphabetic) {
+                    " "
+                } else {
+                    ""
+                };
+                own = format!("{}{sep}{sym}", e.label.trim());
+                joined.push(n.index);
+            }
+        }
         let chars: Vec<char> = own.chars().collect();
         let ranges = amount_ranges(&chars);
         if ranges.is_empty() {
             continue;
         }
-        let value = ranges
-            .iter()
-            .filter_map(|&(a, b)| {
-                amount_value(
-                    &chars
-                        .get(a..b)
-                        .unwrap_or_default()
-                        .iter()
-                        .collect::<String>(),
-                )
-            })
-            .fold(f64::MIN, f64::max);
+        let value = max_amount(&chars, &ranges);
         // Its words besides the amounts.
         let mut rest = String::new();
         let mut at = 0usize;
@@ -629,13 +888,14 @@ fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountF
         let text = if names_something || !row_sized(e, screen) {
             own.trim().to_owned()
         } else {
-            let mut row: Vec<&str> = screen
-                .elements
+            let mut row: Vec<&str> = els
                 .iter()
-                .filter(|o| o.index != e.index && o.role == jarvis_proto::Role::StaticText)
+                .filter(|o| {
+                    o.index != e.index && o.role == Role::StaticText && !joined.contains(&o.index)
+                })
                 .filter(|o| row_sized(o, screen) && same_row(&o.frame, &e.frame))
                 .map(|o| o.label.trim())
-                .filter(|l| !l.is_empty() && !has_money(l))
+                .filter(|l| !l.is_empty() && !has_money(l) && !lone_currency(l) && !is_number(l))
                 .collect();
             if row.is_empty() {
                 if let Some(a) = above.filter(|a| {
@@ -652,31 +912,153 @@ fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountF
             row.push(own.trim());
             row.join(" ")
         };
-        if !out.iter().any(|f| f.text == text) {
-            out.push(AmountFact {
-                text,
-                value: if value.is_finite() { value } else { -1.0 },
-            });
-        }
+        let charge = has_charge_words(&text);
+        push(&mut out, text, value, charge);
     }
-    // Stable: equal values keep screen order.
-    out.sort_by(|a, b| b.value.total_cmp(&a.value));
+    // Stable: equal keys keep screen order.
+    out.sort_by(|a, b| b.charge.cmp(&a.charge).then(b.value.total_cmp(&a.value)));
     out
 }
 
 /// The texts of the selected or checked options on `screen` other than `target` (tabs and
-/// keys excepted), each once, in screen order.
+/// keys excepted), each once, ranked: options that carry an amount or sit in the row band
+/// of an amount or of the target first; then options of a group (radio-like: buttons,
+/// cells, segments) before switches and checkboxes; then screen order.
 fn selected_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+    let amount_rows: Vec<jarvis_proto::Rect> = screen
+        .elements
+        .iter()
+        .filter(|e| !e.secure && e.role != Role::Key && !e.frame.is_empty())
+        .filter(|e| {
+            let t: Vec<char> = crate::classify::element_text(e).chars().collect();
+            !amount_ranges(&t).is_empty()
+        })
+        .map(|e| e.frame)
+        .collect();
+    let mut ranked: Vec<(u8, u8, String)> = Vec::new();
     for e in screen.elements.iter().filter(|e| {
         e.selected
             && !e.secure
-            && !matches!(e.role, jarvis_proto::Role::Tab | jarvis_proto::Role::Key)
+            && !matches!(e.role, Role::Tab | Role::Key)
             && !target.is_some_and(|t| t.index == e.index)
     }) {
         let t = crate::classify::element_text(e).trim().to_owned();
-        if !t.is_empty() && !out.contains(&t) {
+        if t.is_empty() || ranked.iter().any(|(_, _, x)| *x == t) {
+            continue;
+        }
+        let chars: Vec<char> = t.chars().collect();
+        let near_amount = !amount_ranges(&chars).is_empty()
+            || (!e.frame.is_empty()
+                && row_sized(e, screen)
+                && (amount_rows.iter().any(|r| same_row(r, &e.frame))
+                    || target.is_some_and(|tg| same_row(&tg.frame, &e.frame))));
+        let switch = is_switch_like(&e.role);
+        ranked.push((u8::from(!near_amount), u8::from(switch), t));
+    }
+    // Stable: equal ranks keep screen order.
+    ranked.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    ranked.into_iter().map(|(_, _, t)| t).collect()
+}
+
+/// The values of the value fields on `screen` (text inputs, sliders, steppers, pickers;
+/// never secure ones, nor the target) that are not amounts, as `Name: value`.
+fn field_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for e in screen
+        .elements
+        .iter()
+        .filter(|e| is_value_field(e) && !target.is_some_and(|t| t.index == e.index))
+    {
+        let Some(v) = field_value(e) else { continue };
+        let chars: Vec<char> = v.chars().collect();
+        let amount = !amount_ranges(&chars).is_empty()
+            || (v.chars().any(|c| c.is_ascii_digit()) && amount_like_field(e));
+        if amount {
+            continue;
+        }
+        let name = field_name(e);
+        let t = if name.is_empty() {
+            v.to_owned()
+        } else {
+            format!("{name}: {v}")
+        };
+        if !out.contains(&t) {
             out.push(t);
+        }
+    }
+    out
+}
+
+/// Whether `word` looks like who is paid or messaged: a phone number (7 to 15 digits with
+/// `+ ( ) - .` and spaces), a masked account or card suffix (`••••4521`, `****4521`,
+/// `x4521`), an email address or an `@handle`.
+fn recipient_word(word: &str) -> bool {
+    let w = word.trim_matches(|c: char| matches!(c, ',' | ';' | '(' | ')' | '.' | ':'));
+    if w.is_empty() {
+        return false;
+    }
+    // Email address or @handle.
+    if let Some(at) = w.find('@') {
+        let (user, domain) = (w.get(..at).unwrap_or(""), w.get(at + 1..).unwrap_or(""));
+        let handle = user.is_empty()
+            && domain.chars().count() >= 2
+            && domain
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '-'));
+        let email = !user.is_empty() && domain.contains('.') && !domain.starts_with('.');
+        return handle || email;
+    }
+    // Masked suffix: mask characters followed by 2 to 6 digits.
+    let masks = |c: char| matches!(c, '•' | '*' | '·' | '●' | '∙' | 'x' | 'X' | '…');
+    let digits_after_mask = w.trim_start_matches(masks);
+    digits_after_mask.len() < w.len()
+        && (2..=6).contains(&digits_after_mask.chars().count())
+        && digits_after_mask.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Whether `text` contains a phone number: a run of 7 to 15 digits written with only
+/// `+ ( ) - .` and single spaces between them.
+fn has_phone_number(text: &str) -> bool {
+    let mut digits = 0usize;
+    let mut prev_space = false;
+    for c in text.chars().chain(std::iter::once('|')) {
+        if c.is_ascii_digit() {
+            digits += 1;
+            prev_space = false;
+        } else if matches!(c, '+' | '(' | ')' | '-' | '.')
+            || (c == ' ' && !prev_space && digits > 0)
+        {
+            prev_space = c == ' ';
+        } else {
+            if (7..=15).contains(&digits) {
+                return true;
+            }
+            digits = 0;
+            prev_space = false;
+        }
+    }
+    false
+}
+
+/// Up to [`MAX_LISTED_RECIPIENTS`] texts on `screen` (not the target's, never a secure
+/// field's) that say who is paid or messaged: phone numbers, masked account or card
+/// suffixes, email addresses, `@handles`. Money texts are left to the amounts.
+fn recipient_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for e in screen
+        .elements
+        .iter()
+        .filter(|e| !e.secure && e.role != Role::Key && !target.is_some_and(|t| t.index == e.index))
+    {
+        let t = crate::classify::element_text(e).trim().to_owned();
+        if t.is_empty() || has_money(&t) {
+            continue;
+        }
+        if (t.split_whitespace().any(recipient_word) || has_phone_number(&t)) && !out.contains(&t) {
+            out.push(t);
+            if out.len() >= MAX_LISTED_RECIPIENTS {
+                break;
+            }
         }
     }
     out
@@ -688,12 +1070,48 @@ fn fact_entry(text: &str, max: usize) -> String {
     clean_label(text, max).replace(';', ",")
 }
 
-/// The facts appended to an in-app summary: `Amounts on screen: Order total $500.00; You
-/// save $5.00` (every distinct amount with the label text of its row, largest first, at
-/// most [`MAX_LISTED_AMOUNTS`], then `and N more`) and `Selected: Monthly, $4.99` (at most
-/// [`MAX_LISTED_SELECTED`], then `and N more`). Empty parts are left out.
-fn facts_suffix(amounts: &[AmountFact], selected: &[String], limits: Limits) -> Vec<String> {
+/// The facts of an in-app summary, gathered once.
+struct Facts {
+    amounts: Vec<AmountFact>,
+    recipients: Vec<String>,
+    selected: Vec<String>,
+    fields: Vec<String>,
+}
+
+/// `Heading: a; b; c and N more` with at most `max` entries, each `entry`-formatted.
+fn fact_list(heading: &str, items: &[String], max: usize, entry: usize) -> Option<String> {
+    if items.is_empty() || entry == 0 {
+        return None;
+    }
+    let shown: Vec<String> = items
+        .iter()
+        .take(max)
+        .map(|t| fact_entry(t, entry))
+        .collect();
+    let more = items.len().saturating_sub(max);
+    let tail = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    Some(format!("{heading}: {}{tail}", shown.join("; ")))
+}
+
+/// The facts appended to an in-app summary, in this order (amounts first, so they are the
+/// last screen text to shrink):
+///
+/// - `Amounts on screen: Due today $199.00; Compare at $1,200.00 and 2 more` (every
+///   distinct amount, the charge first, at most [`MAX_LISTED_AMOUNTS`], then always the
+///   count of the rest);
+/// - `To/Account: Checking ••••4521` (payments and messages only, at most
+///   [`MAX_LISTED_RECIPIENTS`]);
+/// - `Selected: Annual plan` (at most [`MAX_LISTED_SELECTED`], ranked, then `and N more`);
+/// - `Fields: Note: dinner` (at most [`MAX_LISTED_FIELDS`], then `and N more`).
+///
+/// Empty parts are left out.
+fn facts_suffix(facts: &Facts, limits: Limits) -> Vec<String> {
     let mut parts = Vec::new();
+    let amounts = &facts.amounts;
     if !amounts.is_empty() {
         let shown: Vec<String> = amounts
             .iter()
@@ -709,7 +1127,11 @@ fn facts_suffix(amounts: &[AmountFact], selected: &[String], limits: Limits) -> 
                             fact_entry(&t, MAX_AMOUNT_CHARS)
                         })
                         .collect();
-                    tokens.join(" ")
+                    if tokens.is_empty() {
+                        fact_entry(&f.text, MAX_AMOUNT_CHARS)
+                    } else {
+                        tokens.join(" ")
+                    }
                 } else {
                     fact_entry(&f.text, limits.amount_entry)
                 }
@@ -723,31 +1145,38 @@ fn facts_suffix(amounts: &[AmountFact], selected: &[String], limits: Limits) -> 
         };
         parts.push(format!("Amounts on screen: {}{tail}", shown.join("; ")));
     }
-    if !selected.is_empty() {
+    parts.extend(fact_list(
+        "To/Account",
+        &facts.recipients,
+        MAX_LISTED_RECIPIENTS,
+        limits.recipient_entry,
+    ));
+    if !facts.selected.is_empty() {
         if limits.selected_entry == 0 {
-            parts.push(format!("Selected: {} options", selected.len()));
+            parts.push(format!("Selected: {} options", facts.selected.len()));
         } else {
-            let shown: Vec<String> = selected
-                .iter()
-                .take(MAX_LISTED_SELECTED)
-                .map(|t| fact_entry(t, limits.selected_entry))
-                .collect();
-            let more = selected.len().saturating_sub(MAX_LISTED_SELECTED);
-            let tail = if more > 0 {
-                format!(" and {more} more")
-            } else {
-                String::new()
-            };
-            parts.push(format!("Selected: {}{tail}", shown.join("; ")));
+            parts.extend(fact_list(
+                "Selected",
+                &facts.selected,
+                MAX_LISTED_SELECTED,
+                limits.selected_entry,
+            ));
         }
     }
+    parts.extend(fact_list(
+        "Fields",
+        &facts.fields,
+        MAX_LISTED_FIELDS,
+        limits.field_entry,
+    ));
     parts
 }
 
 /// The summary of pressing `el` (`verb` "Tap" or "Long-press"): a tap on an on/off switch
 /// says what it will do (`Turn on "Wi-Fi" in Settings`); a control whose row has other
-/// text names it (`Tap "Buy" next to "Socks $5.00" in Shop`). The screen's amounts and
-/// selected options follow as facts (see `facts_suffix`), never one amount picked by
+/// text names it (`Tap "Buy" next to "Socks $5.00" in Shop`); a control under a card's
+/// stacked title names that too (`Tap "Delete order" under "Order #1001, Placed Nov 20"
+/// in Shop`). The screen's facts follow (see `facts_suffix`), never one amount picked by
 /// distance.
 fn press_summary(
     verb: &str,
@@ -769,7 +1198,13 @@ fn press_summary(
     } else {
         format!(" next to \"{}\"", clean_label(&row, l.next_to))
     };
-    format!("{verb} {what}{next_to}{in_app}")
+    let item = item_texts(el, screen).join(", ");
+    let under = if item.is_empty() || l.under == 0 {
+        String::new()
+    } else {
+        format!(" under \"{}\"", clean_label(&item, l.under))
+    };
+    format!("{verb} {what}{next_to}{under}{in_app}")
 }
 
 /// A one-line, human-readable, sanitised description of `action` for a confirmation
@@ -792,15 +1227,33 @@ fn summarize_with(action: &Action, screen: &CompactScreen, category: RiskCategor
         _ => None,
     };
     let with_facts = uses_foreground_app(action) && !matches!(action, Action::Look);
-    let (amounts, selected) = if with_facts {
-        (amount_facts(screen, target), selected_facts(screen, target))
+    let facts = if with_facts {
+        let pays = matches!(
+            category,
+            RiskCategory::Payment | RiskCategory::SendMessage | RiskCategory::Purchase
+        );
+        Facts {
+            amounts: amount_facts(screen, target),
+            recipients: if pays {
+                recipient_facts(screen, target)
+            } else {
+                Vec::new()
+            },
+            selected: selected_facts(screen, target),
+            fields: field_facts(screen, target),
+        }
     } else {
-        (Vec::new(), Vec::new())
+        Facts {
+            amounts: Vec::new(),
+            recipients: Vec::new(),
+            selected: Vec::new(),
+            fields: Vec::new(),
+        }
     };
     let mut line = String::new();
     for l in LIMITS {
         let mut parts = vec![action_line(action, screen, category, l)];
-        parts.extend(facts_suffix(&amounts, &selected, l));
+        parts.extend(facts_suffix(&facts, l));
         line = parts.join(". ");
         if line.chars().count() <= MAX_SUMMARY_CHARS {
             break;

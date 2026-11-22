@@ -23,9 +23,10 @@
 //!
 //! Approvals are not acted on blind: the owner may answer long after the question, so once
 //! the last confirmation of a runner action is approved the session observes again and runs
-//! the action only if the fresh screen's content record equals the one the owner approved
-//! (the whole screen, digits of free-standing texts excepted; the action re-planned on the
-//! fresh screen, see `recheck_approved`); otherwise the model is told it was not done and
+//! the action only if the fresh raw tree's exact digest equals the one the owner approved
+//! (`jarvis_observe::screen_digest`: no tolerance; a screen with live-updating text cannot
+//! be confirmed, fail closed) and the target is the same; the action is re-planned on the
+//! fresh screen, see `recheck_approved`; otherwise the model is told it was not done and
 //! the action goes through the full gate again. Within one approval, and never as a step,
 //! the look may bring the asked app back once (when the agent's own app or the home screen
 //! is in front) and wait [`APPROVAL_SETTLE_MS`] once for a settling screen before a last
@@ -79,7 +80,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use jarvis_memory::{LogEntry, LogStep, MemoryStore, Next, RecordedStep, Recorder, Replayer};
-use jarvis_observe::{compact, diff, marks, screen_hash};
+use jarvis_observe::{compact, diff, marks, screen_digest, screen_hash, ScreenDigest};
 use std::collections::VecDeque;
 
 use jarvis_proto::{
@@ -167,6 +168,10 @@ struct Current {
     safe: CompactScreen,
     /// `screen_hash` of `screen`.
     hash: u64,
+    /// The exact digest of the raw tree `screen` was compacted from (see
+    /// [`jarvis_observe::screen_digest`]): what an approval is checked against. Kept here,
+    /// beside the screen, so no FFI-visible type carries it.
+    digest: ScreenDigest,
     /// Screenshot handle, when this observation has one.
     screenshot: Option<ImageRef>,
     /// Whether anything has been observed yet.
@@ -187,6 +192,7 @@ impl Default for Current {
             screen: empty.clone(),
             safe: empty,
             hash: 0,
+            digest: ScreenDigest::default(),
             screenshot: None,
             seen: false,
         }
@@ -1270,25 +1276,27 @@ impl Session {
     /// [`MAX_STALE_APPROVALS`] the session ends `Failed`. Otherwise decide again (through
     /// the full gate, which asks again if the action is proposed again).
     fn approval_stale(&mut self, now: u64, pending: &Pending) -> Effect {
-        self.record_failure(pending, prompt::RESULT_APPROVAL_STALE);
+        // What changed, in words (from the prompt-safe screens; cleaned and bounded).
+        let change = approval_context(&pending.action, &pending.before_safe)
+            .change_note(&pending.action, &self.current.safe)
+            .unwrap_or_else(|| prompt::CHANGE_UNSEEN.to_owned());
+        self.record_failure(pending, &prompt::approval_stale(&change));
         self.stale_approvals = self.stale_approvals.saturating_add(1);
         if self.stale_approvals >= MAX_STALE_APPROVALS {
-            let summary = format!(
-                "Stopped: the screen changed after the owner approved an action {} times, so nothing approved was done. Try again when the screen is settled.",
-                self.stale_approvals
-            );
+            let summary = prompt::stale_approvals_summary(self.stale_approvals, &change);
             return self.finish(now, OutcomeStatus::Failed, &summary);
         }
         self.decide(now)
     }
 
     /// `pending` re-planned on the current screen, when it is still the action the owner
-    /// approved: the fresh screen's content record **equals** the one of the screen the
-    /// question was asked about (`pending.before`; see [`jarvis_safety::ApprovalContext`]:
-    /// the app, the Return-key cue and every element's role, texts and states in order,
-    /// with digits tolerated only in free-standing texts without an amount), the target
-    /// sits at the same position in it (so a twin cannot take its place) and its fresh
-    /// frame contains the re-planned point; on the home screen a launch that cannot be
+    /// approved: the exact digest of the fresh raw tree **equals** the one taken when the
+    /// question was asked (`pending.before_digest`; see [`jarvis_observe::screen_digest`]:
+    /// every node's role, texts, identifier, placeholder and states, before compaction
+    /// drops anything; no tolerance, so live-updating text voids the approval), the target
+    /// sits at the same position in the compact screen with the same role, texts and
+    /// states (`jarvis_safety::ApprovalContext::target_holds_on`, so a twin cannot take its
+    /// place) and its fresh frame contains the re-planned point; on the home screen a launch that cannot be
     /// named still finds no denied app among the results; and a gate decision on the
     /// fresh screen asks for nothing new (no denial, and no confirmation other than the one
     /// approved, in the same category: the record already pins everything the summary is
@@ -1301,7 +1309,9 @@ impl Session {
     ) -> Option<Pending> {
         let screen = &self.current.screen;
         let action = pending.action.clone();
-        if !approval_context(&action, &pending.before).holds_on(&action, screen) {
+        if self.current.digest != pending.before_digest
+            || !approval_context(&action, &pending.before).target_holds_on(&action, screen)
+        {
             return None;
         }
         if is_springboard(&screen.app_bundle_id)
@@ -1352,6 +1362,7 @@ impl Session {
             source: pending.source,
             before: screen.clone(),
             before_safe: self.current.safe.clone(),
+            before_digest: self.current.digest,
             exec: Exec::Runner(queue),
             check,
         })
@@ -1396,9 +1407,12 @@ impl Session {
     }
 
     fn ingest(&mut self, obs: Observation) {
+        // The digest is taken from the raw tree before compaction cuts or drops anything.
+        let digest = screen_digest(&obs.screen);
         let screen = compact(&obs.screen);
         self.current = Current {
             hash: screen_hash(&screen),
+            digest,
             safe: prompt_safe(&screen, &self.memory),
             screen,
             screenshot: obs.screenshot,
@@ -2001,6 +2015,7 @@ impl Session {
             source,
             before: screen.clone(),
             before_safe: self.current.safe.clone(),
+            before_digest: self.current.digest,
             described,
             exec,
             check,

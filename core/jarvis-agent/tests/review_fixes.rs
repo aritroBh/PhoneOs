@@ -825,24 +825,26 @@ fn an_approved_switch_that_flipped_meanwhile_is_not_tapped() {
     assert!(matches!(e, Effect::Act(_)), "{e:?}");
 }
 
-/// Not brittle: a clock or countdown digit far from the target changing does not void the
-/// approval; a text in the target's own row changing does.
+/// Any change voids the approval, far from the target or in its row; an unchanged screen
+/// runs.
 ///
-/// Deliberately changed in the third review: the previous design let *any* unrelated
-/// static text far from the target change ("Updated 9:41" → "Updating…" still ran). Under
-/// the whole-screen record only digits of free-standing texts may change; a changed word
-/// anywhere voids the approval.
+/// Deliberately changed twice. Third review: the previous design let *any* unrelated
+/// static text far from the target change ("Updated 9:41" → "Updating…" still ran).
+/// Fourth review: digits of free-standing texts no longer tick either ("Updated 9:41" →
+/// "9:42" used to run): the record is the exact digest of the raw tree.
 #[test]
-fn an_approval_survives_far_changes_but_not_changes_in_its_row() {
+fn an_approval_is_void_on_any_change_far_away_or_in_its_row() {
     let items = [("Socks", "$5.00"), ("TV", "$1,500.00")];
     let before = shop_list_with(Some("Updated 9:41"), &items);
     let tv = nth_index(&before, "Buy", 2);
+    let (asked, e) = approve_then_look(config(), &before, tv, &before.clone());
+    assert!(matches!(e, Effect::Act(_)), "'{asked}': {e:?}");
     for status in ["Updated 9:42", "Updated 10:05"] {
         let after = shop_list_with(Some(status), &items);
         let (asked, e) = approve_then_look(config(), &before, tv, &after);
         assert!(
-            matches!(e, Effect::Act(_)),
-            "'{status}' far away voided '{asked}': {e:?}"
+            !matches!(e, Effect::Act(_)),
+            "'{status}' far away kept '{asked}': {e:?}"
         );
     }
     let after = shop_list_with(Some("Updating…"), &items);
@@ -910,7 +912,8 @@ fn stale_approvals_are_capped_even_with_successes_in_between() {
                 assert_eq!(o.status, OutcomeStatus::Failed, "{}", o.summary);
                 assert!(
                     o.summary
-                        .contains("the screen changed after the owner approved"),
+                        .contains("the screen kept changing after you approved")
+                        && o.summary.contains("Do this step yourself"),
                     "{}",
                     o.summary
                 );
@@ -1026,20 +1029,23 @@ fn reserved(countdown: &str, stepper: &str, banner: Option<&str>) -> Screen {
     )
 }
 
-/// A countdown right above the target ticking ("Reserved for 9:58" → "9:41") keeps the
-/// approval; a stepper's quantity that changed, or a banner that appeared or disappeared,
-/// voids it.
+/// A countdown right above the target ticking ("Reserved for 9:58" → "9:41"), a stepper's
+/// quantity that changed, or a banner that appeared or disappeared, voids the approval.
+/// (Changed expectation, fourth review: the ticking countdown used to keep it; a screen
+/// with live-updating text cannot be confirmed now, fail closed.)
 #[test]
-fn countdowns_tick_but_quantities_and_banners_void_the_approval() {
+fn countdowns_quantities_and_banners_void_the_approval() {
     let before = reserved("Reserved for 9:58", "1", None);
     let pay = index_of(&before, "Pay");
+    let (_, e) = approve_then_look(config(), &before, pay, &before.clone());
+    assert!(matches!(e, Effect::Act(_)), "{e:?}");
     let (_, e) = approve_then_look(
         config(),
         &before,
         pay,
         &reserved("Reserved for 9:41", "1", None),
     );
-    assert!(matches!(e, Effect::Act(_)), "{e:?}");
+    assert!(!matches!(e, Effect::Act(_)), "the countdown ticked: {e:?}");
     let (_, e) = approve_then_look(
         config(),
         &before,
@@ -1102,4 +1108,301 @@ fn a_huge_screen_is_gated_and_rechecked_quickly() {
     println!("5,000 elements: observe {observe:?}, gate+ask {ask:?}, recheck+act {recheck:?}");
     assert!(ask < Duration::from_millis(1500), "{ask:?}");
     assert!(recheck < Duration::from_millis(3000), "{recheck:?}");
+}
+
+// ---------------------------------------------------------------------------------------
+// Fourth review: the record is the exact digest of the raw tree, taken before compaction.
+// ---------------------------------------------------------------------------------------
+
+/// Order cards: title and date stacked above a "Delete order" button.
+fn order_cards(first: u32) -> Screen {
+    let mut kids = Vec::new();
+    for k in 0..3u32 {
+        let y = 100.0 + 200.0 * f64::from(k);
+        kids.push(text(
+            &format!("Order #{}", first + k),
+            rect(16.0, y, 361.0, 22.0),
+        ));
+        kids.push(text("Placed Nov 20", rect(16.0, y + 26.0, 361.0, 20.0)));
+        kids.push(node(
+            Role::Button,
+            "Delete order",
+            rect(16.0, y + 56.0, 361.0, 44.0),
+        ));
+    }
+    screen("com.example.shop", "Shop", app_root("Shop", kids), false)
+}
+
+/// End to end: approved "Delete order" under Order #1001; at the look #1001 is gone and
+/// #1002 sits in its slots. The digit tolerance tapped it; now nothing is tapped, the model
+/// is told what changed, and the question named the order.
+#[test]
+fn a_list_shifted_by_one_card_is_not_acted_on() {
+    let before = order_cards(1001);
+    let i = index_of(&before, "Delete order");
+    let (asked, e) = approve_then_look(config(), &before, i, &order_cards(1002));
+    assert_eq!(
+        asked,
+        "Tap \"Delete order\" under \"Order #1001, Placed Nov 20\" in Shop"
+    );
+    assert!(!matches!(e, Effect::Act(_)), "deleted Order #1002: {e:?}");
+    let Effect::Infer(req) = e else {
+        panic!("{e:?}")
+    };
+    assert!(
+        req.user.contains(
+            "not done: the screen changed after the owner approved it (the text \"Order #1001\" is now \"Order #1002\")"
+        ),
+        "{}",
+        req.user
+    );
+    let (_, e) = approve_then_look(config(), &before, i, &order_cards(1001));
+    assert!(matches!(e, Effect::Act(RunnerCommand::Tap { .. })), "{e:?}");
+}
+
+/// A row with no controls merges at most 12 child texts into its label; the 13th is not on
+/// the compact screen, but it is in the digest.
+fn review_order(ship_to: &str) -> Screen {
+    let mut parts: Vec<UiNode> = (0..12)
+        .map(|k| {
+            text(
+                &format!("Line {k} detail"),
+                rect(16.0, 100.0 + 20.0 * f64::from(k), 300.0, 18.0),
+            )
+        })
+        .collect();
+    parts.push(text(ship_to, rect(16.0, 340.0, 300.0, 18.0)));
+    let cell = UiNode::new(Role::Cell, rect(0.0, 90.0, 393.0, 280.0)).with_children(parts);
+    screen(
+        "com.example.shop",
+        "Shop",
+        app_root(
+            "Shop",
+            vec![
+                cell,
+                text("Total $80.00", rect(16.0, 600.0, 361.0, 22.0)),
+                node(Role::Button, "Place order", rect(16.0, 700.0, 361.0, 50.0)),
+            ],
+        ),
+        false,
+    )
+}
+
+#[test]
+fn text_past_the_merged_part_cap_voids_the_approval() {
+    let before = review_order("Ship to Alex Home");
+    let after = review_order("Ship to Mallory Depot");
+    assert_eq!(
+        jarvis_observe::compact(&before),
+        jarvis_observe::compact(&after)
+    );
+    let i = index_of(&before, "Place order");
+    let (_, e) = approve_then_look(config(), &before, i, &after);
+    assert!(!matches!(e, Effect::Act(_)), "shipped elsewhere: {e:?}");
+    // Only the raw tree differs: the model is told something changed.
+    let Effect::Infer(req) = e else {
+        panic!("{e:?}")
+    };
+    assert!(
+        req.user
+            .contains("approved it (something on the screen changed)"),
+        "{}",
+        req.user
+    );
+}
+
+/// An unlabeled image's identifier (the card brand) is not on the compact screen; it is in
+/// the digest.
+#[test]
+fn an_unlabeled_images_identifier_changing_voids_the_approval() {
+    let pay = |card: &str| {
+        screen(
+            "com.example.shop",
+            "Shop",
+            app_root(
+                "Shop",
+                vec![
+                    UiNode::new(Role::Image, rect(16.0, 300.0, 40.0, 24.0)).with_identifier(card),
+                    text("Total $80.00", rect(16.0, 600.0, 361.0, 22.0)),
+                    node(Role::Button, "Pay", rect(16.0, 700.0, 361.0, 50.0)),
+                ],
+            ),
+            false,
+        )
+    };
+    let before = pay("card.visa");
+    let i = index_of(&before, "Pay");
+    let (_, e) = approve_then_look(config(), &before, i, &pay("card.amex"));
+    assert!(!matches!(e, Effect::Act(_)), "{e:?}");
+    let (_, e) = approve_then_look(config(), &before, i, &pay("card.visa"));
+    assert!(matches!(e, Effect::Act(_)), "{e:?}");
+}
+
+/// A screen with the real status bar: its clock ticking (left out by role) keeps the
+/// approval; a password field's value and the keyboard's keys and predictions changing do
+/// too.
+fn checkout_with_chrome(clock: &str, password: &str, prediction: &str) -> Screen {
+    let status_bar = UiNode::new(Role::Other("StatusBar".into()), rect(0.0, 0.0, 393.0, 54.0))
+        .with_children(vec![
+            text(clock, rect(40.0, 16.0, 60.0, 20.0)),
+            UiNode::new(Role::Other("Other".into()), rect(330.0, 18.0, 30.0, 14.0))
+                .with_label("100% battery power"),
+        ]);
+    let keyboard_window = UiNode::new(Role::Window, IPHONE_SIZE.to_rect()).with_children(vec![
+        UiNode::new(Role::Other("Other".into()), rect(0.0, 470.0, 393.0, 44.0))
+            .with_identifier("SystemInputAssistantView")
+            .with_children(vec![node(
+                Role::Button,
+                prediction,
+                rect(0.0, 470.0, 393.0, 44.0),
+            )]),
+        UiNode::new(Role::Keyboard, rect(0.0, 516.0, 393.0, 336.0)).with_children(vec![
+            UiNode::new(Role::Key, rect(3.0, 527.0, 37.0, 46.0)).with_label(prediction),
+            UiNode::new(Role::Button, rect(300.0, 800.0, 90.0, 46.0))
+                .with_label("go")
+                .with_identifier("Return"),
+        ]),
+    ]);
+    let root = UiNode::new(Role::Application, IPHONE_SIZE.to_rect())
+        .with_label("Shop")
+        .with_children(vec![
+            UiNode::new(Role::Window, IPHONE_SIZE.to_rect()).with_children(vec![
+                text("Checkout", rect(16.0, 70.0, 200.0, 40.0)),
+                UiNode::new(Role::SecureTextField, rect(16.0, 200.0, 361.0, 44.0))
+                    .with_label("Card PIN")
+                    .with_value(password),
+                text("Total $42.10", rect(16.0, 300.0, 361.0, 30.0)),
+                node(Role::Button, "Pay", rect(16.0, 400.0, 361.0, 50.0)),
+            ]),
+            keyboard_window,
+            UiNode::new(Role::Window, IPHONE_SIZE.to_rect()).with_children(vec![status_bar]),
+        ]);
+    screen("com.example.shop", "Shop", root, true)
+}
+
+#[test]
+fn a_status_bar_clock_that_ticks_keeps_the_approval() {
+    let before = checkout_with_chrome("9:41", "••••", "Hello");
+    let i = index_of(&before, "Pay");
+    let after = checkout_with_chrome("9:42", "•••••", "Thanks");
+    assert_ne!(
+        jarvis_observe::compact(&before),
+        jarvis_observe::compact(&after),
+        "the clock is on the compact screen"
+    );
+    let (asked, e) = approve_then_look(config(), &before, i, &after);
+    assert!(
+        matches!(e, Effect::Act(RunnerCommand::Tap { .. })),
+        "'{asked}': {e:?}"
+    );
+    // The same clock text in the app's own window (no status-bar role) voids it.
+    let in_app = |clock: &str| {
+        screen(
+            "com.example.shop",
+            "Shop",
+            app_root(
+                "Shop",
+                vec![
+                    text(clock, rect(40.0, 16.0, 60.0, 20.0)),
+                    text("Total $42.10", rect(16.0, 300.0, 361.0, 30.0)),
+                    node(Role::Button, "Pay", rect(16.0, 400.0, 361.0, 50.0)),
+                ],
+            ),
+            false,
+        )
+    };
+    let before = in_app("9:41");
+    let i = index_of(&before, "Pay");
+    let (_, e) = approve_then_look(config(), &before, i, &in_app("9:42"));
+    assert!(!matches!(e, Effect::Act(_)), "{e:?}");
+}
+
+/// On the home screen an icon's badge may change between the question and the look.
+#[test]
+fn a_home_screen_badge_that_changes_keeps_the_approval() {
+    let home = |mail: &str| {
+        screen(
+            "com.apple.springboard",
+            "Home",
+            app_root(
+                "Home",
+                vec![
+                    node(Role::Button, mail, rect(20.0, 100.0, 64.0, 64.0)),
+                    node(Role::Button, "Gadgetry", rect(110.0, 100.0, 64.0, 64.0)),
+                ],
+            ),
+            false,
+        )
+    };
+    let before = home("Mail, 3 unread");
+    let i = index_of(&before, "Gadgetry");
+    let (asked, e) = approve_then_look(first_use_config(), &before, i, &home("Mail, 4 unread"));
+    assert!(asked.contains("Gadgetry"), "{asked}");
+    assert!(
+        matches!(e, Effect::Act(RunnerCommand::Tap { .. })),
+        "'{asked}': {e:?}"
+    );
+    let (_, e) = approve_then_look(first_use_config(), &before, i, &home("Mall, 3 unread"));
+    assert!(!matches!(e, Effect::Act(_)), "{e:?}");
+}
+
+/// A live ETA keeps changing: every approval is void, and after three the session ends
+/// telling the owner to do the step themselves (the deliberate fail-closed consequence).
+#[test]
+fn a_live_eta_ends_the_session_with_advice_for_the_owner() {
+    let ride = |eta: u32| {
+        screen(
+            "com.example.ride",
+            "Ride",
+            app_root(
+                "Ride",
+                vec![
+                    text("Comfort $23.45", rect(16.0, 560.0, 361.0, 30.0)),
+                    text(
+                        &format!("Pickup in {eta} min"),
+                        rect(16.0, 600.0, 361.0, 30.0),
+                    ),
+                    node(
+                        Role::Button,
+                        "Request Comfort",
+                        rect(16.0, 700.0, 361.0, 50.0),
+                    ),
+                ],
+            ),
+            false,
+        )
+    };
+    let mut d = Driver::new(config(), "Get me a ride");
+    d.step(Event::Start);
+    let mut eta = 9;
+    let mut e = d.observed(&ride(eta));
+    for _ in 0..jarvis_agent::MAX_STALE_APPROVALS {
+        let i = index_of(&ride(eta), "Request Comfort");
+        assert!(matches!(e, Effect::Infer(_)), "{e:?}");
+        let c = d.model(&format!(r#"{{"action":"tap","element":{i}}}"#));
+        assert!(matches!(c, Effect::Confirm(_)), "{c:?}");
+        assert!(matches!(
+            d.step(Event::UserDecision { approved: true }),
+            Effect::Observe { .. }
+        ));
+        eta -= 1;
+        e = d.look(&ride(eta)).0;
+    }
+    let Effect::Finished(o) = e else {
+        panic!("{e:?}")
+    };
+    assert_eq!(o.status, OutcomeStatus::Failed);
+    assert!(o.summary.contains("live-updating text"), "{}", o.summary);
+    assert!(
+        o.summary
+            .contains("Jarvis did not do it. Do this step yourself."),
+        "{}",
+        o.summary
+    );
+    assert!(
+        o.summary
+            .contains("the text 'Pickup in 7 min' is now 'Pickup in 6 min'"),
+        "{}",
+        o.summary
+    );
 }

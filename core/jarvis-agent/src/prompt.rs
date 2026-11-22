@@ -168,10 +168,29 @@ pub(crate) const RESULT_LOCK_TOOL_UNKNOWN: &str =
 /// History result: a question the owner did not answer before the lock.
 pub(crate) const RESULT_LOCK_UNANSWERED: &str =
     "not answered: the phone locked before the owner replied";
-/// History result: the owner approved, but the approved control was no longer where it was
-/// asked about (moved, gone, another app, or the screen now reads differently).
-pub(crate) const RESULT_APPROVAL_STALE: &str =
-    "not done: the screen changed after the owner approved it; read the screen again and choose again";
+/// History result: the owner approved, but the screen was no longer exactly the one asked
+/// about (the raw tree's digest differs, or the approved control moved or changed).
+/// `change` says what changed (cleaned screen text, see
+/// `jarvis_safety::ApprovalContext::change_note`, or [`CHANGE_UNSEEN`]).
+pub(crate) fn approval_stale(change: &str) -> String {
+    format!(
+        "not done: the screen changed after the owner approved it ({change}); read the screen again and choose again"
+    )
+}
+
+/// What an approval note says when only something the compact screen does not show
+/// changed (the raw tree's digest).
+pub(crate) const CHANGE_UNSEEN: &str = "something on the screen changed";
+
+/// The session's final summary after [`crate::session::MAX_STALE_APPROVALS`] approvals
+/// were not carried out: tells the owner what to do. A screen with live-updating text (an
+/// ETA, a countdown, a clock inside the app) never shows the same tree twice, so an
+/// approval on it cannot be confirmed (a deliberate, fail-closed choice).
+pub(crate) fn stale_approvals_summary(count: u32, last_change: &str) -> String {
+    format!(
+        "Stopped: the screen kept changing after you approved ({count} times; last: {last_change}). It may show live-updating text, such as an ETA, a countdown or a clock. Jarvis did not do it. Do this step yourself."
+    )
+}
 /// History result: the text was typed, but the screen changed before its Return was pressed.
 pub(crate) const RESULT_RETURN_HELD: &str =
     "not done: the text was typed, but the screen changed before Return, so Return was not pressed; check the screen";

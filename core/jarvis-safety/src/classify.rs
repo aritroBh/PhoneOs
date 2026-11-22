@@ -751,11 +751,23 @@ fn beside_siblings(screen: &CompactScreen) -> BTreeSet<u32> {
 /// a carousel or grid (music, App Store and news shelves, photo grids), where a sideways
 /// drag pages. There is no screen-width threshold: a row in a split view's narrow column
 /// (beside the wider detail column's rows) or an inset-grouped list is still a row.
+///
+/// A row is also short: taller than [`MAX_LIST_ROW_SHARE`] of the screen height, a lone
+/// cell or button is a page (an onboarding page, a story, a paging card), where a sideways
+/// drag turns the page. With an unknown screen height only the sibling rule applies.
 fn is_list_row(el: &Element, r: &Reader<'_>) -> bool {
+    let screen_h = r.screen.size.height;
+    let page =
+        screen_h.is_finite() && screen_h > 0.0 && el.frame.height > screen_h * MAX_LIST_ROW_SHARE;
     row_family(&el.role)
+        && !page
         && !in_app(&r.screen.app_bundle_id, SPRINGBOARD_BUNDLE_ID)
         && !r.is_beside_sibling(el)
 }
+
+/// Tallest share of the screen height a list row with swipe actions takes (see
+/// [`is_list_row`]): a 200 pt row on an 852 pt screen is a row, a 420 pt card is a page.
+pub(crate) const MAX_LIST_ROW_SHARE: f64 = 0.25;
 
 /// Whether a drag in finger direction `finger` that crosses `el` acts on it. Sideways:
 /// adjustable controls (sliders, switches, steppers, slide-to-act controls) and list rows

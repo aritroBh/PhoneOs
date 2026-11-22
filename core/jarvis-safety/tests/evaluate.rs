@@ -114,7 +114,11 @@ fn send_in_messages_needs_confirmation() {
         None,
     ));
     assert_eq!(req.category, RiskCategory::SendMessage);
-    assert_eq!(req.summary, "Tap \"Send\" in Messages");
+    // Fourth review: the values of fields are facts (the message about to be sent).
+    assert_eq!(
+        req.summary,
+        "Tap \"Send\" in Messages. Fields: Message: See you at 7"
+    );
     assert_eq!(req.app, "com.apple.MobileSMS");
 
     let submit = Action::Type {
@@ -364,13 +368,15 @@ fn summaries_are_sanitised_and_hide_secrets() {
     let long = format!("Delete {}", "x".repeat(500));
     let s = app_screen(vec![button(1, &long)]);
     let sum = summarize(&Action::Tap { element: 1 }, &s, None);
-    assert!(sum.chars().count() <= 200, "{sum}");
+    // The summary cap is 320 characters (was 200 before the fourth review's facts).
+    assert!(sum.chars().count() <= 320, "{sum}");
     assert!(sum.contains('…'));
-    // Unlabelled elements are described by role and index.
+    // Unlabelled elements are described by role and index (and, fourth review, by the
+    // text stacked right above them).
     let s = app_screen(vec![label(1, "Delete this?"), button(2, "")]);
     assert_eq!(
         summarize(&Action::Tap { element: 2 }, &s, None),
-        "Tap button #2 in Example"
+        "Tap button #2 under \"Delete this?\" in Example"
     );
 }
 
@@ -412,7 +418,8 @@ fn a_long_label_keeps_its_largest_amounts() {
         assert!(sum.contains(kept), "{kept} missing: {sum}");
     }
     assert!(!sum.contains("$0.99"), "{sum}");
-    assert!(sum.chars().count() <= 200, "{sum}");
+    // The summary cap is 320 characters (was 200 before the fourth review's facts).
+    assert!(sum.chars().count() <= 320, "{sum}");
 }
 
 /// The summary the owner approves says what tells the control apart: the row's item and
@@ -588,10 +595,11 @@ fn the_summary_states_the_selected_option() {
     assert!(summarize(&tap, &plans(false), None).ends_with("Selected: Yearly, $49.99"));
 }
 
-/// Six amounts: the three largest are named, the rest counted; the summary stays bounded
-/// and keeps the amounts when the labels are long.
+/// Six amounts (fourth review: five are listed, was three): the five largest are named,
+/// the rest counted; the summary stays bounded and keeps the amounts when the labels are
+/// long.
 #[test]
-fn a_screen_with_many_amounts_lists_three_and_counts_the_rest() {
+fn a_screen_with_many_amounts_lists_five_and_counts_the_rest() {
     let amounts = ["$1.00", "$250.00", "$3.50", "$1,999.00", "$12.00", "$0.99"];
     let mut els: Vec<_> = amounts
         .iter()
@@ -613,17 +621,23 @@ fn a_screen_with_many_amounts_lists_three_and_counts_the_rest() {
     let s = screen("com.example.app", "Example", els);
     let sum = summarize(&Action::Tap { element: 6 }, &s, None);
     println!("{sum}");
-    assert!(sum.chars().count() <= 200, "{sum}");
-    for kept in ["$1,999.00", "$250.00", "$12.00", "and 3 more"] {
+    assert!(sum.chars().count() <= 320, "{sum}");
+    for kept in [
+        "$1,999.00",
+        "$250.00",
+        "$12.00",
+        "$3.50",
+        "$1.00",
+        "and 1 more",
+    ] {
         assert!(sum.contains(kept), "{kept}: {sum}");
     }
-    for dropped in ["$0.99", "$3.50", "$1.00;"] {
-        assert!(!sum.contains(dropped), "{dropped}: {sum}");
-    }
-    let first = sum.find("$1,999.00").unwrap();
+    assert!(!sum.contains("$0.99"), "{sum}");
+    let pos = |t: &str| sum.find(t).unwrap();
     assert!(
-        first < sum.find("$250.00").unwrap()
-            && sum.find("$250.00").unwrap() < sum.find("$12.00").unwrap(),
+        pos("$1,999.00") < pos("$250.00")
+            && pos("$250.00") < pos("$12.00")
+            && pos("$12.00") < pos("$3.50"),
         "{sum}"
     );
     assert!(
@@ -669,12 +683,13 @@ fn a_hostile_label_cannot_forge_the_facts() {
     assert_eq!(sum.matches('"').count(), 2, "{sum}");
 }
 
-/// No amounts and nothing selected: no suffix at all.
+/// No amounts and nothing selected: no suffix at all (the text stacked above the target
+/// names its item, fourth review).
 #[test]
 fn a_screen_without_amounts_adds_no_facts() {
     let s = app_screen(vec![label(1, "Delete this note?"), button(2, "Delete")]);
     assert_eq!(
         summarize(&Action::Tap { element: 2 }, &s, None),
-        "Tap \"Delete\" in Example"
+        "Tap \"Delete\" under \"Delete this note?\" in Example"
     );
 }
