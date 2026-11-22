@@ -186,7 +186,10 @@ public struct DismissRule: Sendable, Equatable, CustomStringConvertible {
 ///    "the switch is on") no longer holds. When it says the action failed,
 ///    was not done, was dropped or its result is unknown (`interrupted: …` after a lock),
 ///    the step is retried, unless its precondition no longer holds on screen (it took
-///    effect) or its target is gone. At most `options.maxRetries` retries per step, then the
+///    effect) or its target is gone. A step the core reports as never run (`not done`,
+///    `not answered`) whose target is hidden while the next step's target is not listed
+///    either (a sheet or tip over the screen) is gone back to: it waits for its target,
+///    and dismiss rules may clear the cover. At most `options.maxRetries` retries per step, then the
 ///    script fails with the reason.
 /// 4. Run the current step. A missing target waits (`wait` actions) up to
 ///    `options.patience` times, then fails with a reason that lists what was on screen.
@@ -313,6 +316,24 @@ public final class ScriptedModel: ModelProvider {
             s.waits = 0
             current = steps[pending.step]
             currentTargetListed = true
+        } else if let pending, Self.mustWaitForTarget(result: last, query: pending.query, on: screen, nextTargetListed: currentTargetListed) {
+            // The core says the step never ran, and something (a sheet, a tip) covers its
+            // target: the step is still to do. Go back to it, so it waits for its target
+            // (and dismiss rules may clear what covers it) instead of moving on with the
+            // step unfinished (Safari form run: a tip appeared between the first-use
+            // approval and the typing, the core dropped the typing, the script went on to
+            // the email and the form was sent without a name).
+            let label = "step \(pending.step + 1)/\(steps.count) (\(steps[pending.step]))"
+            let done = s.retries[pending.step, default: 0]
+            guard done < options.maxRetries else {
+                return (pending.step, failJSON("\(label): still not done after \(done) retries (last result: \(last))", screen),
+                        "\(label): giving up after \(done) retries")
+            }
+            s.retries[pending.step] = done + 1
+            s.cursor = pending.step
+            s.waits = 0
+            current = steps[pending.step]
+            currentTargetListed = false
         }
         if !currentTargetListed, s.dismissals < options.maxDismissals {
             for (i, rule) in options.dismiss.enumerated() where s.ruleUses[i, default: 0] < rule.maxUses {
@@ -432,6 +453,19 @@ public final class ScriptedModel: ModelProvider {
             return nextTargetListed ? false : targetThere
         case .notDone, .interrupted, .notAnswered, .unknown:
             return targetThere
+        }
+    }
+
+    /// Whether a tap/type the core reports as never run (`not done: …`, `not answered: …`)
+    /// is still to do although its target is not listed now: neither its target nor the
+    /// next step's target is on `screen` (something covers the screen). With the next
+    /// step's target listed the screen has moved on and the script moves with it.
+    static func mustWaitForTarget(result: String, query: ElementQuery, on screen: PromptScreen, nextTargetListed: Bool) -> Bool {
+        switch StepOutcome(result: result) {
+        case .notDone, .notAnswered:
+            return query.find(in: screen) == nil && !nextTargetListed
+        default:
+            return false
         }
     }
 

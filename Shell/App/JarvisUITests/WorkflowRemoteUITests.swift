@@ -37,13 +37,42 @@ final class WorkflowRemoteUITests: QATestCase {
         require(app.staticTexts["workflows.title"], "the Workflows screen", in: app)
     }
 
+    /// Types into the field. `endEditing`: then presses Return, as a person does before
+    /// moving on, and waits until the keyboard is gone, so the next control is tapped on a
+    /// settled screen with nothing over it.
     @MainActor
-    private func type(_ text: String, into identifier: String, in app: XCUIApplication) {
+    private func type(_ text: String, into identifier: String, endEditing: Bool = false, in app: XCUIApplication) {
         let field = app.textFields[identifier]
         require(field, "the field \(identifier)", in: app)
         bringAboveKeyboard(field, in: app)
-        XCTAssertTrue(focus(field), "the field \(identifier) never took the keyboard focus")
+        XCTAssertTrue(focus(field), "the field \(identifier) never took the keyboard focus\n\(focusReport(field, in: app))")
         field.typeText(text)
+        guard endEditing else { return }
+        field.typeText("\n")
+        // Not an assertion: where Return keeps the keyboard up, the next field is still
+        // brought above it (bringAboveKeyboard) before it is tapped.
+        _ = app.keyboards.firstMatch.waitForNonExistence(timeout: 5)
+    }
+
+    /// What the next run needs to see when a field does not take the focus: the field's
+    /// frame and hittability, the keyboard's frame and the editor's text fields.
+    @MainActor
+    private func focusReport(_ field: XCUIElement, in app: XCUIApplication) -> String {
+        let keyboard = app.keyboards.firstMatch
+        var lines = [
+            "field exists \(field.exists), hittable \(field.exists && field.isHittable), frame \(field.exists ? "\(field.frame)" : "-")",
+            "keyboard " + (keyboard.exists ? "up, frame \(keyboard.frame)" : "not shown"),
+        ]
+        let readsFocus = field.responds(to: NSSelectorFromString("hasKeyboardFocus"))
+        lines += app.textFields.allElementsBoundByIndex.map { other in
+            let focus = readsFocus ? String(describing: other.value(forKey: "hasKeyboardFocus")) : "unreadable"
+            return "text field \(other.identifier) frame \(other.frame) focus \(focus)"
+        }
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "focus-failure"
+        shot.lifetime = .keepAlways
+        add(shot)
+        return lines.joined(separator: "\n")
     }
 
     /// Taps `field` until it has the keyboard focus. A tap made while the editor is still
@@ -90,10 +119,10 @@ final class WorkflowRemoteUITests: QATestCase {
     @MainActor
     private func createWorkflow(_ name: String, phrase: String? = nil, steps: [(String, String)], in app: XCUIApplication) {
         app.buttons["workflows.new"].tap()
-        type(name, into: "workflow.edit.name", in: app)
+        type(name, into: "workflow.edit.name", endEditing: true, in: app)
         if let phrase {
             app.buttons["workflow.edit.trigger.phrase"].tap()
-            type(phrase, into: "workflow.edit.phrase", in: app)
+            type(phrase, into: "workflow.edit.phrase", endEditing: true, in: app)
         }
         for (index, step) in steps.enumerated() {
             if index > 0 {
@@ -105,9 +134,13 @@ final class WorkflowRemoteUITests: QATestCase {
             require(kind, "the \(step.0) kind of step \(index + 1)", in: app)
             if !kind.isHittable { app.swipeUp() }
             kind.tap()
-            // Choosing a kind redraws the step (its text field is replaced).
-            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
-            type(step.1, into: "workflow.edit.step.\(index).text", in: app)
+            // The chip shows the kind as chosen once the step has been redrawn.
+            let deadline = Date().addingTimeInterval(5)
+            while !kind.isSelected && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+            XCTAssertTrue(kind.isSelected, "the \(step.0) kind of step \(index + 1) was not shown as chosen")
+            type(step.1, into: "workflow.edit.step.\(index).text", endEditing: true, in: app)
         }
         toolbarButton("workflow.edit.save", label: "Save", in: app).tap()
     }

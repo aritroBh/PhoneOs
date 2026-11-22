@@ -772,14 +772,27 @@ private struct StepEditor: View {
         .accessibilityIdentifier(id(index, "row"))
     }
 
-    @ViewBuilder private var fields: some View {
+    /// The placeholder of the step's one text field, for the kinds that have it.
+    private var textPlaceholder: String? {
         switch step.wrappedValue.kind {
-        case .runTask:
-            EditorField(placeholder: "What Jarvis should do", text: step.text, identifier: id(index, "text"))
-        case .askOwner:
-            EditorField(placeholder: "A yes/no question for you", text: step.text, identifier: id(index, "text"))
-        case .notify:
-            EditorField(placeholder: "Notification text", text: step.text, identifier: id(index, "text"))
+        case .runTask: "What Jarvis should do"
+        case .askOwner: "A yes/no question for you"
+        case .notify: "Notification text"
+        case .wait, .stopUnless, .runSkill: nil
+        }
+    }
+
+    @ViewBuilder private var fields: some View {
+        // One text field for task, question and notification, in the same place for all
+        // three: switching between them changes its placeholder, never replaces the field
+        // (a replaced field could not be focused by a tap that came right after the switch,
+        // simulator runs 9, 10 and 76), and the text is kept across kinds.
+        if let placeholder = textPlaceholder {
+            EditorField(placeholder: placeholder, text: step.text, identifier: id(index, "text"))
+        }
+        switch step.wrappedValue.kind {
+        case .runTask, .askOwner, .notify:
+            EmptyView()
         case .wait:
             Stepper(value: step.waitSeconds, in: 1...1_800, step: step.wrappedValue.waitSeconds >= 60 ? 30 : 5) {
                 HStack {

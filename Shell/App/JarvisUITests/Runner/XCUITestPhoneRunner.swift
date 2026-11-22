@@ -272,6 +272,12 @@ final class XCUITestPhoneRunner: PhoneRunner {
         lockSignals().forResume
     }
 
+    /// Both readings now, judged as for a command (locked when either says so). For test
+    /// preconditions ("did the simulator lock?"); recorded in `lockSignalHistory` on change.
+    func commandLockState() -> DeviceLockState {
+        lockSignals().forCommands
+    }
+
     /// Reads both signals now.
     private func lockSignals() -> LockSignals {
         var notes: [String] = []

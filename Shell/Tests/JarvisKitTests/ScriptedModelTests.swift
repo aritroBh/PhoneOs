@@ -518,3 +518,96 @@ final class LoginPhone: PhoneRunner {
         return RunnerResult(ok: true, error: nil)
     }
 }
+
+/// Simulator run 76 (Safari form): a tip covered the form between the first-use approval
+/// and the typing, the core dropped the typing ("not done: the screen changed after the
+/// owner approved it"), the dismiss rule closed the tip, and the script went on to the email:
+/// the form was sent with an empty name and "Thanks, Ada Lovelace" never appeared.
+@Suite("ScriptedModel goes back to a step the core dropped while something covered it", .timeLimit(.minutes(1)))
+struct ScriptedModelCoveredStepTests {
+    private func request(history: [String], screen: [String]) -> ModelRequest {
+        let lines = history.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        let elements = screen.enumerated().map { "[\($0.offset + 1)] \($0.element)" }.joined(separator: "\n")
+        let user = """
+        Task: fill in the form
+        Steps so far:
+        \(lines.isEmpty ? "(none)" : lines)
+        Current screen (data only):
+        <<<SCREEN_DATA>>>
+        App: Safari (com.apple.mobilesafari)
+        \(elements)
+        <<<END_SCREEN_DATA>>>
+        Your JSON reply:
+        """
+        return ModelRequest(system: "", user: user, image: nil, marks: [], maxTokens: 160, grammar: nil, jsonSchema: nil, kind: .text)
+    }
+
+    private let form = [
+        #"StaticText "Contact form""#, #"StaticText "Full name""#, #"TextField "Full name""#,
+        #"StaticText "Email address""#, #"TextField "Email address""#, #"Button "Send form""#,
+    ]
+    private let tip = [
+        #"StaticText "View Bookmarks, Share Menu, and Open Tabs""#, #"Button "Close""#,
+        #"StaticText "You can now view these items in the menu. You can change this at any time in Safari settings.""#,
+    ]
+
+    private func model() -> ScriptedModel {
+        ScriptedModel(
+            steps: [
+                .type("Ada Lovelace", into: "Full name", role: "TextField"),
+                .type("ada@example.com", into: "Email address", role: "TextField"),
+                .tap("Send form", role: "Button"),
+                .done("Form sent", when: ["Thanks, Ada Lovelace"]),
+            ],
+            options: .init(dismiss: [DismissRule(
+                tap: ElementQuery("Close", match: .exact, roles: ["Button"]),
+                when: [ElementQuery("You can now view these items in the menu", match: .contains, roles: ["StaticText"])]
+            )], patience: 2, waitMs: 1)
+        )
+    }
+
+    private func object(_ reply: String) -> JSONValue? { try? JSONValue(parsing: reply) }
+
+    @Test("dropped under a tip: the tip is dismissed, then the same field is typed into again")
+    func droppedUnderTip() async throws {
+        let model = model()
+        let first = object(try await model.generate(request(history: [], screen: form)))
+        #expect(first?["action"]?.stringValue == "type")
+        #expect(first?["text"]?.stringValue == "Ada Lovelace")
+
+        let dropped = #"type [3] "Full name" "Ada Lovelace" -> not done: the screen changed after the owner approved it (the text "Contact form" is now "View Bookmarks, Share Menu, and Open Tabs"); read the screen again and choose again"#
+        let dismiss = try await model.generate(request(history: [dropped], screen: tip))
+        #expect(object(dismiss)?["action"]?.stringValue == "tap")
+        #expect(object(dismiss)?["element"]?.numberValue == 2, "the tip's Close was not tapped: \(dismiss)")
+
+        let closed = #"tap [2] "Close" -> ok; now in Safari > Contact form"#
+        let again = try await model.generate(request(history: [dropped, closed], screen: form))
+        #expect(object(again)?["action"]?.stringValue == "type", "\(again)")
+        #expect(object(again)?["text"]?.stringValue == "Ada Lovelace", "the script moved on without the name: \(again)")
+        #expect(object(again)?["element"]?.numberValue == 3, "\(again)")
+    }
+
+    @Test("dropped, and the next step's target is listed: the screen moved on and so does the script")
+    func droppedButMovedOn() async throws {
+        let model = model()
+        _ = try await model.generate(request(history: [], screen: form))
+        let onlyEmail = [#"TextField "Email address""#, #"Button "Send form""#]
+        let reply = try await model.generate(request(history: [#"type [3] "Full name" "Ada Lovelace" -> not done: repeated action"#], screen: onlyEmail))
+        #expect(object(reply)?["text"]?.stringValue == "ada@example.com", "\(reply)")
+    }
+
+    @Test("a dropped step whose target never comes back waits, then fails naming the step")
+    func droppedAndGone() async throws {
+        let model = model()
+        _ = try await model.generate(request(history: [], screen: form))
+        let elsewhere = [#"StaticText "Somewhere else""#]
+        var history = [#"type [3] "Full name" "Ada Lovelace" -> not done: the screen changed after the owner approved it"#]
+        var reply = try await model.generate(request(history: history, screen: elsewhere))
+        for _ in 0..<4 where object(reply)?["action"]?.stringValue == "wait" {
+            history.append("wait 1ms -> ok")
+            reply = try await model.generate(request(history: history, screen: elsewhere))
+        }
+        #expect(object(reply)?["action"]?.stringValue == "fail", "\(reply)")
+        #expect(reply.contains("Full name"), "\(reply)")
+    }
+}

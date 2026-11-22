@@ -30,6 +30,17 @@ final class InterposingModel: ModelProvider {
     }
 }
 
+/// Set once, read from any thread (the lock test's "the simulator locked" precondition).
+final class LockFlag: Sendable {
+    private let state = Mutex(false)
+
+    var value: Bool { state.withLock { $0 } }
+
+    func set() {
+        state.withLock { $0 = true }
+    }
+}
+
 /// The phone locks in the middle of a task (simulator, no passcode): the runner refuses the
 /// next command as locked, the session waits for an unlock, and after the unlock it looks
 /// at the screen again before acting.
@@ -45,9 +56,26 @@ final class LockedPhoneAgentTests: QATestCase {
         let transcript = run.transcript
         let scripted = ScriptedModel(steps: PlaygroundAgentTests.toggleScript)
         // Before the model's second answer (tap the switch) the phone locks; four seconds
-        // later the owner unlocks and returns to Jarvis.
+        // later the owner unlocks and returns to Jarvis. The lock is confirmed first: in
+        // simulator run 76 `pressLockButton` returned but the simulator never locked (every
+        // reading stayed unlocked and the tap that followed turned the switch on), which
+        // failed this test as a driver fault. A press that does not lock within 6 s is
+        // repeated once; a simulator that still does not lock fails the precondition below.
+        let runner = run.runner
+        let lockSeen = LockFlag()
         let model = InterposingModel(scripted, atCall: 2) {
-            transcript.record("owner", "lock: \(SimulatorLock.lock())")
+            for press in 1...2 where !lockSeen.value {
+                transcript.record("owner", "lock (press \(press)): \(SimulatorLock.lock())")
+                let deadline = ContinuousClock.now + .seconds(6)
+                while ContinuousClock.now < deadline {
+                    if runner.commandLockState() == .locked {
+                        lockSeen.set()
+                        break
+                    }
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+            }
+            transcript.record("owner", lockSeen.value ? "lock: the simulator reports locked" : "lock: the simulator never reported locked")
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(4))
                 transcript.record("owner", "unlock: \(SimulatorLock.unlock(returningTo: app))")
@@ -58,6 +86,10 @@ final class LockedPhoneAgentTests: QATestCase {
         let outcome = try await run.run(task: "Turn on tips in the playground", model: model, maxDurationMs: 60_000)
         let entries = transcript.entries
         let history = "lock signal history:\n" + run.runner.lockSignalHistory.joined(separator: "\n")
+
+        // Precondition, not the driver: the simulator must have locked at all.
+        XCTAssertTrue(lockSeen.value,
+                      "precondition: the simulator did not lock (pressLockButton twice, no lock reading within 6 s of either press); this is the simulator, not the driver\n\(history)\n\(outcome.explanation)")
 
         // After the unlock the app must be back in front and show the result within 30 s.
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30),
