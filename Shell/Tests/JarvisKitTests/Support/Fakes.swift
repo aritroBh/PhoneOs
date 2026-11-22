@@ -5,19 +5,37 @@ import Synchronization
 
 // MARK: - Waiting helpers
 
-/// A switch that ends a deliberate hang. `hang()` ignores task cancellation on purpose, to
-/// prove the driver does not depend on IO being cooperative.
+/// A switch that ends a deliberate hang. `hang()` ignores task cancellation on purpose (it
+/// suspends on a continuation that only `release()` resumes), to prove the driver does not
+/// depend on IO being cooperative.
 final class Latch: Sendable {
-    private let state = Mutex((entered: 0, released: false))
+    private struct State {
+        var entered = 0
+        var released = false
+        var waiters: [CheckedContinuation<Void, Never>] = []
+    }
+
+    private let state = Mutex(State())
 
     var entered: Int { state.withLock { $0.entered } }
 
-    func release() { state.withLock { $0.released = true } }
+    func release() {
+        let waiters = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            s.released = true
+            defer { s.waiters = [] }
+            return s.waiters
+        }
+        waiters.forEach { $0.resume() }
+    }
 
     func hang() async {
-        state.withLock { $0.entered += 1 }
-        while !state.withLock({ $0.released }) {
-            try? await Task.sleep(for: .milliseconds(10))
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let released = state.withLock { s -> Bool in
+                s.entered += 1
+                if !s.released { s.waiters.append(continuation) }
+                return s.released
+            }
+            if released { continuation.resume() }
         }
     }
 }

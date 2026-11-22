@@ -90,7 +90,8 @@ struct DriverTests {
     func toolCall() async throws {
         var h = Harness()
         SampleTools.registerEcho(in: h.tools)
-        SampleTools.registerClockNow(in: h.tools, now: { Date(timeIntervalSince1970: 0) }, timeZone: TimeZone(identifier: "UTC") ?? .current)
+        let utc = TimeZone(secondsFromGMT: 0) ?? .current
+        SampleTools.registerClockNow(in: h.tools, now: { Date(timeIntervalSince1970: 0) }, timeZone: utc)
         h.model = FakeModel { request, call in
             switch call {
             case 1:
@@ -114,7 +115,7 @@ struct DriverTests {
         }
         #expect(toolResults == [
             ToolResult(ok: true, output: "hello tools", error: nil),
-            ToolResult(ok: true, output: "1970-01-01T00:00:00Z (UTC)", error: nil),
+            ToolResult(ok: true, output: "1970-01-01T00:00:00Z (\(utc.identifier))", error: nil),
         ])
         #expect(h.memory.saves.count == 1)
     }
