@@ -95,6 +95,8 @@ Waiting for a Mac build (app code changed after `18bc128`, the last commit compi
 - [x] `jarvis-remote`: corrupt-store errors never quote the file (keys)
 - [x] Independent adversarial review of the safety gates (agent, safety, observe, memory): 6 proven defects (3 critical: unclassified scroll and element-less swipe over a pay slider, Return-key risk dead after compaction) + 3 more, all fixed with regression tests
 - [x] After an approval the screen is read again; the action runs only if its target is still the same control
+- [x] Second review, of that fix itself: 8 more proven defects (4 critical), fixed. An approval is tied to the target's state, its row, the amounts on screen and what the classifier read; summaries name the neighbouring item, the total, on/off
+- [x] Spotlight, widgets and suggestions cannot open a denied app; classifier scans cannot be padded past a risky control
 - [x] Denied apps are refused by display name (home-screen icon, switcher card, `open_app`)
 - [ ] First-use approval for `OpenUrl` and tools with no declared app
 - [ ] Non-English safety phrases
