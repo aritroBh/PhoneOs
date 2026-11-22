@@ -201,6 +201,9 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     /// Remote control's listener runs (off by default; the paired devices live in the
     /// Keychain, not here).
     public var remoteControlEnabled: Bool
+    /// The Live view shows real screenshots (kept in memory only) instead of an outline of
+    /// the screen. Off by default; a value that cannot be decoded reads as off.
+    public var liveViewScreenshots: Bool
 
     public static let defaultAppTrust: [AppTrust] = [
         AppTrust(bundleIdPrefix: "com.apple.Preferences", name: "Settings", level: .guarded),
@@ -226,7 +229,8 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         appTrust: [AppTrust] = JarvisSettings.defaultAppTrust,
         awayAcknowledged: Bool = false,
         awayProximity: Bool = false,
-        remoteControlEnabled: Bool = false
+        remoteControlEnabled: Bool = false,
+        liveViewScreenshots: Bool = false
     ) {
         self.policyMode = policyMode
         self.firstUseApproval = firstUseApproval
@@ -244,6 +248,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         self.awayAcknowledged = awayAcknowledged
         self.awayProximity = awayProximity
         self.remoteControlEnabled = remoteControlEnabled
+        self.liveViewScreenshots = liveViewScreenshots
     }
 
     enum CodingKeys: String, CodingKey {
@@ -263,6 +268,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         case awayAcknowledged = "away_acknowledged"
         case awayProximity = "away_proximity"
         case remoteControlEnabled = "remote_control_enabled"
+        case liveViewScreenshots = "live_view_screenshots"
     }
 
     /// Decoding has two rules. A **missing** key takes the default, so older files keep
@@ -272,8 +278,9 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     /// relaxed and denied categories, the app trust list, remote control, and the step, time
     /// and lock-wait limits. `SettingsStore.read()` then reports the file as damaged and sets
     /// it aside, so no task runs under weaker rules than the owner chose. The other fields
-    /// (model and runner addresses, the model's context size, Away mode) take the default
-    /// when their value cannot be decoded.
+    /// (model and runner addresses, the model's context size, Away mode, the Live view's
+    /// real-screen option) take the default when their value cannot be decoded; for the
+    /// Live view option the default is off, which keeps fewer pixels, never more.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = JarvisSettings()
@@ -293,6 +300,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         awayAcknowledged = (try? c.decodeIfPresent(Bool.self, forKey: .awayAcknowledged)) ?? d.awayAcknowledged
         awayProximity = (try? c.decodeIfPresent(Bool.self, forKey: .awayProximity)) ?? d.awayProximity
         remoteControlEnabled = try Self.strict(c, .remoteControlEnabled, d.remoteControlEnabled)
+        liveViewScreenshots = (try? c.decodeIfPresent(Bool.self, forKey: .liveViewScreenshots)) ?? d.liveViewScreenshots
     }
 
     /// The keys whose value must decode when present (see `init(from:)`).

@@ -86,6 +86,19 @@ Waiting for a Mac build (app code changed after `18bc128`, the last commit compi
 - [ ] Audio-session interruption recovery (with voice)
 - [ ] Siri AI `ToolIntent` + app skills bundle experiment
 
+## Live view (cursor)
+
+Watch Jarvis act: a phone-shaped viewer in the run screen shows the screen Jarvis acts on, with a "Jarvis" cursor that glides to each target and shows the tap, long press or swipe, and a caption ("Tap “Send”"). iOS does not let Jarvis (or any app) draw a cursor over other apps, so the viewer lives inside Jarvis; it is not an overlay on the app being driven.
+
+- [x] JarvisKit `Viewer/` (Linux-tested): `PointerTimeline` reducer over the run's events (one step per runner command, the screen it acted on, the element under the pointer as a display aid only, caption, running/done/failed; capped at 200 steps), `CursorPath` (glide, press, drag; clamping, NaN, landscape), `ViewerMapping` (aspect fit, letterbox), `ReplayState` (step, play 1×/2×, scrub, Live without being yanked forward), `LiveViewScene` (what the view draws at a moment). All `Sendable`; the timeline is `Codable` with stable keys for the remote stream
+- [x] Backdrop: wireframe from the typed tree (shown elements, labels and placeholders, never values, at most 400); real screenshots only with "Show real screen in Live view" (off by default): `DriverConfiguration.viewerScreenshots` asks the runner for pixels on every observation and keeps them in `ViewerFrameStore` (memory only, capped by count and bytes, emptied per run and when the option is turned off); the core still gets an `ImageRef` only when it asked; nothing is kept for a locked observation
+- [x] Privacy: typed text comes from the model's (or flow's) action, never the runner command; `{{profile.…}}` values and anything typed into a secure field or a field that cannot be shown to be plain show as `••••` or not at all; URLs show the host only; runner error texts are not kept. Tests assert on the encoded JSON
+- [~] App: `Views/LiveScreenView.swift` (viewer, cursor, ripple, long-press ring, swipe trail, target outline, caption, replay controls; Reduce Motion, VoiceOver, Dynamic Type), Screen / Elements switch on the run screen, the setting in Control. **Not compiled yet**: needs the Mac CI
+- [~] UI test `testLiveViewFollowsAndReplaysDemoTask` (demo run: viewer present, caption changes, step back/forward/Live). **Unverified** until the Mac CI runs it
+- [ ] Check on the Mac: `backward.frame.fill` / `forward.frame.fill` symbols render; Canvas text in small rectangles; the viewer's height on small phones; the workflow run view still shows the element list only
+- [ ] Phase 2: stream the timeline and (when the option is on) frames to the paired remote controller over the existing encrypted channel, off by default, with its own permission
+- [ ] Phase 3 (device spike): Picture-in-Picture floating mini-viewer over other apps (check it never covers tap targets and never appears in the tree the runner reads); Live Activity caption for the current step
+
 ## Core follow-ups
 
 - [x] Local-model eval on the simulated phone (`docs/MODEL-EVAL.md`)

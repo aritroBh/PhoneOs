@@ -288,6 +288,22 @@ deleted or overwritten, as `SkillLibrary` does) and the caller is told.
   `RemoteTransport` (`InMemoryRemoteTransport`; `InProcessRemote` drives the real
   `JarvisRemoteClient` over it).
 
+## Live view (JarvisKit side, Linux-tested)
+
+`Sources/JarvisKit/Viewer/`: what the run screen's Live view draws, as plain values.
+`PointerTimeline` reduces the same `RunEvent` stream as `LiveRun` into a `ViewerTimeline` (one
+`ViewerStep` per runner command: gesture, the screen it acted on, the element under the pointer
+for display only, caption, state; capped at 200 steps). `CursorPath` gives the cursor's pose at
+any moment of a step (glide, press, drag), `ViewerMapping` maps screen points into the view,
+`ReplayState` is the scrubber and `LiveViewScene` combines them; the SwiftUI view
+(`App/Jarvis/Views/LiveScreenView.swift`) only draws what these return. The backdrop is a
+wireframe of the typed tree, or, with "Show real screen in Live view" on
+(`DriverConfiguration.viewerScreenshots`, off by default), screenshots kept in a
+`ViewerFrameStore` (memory only, capped by count and bytes). The core's own screenshots are
+unchanged by the option. Typed text is shown only from the model's action, never into a secure
+field, with stored profile values masked; URLs show their host only. iOS does not let an app
+draw over other apps, so the cursor is shown inside Jarvis, not over the app being driven.
+
 ## SessionDriver
 
 `SessionDriver` is an actor. `init(config:task:memoryJSON:dependencies:configuration:)`

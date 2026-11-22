@@ -19,6 +19,9 @@ public struct DriverDependencies: Sendable {
     public var attention: any OwnerAttention
     /// Timestamps for the core's events.
     public var clock: any MonotonicClock
+    /// Where the Live view's frames go when `DriverConfiguration.viewerScreenshots` is on
+    /// (keyed by `ViewerFrameKey(taskId:observation:)`); `nil` keeps none.
+    public var viewerFrames: ViewerFrameStore?
 
     /// Bundles the dependencies; the clock defaults to the system's monotonic clock.
     public init(
@@ -29,7 +32,8 @@ public struct DriverDependencies: Sendable {
         memory: any MemoryPersisting,
         screenshots: ScreenshotStore,
         attention: any OwnerAttention = NoOwnerAttention(),
-        clock: any MonotonicClock = SystemMonotonicClock()
+        clock: any MonotonicClock = SystemMonotonicClock(),
+        viewerFrames: ViewerFrameStore? = nil
     ) {
         self.runner = runner
         self.model = model
@@ -39,6 +43,7 @@ public struct DriverDependencies: Sendable {
         self.screenshots = screenshots
         self.attention = attention
         self.clock = clock
+        self.viewerFrames = viewerFrames
     }
 }
 
@@ -88,6 +93,8 @@ public actor SessionDriver {
     private var cancelInFlightIO: (@Sendable () -> Void)?
     private var lastObservationIssue: String?
     private var waitingForUnlock = false
+    /// The number of the effect being carried out (names the Live view's frames).
+    private var currentEffectNumber = 0
 
     /// Creates the session. Throws when the core rejects `memoryJSON` (corrupt or from an
     /// incompatible core); quarantine that memory and retry with `""` (fresh memory).
@@ -158,6 +165,7 @@ public actor SessionDriver {
             let parsedRunnerText = if case .observedRunnerText = event { true } else { false }
             let effect = session.step(nowMs: deps.clock.nowMs(), event: event)
             effectCount += 1
+            currentEffectNumber = effectCount
             if parsedRunnerText { reportObservationIssue() }
             emit(.effect(effect, number: effectCount))
             if let progress = try? session.progress() {
@@ -226,14 +234,23 @@ public actor SessionDriver {
     private func observe(screenshot: Bool) async -> Event {
         let runner = deps.runner
         let attempts = max(1, configuration.observeAttempts)
+        // The Live view's frames: pixels on every observation, without changing what the
+        // core is given (below).
+        let viewerFrames = configuration.viewerScreenshots ? deps.viewerFrames : nil
+        let forViewerOnly = viewerFrames != nil && !screenshot
+        let requestPixels = screenshot || viewerFrames != nil
         var lastError = "no attempt made"
         for attempt in 1...attempts {
             do {
                 let observation = try await io(.observe, configuration.observeTimeout) {
-                    try await runner.snapshot(includeScreenshot: screenshot)
+                    try await runner.snapshot(includeScreenshot: requestPixels)
                 }
                 for note in observation.notes { emit(.note(note)) }
-                let ref = observation.screenshot.map { deps.screenshots.store($0) }
+                if let viewerFrames, let frame = observation.screenshot, !observation.deviceLocked {
+                    viewerFrames.put(frame, for: ViewerFrameKey(taskId: task.id, observation: currentEffectNumber))
+                }
+                // Pixels taken only for the viewer never reach the core or its store.
+                let ref = forViewerOnly ? nil : observation.screenshot.map { deps.screenshots.store($0) }
                 return observation.event(screenshot: ref)
             } catch let error where isOurCancellation(error) {
                 return stop(.cancelled)

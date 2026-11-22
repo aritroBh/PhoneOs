@@ -31,6 +31,12 @@ public struct DriverConfiguration: Sendable, Equatable {
     /// a tool or the owner; a lock interrupts the wait with `Event.deviceLocked`. `nil`
     /// turns the watch off.
     public var lockWatchInterval: Duration?
+    /// The Live view's real-screen option ("Show real screen in Live view", off by default):
+    /// every observation also asks the runner for a screenshot, kept in
+    /// `DriverDependencies.viewerFrames` (memory only). What the core receives does not
+    /// change: it gets an `ImageRef` only for an observation it asked a screenshot for. No
+    /// frame is kept for a locked observation. Without `viewerFrames` this does nothing.
+    public var viewerScreenshots: Bool
 
     /// The defaults, each overridable.
     public init(
@@ -45,7 +51,8 @@ public struct DriverConfiguration: Sendable, Equatable {
         maxEffects: Int = 2_000,
         updateBufferSize: Int = 1_024,
         unlockPollInterval: Duration = .seconds(2),
-        lockWatchInterval: Duration? = .seconds(3)
+        lockWatchInterval: Duration? = .seconds(3),
+        viewerScreenshots: Bool = false
     ) {
         self.observeTimeout = observeTimeout
         self.observeAttempts = observeAttempts
@@ -59,5 +66,6 @@ public struct DriverConfiguration: Sendable, Equatable {
         self.updateBufferSize = updateBufferSize
         self.unlockPollInterval = unlockPollInterval
         self.lockWatchInterval = lockWatchInterval
+        self.viewerScreenshots = viewerScreenshots
     }
 }

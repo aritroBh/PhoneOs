@@ -142,6 +142,9 @@ public final class JarvisCoordinator: Sendable {
     private let demoDelay: Duration
     private let demoLockedPolls: Int
     private let maxLockedWaitOverrideMs: UInt64?
+    /// The Live view's real-screen frames (memory only; emptied when a run starts). Filled
+    /// only while `JarvisSettings.liveViewScreenshots` is on.
+    public let viewerFrames: ViewerFrameStore
 
     public init(
         paths: JarvisPaths,
@@ -151,9 +154,11 @@ public final class JarvisCoordinator: Sendable {
         configuration: DriverConfiguration = DriverConfiguration(),
         demoDelay: Duration = .milliseconds(350),
         demoLockedPolls: Int = 0,
-        maxLockedWaitOverrideMs: UInt64? = nil
+        maxLockedWaitOverrideMs: UInt64? = nil,
+        viewerFrames: ViewerFrameStore = ViewerFrameStore()
     ) {
         self.paths = paths
+        self.viewerFrames = viewerFrames
         self.selection = selection
         self.agentBundleId = agentBundleId
         self.configuration = configuration
@@ -278,11 +283,16 @@ public final class JarvisCoordinator: Sendable {
             guard setAside != nil else { return .notStarted(Self.memoryUnreadable) }
             memoryJSON = ""
         }
+        // The Live view shows this run only: the last run's frames go now, and none are
+        // accepted unless the owner turned the option on.
+        viewerFrames.removeAll()
+        viewerFrames.isEnabled = settings.liveViewScreenshots
         let deps = DriverDependencies(
             runner: runner, model: model, tools: tools, human: human, memory: memory, screenshots: screenshots,
-            attention: attention
+            attention: attention, viewerFrames: viewerFrames
         )
-        let configuration = self.configuration
+        var configuration = self.configuration
+        configuration.viewerScreenshots = settings.liveViewScreenshots
         let driver: SessionDriver
         switch await Self.startDriver(memoryJSON: memoryJSON, memory: memory, make: {
             try SessionDriver(config: config, task: task, memoryJSON: $0, dependencies: deps, configuration: configuration)
