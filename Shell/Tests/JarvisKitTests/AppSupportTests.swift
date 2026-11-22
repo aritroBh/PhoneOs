@@ -13,7 +13,7 @@ private func tempDirectory() -> URL {
 
 @Suite("JarvisSettings", .timeLimit(.minutes(1)))
 struct SettingsTests {
-    @Test("round trip, and missing or unknown fields fall back to defaults")
+    @Test("round trip; missing fields and unknown keys take defaults; a safety field that cannot be decoded fails the decode")
     func codable() throws {
         var settings = JarvisSettings()
         settings.policyMode = .stepByStep
@@ -23,12 +23,20 @@ struct SettingsTests {
         let data = try JSONEncoder().encode(settings)
         #expect(try JSONDecoder().decode(JarvisSettings.self, from: data) == settings)
 
-        let partial = #"{"policy_mode":"step_by_step","deny_categories":["payment","teleport"],"max_steps":"x","future":1}"#
+        let partial = #"{"policy_mode":"step_by_step","deny_categories":["payment"],"model_name":7,"future":1}"#
         let decoded = try JSONDecoder().decode(JarvisSettings.self, from: Data(partial.utf8))
         #expect(decoded.policyMode == .stepByStep)
-        #expect(decoded.denyCategories == [.payment], "unknown category names are skipped")
-        #expect(decoded.maxSteps == 40, "a wrongly typed field takes the default")
+        #expect(decoded.denyCategories == [.payment])
+        #expect(decoded.maxSteps == 40, "a missing field takes the default")
+        #expect(decoded.modelName == "local-model", "a wrongly typed non-safety field takes the default")
         #expect(decoded.appTrust == JarvisSettings.defaultAppTrust)
+
+        // Before: an unknown category was skipped and a wrongly typed limit took the default.
+        // Both now fail the decode (the file is reported damaged, see StoredFileTests).
+        let unknownCategory = #"{"deny_categories":["payment","teleport"]}"#
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(JarvisSettings.self, from: Data(unknownCategory.utf8)) }
+        let wrongLimit = #"{"max_steps":"x"}"#
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(JarvisSettings.self, from: Data(wrongLimit.utf8)) }
     }
 
     @Test("apply maps onto the core's default policy and keeps its other defaults")
@@ -173,6 +181,60 @@ struct BrokerTests {
         await #expect(throws: HumanPromptError.withdrawn) { try await second.value }
         #expect(broker.pending == nil)
         #expect(!broker.decline(1))
+    }
+
+    @Test("withdraw by id removes only that prompt; a newer prompt is never touched by an older id")
+    func withdrawById() async throws {
+        let broker = HumanPromptBroker()
+        let request = ConfirmRequest(category: .payment, summary: "Pay", app: "a")
+        let first = Task { try await broker.confirm(request) }
+        try await waitUntil { broker.pending != nil }
+        let p1 = try #require(broker.pendingConfirmation)
+        let second = Task { try await broker.confirm(request) }
+        try await waitUntil { broker.pendingConfirmation.map { $0.id != p1.id } ?? false }
+        let p2 = try #require(broker.pendingConfirmation)
+        await #expect(throws: HumanPromptError.withdrawn) { try await first.value }
+
+        // A late withdrawal of p1 (a lock handled late) leaves p2 on screen.
+        #expect(!broker.withdraw(p1.id))
+        #expect(broker.pendingConfirmation?.id == p2.id)
+        #expect(broker.withdraw(p2.id))
+        await #expect(throws: HumanPromptError.withdrawn) { try await second.value }
+        #expect(broker.pending == nil)
+        #expect(broker.latestPromptId == p2.id)
+        #expect(broker.confirmations(after: 0).map(\.id) == [p1.id, p2.id])
+        #expect(broker.confirmations(after: p1.id).map(\.id) == [p2.id])
+    }
+
+    @Test("a cancelled ask withdraws its own prompt at once (the driver abandoning a wait on a lock), and only it")
+    func cancelledAskWithdrawsItsPrompt() async throws {
+        let broker = HumanPromptBroker()
+        let request = ConfirmRequest(category: .delete, summary: "Delete?", app: "x")
+        // The driver's lock watch abandons the confirmation through an IORace: the race ends
+        // and cancels the task that asks.
+        let race = IORace<Bool>()
+        let waiting = Task { try await race.run(kind: .confirm, timeout: nil) { try await broker.confirm(request) } }
+        try await waitUntil { broker.pending != nil }
+        let abandoned = try #require(broker.pendingConfirmation)
+        race.resolve(false)
+        _ = try await waiting.value
+        try await waitUntil { broker.pending == nil }
+
+        // A question asked next is not affected by the abandoned one.
+        let question = Task { try await broker.answer("Which?") }
+        try await waitUntil { broker.pending != nil }
+        #expect(!broker.withdraw(abandoned.id))
+        let pending = try #require(broker.pending)
+        #expect(broker.reply(pending.id, "That one"))
+        #expect(try await question.value == "That one")
+
+        // An ask whose task is cancelled before its prompt is shown never shows it.
+        let early = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await broker.confirm(request)
+        }
+        await #expect(throws: HumanPromptError.withdrawn) { try await early.value }
+        #expect(broker.pending == nil)
     }
 }
 

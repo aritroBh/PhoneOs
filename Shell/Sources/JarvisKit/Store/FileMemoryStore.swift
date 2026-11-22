@@ -1,5 +1,6 @@
 import Foundation
 import Dispatch
+import Synchronization
 
 /// Errors of `FileMemoryStore`.
 public enum MemoryStoreError: Error, Equatable, Sendable, CustomStringConvertible {
@@ -22,7 +23,10 @@ public enum MemoryStoreError: Error, Equatable, Sendable, CustomStringConvertibl
 /// - On Apple platforms the file gets complete-until-first-user-authentication data
 ///   protection, so the background agent can read it while the phone is locked after the
 ///   first unlock.
-/// - All file work runs on a private serial queue, never on the Swift concurrency pool.
+/// - All file work runs on a serial queue, never on the Swift concurrency pool. Every store
+///   for the same path shares one queue, so saves land in the order they were asked for: a
+///   save abandoned by an earlier run (still waiting on a slow disk) cannot overwrite a newer
+///   one from another `FileMemoryStore` instance.
 public final class FileMemoryStore: MemoryPersisting {
     /// The memory file.
     public let fileURL: URL
@@ -33,7 +37,7 @@ public final class FileMemoryStore: MemoryPersisting {
     /// quarantined files (injectable for tests).
     public init(fileURL: URL, now: @escaping @Sendable () -> Date = Date.init) {
         self.fileURL = fileURL
-        self.queue = DispatchQueue(label: "JarvisKit.FileMemoryStore")
+        self.queue = Self.queue(for: fileURL)
         self.now = now
     }
 
@@ -125,6 +129,22 @@ public final class FileMemoryStore: MemoryPersisting {
         }
         return target
     }
+
+    /// One serial queue per file path, shared by every store of that path.
+    private static let queues = Mutex<[String: DispatchQueue]>([:])
+
+    static func queue(for url: URL) -> DispatchQueue {
+        let key = url.standardizedFileURL.path
+        return queues.withLock { all in
+            if let existing = all[key] { return existing }
+            let queue = DispatchQueue(label: "JarvisKit.FileMemoryStore")
+            all[key] = queue
+            return queue
+        }
+    }
+
+    /// Whether `other` serialises its file work with this store (same path).
+    func sharesQueue(with other: FileMemoryStore) -> Bool { queue === other.queue }
 
     private static var writeOptions: Data.WritingOptions {
         #if canImport(Darwin)

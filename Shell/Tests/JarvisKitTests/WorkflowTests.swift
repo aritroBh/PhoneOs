@@ -430,4 +430,125 @@ struct WorkflowSchedulerTests {
         try await eventually("the run") { !h.runner.isRunning }
         #expect(h.notifier.posted.withLock { $0 } == ["m"])
     }
+
+    // MARK: - Local slots, daylight saving, clock changes
+
+    /// `date` (given in UTC) read as wall time in New York.
+    private func newYork(_ month: Int, _ day: Int, _ hour: Int, _ minute: Int) -> LocalTime {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        var ny = Calendar(identifier: .gregorian)
+        ny.timeZone = TimeZone(identifier: "America/New_York")!
+        let date = utc.date(from: DateComponents(year: 2026, month: month, day: day, hour: hour, minute: minute))!
+        return LocalTime(date: date, calendar: ny)
+    }
+
+    @Test("a daily schedule fires once on the night the clocks go back, also across a relaunch")
+    func dstFallBackFiresOnce() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        // 2026-11-01: clocks go from 01:59 EDT back to 01:00 EST. 01:30 local happens twice.
+        let firstUTC = Date(timeIntervalSince1970: 1_793_511_000)   // 2026-11-01 05:30 UTC = 01:30 EDT
+        let secondUTC = firstUTC.addingTimeInterval(3_600)            // 06:30 UTC = 01:30 EST
+        let first = LocalTime(date: firstUTC, calendar: calendar)
+        let second = LocalTime(date: secondUTC, calendar: calendar)
+        #expect(first.minuteOfDay == 90 && second.minuteOfDay == 90, "\(first) \(second)")
+
+        let h = AppHarness("probe-dst", libraryNow: { Date(timeIntervalSince1970: 0) })
+        defer { h.cleanUp() }
+        let w = try h.library.save(WorkflowDraft(name: "Nightly", trigger: TriggerDraft(kind: .schedule, days: Set(WeekdayOption.allCases), hour: 1, minute: 30),
+                                                 steps: [StepDraft(kind: .notify, text: "n")]))
+        let stateURL = h.dir.appendingPathComponent("s.json")
+        let scheduler = WorkflowScheduler(library: h.library, stateURL: stateURL, catchUpMinutes: 15)
+        #expect(scheduler.tick(at: first, runner: h.runner) == w.id)
+        try await eventually("the run") { !h.runner.isRunning }
+        #expect(scheduler.tick(at: second, runner: h.runner) == nil, "the daily workflow ran a second time the same night")
+        // The local slot is in the state file: a relaunch in the repeated hour does not fire.
+        let relaunched = WorkflowScheduler(library: h.library, stateURL: stateURL, catchUpMinutes: 15)
+        #expect(relaunched.tick(at: second, runner: h.runner) == nil, "the relaunch forgot the local slot")
+        // The next night fires as usual (01:30 EST = 06:30 UTC).
+        #expect(relaunched.tick(at: newYork(11, 2, 6, 30), runner: h.runner) == w.id)
+        try await eventually("the next night's run") { !h.runner.isRunning }
+        #expect(h.notifier.posted.withLock { $0 } == ["n", "n"])
+    }
+
+    @Test("a schedule in the hour skipped by spring forward fires once, at the first check after the gap")
+    func springForwardFiresOnce() async throws {
+        // 2026-03-08: 02:00 EST (07:00 UTC) becomes 03:00 EDT; 02:30 does not exist that day.
+        let h = AppHarness("dst-spring", libraryNow: { Date(timeIntervalSince1970: 0) })
+        defer { h.cleanUp() }
+        let w = try h.library.save(draft("Night", [StepDraft(kind: .notify, text: "s")],
+                                         trigger: TriggerDraft(kind: .schedule, days: Set(WeekdayOption.allCases), hour: 2, minute: 30)))
+        let scheduler = WorkflowScheduler(library: h.library, catchUpMinutes: 15)
+        #expect(scheduler.tick(at: newYork(3, 8, 6, 55), runner: h.runner) == nil, "fired before the gap")   // 01:55 EST
+        #expect(scheduler.tick(at: newYork(3, 8, 7, 0), runner: h.runner) == w.id, "02:30 was lost")       // 03:00 EDT
+        try await eventually("the run") { !h.runner.isRunning }
+        #expect(scheduler.tick(at: newYork(3, 8, 7, 1), runner: h.runner) == nil, "fired twice after the gap")
+        #expect(scheduler.tick(at: newYork(3, 8, 7, 14), runner: h.runner) == nil, "fired twice after the gap")
+        // The next day 02:30 EDT (06:30 UTC) fires normally.
+        #expect(scheduler.tick(at: newYork(3, 9, 6, 30), runner: h.runner) == w.id)
+        try await eventually("the next day's run") { !h.runner.isRunning }
+        #expect(h.notifier.posted.withLock { $0 } == ["s", "s"])
+
+        // The window is real time: a first check 14 minutes after the gap still catches up,
+        // 16 minutes after it does not (as for any schedule missed by more than the window).
+        let late = AppHarness("dst-spring-late", libraryNow: { Date(timeIntervalSince1970: 0) })
+        defer { late.cleanUp() }
+        let lw = try late.library.save(draft("Night", [StepDraft(kind: .notify, text: "s")],
+                                             trigger: TriggerDraft(kind: .schedule, days: Set(WeekdayOption.allCases), hour: 2, minute: 30)))
+        let lateScheduler = WorkflowScheduler(library: late.library, catchUpMinutes: 15)
+        #expect(lateScheduler.due(at: newYork(3, 8, 7, 16)).isEmpty, "caught up outside the real-time window")
+        #expect(lateScheduler.tick(at: newYork(3, 8, 7, 14), runner: late.runner) == lw.id, "not caught up inside the window")
+        try await eventually("the late run") { !late.runner.isRunning }
+    }
+
+    @Test("a clock that ran ahead and was set back never fires a minute again; entries are not pruned by age")
+    func clockSetBackDoesNotRefire() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        func at(_ day: Int, _ hour: Int, _ minute: Int) -> LocalTime {
+            LocalTime(date: calendar.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour, minute: minute))!, calendar: calendar)
+        }
+        let h = AppHarness("probe-clock", libraryNow: { Date(timeIntervalSince1970: 0) })
+        defer { h.cleanUp() }
+        let a = try h.library.save(WorkflowDraft(name: "Monday", trigger: TriggerDraft(kind: .schedule, days: [.mon], hour: 7, minute: 30),
+                                                 steps: [StepDraft(kind: .notify, text: "a")]))
+        let b = try h.library.save(WorkflowDraft(name: "Daily", trigger: TriggerDraft(kind: .schedule, days: Set(WeekdayOption.allCases), hour: 7, minute: 35),
+                                                 steps: [StepDraft(kind: .notify, text: "b")]))
+        let scheduler = WorkflowScheduler(library: h.library, catchUpMinutes: 15)
+        #expect(scheduler.tick(at: at(23, 7, 30), runner: h.runner) == a.id)   // Monday 07:30
+        try await eventually("a") { !h.runner.isRunning }
+        // The phone's clock runs 9 days ahead for a moment (wrong network time, manual set).
+        #expect(scheduler.tick(at: at(32, 7, 35), runner: h.runner) == b.id)
+        try await eventually("b") { !h.runner.isRunning }
+        // The clock is corrected: Monday 07:40 again, inside the catch-up window.
+        #expect(scheduler.tick(at: at(23, 7, 40), runner: h.runner) == nil, "Monday 07:30 fired a second time")
+    }
+
+    @Test("an old state file without local slots still loads; entries of removed workflows are dropped")
+    func stateFileCompatibilityAndPruning() async throws {
+        let h = AppHarness("sched-compat", libraryNow: { Date(timeIntervalSince1970: 0) })
+        defer { h.cleanUp() }
+        let morning = try h.library.save(draft("Morning", [StepDraft(kind: .notify, text: "m")],
+                                               trigger: TriggerDraft(kind: .schedule, days: [.mon], hour: 7, minute: 30)))
+        let evening = try h.library.save(draft("Evening", [StepDraft(kind: .notify, text: "e")],
+                                               trigger: TriggerDraft(kind: .schedule, days: [.mon], hour: 19, minute: 0)))
+        let stateURL = h.dir.appendingPathComponent("workflow-schedule.json")
+        try FileManager.default.createDirectory(at: h.dir, withIntermediateDirectories: true)
+        let old = #"{"fired":{"\#(morning.id)":\#(at(7, 30).epochMinute),"\#(evening.id)":\#(at(19, 0, dayOffset: -7).epochMinute)}}"#
+        try Data(old.utf8).write(to: stateURL)
+
+        let scheduler = WorkflowScheduler(library: h.library, stateURL: stateURL, catchUpMinutes: 15)
+        #expect(scheduler.loadIssue == nil)
+        #expect(scheduler.tick(at: at(7, 35), runner: h.runner) == nil, "the old file's fired minute was ignored")
+
+        try h.library.remove(id: evening.id)
+        #expect(scheduler.tick(at: at(7, 30, dayOffset: 7), runner: h.runner) == morning.id)
+        try await eventually("the run") { !h.runner.isRunning }
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as? [String: Any])
+        let fired = try #require(json["fired"] as? [String: Any])
+        let slots = try #require(json["firedSlot"] as? [String: Any])
+        #expect(Set(fired.keys) == [morning.id], "the removed workflow's entry was kept")
+        #expect(Set(slots.keys) == [morning.id])
+    }
 }

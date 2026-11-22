@@ -78,10 +78,10 @@ struct PostCommandLockTests {
         let runner = FlippingRunner(lockAfterCommand: false)
         let checked = LockCheckingRunner(runner)
         #expect(try await checked.perform(.tap(x: 1, y: 1)).ok)
-        #expect(runner.lockReads.withLock { $0 } == 1)
+        #expect(runner.lockReads.withLock { $0 } == 2, "one read before the command, one after")
         runner.lockAfterCommand.withLock { $0 = true }
         #expect(try await checked.perform(.wait(ms: 1)).ok, "a wait must not be turned into a lock failure")
-        #expect(runner.lockReads.withLock { $0 } == 1, "a wait read the lock state")
+        #expect(runner.lockReads.withLock { $0 } == 2, "a wait read the lock state")
     }
 
     @Test("the rule itself: unknown changes nothing; a failure already marked locked is kept")

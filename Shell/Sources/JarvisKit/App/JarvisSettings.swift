@@ -165,7 +165,8 @@ public struct AppTrust: Codable, Sendable, Equatable, Identifiable {
 }
 
 /// Everything the owner can set, persisted as JSON. Every field is optional when decoding
-/// (missing fields take the defaults), so older files keep loading.
+/// (missing fields take the defaults), so older files keep loading; a safety field that is
+/// present but cannot be decoded makes the file damaged (see `init(from:)`).
 public struct JarvisSettings: Codable, Sendable, Equatable {
     public var policyMode: PolicyModeOption
     /// Ask the first time Jarvis acts in an app.
@@ -264,31 +265,55 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         case remoteControlEnabled = "remote_control_enabled"
     }
 
+    /// Decoding has two rules. A **missing** key takes the default, so older files keep
+    /// loading. A key that is **present** but cannot be decoded (wrong type, `null`, an enum
+    /// value this build does not know, also inside a list) fails the whole decode when the
+    /// field is one of the owner's safety rules: the policy mode, first-use approval, the
+    /// relaxed and denied categories, the app trust list, remote control, and the step, time
+    /// and lock-wait limits. `SettingsStore.read()` then reports the file as damaged and sets
+    /// it aside, so no task runs under weaker rules than the owner chose. The other fields
+    /// (model and runner addresses, the model's context size, Away mode) take the default
+    /// when their value cannot be decoded.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = JarvisSettings()
-        policyMode = (try? c.decodeIfPresent(PolicyModeOption.self, forKey: .policyMode)) ?? d.policyMode
-        firstUseApproval = (try? c.decodeIfPresent(Bool.self, forKey: .firstUseApproval)) ?? d.firstUseApproval
-        relaxedCategories = Self.lenientList(c, .relaxedCategories) ?? d.relaxedCategories
-        denyCategories = Self.lenientList(c, .denyCategories) ?? d.denyCategories
-        maxSteps = (try? c.decodeIfPresent(Int.self, forKey: .maxSteps)) ?? d.maxSteps
-        maxMinutes = (try? c.decodeIfPresent(Int.self, forKey: .maxMinutes)) ?? d.maxMinutes
-        maxLockedWaitMinutes = (try? c.decodeIfPresent(Int.self, forKey: .maxLockedWaitMinutes)) ?? d.maxLockedWaitMinutes
+        policyMode = try Self.strict(c, .policyMode, d.policyMode)
+        firstUseApproval = try Self.strict(c, .firstUseApproval, d.firstUseApproval)
+        relaxedCategories = try Self.strict(c, .relaxedCategories, d.relaxedCategories)
+        denyCategories = try Self.strict(c, .denyCategories, d.denyCategories)
+        maxSteps = try Self.strict(c, .maxSteps, d.maxSteps)
+        maxMinutes = try Self.strict(c, .maxMinutes, d.maxMinutes)
+        maxLockedWaitMinutes = try Self.strict(c, .maxLockedWaitMinutes, d.maxLockedWaitMinutes)
         modelBackend = (try? c.decodeIfPresent(ModelBackendKind.self, forKey: .modelBackend)) ?? d.modelBackend
         modelBaseURL = (try? c.decodeIfPresent(String.self, forKey: .modelBaseURL)) ?? d.modelBaseURL
         modelName = (try? c.decodeIfPresent(String.self, forKey: .modelName)) ?? d.modelName
         modelContextTokens = (try? c.decodeIfPresent(Int.self, forKey: .modelContextTokens)) ?? d.modelContextTokens
         runnerBaseURL = (try? c.decodeIfPresent(String.self, forKey: .runnerBaseURL)) ?? d.runnerBaseURL
-        appTrust = (try? c.decodeIfPresent([AppTrust].self, forKey: .appTrust)) ?? d.appTrust
+        appTrust = try Self.strict(c, .appTrust, d.appTrust)
         awayAcknowledged = (try? c.decodeIfPresent(Bool.self, forKey: .awayAcknowledged)) ?? d.awayAcknowledged
         awayProximity = (try? c.decodeIfPresent(Bool.self, forKey: .awayProximity)) ?? d.awayProximity
-        remoteControlEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .remoteControlEnabled)) ?? d.remoteControlEnabled
+        remoteControlEnabled = try Self.strict(c, .remoteControlEnabled, d.remoteControlEnabled)
     }
 
-    /// Decodes a category list, skipping names this build does not know.
-    private static func lenientList(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> [RiskCategoryOption]? {
-        guard let names = try? c.decodeIfPresent([String].self, forKey: key) else { return nil }
-        return names.compactMap(RiskCategoryOption.init(rawValue:))
+    /// The keys whose value must decode when present (see `init(from:)`).
+    static let safetyKeys: [CodingKeys] = [
+        .policyMode, .firstUseApproval, .relaxedCategories, .denyCategories, .maxSteps, .maxMinutes,
+        .maxLockedWaitMinutes, .appTrust, .remoteControlEnabled,
+    ]
+
+    /// A safety field: the default when the key is missing, the decoded value when present,
+    /// and an error naming the key when the value is there but cannot be used.
+    private static func strict<T: Decodable>(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys, _ fallback: T) throws -> T {
+        guard c.contains(key) else { return fallback }
+        do {
+            return try c.decode(T.self, forKey: key)
+        } catch {
+            throw DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: [key],
+                debugDescription: "\"\(key.rawValue)\" holds a value this version of Jarvis cannot use (\(StoredFile.describe(error)))",
+                underlyingError: error
+            ))
+        }
     }
 
     // MARK: - Validated values

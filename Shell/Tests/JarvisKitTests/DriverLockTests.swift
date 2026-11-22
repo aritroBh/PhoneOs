@@ -111,7 +111,7 @@ final class RecordingAttention: OwnerAttention {
 
 /// Runs the Wi-Fi task on `phone`.
 private func runLocked(
-    _ phone: LockablePhone,
+    _ phone: any PhoneRunner,
     gate: FakeGate = FakeGate(),
     attention: RecordingAttention = RecordingAttention(),
     maxLockedWaitMs: UInt64? = nil,
@@ -330,4 +330,120 @@ private func runLockedUnknown(_ phone: UnknownLockPhone) async throws -> (RunRes
     }
     let result = await driver.run()
     return (result, await collector.value)
+}
+
+/// A phone like a LoopCtrl runner: it does NOT refuse commands while locked (a tap lands on
+/// the lock screen and does nothing), and reports its lock state only when `canTell`. It
+/// locks right after snapshot number `lockAfterSnapshot` returns (so between the
+/// observation and the command the model chose from it) and unlocks after
+/// `unlockAfterPolls` lock-state polls.
+final class TapsThroughLockPhone: PhoneRunner {
+    struct State {
+        var locked = false
+        var snapshots = 0
+        var lockAfterSnapshot: Int?
+        var unlockAfterPolls = 3
+        /// Commands that reached the phone while it was locked (they did nothing).
+        var sentWhileLocked: [RunnerCommand] = []
+        var sent: [RunnerCommand] = []
+    }
+
+    let inner = FakePhone()
+    let state = Mutex(State())
+    let canTell: Bool
+
+    init(lockAfterSnapshot: Int?, canTell: Bool = true) {
+        self.canTell = canTell
+        state.withLock { $0.lockAfterSnapshot = lockAfterSnapshot }
+    }
+
+    var snapshotState: State { state.withLock { $0 } }
+
+    func snapshot(includeScreenshot: Bool) async throws -> RunnerObservation {
+        let locked = state.withLock { $0.locked }
+        if locked {
+            return RunnerObservation(source: "Application, label: 'SpringBoard', {{0, 0}, {393, 852}}",
+                                     appBundleId: "com.apple.springboard", screenSize: screenSize, deviceLocked: true)
+        }
+        let observation = try await inner.snapshot(includeScreenshot: includeScreenshot)
+        state.withLock { s in
+            s.snapshots += 1
+            if s.snapshots == s.lockAfterSnapshot { s.locked = true }
+        }
+        return observation
+    }
+
+    func perform(_ command: RunnerCommand) async throws -> RunnerResult {
+        let locked = state.withLock { s -> Bool in
+            s.sent.append(command)
+            if s.locked { s.sentWhileLocked.append(command) }
+            return s.locked
+        }
+        if locked { return RunnerResult(ok: true, error: nil) }
+        return try await inner.perform(command)
+    }
+
+    func lockState() async throws -> DeviceLockState {
+        guard canTell else { return .unknown }
+        return state.withLock { s -> DeviceLockState in
+            if s.locked {
+                s.unlockAfterPolls -= 1
+                if s.unlockAfterPolls <= 0 { s.locked = false }
+            }
+            return s.locked ? .locked : .unlocked
+        }
+    }
+}
+
+@Suite("Lock check before a command (LockCheckingRunner, real core)", .timeLimit(.minutes(1)))
+struct PreCommandLockTests {
+    @Test("the phone locks between the observation and the command: nothing is sent, the run waits, re-observes and chooses again")
+    func lockedBeforeCommand() async throws {
+        let phone = TapsThroughLockPhone(lockAfterSnapshot: 1)
+        // No lock watch: the lock lands after the model answered, right before the command.
+        let (result, updates) = try await runLocked(LockCheckingRunner(phone), lockWatch: nil)
+
+        #expect(result.outcome.status == .success, "\(result.outcome.summary)")
+        #expect(phone.snapshotState.sentWhileLocked.isEmpty, "a command was sent to a locked phone")
+        let lockedActs = updates.events.filter {
+            if case .actResult(let r) = $0 { return r.failure == .deviceLocked && !r.ok } else { return false }
+        }
+        #expect(lockedActs.count == 1, "the refused command was not reported as locked: \(updates.events)")
+        #expect(!updates.awaitingUnlock.isEmpty, "the run did not wait for the unlock")
+        #expect(updates.events.contains(.deviceUnlocked))
+        // After the unlock the next effect is an observation, then the model chooses again.
+        guard let unlock = updates.firstIndex(where: {
+            if case .effectCompleted(_, .deviceUnlocked) = $0 { return true } else { return false }
+        }) else {
+            Issue.record("no deviceUnlocked")
+            return
+        }
+        let after = updates[(unlock + 1)...].compactMap { u -> Effect? in if case .effect(let e, _) = u { return e } else { return nil } }
+        #expect({ if case .observe? = after.first { return true } else { return false } }(), "after unlock: \(after.prefix(2))")
+        #expect(after.contains { if case .infer = $0 { return true } else { return false } }, "the action was not chosen again")
+        #expect(phone.inner.page == .wifiOff)
+    }
+
+    @Test("a runner that cannot tell its lock state: commands are sent as before")
+    func unknownLockStateStillWorks() async throws {
+        let phone = TapsThroughLockPhone(lockAfterSnapshot: nil, canTell: false)
+        let (result, _) = try await runLocked(LockCheckingRunner(phone), lockWatch: nil)
+        #expect(result.outcome.status == .success, "\(result.outcome.summary)")
+        #expect(!phone.snapshotState.sent.isEmpty)
+        #expect(phone.inner.page == .wifiOff)
+    }
+
+    @Test("a locked reading before the command: not sent, the runner's own locked refusal; a wait is not checked")
+    func refusalShape() async throws {
+        let phone = TapsThroughLockPhone(lockAfterSnapshot: 1)
+        let checked = LockCheckingRunner(phone)
+        _ = try await checked.snapshot(includeScreenshot: false)
+        phone.state.withLock { $0.unlockAfterPolls = 100 }
+        let result = try await checked.perform(.tap(x: 1, y: 1))
+        #expect(!result.ok)
+        #expect(result.failure == .deviceLocked)
+        #expect(phone.snapshotState.sent.isEmpty, "the tap reached the phone")
+        #expect(try await checked.perform(.wait(ms: 1)).ok)
+        #expect(phone.snapshotState.sent.count == 1, "the wait was not passed through")
+    }
 }

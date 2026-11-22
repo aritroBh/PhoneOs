@@ -172,6 +172,124 @@ struct SettingsFileTests {
     }
 }
 
+/// A file with one safety field present but unusable (wrong type, `null`, a value this build
+/// does not know, also inside a list); every other field is as the owner wrote it.
+private let unusableSafetyFields: [String] = [
+    #"{"deny_categories":"payment"}"#,
+    #"{"deny_categories":["payment","teleport"]}"#,
+    #"{"relaxed_categories":{"a":1}}"#,
+    #"{"relaxed_categories":["send_message","beam"]}"#,
+    #"{"app_trust":[{"bundleIdPrefix":"com.bank.app","name":"Bank","level":"denied"},{"bundleIdPrefix":"com.x","name":"X","level":"ask_twice"}]}"#,
+    #"{"app_trust":{"com.bank.app":"denied"}}"#,
+    #"{"app_trust":[{"bundleIdPrefix":"com.bank.app","level":"denied"}]}"#,
+    #"{"policy_mode":"relaxed"}"#,
+    #"{"policy_mode":1}"#,
+    #"{"first_use_approval":"yes"}"#,
+    #"{"first_use_approval":null}"#,
+    #"{"remote_control_enabled":"off"}"#,
+    #"{"max_steps":"40"}"#,
+    #"{"max_minutes":2.5}"#,
+    #"{"max_locked_wait_minutes":[30]}"#,
+]
+
+@Suite("Stored files: settings safety fields are strict", .timeLimit(.minutes(1)))
+@MainActor
+struct SettingsStrictnessTests {
+    @Test("a safety field that is present but cannot be decoded makes the rules file damaged: set aside, refused until reviewed",
+          arguments: unusableSafetyFields)
+    func unusableSafetyField(json: String) throws {
+        let dir = try makeDirectory("settings-strict")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(fileURL: dir.appendingPathComponent("settings.json"), now: fixedNow)
+        let bytes = Data(json.utf8)
+        try bytes.write(to: store.fileURL)
+
+        guard case .damaged(_, let setAside?) = store.read() else {
+            Issue.record("not reported as damaged: \(json)")
+            return
+        }
+        #expect(try Data(contentsOf: setAside) == bytes, "the original bytes were not kept")
+
+        // The gate sees the same damage: tasks are refused until the owner reviewed the rules.
+        try bytes.write(to: store.fileURL)
+        let gate = SettingsGate(store: store)
+        guard case .damaged? = gate.problem else {
+            Issue.record("the gate let \(json) through")
+            return
+        }
+        #expect(gate.refusal != nil)
+        #expect(!gate.refresh())
+        #expect(gate.refusal != nil, "a refresh ended the review")
+        gate.acknowledgeReview()
+        #expect(gate.refusal == nil)
+    }
+
+    @Test("an unknown trust level never drops the owner's Denied apps or denied categories silently")
+    func unknownTrustLevelIsReported() throws {
+        let dir = scratchDirectory("probe-settings")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("settings.json")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = #"""
+        {"deny_categories":"payment",
+         "app_trust":[{"bundleIdPrefix":"com.bank.app","name":"Bank","level":"denied"},
+                      {"bundleIdPrefix":"com.x","name":"X","level":"ask_twice"}]}
+        """#
+        try Data(json.utf8).write(to: url)
+        let gate = SettingsGate(store: SettingsStore(fileURL: url))
+        // Either the file is reported (damaged / needs review) or the owner's rules survive.
+        let reported = gate.problem != nil
+        #expect(reported || gate.settings.trust(for: "com.bank.app") == .denied,
+                "the owner's Denied rule for com.bank.app vanished with no problem reported")
+        #expect(reported || gate.settings.denyCategories.contains(.payment),
+                "deny_categories was dropped silently")
+    }
+
+    @Test("a file without the safety keys still loads with the defaults (older files)")
+    func missingKeysTakeDefaults() throws {
+        let dir = try makeDirectory("settings-old")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(fileURL: dir.appendingPathComponent("settings.json"))
+        try Data("{}".utf8).write(to: store.fileURL)
+        #expect(store.read() == .loaded(JarvisSettings()))
+        try Data(#"{"model_name":"m","future_field":[1,2]}"#.utf8).write(to: store.fileURL)
+        #expect(store.read() == .loaded(JarvisSettings(modelName: "m")))
+        let gate = SettingsGate(store: store)
+        #expect(gate.problem == nil)
+    }
+
+    @Test("a lenient field with a wrong type still loads and keeps every safety field as written")
+    func lenientFieldKeepsSafetyFields() throws {
+        let dir = try makeDirectory("settings-lenient")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(fileURL: dir.appendingPathComponent("settings.json"))
+        let json = #"""
+        {"policy_mode":"step_by_step","first_use_approval":false,"relaxed_categories":["call"],
+         "deny_categories":["payment","delete"],"max_steps":12,"max_minutes":3,"max_locked_wait_minutes":5,
+         "app_trust":[{"bundleIdPrefix":"com.bank.app","name":"Bank","level":"denied"}],
+         "remote_control_enabled":true,
+         "model_base_url":42,"model_name":["x"],"model_context_tokens":"big","runner_base_url":false,
+         "model_backend":"quantum","away_acknowledged":"maybe","away_proximity":3}
+        """#
+        try Data(json.utf8).write(to: store.fileURL)
+        guard case .loaded(let s) = store.read() else {
+            Issue.record("not loaded: \(store.read())")
+            return
+        }
+        let d = JarvisSettings()
+        #expect(s.policyMode == .stepByStep)
+        #expect(!s.firstUseApproval)
+        #expect(s.relaxedCategories == [.call])
+        #expect(s.denyCategories == [.payment, .delete])
+        #expect(s.maxSteps == 12 && s.maxMinutes == 3 && s.maxLockedWaitMinutes == 5)
+        #expect(s.appTrust == [AppTrust(bundleIdPrefix: "com.bank.app", name: "Bank", level: .denied)])
+        #expect(s.remoteControlEnabled)
+        #expect(s.modelBaseURL == d.modelBaseURL && s.modelName == d.modelName && s.modelContextTokens == d.modelContextTokens)
+        #expect(s.runnerBaseURL == d.runnerBaseURL && s.modelBackend == d.modelBackend)
+        #expect(s.awayAcknowledged == d.awayAcknowledged && s.awayProximity == d.awayProximity)
+    }
+}
+
 @Suite("Stored files: TaskCenter refuses while the rules cannot be used", .timeLimit(.minutes(1)))
 @MainActor
 struct SettingsRefusalTests {
@@ -434,6 +552,126 @@ struct HistoryFileTests {
         #expect(try Data(contentsOf: setAside) == bytes)
         #expect(try store.append(record("1", 1)).map(\.id) == ["1"])
         #expect(try Data(contentsOf: setAside) == bytes, "the set-aside file changed")
+    }
+}
+
+@Suite("Stored files: a driver init failure sets the memory aside only when the core rejected it", .timeLimit(.minutes(1)))
+struct DriverStartMemoryTests {
+    private struct Other: Error {}
+
+    @Test("an init error that is not about memory leaves a good memory file alone and the run does not start",
+          arguments: [0, 1])
+    func otherErrorLeavesMemory(kind: Int) async throws {
+        let dir = try makeDirectory("start-other")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("memory.json")
+        let bytes = Data(#"{"flows":[]}"#.utf8)
+        try bytes.write(to: url)
+        let calls = Mutex<[String]>([])
+        let error: any Error = kind == 0 ? JarvisError.Internal(message: "boom") : Other()
+        let result = await JarvisCoordinator.startDriver(memoryJSON: #"{"flows":[]}"#, memory: FileMemoryStore(fileURL: url)) { json -> Int in
+            calls.withLock { $0.append(json) }
+            throw error
+        }
+        guard case .failure(let refusal) = result else {
+            Issue.record("started")
+            return
+        }
+        #expect(refusal.text.hasPrefix("the core could not start a session"))
+        #expect(refusal.text != JarvisCoordinator.memoryUnreadable)
+        #expect(calls.withLock { $0 } == [#"{"flows":[]}"#], "retried with fresh memory")
+        #expect(try Data(contentsOf: url) == bytes, "the memory file was changed")
+        #expect(files(in: dir) == ["memory.json"], "the memory file was set aside")
+    }
+
+    @Test("the core's memory-rejected error sets the file aside and starts with fresh memory")
+    func memoryRejectedQuarantines() async throws {
+        let dir = try makeDirectory("start-memory")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("memory.json")
+        let bytes = Data(#"{"schema":999}"#.utf8)
+        try bytes.write(to: url)
+        let calls = Mutex<[String]>([])
+        let result = await JarvisCoordinator.startDriver(memoryJSON: #"{"schema":999}"#, memory: FileMemoryStore(fileURL: url, now: fixedNow)) { json -> Int in
+            calls.withLock { $0.append(json) }
+            if !json.isEmpty { throw JarvisError.InvalidMemory(message: "newer schema") }
+            return 7
+        }
+        #expect((try? result.get()) == 7)
+        #expect(calls.withLock { $0 } == [#"{"schema":999}"#, ""])
+        #expect(files(in: dir) == ["memory.json.\(setAsideName)"])
+        #expect(try Data(contentsOf: dir.appendingPathComponent("memory.json.\(setAsideName)")) == bytes)
+    }
+}
+
+@Suite("Stored files: skills and workflows recover after the unlock", .timeLimit(.minutes(1)))
+struct LibraryRecoveryTests {
+    @Test("skills: unreadable at launch is empty and write-blocked; after a reload the skills are there and saving works")
+    func skillsRecover() throws {
+        let dir = try makeDirectory("skills-recover")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("skills.json")
+        let original = SkillLibrary(fileURL: url)
+        try original.save(SkillDraft(name: "Wifi off", summary: "s", triggers: ["wifi off"], instructions: "Turn off Wi-Fi"))
+        let locked = try Unreadable(url)
+
+        let library = SkillLibrary(fileURL: url)
+        #expect(library.skills.isEmpty)
+        #expect(library.isWriteBlocked)
+        #expect(throws: SkillLibraryError.self) { try library.save(SkillDraft(name: "Other", summary: "s", triggers: ["other"], instructions: "x")) }
+        #expect(!library.reloadIfBlocked(), "still unreadable")
+        #expect(locked.untouched)
+
+        try locked.restore()
+        #expect(library.reloadIfBlocked())
+        #expect(library.skills.map(\.name) == ["Wifi off"])
+        #expect(!library.isWriteBlocked)
+        try library.save(SkillDraft(name: "Other", summary: "s", triggers: ["other"], instructions: "x"))
+        #expect(SkillLibrary(fileURL: url).skills.count == 2)
+    }
+
+    @Test("skills: a library that loaded is not re-read (in-memory state kept)")
+    func skillsLoadedNotReread() throws {
+        let dir = try makeDirectory("skills-noreload")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("skills.json")
+        let library = SkillLibrary(fileURL: url)
+        try library.save(SkillDraft(name: "Wifi off", summary: "s", triggers: ["wifi off"], instructions: "Turn off Wi-Fi"))
+        // Another writer changes the file; a needless re-read would show its content.
+        try Data(#"{"version":1,"skills":[]}"#.utf8).write(to: url)
+        #expect(!library.reloadIfBlocked())
+        #expect(library.skills.map(\.name) == ["Wifi off"])
+    }
+
+    @Test("workflows: unreadable at launch is empty and write-blocked; after a reload they are there and saving works; a loaded library is not re-read")
+    func workflowsRecover() throws {
+        let dir = try makeDirectory("workflows-recover")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let skills = SkillLibrary(fileURL: dir.appendingPathComponent("skills.json"))
+        let url = dir.appendingPathComponent("workflows.json")
+        let draft = { (name: String) in
+            WorkflowDraft(name: name, trigger: TriggerDraft(), steps: [StepDraft(kind: .notify, text: "hi")], onFailure: .stop)
+        }
+        try WorkflowLibrary(fileURL: url, skills: skills).save(draft("Morning"))
+        let locked = try Unreadable(url)
+
+        let library = WorkflowLibrary(fileURL: url, skills: skills)
+        #expect(library.workflows.isEmpty)
+        #expect(library.isWriteBlocked)
+        #expect(throws: WorkflowLibraryError.self) { try library.save(draft("Evening")) }
+        #expect(!library.reloadIfBlocked())
+        #expect(locked.untouched)
+
+        try locked.restore()
+        #expect(library.reloadIfBlocked())
+        #expect(library.workflows.map(\.name) == ["Morning"])
+        try library.save(draft("Evening"))
+        #expect(WorkflowLibrary(fileURL: url, skills: skills).workflows.count == 2)
+
+        // Loaded now: another reload does nothing and keeps what is in memory.
+        try Data(#"{"version":1,"workflows":[]}"#.utf8).write(to: url)
+        #expect(!library.reloadIfBlocked())
+        #expect(library.workflows.count == 2)
     }
 }
 

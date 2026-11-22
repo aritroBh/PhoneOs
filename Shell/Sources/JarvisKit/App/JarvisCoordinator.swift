@@ -282,22 +282,13 @@ public final class JarvisCoordinator: Sendable {
             runner: runner, model: model, tools: tools, human: human, memory: memory, screenshots: screenshots,
             attention: attention
         )
+        let configuration = self.configuration
         let driver: SessionDriver
-        do {
-            driver = try SessionDriver(config: config, task: task, memoryJSON: memoryJSON, dependencies: deps, configuration: configuration)
-        } catch {
-            // The core rejected the saved memory: set it aside and start fresh. If it cannot be
-            // set aside, the run would overwrite it at the end: do not start.
-            do {
-                _ = try await memory.quarantine()
-            } catch {
-                return .notStarted(Self.memoryUnreadable)
-            }
-            do {
-                driver = try SessionDriver(config: config, task: task, memoryJSON: "", dependencies: deps, configuration: configuration)
-            } catch {
-                return .notStarted("the core could not start a session: \(error)")
-            }
+        switch await Self.startDriver(memoryJSON: memoryJSON, memory: memory, make: {
+            try SessionDriver(config: config, task: task, memoryJSON: $0, dependencies: deps, configuration: configuration)
+        }) {
+        case .success(let started): driver = started
+        case .failure(let refusal): return .notStarted(refusal.text)
         }
 
         let forward = Task {
@@ -316,6 +307,43 @@ public final class JarvisCoordinator: Sendable {
         let apps = await forward.value
         _ = try? TaskHistoryStore(fileURL: paths.history).append(TaskRecord(task: task, result: result, apps: apps, skill: skill, origin: origin))
         return .finished(task, result)
+    }
+}
+
+/// Why `JarvisCoordinator.startDriver` did not start a driver (owner-facing text).
+struct DriverStartRefusal: Error, Equatable {
+    let text: String
+}
+
+extension JarvisCoordinator {
+    /// Creates the driver with `make(memoryJSON)`. Only the core's "memory rejected" error
+    /// (`JarvisError.InvalidMemory`, for saved memory that is not empty) sets the memory
+    /// file aside and retries with fresh memory; if it cannot be set aside the run does not
+    /// start (its save would overwrite the file). Any other error ends the run as not
+    /// started and leaves the memory file as it is.
+    static func startDriver<D>(
+        memoryJSON: String,
+        memory: FileMemoryStore,
+        make: (String) throws -> D
+    ) async -> Result<D, DriverStartRefusal> {
+        do {
+            return .success(try make(memoryJSON))
+        } catch {
+            guard CoreErrorMessage(error).isInvalidMemory, !memoryJSON.isEmpty else {
+                return .failure(DriverStartRefusal(text: "the core could not start a session: \(CoreErrorMessage(error).message)"))
+            }
+        }
+        // The core rejected the saved memory: set it aside and start fresh.
+        do {
+            _ = try await memory.quarantine()
+        } catch {
+            return .failure(DriverStartRefusal(text: memoryUnreadable))
+        }
+        do {
+            return .success(try make(""))
+        } catch {
+            return .failure(DriverStartRefusal(text: "the core could not start a session: \(CoreErrorMessage(error).message)"))
+        }
     }
 }
 

@@ -63,6 +63,9 @@ public struct CoreErrorMessage: Sendable, Equatable, CustomStringConvertible {
     /// Whether the core refused a workflow, a workflow snapshot or a workflow lookup.
     public var isInvalidWorkflow: Bool { kind == "InvalidWorkflow" }
 
+    /// Whether the core rejected saved memory bytes (`JarvisSession` init, skill promotion).
+    public var isInvalidMemory: Bool { kind == "InvalidMemory" }
+
     /// Whether the object that threw is unusable (a caught panic): rebuild it.
     public var isPoisoned: Bool { kind == "Poisoned" || kind == "Internal" }
 

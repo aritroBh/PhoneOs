@@ -70,8 +70,14 @@ public struct RemotePairingOffer: Sendable, Equatable, CustomStringConvertible, 
 /// - **One entry for tasks.** Remote `startTask`/`runSkill`/`runWorkflow` start through
 ///   `TaskCenter` / `WorkflowRunner` exactly like the owner's requests; skills are checked
 ///   again with `SkillLibrary.context`.
-/// - **Decisions** apply only to the confirmation on screen: same hub request id, same
-///   category, same request in the broker; an approval also needs
+/// - **Decisions are bound to a prompt id.** When the hub gets a request for a confirmation,
+///   the broker's prompt id of that confirmation is recorded with the hub's request id (the
+///   first confirmation prompt with that request not bound before; the next one shown when it
+///   is not on screen yet). A decision resolves only that exact prompt, and only while it is
+///   still the pending one; anything else (a second device after the first one decided, an
+///   answer the owner already gave on the phone, a prompt replaced by an equal one after a
+///   lock or in step-by-step mode) is refused and written to the audit log as stale. The
+///   category and the request on screen are checked too, and an approval also needs
 ///   `remotelyApprovable(category:)`.
 /// - **Lifecycle.** Off by default; on starts the listener and a tick timer; off stops both
 ///   and drops the hub. A poisoned hub is rebuilt from the secret store.
@@ -126,8 +132,12 @@ public final class RemoteControlService {
 
     private var inbox: [Input] = []
     private var working = false
-    /// The confirmation the hub knows about: its request id and the request on screen.
-    private var hubConfirm: (id: UInt64, request: ConfirmRequest)?
+    /// The confirmation the hub knows about: its request id, the request, and the broker's
+    /// prompt id it was announced for (`nil` until that prompt is shown).
+    private var hubConfirm: (id: UInt64, request: ConfirmRequest, promptId: Int?)?
+    /// The highest broker prompt id already bound to a hub request (or shown before remote
+    /// control started): a later request binds only to a newer prompt.
+    private var boundPromptId = 0
     private var lastScreen: Screen?
     private var lastCatalog: (skills: [CatalogEntry], workflows: [CatalogEntry])?
 
@@ -194,6 +204,8 @@ public final class RemoteControlService {
         if observer == nil {
             observer = center.observe { [weak self] event in self?.taskEvent(event) }
         }
+        // Prompts shown before remote control started were never announced to the hub.
+        boundPromptId = max(boundPromptId, desk.latestPromptId)
         lastCatalog = nil
         refreshCatalog()
         if let session = center.session, session.origin.workflow == nil {
@@ -401,7 +413,7 @@ public final class RemoteControlService {
                     carryOut(try hub.localEvent(nowMs: clock(), event: event))
                 case .confirmRequested(let request):
                     let effects = try hub.localEvent(nowMs: clock(), event: .confirmRequested(request: request))
-                    if let id = try hub.pendingRequestId() { hubConfirm = (id, request) }
+                    if let id = try hub.pendingRequestId() { hubConfirm = (id, request, bindPrompt(for: request)) }
                     carryOut(effects)
                 case .confirmResolved(let approved):
                     guard let pending = hubConfirm else { break }
@@ -497,11 +509,28 @@ public final class RemoteControlService {
         }
     }
 
+    /// The broker prompt a newly announced `request` belongs to: the first confirmation
+    /// prompt with that request shown after the last one bound. `nil` when it is not shown
+    /// yet (the run announces the confirmation just before it asks the broker); it is bound
+    /// when a decision arrives.
+    private func bindPrompt(for request: ConfirmRequest) -> Int? {
+        guard let prompt = desk.confirmations(after: boundPromptId).first(where: { $0.request == request }) else { return nil }
+        boundPromptId = prompt.id
+        return prompt.id
+    }
+
     private func decide(requestId: UInt64, approved: Bool, category: RiskCategory, deviceId: String) {
         let who = deviceName(deviceId) ?? "a device"
-        guard let pending = hubConfirm, pending.id == requestId, pending.request.category == category,
-              let onScreen = desk.pendingConfirmation, onScreen.request == pending.request else {
-            note("Ignored a decision from \(who): the question on the phone had changed", device: deviceId, warning: true)
+        if var pending = hubConfirm, pending.id == requestId, pending.promptId == nil {
+            pending.promptId = bindPrompt(for: pending.request)
+            hubConfirm = pending
+        }
+        // Bound to one prompt: only that prompt, and only while it is the one on screen.
+        guard let pending = hubConfirm, pending.id == requestId, let promptId = pending.promptId,
+              let onScreen = desk.pendingConfirmation, onScreen.id == promptId,
+              pending.request.category == category, onScreen.request == pending.request else {
+            note("Ignored a stale decision from \(who): the question it answers is no longer the one on the phone",
+                 device: deviceId, warning: true)
             return
         }
         if approved, (try? remotelyApprovable(category: category)) != true {

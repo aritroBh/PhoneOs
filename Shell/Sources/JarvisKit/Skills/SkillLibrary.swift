@@ -231,6 +231,24 @@ public final class SkillLibrary: Sendable {
         }
     }
 
+    /// Reads the file again when saving is blocked because it could not be read at launch
+    /// (before the first unlock after a restart, an I/O error) or could not be set aside.
+    /// The owner's skills then appear and saving works, without a relaunch. A library whose
+    /// file was loaded is not re-read (nothing in memory is lost); while blocked, nothing
+    /// could change in memory. Returns whether the skills were re-read and saving now works.
+    @discardableResult
+    public func reloadIfBlocked() -> Bool {
+        state.withLock { s in
+            guard s.writeBlocked != nil else { return false }
+            let fresh = Self.load(fileURL: fileURL, now: now)
+            s = fresh
+            return fresh.writeBlocked == nil
+        }
+    }
+
+    /// Whether saving is blocked (the file could not be read or set aside).
+    public var isWriteBlocked: Bool { state.withLock { $0.writeBlocked != nil } }
+
     // MARK: - Reading
 
     /// All skills, ordered by id.

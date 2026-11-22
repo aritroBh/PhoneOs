@@ -220,8 +220,18 @@ extension RunnerResult {
 }
 
 /// Wraps a runner that can read the lock state cheaply (LoopCtrl's `device_info`) and checks
-/// it after every command (`RunnerResult.checkedAfterCommand`). A failed lock read changes
-/// nothing. Observations and lock polls pass through.
+/// it before and after every command.
+///
+/// - **Before**: model inference sits between the observation and the command and can take
+///   many seconds, so the phone may have locked meanwhile. When the runner reports
+///   `.locked`, the command is not sent and the result is the runner's own locked refusal
+///   (`RunnerResult.deviceLocked`, `RunnerFailure.deviceLocked`: nothing ran), so the core
+///   waits for the unlock, observes again and chooses the action again. `.unknown` or a
+///   failed read sends the command as before.
+/// - **After**: `RunnerResult.checkedAfterCommand` (a command the phone locked under is
+///   reported as locked). A failed lock read changes nothing.
+///
+/// Waits (`.wait`) are not checked. Observations and lock polls pass through.
 public final class LockCheckingRunner: PhoneRunner {
     public let inner: any PhoneRunner
 
@@ -234,8 +244,11 @@ public final class LockCheckingRunner: PhoneRunner {
     }
 
     public func perform(_ command: RunnerCommand) async throws -> RunnerResult {
+        if case .wait = command { return try await inner.perform(command) }
+        if (try? await inner.lockState()) == .locked {
+            return .deviceLocked("the phone is locked; \(Transcript.describe(command)) was not sent")
+        }
         let result = try await inner.perform(command)
-        if case .wait = command { return result }
         let after = (try? await inner.lockState()) ?? .unknown
         return result.checkedAfterCommand(command, lockedAfter: after)
     }

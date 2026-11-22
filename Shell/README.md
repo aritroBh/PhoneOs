@@ -157,7 +157,12 @@ without a relaunch. A damaged file is renamed to `<name>.corrupt-<ms>` next to i
 deleted or overwritten, as `SkillLibrary` does) and the caller is told.
 
 - **`SettingsStore`**: `read() -> SettingsRead` (`.loaded`, `.missing`, `.unreadable(reason:)`,
-  `.damaged(reason:setAside:)`); `save` throws `StoredFileError` while the file is unreadable;
+  `.damaged(reason:setAside:)`). A missing key takes its default (old files keep loading); a
+  safety field that is present but cannot be decoded (`policy_mode`, `first_use_approval`,
+  `relaxed_categories`, `deny_categories`, `app_trust`, `remote_control_enabled`, `max_steps`,
+  `max_minutes`, `max_locked_wait_minutes`: wrong type, `null`, or a value this build does not
+  know, also one entry of a list) makes the whole file damaged, so it is set aside and the owner
+  must review; the model/runner addresses, context size and Away toggles stay lenient; `save` throws `StoredFileError` while the file is unreadable;
   `load()` (defaults for anything but `.loaded`) must not feed a task. **`SettingsGate`** (main
   actor) holds the settings the app runs with and the `problem`; `refresh()` re-reads while
   unreadable, `acknowledgeReview()` ends the damaged state. `TaskCenter(…, settingsProblem:)`
@@ -171,11 +176,18 @@ deleted or overwritten, as `SkillLibrary` does) and the caller is told.
   bounded. `loadIssue` says what happened.
 - **`WorkflowScheduler`**: while its state is unreadable nothing fires (what fired is
   unknown) and nothing is written; a minute marked meanwhile is merged in later. A damaged
-  state is set aside and minutes up to that moment count as fired (no double run).
+  state is set aside and minutes up to that moment count as fired (no double run). Old state
+  files without local slots still load.
 - **`FileMemoryStore`**: `read()` reports the case; `JarvisCoordinator.run` does not start
   (`.notStarted(JarvisCoordinator.memoryUnreadable)`) when the memory cannot be read or a
   rejected memory cannot be set aside, because the run's save would replace the learned
-  flows and first-use approvals.
+  flows and first-use approvals. Only the core's `InvalidMemory` error sets the memory aside;
+  any other driver init error ends the run as not started and leaves the file alone. Stores
+  of the same path share one serial queue, so saves land in the order they were asked for.
+- **`SkillLibrary` / `WorkflowLibrary`**: a file unreadable at launch leaves the library empty
+  and saving blocked; `reloadIfBlocked()` (called with `AppModel.reloadSettings()`) reads it
+  again, so the owner's skills and workflows appear after the first unlock without a
+  relaunch. A library that loaded is never re-read.
 
 ## Skills, Away mode, Apps (JarvisKit side, Linux-tested)
 
@@ -240,7 +252,14 @@ deleted or overwritten, as `SkillLibrary` does) and the caller is told.
   `Progress` (step states, activity, notes, outcome) drives the workflow run view.
 - **`WorkflowScheduler`**: each check asks the core what fired within the catch-up window (15
   min) and starts it, at most once per scheduled minute (fired minutes kept in
-  `workflow-schedule.json`, so a relaunch catches up once); minutes that ended before the
+  `workflow-schedule.json`, so a relaunch catches up once); per workflow the latest fired UTC
+  minute and the latest fired local slot (local date + minute, `LocalTime.localDay`) are kept,
+  never pruned by age (only workflows that no longer exist are dropped): a fire whose local
+  slot already fired is refused (01:30 on the night the clocks go back, flying west), and a
+  clock that ran ahead and was set back cannot re-fire a minute. The window is real time: when
+  the clocks go forward inside it, it is widened on the wall clock by the skipped minutes, so a
+  02:30 schedule on the spring-forward night fires once at the first check after the gap
+  (03:00…03:14), never twice; minutes that ended before the
   workflow was saved are skipped; while something runs it waits for the next check. iOS does
   not wake the app: schedules run while Jarvis is open (the UI says so); exact times come from
   a Shortcuts automation calling `RunJarvisWorkflowIntent`.
@@ -250,8 +269,12 @@ deleted or overwritten, as `SkillLibrary` does) and the caller is told.
   connection); phone events caused by effects are queued behind them, so frames leave in the
   hub's counter order. Remote `startTask`/`runSkill`/`runWorkflow` go through
   `TaskCenter`/`WorkflowRunner` (skills re-checked with `SkillLibrary.context`); `cancelTask`
-  cancels only what its id names; `decide` applies only to the confirmation on screen (same
-  hub request id, category and broker request; approval also needs `remotelyApprovable`).
+  cancels only what its id names; `decide` is bound to a prompt id: when the hub's request is
+  created, the broker's prompt id for it is recorded (`ConfirmationDesk.confirmations(after:)`),
+  and a decision resolves only that exact prompt while it is still pending (category and
+  request re-checked; approval also needs `remotelyApprovable`); anything else (a second
+  device, an answer already given on the phone, an equal prompt asked again after a lock or in
+  step-by-step mode) is refused and audited as "Ignored a stale decision".
   Progress is forwarded with the typed `Screen` from the last observation. `catalogChanged`
   is sent when enabled skills/workflows change. Off by default; on loads the hub from the
   secret store (a refused store is kept and reported), starts the transport and a 1 s tick;
@@ -264,9 +287,10 @@ deleted or overwritten, as `SkillLibrary` does) and the caller is told.
 ## SessionDriver
 
 `SessionDriver` is an actor. `init(config:task:memoryJSON:dependencies:configuration:)`
-throws when the core rejects the memory. In that case call `FileMemoryStore.quarantine()`
-and retry with `""` (only if the quarantine succeeded: otherwise the run's save would
-overwrite the file). `run() async -> RunResult` never throws. `cancel()` stops the run, and
+throws when the core rejects the memory (`JarvisError.InvalidMemory`). Only in that case call
+`FileMemoryStore.quarantine()` and retry with `""` (only if the quarantine succeeded:
+otherwise the run's save would overwrite the file); any other error means the run does not
+start and the memory file stays as it is (`JarvisCoordinator.startDriver`). `run() async -> RunResult` never throws. `cancel()` stops the run, and
 `nonisolated updates: AsyncStream<DriverUpdate>` reports progress.
 
 | Effect | IO | Event on success | Event on error / timeout |
@@ -287,6 +311,9 @@ Further guarantees:
 - IO runs in `IORace`. The waiter resumes on the first of completion, deadline or
   cancellation, even if the IO ignores cancellation. Abandoned IO keeps running detached
   until it ends, and its result is dropped.
+- A prompt of `HumanPromptBroker` whose asking task is cancelled (the driver abandoning a
+  confirmation or question because the phone locked, a timeout) is withdrawn by its own id at
+  once; a newer prompt is never touched (`withdraw(_:)` does the same for a caller with an id).
 - `finish()` is called once and its JSON goes to `MemoryPersisting.save` exactly once, on
   every exit path. The save runs in a detached task with its own deadline, so a cancelled run
   still saves. If `finish()` throws (the core is poisoned), nothing is saved and
@@ -369,7 +396,11 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   phone locked under it is reported as `RunnerFailure.deviceLocked`
   (`RunnerResult.checkedAfterCommand`), so the core does not trust it and looks again after
   the unlock; live runs wrap `LoopCtrlRunner` in `LockCheckingRunner` for the same check over
-  `device_info`. `ScriptedModel` decides from the prompt's "Steps so far" whether a tap/type
+  `device_info`, which also reads the lock state *before* each command (not waits): model
+  inference sits between the observation and the command, so when the phone locked meanwhile
+  the command is not sent and the result is the runner's locked refusal
+  (`RunnerResult.deviceLocked`); the core waits for the unlock, observes and decides again.
+  `.unknown` sends the command as before. `ScriptedModel` decides from the prompt's "Steps so far" whether a tap/type
   took effect (`ok`, whatever follows it (`ok; changed: …`, `ok; now in …`, `ok; screen
   unchanged`) is not read; or `done, but …` while its precondition no longer holds) and
   otherwise retries it, at most `Options.maxRetries` times. A switch is rendered `(on)` /

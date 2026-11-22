@@ -426,9 +426,8 @@ final class AppModel: ObservableObject {
             live = LiveRun(task: session.text, maxSteps: Int(settings.clampedMaxSteps), skillName: session.skill?.name)
             if session.origin.workflow == nil { showingRun = true }
         case .session(_, let runEvent):
-            // A lock abandoned the pending question or confirmation: take the sheet away
-            // (the core asks again after the unlock).
-            if case .update(.lockDetected) = runEvent { broker.cancelAll() }
+            // A lock abandoned the pending question or confirmation: the broker withdrew that
+            // prompt by its id when the driver gave up the wait (never a newer one).
             live.apply(runEvent)
         case .sessionFinished(let session, let outcome):
             switch outcome {
@@ -810,6 +809,7 @@ final class AppModel: ObservableObject {
             if settings != loaded { settings = loaded }
             if settings.remoteControlEnabled && !remote.isOn { remote.setEnabled(true) }
         }
+        if [skills.reloadIfBlocked(), workflows.reloadIfBlocked()].contains(true) { refreshSkills(); refreshWorkflows() }
         mirrorSettingsProblem()
     }
 

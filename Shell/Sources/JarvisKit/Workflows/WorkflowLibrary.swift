@@ -121,6 +121,24 @@ public final class WorkflowLibrary: Sendable {
         }
     }
 
+    /// Reads the file again when saving is blocked because it could not be read at launch
+    /// (before the first unlock after a restart, an I/O error) or could not be set aside.
+    /// The owner's workflows then appear and saving works, without a relaunch. A library whose
+    /// file was loaded is not re-read (nothing in memory is lost); while blocked, nothing
+    /// could change in memory. Returns whether the workflows were re-read and saving now works.
+    @discardableResult
+    public func reloadIfBlocked() -> Bool {
+        state.withLock { s in
+            guard s.writeBlocked != nil else { return false }
+            let fresh = Self.load(fileURL: fileURL, now: now)
+            s = fresh
+            return fresh.writeBlocked == nil
+        }
+    }
+
+    /// Whether saving is blocked (the file could not be read or set aside).
+    public var isWriteBlocked: Bool { state.withLock { $0.writeBlocked != nil } }
+
     // MARK: - Reading
 
     /// All (valid) workflows, ordered by id.
@@ -337,21 +355,56 @@ public struct LocalTime: Sendable, Equatable {
     public var minuteOfDay: UInt32
     /// Whole minutes since 1970 (UTC), to tell scheduled minutes apart.
     public var epochMinute: Int64
+    /// The local date as a day number (days since 1970-01-01 in the local calendar), so a
+    /// local slot (date and minute) can be told apart from the UTC minute: the same local
+    /// 01:30 happens twice on the night the clocks go back, and again after flying west.
+    public var localDay: Int64
+    /// The time zone the wall time was read in (`nil`: not known, no daylight-saving
+    /// adjustment). The scheduler uses it to widen its catch-up window over a skipped hour.
+    public var timeZone: TimeZone?
 
-    public init(weekday: Weekday, minuteOfDay: UInt32, epochMinute: Int64) {
+    /// `localDay` defaults to the day of `epochMinute - minuteOfDay` (UTC arithmetic).
+    public init(weekday: Weekday, minuteOfDay: UInt32, epochMinute: Int64, localDay: Int64? = nil, timeZone: TimeZone? = nil) {
         self.weekday = weekday
         self.minuteOfDay = minuteOfDay
         self.epochMinute = epochMinute
+        self.localDay = localDay ?? Self.floorDiv(epochMinute - Int64(minuteOfDay), 1_440)
+        self.timeZone = timeZone
     }
 
     /// `date` in `calendar`'s time zone.
     public init(date: Date, calendar: Calendar = .current) {
-        let parts = calendar.dateComponents([.weekday, .hour, .minute], from: date)
+        let parts = calendar.dateComponents([.year, .month, .day, .weekday, .hour, .minute], from: date)
         // Calendar: 1 = Sunday … 7 = Saturday; the core: 0 = Monday.
         let index = UInt32(((parts.weekday ?? 2) + 5) % 7)
         self.weekday = (try? weekdayFromIndex(index: index)) ?? .mon
         self.minuteOfDay = UInt32(max(0, min(1_439, (parts.hour ?? 0) * 60 + (parts.minute ?? 0))))
         self.epochMinute = Int64((date.timeIntervalSince1970 / 60).rounded(.down))
+        if let y = parts.year, let m = parts.month, let d = parts.day {
+            self.localDay = Self.daysFromCivil(year: Int64(y), month: Int64(m), day: Int64(d))
+        } else {
+            self.localDay = Self.floorDiv(epochMinute - Int64(minuteOfDay), 1_440)
+        }
+        self.timeZone = calendar.timeZone
+    }
+
+    /// The local slot of this time: local day × 1440 + minute of day.
+    public var localMinute: Int64 { localDay * 1_440 + Int64(minuteOfDay) }
+
+    static func floorDiv(_ a: Int64, _ b: Int64) -> Int64 {
+        let q = a / b
+        return (a % b != 0 && (a < 0) != (b < 0)) ? q - 1 : q
+    }
+
+    /// Days since 1970-01-01 of a proleptic Gregorian date (H. Hinnant's algorithm).
+    static func daysFromCivil(year: Int64, month: Int64, day: Int64) -> Int64 {
+        let y = month <= 2 ? year - 1 : year
+        let era = floorDiv(y, 400)
+        let yoe = y - era * 400
+        let mp = (month + 9) % 12
+        let doy = (153 * mp + 2) / 5 + day - 1
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+        return era * 146_097 + doe - 719_468
     }
 }
 

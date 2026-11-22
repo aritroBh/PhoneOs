@@ -16,6 +16,21 @@ private func contents(of directory: URL) throws -> [String] {
 
 @Suite("FileMemoryStore", .timeLimit(.minutes(1)))
 struct FileMemoryStoreTests {
+    @Test("stores of the same path share one serial queue, so saves land in the order they were asked for")
+    func savesSerialisedPerPath() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("jarvis-mem-queue-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("memory.json")
+        let a = FileMemoryStore(fileURL: url)
+        let b = FileMemoryStore(fileURL: dir.appendingPathComponent("./memory.json"))
+        #expect(a.sharesQueue(with: b))
+        #expect(!a.sharesQueue(with: FileMemoryStore(fileURL: dir.appendingPathComponent("other.json"))))
+        // Work asked of either store runs in order on that queue.
+        try await a.save(#"{"v":1}"#)
+        try await b.save(#"{"v":2}"#)
+        #expect(try await a.load() == #"{"v":2}"#)
+    }
+
     @Test("missing file loads as fresh memory")
     func missing() async throws {
         let dir = try temporaryDirectory()

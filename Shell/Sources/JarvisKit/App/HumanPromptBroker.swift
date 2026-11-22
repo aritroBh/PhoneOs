@@ -21,6 +21,12 @@ public enum HumanPrompt: Sendable, Equatable, Identifiable {
 public protocol ConfirmationDesk: Sendable {
     /// The confirmation waiting for the owner, if the pending prompt is one.
     var pendingConfirmation: (id: Int, request: ConfirmRequest)? { get }
+    /// The highest prompt id handed out so far (0 before the first prompt).
+    var latestPromptId: Int { get }
+    /// The recent confirmation prompts with an id above `id`, oldest first (whether or not
+    /// they are still pending). Remote control binds each request it announces to exactly
+    /// one of these.
+    func confirmations(after id: Int) -> [(id: Int, request: ConfirmRequest)]
     /// Answers confirmation `id`; false when it is no longer pending.
     @discardableResult
     func resolveConfirmation(_ id: Int, approved: Bool) -> Bool
@@ -42,6 +48,11 @@ public enum HumanPromptError: Error, Equatable, Sendable {
 /// `onChange`) and resolves with `approve` / `decline` / `reply`. One prompt at a time (the
 /// driver asks one thing at a time); a newer prompt replaces an older one, which is
 /// withdrawn (a withdrawn confirmation is a decline for the driver).
+///
+/// A prompt whose asking task is cancelled is withdrawn by its own id, and only that one:
+/// when the driver abandons a confirmation or a question because the phone locked (or the
+/// wait timed out), its prompt leaves the screen at that moment, and a newer prompt is never
+/// touched by it. `withdraw(_:)` does the same for a caller that holds an id.
 public final class HumanPromptBroker: HumanGate, ConfirmationDesk, OwnerQuestioner {
     private enum Waiter {
         case confirm(CheckedContinuation<Bool, any Error>)
@@ -52,7 +63,15 @@ public final class HumanPromptBroker: HumanGate, ConfirmationDesk, OwnerQuestion
         var nextID = 1
         var prompt: HumanPrompt?
         var waiter: Waiter?
+        /// Ids handed out whose prompt is not installed yet; an id cancelled meanwhile is
+        /// removed, and its install then withdraws at once.
+        var reserved: Set<Int> = []
+        /// The latest confirmation prompts (bounded), for `confirmations(after:)`.
+        var recentConfirmations: [(id: Int, request: ConfirmRequest)] = []
     }
+
+    /// How many confirmation prompts `confirmations(after:)` remembers.
+    static let confirmationHistory = 32
 
     private let state = Mutex(State())
     private let onChange: @Sendable (HumanPrompt?) -> Void
@@ -66,21 +85,42 @@ public final class HumanPromptBroker: HumanGate, ConfirmationDesk, OwnerQuestion
     public var pending: HumanPrompt? { state.withLock { $0.prompt } }
 
     public func confirm(_ request: ConfirmRequest) async throws -> Bool {
-        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Bool, any Error>) in
-            install { id in (.confirm(id: id, request: request), .confirm(c)) }
+        let id = reserve()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Bool, any Error>) in
+                install(id, .confirm(id: id, request: request), .confirm(c))
+            }
+        } onCancel: {
+            self.withdraw(id)
         }
     }
 
     public func answer(_ question: String) async throws -> String {
-        try await withCheckedThrowingContinuation { (c: CheckedContinuation<String, any Error>) in
-            install { id in (.question(id: id, text: question), .answer(c)) }
+        let id = reserve()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<String, any Error>) in
+                install(id, .question(id: id, text: question), .answer(c))
+            }
+        } onCancel: {
+            self.withdraw(id)
         }
     }
 
     public func askYesNo(_ question: String) async throws -> Bool {
-        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Bool, any Error>) in
-            install { id in (.yesNo(id: id, text: question), .confirm(c)) }
+        let id = reserve()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Bool, any Error>) in
+                install(id, .yesNo(id: id, text: question), .confirm(c))
+            }
+        } onCancel: {
+            self.withdraw(id)
         }
+    }
+
+    public var latestPromptId: Int { state.withLock { $0.nextID - 1 } }
+
+    public func confirmations(after id: Int) -> [(id: Int, request: ConfirmRequest)] {
+        state.withLock { s in s.recentConfirmations.filter { $0.id > id } }
     }
 
     public var pendingConfirmation: (id: Int, request: ConfirmRequest)? {
@@ -110,6 +150,23 @@ public final class HumanPromptBroker: HumanGate, ConfirmationDesk, OwnerQuestion
         return true
     }
 
+    /// Withdraws prompt `id` (a confirmation counts as declined) if it is still pending, or
+    /// before it is shown if it is not yet. Any other prompt stays. Returns whether `id` was
+    /// pending or about to be.
+    @discardableResult
+    public func withdraw(_ id: Int) -> Bool {
+        let (waiter, wasReserved) = state.withLock { s -> (Waiter?, Bool) in
+            if s.reserved.remove(id) != nil { return (nil, true) }
+            guard let prompt = s.prompt, prompt.id == id else { return (nil, false) }
+            defer { s.prompt = nil; s.waiter = nil }
+            return (s.waiter, false)
+        }
+        guard let waiter else { return wasReserved }
+        Self.withdraw(waiter)
+        onChange(nil)
+        return true
+    }
+
     /// Withdraws whatever is pending (a confirmation counts as declined).
     public func cancelAll() {
         let waiter = state.withLock { s -> Waiter? in
@@ -123,15 +180,35 @@ public final class HumanPromptBroker: HumanGate, ConfirmationDesk, OwnerQuestion
 
     // MARK: - Internals
 
-    private func install(_ make: (Int) -> (HumanPrompt, Waiter)) {
-        let (prompt, previous) = state.withLock { s -> (HumanPrompt, Waiter?) in
+    /// Hands out the id of the next prompt.
+    private func reserve() -> Int {
+        state.withLock { s in
             let id = s.nextID
             s.nextID += 1
-            let (prompt, waiter) = make(id)
+            s.reserved.insert(id)
+            return id
+        }
+    }
+
+    /// Shows `prompt` (id `id`, reserved), replacing and withdrawing the pending one. When
+    /// `id` was withdrawn before it was shown, `waiter` is withdrawn at once instead.
+    private func install(_ id: Int, _ prompt: HumanPrompt, _ waiter: Waiter) {
+        let (shown, previous) = state.withLock { s -> (Bool, Waiter?) in
+            guard s.reserved.remove(id) != nil else { return (false, nil) }
             let previous = s.waiter
             s.prompt = prompt
             s.waiter = waiter
-            return (prompt, previous)
+            if case .confirm(let id, let request) = prompt {
+                s.recentConfirmations.append((id, request))
+                if s.recentConfirmations.count > Self.confirmationHistory {
+                    s.recentConfirmations.removeFirst(s.recentConfirmations.count - Self.confirmationHistory)
+                }
+            }
+            return (true, previous)
+        }
+        guard shown else {
+            Self.withdraw(waiter)
+            return
         }
         if let previous { Self.withdraw(previous) }
         onChange(prompt)

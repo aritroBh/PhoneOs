@@ -7,6 +7,15 @@ public struct ScheduledFire: Sendable, Equatable {
     public var workflow: Workflow
     /// The scheduled minute (minutes since 1970, UTC).
     public var scheduledMinute: Int64
+    /// The scheduled local slot (`LocalTime.localMinute`: local day × 1440 + minute of day),
+    /// `nil` when not known.
+    public var localSlot: Int64?
+
+    public init(workflow: Workflow, scheduledMinute: Int64, localSlot: Int64? = nil) {
+        self.workflow = workflow
+        self.scheduledMinute = scheduledMinute
+        self.localSlot = localSlot
+    }
 }
 
 /// Fires scheduled workflows while Jarvis runs. iOS does not wake an app at a set time, so
@@ -16,9 +25,19 @@ public struct ScheduledFire: Sendable, Equatable {
 /// Each check asks the core which schedules fired within the last `catchUpMinutes`
 /// (`JarvisWorkflows.due`), and fires each scheduled minute at most once: fired minutes are
 /// remembered (in `stateURL` when given), so a relaunch inside the window catches up once
-/// and never twice. A minute that ended before the workflow was last saved or switched on
-/// is not caught up. While something else runs, a due workflow waits for the next check
-/// (inside the window).
+/// and never twice. Per workflow it keeps the latest fired UTC minute and the latest fired
+/// local slot (local date and minute): a fire is refused when its UTC minute is not after
+/// the one that fired, or when its local slot equals the one that fired (the night the
+/// clocks go back, 01:30 happens twice; flying west repeats local times). These entries are
+/// never pruned by time, so a clock that ran ahead and was set back cannot make a minute
+/// fire again; only entries of workflows that no longer exist are dropped. A minute that
+/// ended before the workflow was last saved or switched on is not caught up. While
+/// something else runs, a due workflow waits for the next check (inside the window).
+///
+/// Daylight saving: the catch-up window is real time. When the clocks go forward inside
+/// the window, the window on the wall clock is widened by the skipped minutes, so a
+/// schedule in the skipped hour (02:30 on the night 02:00 becomes 03:00) fires once, at the
+/// first check after the gap (03:00), and is not lost.
 ///
 /// The state file follows the store rules (`StoredFileRead`): while it cannot be read
 /// (before the first unlock, an I/O error) nothing fires, because what already fired is
@@ -34,16 +53,41 @@ public final class WorkflowScheduler: Sendable {
     private struct State: Codable {
         /// Workflow id → the last scheduled minute that fired.
         var fired: [String: Int64] = [:]
+        /// Workflow id → the local slot of that fire (`LocalTime.localMinute`). Absent in
+        /// files written before it existed.
+        var firedSlot: [String: Int64] = [:]
         /// Minutes up to this one count as fired for every workflow (set when a damaged
         /// state file was set aside).
         var firedThrough: Int64?
+
+        init(fired: [String: Int64] = [:], firedSlot: [String: Int64] = [:], firedThrough: Int64? = nil) {
+            self.fired = fired
+            self.firedSlot = firedSlot
+            self.firedThrough = firedThrough
+        }
+
+        enum CodingKeys: String, CodingKey { case fired, firedSlot, firedThrough }
+
+        init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            fired = try c.decode([String: Int64].self, forKey: .fired)
+            firedSlot = try c.decodeIfPresent([String: Int64].self, forKey: .firedSlot) ?? [:]
+            firedThrough = try c.decodeIfPresent(Int64.self, forKey: .firedThrough)
+        }
+
+        /// Records `fire` as the latest of its workflow (an older minute changes nothing).
+        mutating func mark(_ id: String, minute: Int64, slot: Int64?) {
+            if let last = fired[id], last > minute { return }
+            fired[id] = minute
+            if let slot { firedSlot[id] = slot }
+        }
     }
 
     private struct Guarded {
         /// `nil` while the state file cannot be read.
         var state: State?
         /// Marked while the file could not be read; merged in once it can.
-        var pending: [String: Int64] = [:]
+        var pending = State()
         var issue: String?
     }
 
@@ -89,9 +133,9 @@ public final class WorkflowScheduler: Sendable {
             g.issue = "The schedule record was damaged (\(reason)) and was kept as \(setAside.lastPathComponent); "
                 + "schedules missed before now are not caught up."
         }
-        for (id, minute) in g.pending { loaded.fired[id] = max(loaded.fired[id] ?? .min, minute) }
-        if !g.pending.isEmpty { write = true }
-        g.pending = [:]
+        for (id, minute) in g.pending.fired { loaded.mark(id, minute: minute, slot: g.pending.firedSlot[id]) }
+        if !g.pending.fired.isEmpty { write = true }
+        g.pending = State()
         g.state = loaded
         if write { persist(loaded) }
     }
@@ -100,33 +144,49 @@ public final class WorkflowScheduler: Sendable {
     /// Empty while the state file cannot be read.
     public func due(at time: LocalTime) -> [ScheduledFire] {
         guard let state = guarded.withLock({ g -> State? in loadIfNeeded(&g); return g.state }) else { return [] }
-        let candidates = library.due(at: time, windowMinutes: catchUpMinutes)
+        let candidates = library.due(at: time, windowMinutes: wallWindow(at: time))
         return candidates.compactMap { workflow in
             guard case .schedule(let schedule) = workflow.trigger,
                   let since = try? scheduleMinutesSinceLast(schedule: schedule, weekday: time.weekday, minuteOfDay: time.minuteOfDay)
             else { return nil }
             let minute = time.epochMinute - Int64(since)
+            let slot = time.localMinute - Int64(since)
             if let last = state.fired[workflow.id], last >= minute { return nil }
+            // The same local date and minute fired already (clocks went back, flew west).
+            if let lastSlot = state.firedSlot[workflow.id], lastSlot == slot { return nil }
             if let through = state.firedThrough, through >= minute { return nil }
             // Saved or switched on after that minute ended: not a missed run.
             if Int64(clamping: workflow.updatedMs) >= (minute + 1) * 60_000 { return nil }
-            return ScheduledFire(workflow: workflow, scheduledMinute: minute)
+            return ScheduledFire(workflow: workflow, scheduledMinute: minute, localSlot: slot)
         }
+    }
+
+    /// The catch-up window on the wall clock: `catchUpMinutes`, plus the minutes the clocks
+    /// skipped inside it (spring forward), so the window stays `catchUpMinutes` of real time.
+    private func wallWindow(at time: LocalTime) -> UInt32 {
+        guard let zone = time.timeZone else { return catchUpMinutes }
+        let nowDate = Date(timeIntervalSince1970: Double(time.epochMinute) * 60)
+        let start = nowDate.addingTimeInterval(-Double(catchUpMinutes) * 60)
+        let skipped = (zone.secondsFromGMT(for: nowDate) - zone.secondsFromGMT(for: start)) / 60
+        return skipped > 0 ? catchUpMinutes + UInt32(skipped) : catchUpMinutes
     }
 
     /// Remembers that `fire` ran (or must not be retried). While the state file cannot be
     /// read it is kept in memory and merged into the file once it can be read.
+    /// Entries of workflows that no longer exist are dropped (never by age).
     public func markFired(_ fire: ScheduledFire) {
+        // Read before taking this scheduler's lock (the library has its own).
+        let existing = Set(library.workflows.map(\.id))
         let snapshot = guarded.withLock { g -> State? in
             loadIfNeeded(&g)
             guard var s = g.state else {
-                g.pending[fire.workflow.id] = max(g.pending[fire.workflow.id] ?? .min, fire.scheduledMinute)
+                g.pending.mark(fire.workflow.id, minute: fire.scheduledMinute, slot: fire.localSlot)
                 return nil
             }
-            s.fired[fire.workflow.id] = max(s.fired[fire.workflow.id] ?? .min, fire.scheduledMinute)
-            let horizon = fire.scheduledMinute - 8 * 24 * 60
-            s.fired = s.fired.filter { $0.value >= horizon }
-            if let through = s.firedThrough, through < horizon { s.firedThrough = nil }
+            s.mark(fire.workflow.id, minute: fire.scheduledMinute, slot: fire.localSlot)
+            let keep = existing.union([fire.workflow.id])
+            s.fired = s.fired.filter { keep.contains($0.key) }
+            s.firedSlot = s.firedSlot.filter { keep.contains($0.key) }
             g.state = s
             return s
         }

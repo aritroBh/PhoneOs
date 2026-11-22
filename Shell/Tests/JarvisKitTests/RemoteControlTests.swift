@@ -290,3 +290,139 @@ struct RemoteControlTests {
         #expect(RemoteAuditText.describe(RemotePermissions()) == "nothing")
     }
 }
+
+/// A device id for injected decisions.
+private func deviceId(_ digit: Character) -> String { String(repeating: digit, count: 32) }
+
+@Suite("Remote decisions are bound to one prompt id", .timeLimit(.minutes(1)))
+@MainActor
+struct RemoteDecisionBindingTests {
+    /// Remote control on, "Turn off Wi-Fi" started with an owner who answers nothing, and
+    /// the first-use confirmation on the phone and known to the hub. Returns the hub's
+    /// request id, the prompt and the run.
+    private func firstUsePending(_ r: RemoteHarness) async throws -> (UInt64, (id: Int, request: ConfirmRequest), Task<TaskRunOutcome, Never>) {
+        r.service.setEnabled(true)
+        try await eventually("the listener") { r.transport.isListening }
+        let broker = r.base.center.broker
+        guard case .success(let task) = r.base.center.start("Turn off Wi-Fi") else {
+            Issue.record("refused")
+            throw WaitTimeout()
+        }
+        try await eventually("first use") { broker.pendingConfirmation?.request.category == .firstUse }
+        try await eventually("the hub to know it") {
+            guard let id = r.probe?.requestId(for: .firstUse) else { return false }
+            return (try? r.probe?.pendingRequestId()) == id
+        }
+        return (try #require(r.probe?.requestId(for: .firstUse)), try #require(broker.pendingConfirmation), task)
+    }
+
+    private func audit(_ r: RemoteHarness, _ prefix: String) -> Int {
+        r.service.audit.entries.filter { $0.text.hasPrefix(prefix) }.count
+    }
+
+    /// Blocks the main actor (so remote control sees none of the run's events) until the
+    /// broker shows a prompt other than `old`.
+    private func waitForNewPrompt(_ broker: HumanPromptBroker, after old: Int) throws -> (id: Int, request: ConfirmRequest) {
+        let deadline = Date().addingTimeInterval(5)
+        while broker.pendingConfirmation?.id == old || broker.pendingConfirmation == nil, Date() < deadline {
+            usleep(1_000)
+        }
+        return try #require(broker.pendingConfirmation)
+    }
+
+    @Test("a decision for hub request h1 never answers a newer prompt with an equal request")
+    func staleDecisionNotMisdirected() async throws {
+        let r = RemoteHarness("probe-decide", rules: ScriptedOwner.Rules(approve: [], decline: [], yes: nil))
+        defer { r.cleanUp() }
+        let broker = r.base.center.broker
+        let (h1, p1, _) = try await firstUsePending(r)
+
+        // From here on the main actor is not yielded: the phone shows a new prompt (same
+        // request, as when the core asks the same thing again) before the run's events reach
+        // remote control.
+        let request = p1.request
+        let second = Task.detached { try await broker.confirm(request) }
+        let p2 = try waitForNewPrompt(broker, after: p1.id)
+        #expect(p2.id != p1.id)
+
+        r.probe?.injectOnTick.withLock { $0 = [.decide(requestId: h1, approved: true, category: .firstUse, deviceId: deviceId("0"))] }
+        r.service.tick()
+        #expect(broker.pendingConfirmation?.id == p2.id, "the decision for request \(h1) (prompt \(p1.id)) answered prompt \(p2.id)")
+        broker.cancelAll()
+        let approved = try? await second.value
+        #expect(approved != true, "prompt \(p2.id), never shown to the device, was approved by its stale decision")
+        #expect(audit(r, "Ignored a stale decision") == 1)
+    }
+
+    @Test("two devices race: the first decision wins, the second is stale and changes nothing")
+    func twoDevicesRace() async throws {
+        let r = RemoteHarness("decide-race", rules: ScriptedOwner.Rules(approve: [], decline: [], yes: nil))
+        defer { r.cleanUp() }
+        let (h1, _, task) = try await firstUsePending(r)
+        r.probe?.injectOnTick.withLock {
+            $0 = [.decide(requestId: h1, approved: false, category: .firstUse, deviceId: deviceId("0")),
+                  .decide(requestId: h1, approved: true, category: .firstUse, deviceId: deviceId("1"))]
+        }
+        r.service.tick()
+        #expect(audit(r, "Declined") == 1)
+        #expect(audit(r, "Ignored a stale decision") == 1, "\(r.service.audit.entries.map(\.text))")
+        #expect(audit(r, "Approved") == 0, "the second device's approval was applied")
+        let outcome = try await value(of: task, "the declined run to end")
+        if case .finished(_, let result) = outcome {
+            #expect(result.outcome.status != .success, "the declined first use ran anyway")
+        }
+    }
+
+    @Test("a decision that arrives after the owner answered on the phone is stale")
+    func afterOwnerAnswered() async throws {
+        let r = RemoteHarness("decide-owner", rules: ScriptedOwner.Rules(approve: [], decline: [], yes: nil))
+        defer { r.cleanUp() }
+        let broker = r.base.center.broker
+        let (h1, p1, task) = try await firstUsePending(r)
+        // The owner declines on the phone; the device's approval arrives before remote
+        // control has seen the run's answer.
+        #expect(broker.decline(p1.id))
+        r.probe?.injectOnTick.withLock { $0 = [.decide(requestId: h1, approved: true, category: .firstUse, deviceId: deviceId("0"))] }
+        r.service.tick()
+        #expect(audit(r, "Ignored a stale decision") == 1)
+        #expect(audit(r, "Approved") == 0)
+        let outcome = try await value(of: task, "the declined run to end")
+        if case .finished(_, let result) = outcome {
+            #expect(result.outcome.status != .success, "the owner's decline was overridden")
+        }
+    }
+
+    @Test("a decision for a prompt withdrawn by a lock and replaced by an equal one is stale")
+    func replacedAfterLock() async throws {
+        let r = RemoteHarness("decide-lock", rules: ScriptedOwner.Rules(approve: [], decline: [], yes: nil))
+        defer { r.cleanUp() }
+        let broker = r.base.center.broker
+        let (h1, p1, _) = try await firstUsePending(r)
+        // The lock withdraws p1 (by its id); after the unlock the core asks the same again.
+        #expect(broker.withdraw(p1.id))
+        let request = p1.request
+        let again = Task.detached { try await broker.confirm(request) }
+        let p2 = try waitForNewPrompt(broker, after: p1.id)
+        #expect(p2.request == p1.request && p2.id != p1.id)
+
+        r.probe?.injectOnTick.withLock { $0 = [.decide(requestId: h1, approved: true, category: .firstUse, deviceId: deviceId("0"))] }
+        r.service.tick()
+        #expect(broker.pendingConfirmation?.id == p2.id, "the new prompt was answered by a decision about the old one")
+        #expect(audit(r, "Ignored a stale decision") == 1)
+        broker.withdraw(p2.id)
+        let approved = try? await again.value
+        #expect(approved != true)
+    }
+
+    @Test("the matching decision for the bound prompt is applied")
+    func boundDecisionApplies() async throws {
+        let r = RemoteHarness("decide-bound", rules: ScriptedOwner.Rules(approve: [], decline: [], yes: nil))
+        defer { r.cleanUp() }
+        let (h1, _, task) = try await firstUsePending(r)
+        r.probe?.injectOnTick.withLock { $0 = [.decide(requestId: h1, approved: false, category: .firstUse, deviceId: deviceId("0"))] }
+        r.service.tick()
+        #expect(audit(r, "Declined") == 1)
+        #expect(audit(r, "Ignored") == 0)
+        _ = try await value(of: task, "the declined run to end")
+    }
+}
