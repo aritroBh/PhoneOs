@@ -150,6 +150,7 @@ struct Chip: View {
         .frame(minHeight: 26)
         .background(Capsule().fill(fill))
         .overlay(Capsule().strokeBorder(Theme.bezel, lineWidth: Theme.bezelWidth))
+        .accessibilityElement(children: .combine)
     }
 }
 
