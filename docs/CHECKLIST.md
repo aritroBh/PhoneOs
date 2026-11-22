@@ -13,7 +13,7 @@ Updated as work lands. `[x]` = done and verified, `[~]` = written but not verifi
 - [x] Workspace + `jarvis-proto` (shared types)
 - [ ] `jarvis-observe` (tree compaction, budgeted render, fingerprints, diff)
 - [ ] `jarvis-safety` (risk classification, gates, deny list, budgets, text hygiene)
-- [ ] `jarvis-memory` (learned flows, profile, task log, JSON snapshot)
+- [x] `jarvis-memory` (learned flows, profile, task log, JSON snapshot)
 - [ ] `jarvis-agent` (session state machine, prompts, parser, schema/grammar, router)
 - [ ] `jarvis-sim` (simulated phone, scripted model, HTTP model, eval CLI)
 - [ ] `jarvis-ffi` (UniFFI surface, Swift bindings generate, iOS target check)
