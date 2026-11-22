@@ -802,6 +802,17 @@ fn policy_task_and_config_round_trip() {
             p::AppInfo::new("com.apple.MobileSMS", "Messages"),
         ],
         agent_bundle_id: Some("com.example.jarvis".to_owned()),
+        skill: Some(p::SkillContext {
+            id: "text-someone".to_owned(),
+            name: "Text someone".to_owned(),
+            instructions: "Use the existing thread.\nKeep it short.".to_owned(),
+            apps: vec!["com.apple.MobileSMS".to_owned()],
+            confine_to_apps: true,
+            args: [("contact", "Mom"), ("message", "on my way")]
+                .into_iter()
+                .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                .collect(),
+        }),
     });
 }
 

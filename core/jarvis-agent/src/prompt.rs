@@ -1,15 +1,17 @@
 //! Every piece of text the model reads, in one place so it is easy to tune.
 //!
 //! The system prompt is fixed (role, output format, one example per action, rules). The user
-//! part is, in order: task, tools, profile keys, recent steps, notes, the screen inside the
-//! data block, and a closing instruction. The whole request is kept within
+//! part is, in order: task, the owner's guidance when the session runs a skill, tools,
+//! profile keys, recent steps, notes, the screen inside the data block, and a closing
+//! instruction. The whole request is kept within
 //! `context_tokens - ACTION_MAX_TOKENS` (estimated with `jarvis_observe::estimate_tokens`):
 //! first the screen is shrunk down to [`MIN_SCREEN_TOKENS`], then the oldest steps are
-//! dropped, then tools, and only then the screen goes below its floor. Task, rules and notes
-//! are never dropped (the task is capped at [`MAX_TASK_CHARS`]).
+//! dropped, then tools, and only then the screen goes below its floor. Task, guidance, rules
+//! and notes are never dropped (the task is capped at [`MAX_TASK_CHARS`], the guidance at
+//! [`MAX_GUIDANCE_CHARS`]).
 
 use jarvis_observe::{estimate_tokens, render};
-use jarvis_proto::{CompactScreen, ModelProfile};
+use jarvis_proto::{AppInfo, CompactScreen, ModelProfile, SkillContext};
 use jarvis_safety::{sanitize_screen_text_with_limit, SCREEN_BLOCK_END, SCREEN_BLOCK_START};
 
 use crate::history::Entry;
@@ -24,6 +26,18 @@ pub(crate) const MIN_SCREEN_TOKENS: u32 = 600;
 pub(crate) const MAX_TASK_CHARS: usize = 600;
 /// Longest note placed in a prompt.
 pub(crate) const MAX_NOTE_CHARS: usize = 300;
+/// Longest skill guidance (the owner's instructions) placed in a prompt, in characters.
+pub(crate) const MAX_GUIDANCE_CHARS: usize = 2_000;
+/// Most guidance lines placed in a prompt.
+const MAX_GUIDANCE_LINES: usize = 24;
+/// Longest skill name in a prompt.
+const MAX_SKILL_NAME_CHARS: usize = 60;
+/// Most skill arguments in a prompt.
+const MAX_GUIDANCE_ARGS: usize = 8;
+/// Longest skill argument value in a prompt.
+const MAX_ARG_CHARS: usize = 200;
+/// Most skill apps listed in a prompt.
+const MAX_GUIDANCE_APPS: usize = 16;
 
 /// The fixed system prompt.
 pub fn system_prompt() -> String {
@@ -112,12 +126,101 @@ pub(crate) struct PromptParts<'a> {
     pub screen: &'a CompactScreen,
     /// A screenshot is attached.
     pub vision: bool,
+    /// The owner's guidance block for a skill session (already neutralised, see
+    /// [`guidance`]).
+    pub guidance: Option<&'a str>,
 }
 
 /// Neutralises user-provided text (the task, answers): trusted as intent, but it must not
 /// be able to open or close the data block.
 pub(crate) fn neutralize_user_text(text: &str, max_chars: usize) -> String {
     sanitize_screen_text_with_limit(text, max_chars)
+}
+
+/// The "Owner's guidance" block for a session that runs `skill`, or `None` when the skill
+/// carries nothing to say.
+///
+/// The instructions are the owner's own words and trusted as intent, but they pass through
+/// the same neutralisation as the task (no data-block delimiters, chat-template tokens or
+/// fake `[N]` element numbers survive) and every line is prefixed with `| `, so no line can
+/// pose as another part of the prompt (`Task:`, `Current screen`...). Capped at
+/// [`MAX_GUIDANCE_CHARS`] characters of instructions and a fixed number of lines, args and
+/// apps.
+pub(crate) fn guidance(skill: &SkillContext, known_apps: &[AppInfo]) -> Option<String> {
+    let name = neutralize_user_text(&skill.name, MAX_SKILL_NAME_CHARS);
+    let mut lines: Vec<String> = Vec::new();
+    let mut budget = MAX_GUIDANCE_CHARS;
+    let capped: String = skill
+        .instructions
+        .chars()
+        .take(MAX_GUIDANCE_CHARS)
+        .collect();
+    for raw in capped.lines() {
+        if lines.len() >= MAX_GUIDANCE_LINES || budget == 0 {
+            break;
+        }
+        let line = neutralize_user_text(raw, budget);
+        if line.is_empty() {
+            continue;
+        }
+        budget = budget.saturating_sub(line.chars().count());
+        lines.push(line);
+    }
+    let args: Vec<String> = skill
+        .args
+        .iter()
+        .take(MAX_GUIDANCE_ARGS)
+        .map(|(k, v)| {
+            format!(
+                "{} = {}",
+                neutralize_user_text(k, 24),
+                neutralize_user_text(v, MAX_ARG_CHARS)
+            )
+        })
+        .filter(|a| !a.starts_with(" ="))
+        .collect();
+    if lines.is_empty() && args.is_empty() && !skill.confine_to_apps {
+        return None;
+    }
+    let mut g = if name.is_empty() {
+        "Owner's guidance for this task:\n".to_owned()
+    } else {
+        format!("Owner's guidance for this task (skill: {name}):\n")
+    };
+    for l in &lines {
+        g.push_str("| ");
+        g.push_str(l);
+        g.push('\n');
+    }
+    if !args.is_empty() {
+        g.push_str(&format!("Details: {}\n", args.join("; ")));
+    }
+    if skill.confine_to_apps {
+        let apps: Vec<String> = skill
+            .apps
+            .iter()
+            .take(MAX_GUIDANCE_APPS)
+            .map(|id| {
+                let id = neutralize_user_text(id, 100);
+                match known_apps
+                    .iter()
+                    .find(|a| a.bundle_id.eq_ignore_ascii_case(&id))
+                {
+                    Some(a) => format!("{} ({id})", neutralize_user_text(&a.name, 40)),
+                    None => id,
+                }
+            })
+            .collect();
+        g.push_str(&format!(
+            "Work only in: {} (other apps are refused)\n",
+            if apps.is_empty() {
+                "the home screen".to_owned()
+            } else {
+                apps.join(", ")
+            }
+        ));
+    }
+    Some(g)
 }
 
 fn user_text(
@@ -130,6 +233,9 @@ fn user_text(
         "Task: {}\n",
         neutralize_user_text(parts.task, MAX_TASK_CHARS)
     );
+    if let Some(g) = parts.guidance {
+        u.push_str(g);
+    }
     if !tools.is_empty() {
         u.push_str("Tools (use call_tool):\n");
         for t in tools {

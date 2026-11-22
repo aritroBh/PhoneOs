@@ -397,5 +397,86 @@ do {
     check("concurrent step() calls", false, "\(error)")
 }
 
+// 8. Skills: the store, the matcher and a session running a confined skill.
+do {
+    // The new `skill` field defaults to nil, so the memberwise init without it compiles.
+    let base = try defaultSessionConfig()
+    let legacy = SessionConfig(policy: base.policy, tools: [], model: base.model,
+                               knownApps: [], agentBundleId: nil)
+    check("SessionConfig init without skill: defaults to nil", legacy.skill == nil && base.skill == nil)
+
+    let skills = try JarvisSkills(json: "")
+    let wifi = Skill(id: "wifi-off", name: "Wi-Fi off", summary: "", kind: .written,
+                     triggers: ["turn off wi-fi", "text {contact} {message}"],
+                     instructions: "Use the switch on the Wi-Fi page.",
+                     apps: [settingsBundle], confineToApps: true,
+                     params: [SkillParam(name: "contact", description: "", required: false),
+                              SkillParam(name: "message", description: "", required: false)],
+                     flowKeys: [], enabled: true, createdMs: 1, updatedMs: 1, runs: 0, lastRunMs: nil)
+    check("JarvisSkills.upsert inserts", try skills.upsert(skill: wifi))
+    var bad = wifi
+    bad.id = "Not An Id"
+    do {
+        _ = try skills.upsert(skill: bad)
+        check("an invalid skill throws InvalidSkill", false, "accepted")
+    } catch let JarvisError.InvalidSkill(message) {
+        check("an invalid skill throws InvalidSkill", message.contains("invalid id"), message)
+    }
+    let result = try skills.matchTask(text: "Please turn off the WiFi")
+    check("matchTask finds the skill", result.matches.first?.skillId == "wifi-off"
+          && result.matches.first?.score == 1000 && !result.ambiguous, "\(result)")
+    let slotted = try skills.matchTask(text: "text mom i am on my way")
+    check("matchTask captures slots", slotted.matches.first?.args["contact"] == "mom"
+          && slotted.matches.first?.args["message"] == "i am on my way", "\(slotted)")
+    let json = try skills.toJson()
+    let reloaded = try JarvisSkills(json: json)
+    check("skills JSON round-trips", try reloaded.list().map { $0.id } == ["wifi-off"]
+          && (try reloaded.loadIssues()).isEmpty)
+    do {
+        _ = try JarvisSkills(json: "{broken")
+        check("a corrupt skills snapshot throws InvalidSkill", false, "accepted")
+    } catch JarvisError.InvalidSkill {
+        check("a corrupt skills snapshot throws InvalidSkill", true)
+    }
+
+    if let m = result.matches.first {
+        var config = try makeConfig()
+        config.skill = try skills.contextForMatch(m: m)
+        check("contextForMatch carries confinement", config.skill?.confineToApps == true
+              && config.skill?.apps == [settingsBundle])
+        // The usual Wi-Fi run inside the skill: the skill adds guidance, keeps both prompts.
+        let skillRun = drive(memoryJson: "", config: config)
+        check("a session running a confined skill in its own app succeeds",
+              skillRun.error == nil && skillRun.outcome?.status == .success,
+              skillRun.error ?? "\(String(describing: skillRun.outcome))")
+        check("the skill did not skip first-use or the setting confirmation",
+              skillRun.confirms.map { $0.category } == [RiskCategory.firstUse, RiskCategory.systemSetting],
+              "\(skillRun.confirms)")
+
+        // Escaping the skill's apps is refused, then blocked.
+        let s = try JarvisSession(config: config, task: task, memoryJson: "")
+        _ = s.step(nowMs: 1, event: .start)
+        var effect = s.step(nowMs: 2, event: .observed(observation: ScreenObservation(screen: settingsScreen(), screenshot: nil)))
+        if case let .infer(request) = effect {
+            check("the prompt carries the owner's guidance",
+                  request.user.contains("Owner's guidance for this task (skill: Wi-Fi off):"), request.user)
+        }
+        let escape = Event.modelOutput(output: ModelOutput(text: #"{"action":"open_app","app":"com.example.shop"}"#))
+        effect = s.step(nowMs: 3, event: escape)
+        effect = s.step(nowMs: 4, event: escape)
+        if case let .finished(outcome) = effect {
+            check("leaving a confined skill's apps twice blocks the session",
+                  outcome.status == .blocked && outcome.summary.contains("works only in its own apps"),
+                  outcome.summary)
+        } else {
+            check("leaving a confined skill's apps twice blocks the session", false, "\(effect)")
+        }
+    } else {
+        check("skill session checks reached a match", false)
+    }
+} catch {
+    check("skills checks", false, "\(error)")
+}
+
 print("\(failures == 0 ? "PASS" : "FAIL") swift smoke: \(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

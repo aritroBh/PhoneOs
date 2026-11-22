@@ -23,6 +23,7 @@ pub mod model;
 pub mod policy;
 pub mod runner;
 pub mod session;
+pub mod skill;
 pub mod task;
 pub mod tool;
 pub mod ui;
@@ -42,6 +43,7 @@ pub use runner::{Key, RunnerCommand, RunnerResult};
 pub use session::{
     ConfirmRequest, Effect, Event, Outcome, OutcomeStatus, Phase, Progress, TimedEvent,
 };
+pub use skill::SkillContext;
 pub use task::{AppInfo, SessionConfig, TaskSpec};
 pub use tool::{ParamKind, Tier, ToolCall, ToolParam, ToolResult, ToolSpec};
 pub use ui::{ImageRef, Observation, Orientation, Role, Screen, UiNode};

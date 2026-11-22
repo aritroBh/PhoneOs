@@ -40,6 +40,7 @@
 mod app;
 mod budget;
 mod classify;
+mod confine;
 mod evaluate;
 mod gate;
 mod phrases;
@@ -51,6 +52,7 @@ mod validate;
 pub use app::{app_level, check_app, is_springboard, matching_rule, mode_level, Verdict};
 pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;
+pub use confine::check_confinement;
 pub use evaluate::{evaluate, first_use_app, first_use_request, summarize, Decision};
 pub use gate::{changes_state, gate, gate_in, Gate, TRUSTED_ALLOWED};
 pub use phrases::{

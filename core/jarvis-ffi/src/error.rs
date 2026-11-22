@@ -36,4 +36,12 @@ pub enum JarvisError {
         /// The panic message.
         message: String,
     },
+    /// A skill, a skill-store snapshot or a skill lookup was refused (validation error,
+    /// corrupt or newer snapshot, unknown id, a flow that cannot be promoted). Kept last:
+    /// UniFFI encodes variants by position.
+    #[error("skill error: {message}")]
+    InvalidSkill {
+        /// What `jarvis-skills` reported.
+        message: String,
+    },
 }

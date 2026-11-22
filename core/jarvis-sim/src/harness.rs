@@ -81,6 +81,7 @@ impl RunSetup {
             },
             known_apps: phone.known_apps(),
             agent_bundle_id: None,
+            skill: None,
         }
     }
 

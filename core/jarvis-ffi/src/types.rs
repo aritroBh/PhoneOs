@@ -555,4 +555,90 @@ pub struct SessionConfig {
     pub known_apps: Vec<AppInfo>,
     /// Bundle id of the Jarvis app itself (never needs first-use approval).
     pub agent_bundle_id: Option<String>,
+    /// The skill this session runs under (owner's guidance in the prompt; with
+    /// `confineToApps`, actions outside the skill's apps are refused). Defaults to `nil`,
+    /// so existing Swift initializers keep compiling.
+    #[uniffi(default = None)]
+    pub skill: Option<SkillContext>,
+}
+
+// ---------------------------------------------------------------------------------------
+// Skills.
+// ---------------------------------------------------------------------------------------
+
+/// Proto `SkillContext`: the skill a session runs under. Build it with
+/// `JarvisSkills.context(skillId:args:)` or `contextForMatch(match:)`.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SkillContext {
+    pub id: String,
+    pub name: String,
+    /// The owner's guidance (sanitised by the core before it enters a prompt).
+    pub instructions: String,
+    /// Bundle ids the skill works in.
+    pub apps: Vec<String>,
+    /// Refuse actions outside `apps` (the home screen stays allowed). Only narrows policy.
+    pub confine_to_apps: bool,
+    /// Parameter values (`contact` -> `Mom`).
+    pub args: std::collections::HashMap<String, String>,
+}
+
+/// Where a skill came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum SkillKind {
+    Learned,
+    Written,
+    BuiltIn,
+}
+
+/// A skill parameter, filled by a `{name}` slot in a trigger.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SkillParam {
+    pub name: String,
+    pub description: String,
+    pub required: bool,
+}
+
+/// A named, reusable capability (`jarvis_skills::Skill`). Limits are enforced by
+/// `JarvisSkills.upsert` (throws `JarvisError.invalidSkill`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct Skill {
+    /// `[a-z0-9-]{1,48}`, unique.
+    pub id: String,
+    pub name: String,
+    pub summary: String,
+    pub kind: SkillKind,
+    /// Phrases with optional `{param}` slots: `"text {contact} {message}"`.
+    pub triggers: Vec<String>,
+    pub instructions: String,
+    pub apps: Vec<String>,
+    pub confine_to_apps: bool,
+    pub params: Vec<SkillParam>,
+    /// Intent keys of learned flows that replay the skill.
+    pub flow_keys: Vec<String>,
+    pub enabled: bool,
+    pub created_ms: u64,
+    pub updated_ms: u64,
+    pub runs: u32,
+    pub last_run_ms: Option<u64>,
+}
+
+/// One skill matching a request.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SkillMatch {
+    pub skill_id: String,
+    /// Per mille, 0 to 1000 (1000 = exact).
+    pub score: u32,
+    /// Values captured by slots.
+    pub args: std::collections::HashMap<String, String>,
+    pub matched_trigger: String,
+    /// Required parameters not filled (ask the owner).
+    pub missing: Vec<String>,
+}
+
+/// The matches for a request, best first.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SkillMatchResult {
+    pub matches: Vec<SkillMatch>,
+    /// The best two are too close to pick one: ask the owner which.
+    pub ambiguous: bool,
 }

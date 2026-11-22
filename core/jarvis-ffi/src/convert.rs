@@ -6,6 +6,7 @@
 //! Swift as JSON text) are `TryFrom`; everything else is `From`.
 
 use jarvis_proto as p;
+use jarvis_skills as sk;
 
 use crate::error::JarvisError;
 use crate::runner::snapshot_to_observation;
@@ -1293,6 +1294,7 @@ impl From<p::SessionConfig> for SessionConfig {
             model,
             known_apps,
             agent_bundle_id,
+            skill,
         } = v;
         SessionConfig {
             policy: policy.into(),
@@ -1300,6 +1302,7 @@ impl From<p::SessionConfig> for SessionConfig {
             model: model.into(),
             known_apps: known_apps.into_iter().map(Into::into).collect(),
             agent_bundle_id,
+            skill: skill.map(Into::into),
         }
     }
 }
@@ -1312,6 +1315,7 @@ impl From<SessionConfig> for p::SessionConfig {
             model,
             known_apps,
             agent_bundle_id,
+            skill,
         } = v;
         p::SessionConfig {
             policy: policy.into(),
@@ -1319,6 +1323,219 @@ impl From<SessionConfig> for p::SessionConfig {
             model: model.into(),
             known_apps: known_apps.into_iter().map(Into::into).collect(),
             agent_bundle_id,
+            skill: skill.map(Into::into),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Skills.
+// ---------------------------------------------------------------------------------------
+
+impl From<p::SkillContext> for SkillContext {
+    fn from(v: p::SkillContext) -> Self {
+        let p::SkillContext {
+            id,
+            name,
+            instructions,
+            apps,
+            confine_to_apps,
+            args,
+        } = v;
+        SkillContext {
+            id,
+            name,
+            instructions,
+            apps,
+            confine_to_apps,
+            args: args.into_iter().collect(),
+        }
+    }
+}
+
+impl From<SkillContext> for p::SkillContext {
+    fn from(v: SkillContext) -> Self {
+        let SkillContext {
+            id,
+            name,
+            instructions,
+            apps,
+            confine_to_apps,
+            args,
+        } = v;
+        p::SkillContext {
+            id,
+            name,
+            instructions,
+            apps,
+            confine_to_apps,
+            args: args.into_iter().collect(),
+        }
+    }
+}
+
+impl From<sk::SkillKind> for SkillKind {
+    fn from(v: sk::SkillKind) -> Self {
+        match v {
+            sk::SkillKind::Learned => SkillKind::Learned,
+            sk::SkillKind::Written => SkillKind::Written,
+            sk::SkillKind::BuiltIn => SkillKind::BuiltIn,
+        }
+    }
+}
+
+impl From<SkillKind> for sk::SkillKind {
+    fn from(v: SkillKind) -> Self {
+        match v {
+            SkillKind::Learned => sk::SkillKind::Learned,
+            SkillKind::Written => sk::SkillKind::Written,
+            SkillKind::BuiltIn => sk::SkillKind::BuiltIn,
+        }
+    }
+}
+
+impl From<sk::SkillParam> for SkillParam {
+    fn from(v: sk::SkillParam) -> Self {
+        let sk::SkillParam {
+            name,
+            description,
+            required,
+        } = v;
+        SkillParam {
+            name,
+            description,
+            required,
+        }
+    }
+}
+
+impl From<SkillParam> for sk::SkillParam {
+    fn from(v: SkillParam) -> Self {
+        let SkillParam {
+            name,
+            description,
+            required,
+        } = v;
+        sk::SkillParam {
+            name,
+            description,
+            required,
+        }
+    }
+}
+
+impl From<sk::Skill> for Skill {
+    fn from(v: sk::Skill) -> Self {
+        let sk::Skill {
+            id,
+            name,
+            summary,
+            kind,
+            triggers,
+            instructions,
+            apps,
+            confine_to_apps,
+            params,
+            flow_keys,
+            enabled,
+            created_ms,
+            updated_ms,
+            runs,
+            last_run_ms,
+        } = v;
+        Skill {
+            id,
+            name,
+            summary,
+            kind: kind.into(),
+            triggers,
+            instructions,
+            apps,
+            confine_to_apps,
+            params: params.into_iter().map(Into::into).collect(),
+            flow_keys,
+            enabled,
+            created_ms,
+            updated_ms,
+            runs,
+            last_run_ms,
+        }
+    }
+}
+
+impl From<Skill> for sk::Skill {
+    fn from(v: Skill) -> Self {
+        let Skill {
+            id,
+            name,
+            summary,
+            kind,
+            triggers,
+            instructions,
+            apps,
+            confine_to_apps,
+            params,
+            flow_keys,
+            enabled,
+            created_ms,
+            updated_ms,
+            runs,
+            last_run_ms,
+        } = v;
+        sk::Skill {
+            id,
+            name,
+            summary,
+            kind: kind.into(),
+            triggers,
+            instructions,
+            apps,
+            confine_to_apps,
+            params: params.into_iter().map(Into::into).collect(),
+            flow_keys,
+            enabled,
+            created_ms,
+            updated_ms,
+            runs,
+            last_run_ms,
+        }
+    }
+}
+
+impl From<sk::SkillMatch> for SkillMatch {
+    fn from(v: sk::SkillMatch) -> Self {
+        let sk::SkillMatch {
+            skill_id,
+            score,
+            args,
+            matched_trigger,
+            missing,
+        } = v;
+        SkillMatch {
+            skill_id,
+            score,
+            args: args.into_iter().collect(),
+            matched_trigger,
+            missing,
+        }
+    }
+}
+
+impl From<SkillMatch> for sk::SkillMatch {
+    fn from(v: SkillMatch) -> Self {
+        let SkillMatch {
+            skill_id,
+            score,
+            args,
+            matched_trigger,
+            missing,
+        } = v;
+        sk::SkillMatch {
+            skill_id,
+            score,
+            args: args.into_iter().collect(),
+            matched_trigger,
+            missing,
         }
     }
 }

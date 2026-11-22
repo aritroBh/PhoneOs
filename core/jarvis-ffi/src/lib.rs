@@ -6,6 +6,10 @@
 //! - `JarvisSession(config:task:memoryJson:) throws`, `step(nowMs:event:) -> Effect`,
 //!   `progress() throws -> SessionProgress`, `finish() throws -> String`,
 //!   `lastObservationIssue() throws -> String?` ([`JarvisSession`]).
+//! - `JarvisSkills(json:) throws`: the skill store and matcher (`list`, `get`, `upsert`,
+//!   `remove`, `recordRun`, `matchTask`, `context`, `contextForMatch`, `taskText`,
+//!   `promoteFlow`, `toJson`, `loadIssues`) ([`JarvisSkills`]). A session runs a skill
+//!   through `SessionConfig.skill`.
 //! - Free functions: `actionJsonSchema()`, `actionGbnf()`, `systemPrompt()`,
 //!   `coreVersion()`, `parseRunnerTextToScreen(snapshot:)`, `defaultPolicy()`,
 //!   `defaultModelProfile()`, `defaultSessionConfig()` ([`api`]).
@@ -39,10 +43,12 @@ mod error;
 mod guard;
 mod runner;
 mod session;
+mod skills;
 pub mod types;
 
 pub use error::JarvisError;
 pub use session::JarvisSession;
+pub use skills::JarvisSkills;
 pub use types::*;
 
 /// Converts an FFI event the way `step` does, for tests and tools (the second value is the

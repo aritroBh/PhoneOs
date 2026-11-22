@@ -28,6 +28,8 @@ ureq = { version = "2", default-features = false, optional = true }
 
 [dev-dependencies]
 jarvis-proto = { workspace = true, features = ["test-util"] }
+# End-to-end workflow test (tests/workflow.rs); a dev-dependency only, so no cycle.
+jarvis-skills.workspace = true
 
 [lints]
 workspace = true

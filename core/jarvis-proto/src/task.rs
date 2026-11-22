@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::ModelProfile;
 use crate::policy::Policy;
+use crate::skill::SkillContext;
 use crate::tool::ToolSpec;
 
 /// What the user asked for.
@@ -58,4 +59,9 @@ pub struct SessionConfig {
     pub known_apps: Vec<AppInfo>,
     /// Bundle id of the Jarvis app itself, which never needs first-use approval.
     pub agent_bundle_id: Option<String>,
+    /// The skill this session runs under, if any: adds the owner's guidance to the prompt
+    /// and, with `confine_to_apps`, keeps the session inside the skill's apps. Absent from
+    /// JSON written before skills existed (and omitted when `None`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill: Option<SkillContext>,
 }

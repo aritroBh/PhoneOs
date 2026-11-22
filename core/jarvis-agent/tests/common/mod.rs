@@ -280,6 +280,7 @@ pub fn config() -> SessionConfig {
         model: ModelProfile::default(),
         known_apps: known_apps(),
         agent_bundle_id: None,
+        skill: None,
     }
 }
 

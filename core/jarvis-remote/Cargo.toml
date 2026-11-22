@@ -8,9 +8,16 @@ publish.workspace = true
 
 [dependencies]
 jarvis-proto.workspace = true
+jarvis-safety.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+chacha20poly1305.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

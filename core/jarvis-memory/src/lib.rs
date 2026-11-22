@@ -24,7 +24,7 @@ pub mod replayer;
 pub mod store;
 
 pub use flow::{flow_id, fnv1a64, Bindings, Flow, FlowAction, FlowStep, FlowText};
-pub use intent::{intent_key, match_slotted, renormalize_key, EQUIVALENT_PHRASES};
+pub use intent::{intent_key, match_slotted, renormalize_key, EQUIVALENT_PHRASES, FILLER_PHRASES};
 pub use log::{LogEntry, LogStep, TaskLog};
 pub use profile::{
     placeholder_key, profile_placeholder, Profile, ProfileField, PLACEHOLDER_CLOSE,

@@ -20,6 +20,11 @@
 //! limits for the rest of the session: any later action inside it, `open_app` into it, or a
 //! tool acting on it finishes the session `Blocked`. Learned-flow steps take exactly the same
 //! path as model actions.
+//!
+//! Skills: with `SessionConfig::skill` the prompt carries the owner's guidance, and a skill
+//! with `confine_to_apps` refuses actions outside its apps (`jarvis_safety::check_confinement`;
+//! refused like a deny-list hit, so a second attempt finishes `Blocked`). A skill only
+//! narrows: deny list, trust levels, first-use approval and confirmations apply unchanged.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -31,8 +36,8 @@ use jarvis_proto::{
     TimedEvent, ToolCall, ToolSpec,
 };
 use jarvis_safety::{
-    check_app, evaluate, first_use_app, first_use_request, redact, redact_screen,
-    sanitize_screen_text, summarize, Budget, BudgetVerdict, Decision,
+    check_app, check_confinement, evaluate, first_use_app, first_use_request, redact,
+    redact_screen, sanitize_screen_text, summarize, Budget, BudgetVerdict, Decision, Verdict,
 };
 
 use crate::commands::{plan, resolve_app, should_change, AppTarget};
@@ -163,6 +168,8 @@ pub struct Session {
     declined_apps: BTreeSet<String>,
     last_action: Option<Action>,
     log_steps: Vec<LogStep>,
+    /// The owner's guidance block when the session runs a skill (built once).
+    guidance: Option<String>,
 }
 
 fn event_name(e: &Event) -> &'static str {
@@ -211,6 +218,10 @@ impl Session {
         let mut recorder = Recorder::new(task.text.clone());
         recorder.set_sensitive_values(sensitive_texts(&memory.profile));
         let budget = Budget::new(&config.policy, 0);
+        let guidance = config
+            .skill
+            .as_ref()
+            .and_then(|s| prompt::guidance(s, &config.known_apps));
         Session {
             config,
             task,
@@ -242,6 +253,7 @@ impl Session {
             declined_apps: BTreeSet::new(),
             last_action: None,
             log_steps: Vec::new(),
+            guidance,
         }
     }
 
@@ -660,6 +672,7 @@ impl Session {
             notes,
             screen: &cur.safe,
             vision,
+            guidance: self.guidance.as_deref(),
         };
         let (system, user) = prompt::build(&parts, &self.config.model);
         let grammar = self.config.model.supports_grammar;
@@ -967,6 +980,13 @@ impl Session {
             }
             other => other.clone(),
         };
+        // 1b. Skill confinement: a skill with `confine_to_apps` keeps the session in its
+        //     apps. It only narrows; every check below still applies.
+        if let Verdict::Deny(reason) =
+            check_confinement(self.config.skill.as_ref(), &normalized, screen, tool)
+        {
+            return Err(Reject::AppDenied(reason));
+        }
         // Jarvis never types into password fields (validate_action would reject it every
         // time): hand that one field to the owner instead of counting failures.
         if let Action::Type { element, .. } = &normalized {

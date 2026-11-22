@@ -37,11 +37,12 @@ core/
 ├─ jarvis-safety/        policy, risk classification, text hygiene
 ├─ jarvis-memory/        learned flows, profile, task log
 ├─ jarvis-agent/         Session state machine, prompts, parser, router
+├─ jarvis-skills/        skills (store, matcher) and workflows (runner, schedules)
 ├─ jarvis-sim/           simulated phone, scripted/HTTP model, eval CLI
 └─ jarvis-ffi/           UniFFI surface for Swift
 ```
 
-Dependency direction: `proto` ← `observe`, `safety`, `memory` ← `agent` ← `sim`, `ffi`. No cycles. Nothing but `sim` may do IO.
+Dependency direction: `proto` ← `observe`, `safety`, `memory` ← `agent` ← `sim`, `ffi`; `proto`, `memory` ← `skills` ← `ffi` (and `sim` tests). No cycles. Nothing but `sim` may do IO.
 
 Rules for every crate:
 
@@ -86,7 +87,7 @@ Plain data, all `Serialize + Deserialize + Clone + Debug + PartialEq`. JSON fiel
 `Outcome { status: Success | Failed | Cancelled | Blocked, summary: String, steps: u32, duration_ms: u64 }`.
 Progress for the UI is read from the session (`session.progress()`), not emitted as effects: `Progress { step, phase, last_action, app, model_calls, parse_retries }`.
 
-**Task.** `TaskSpec { id: String, text: String }`. `SessionConfig { policy: Policy, tools: Vec<ToolSpec>, model: ModelProfile, known_apps: Vec<AppInfo>, agent_bundle_id: Option<String> }` (the Jarvis app itself never needs first-use approval), `ModelProfile { context_tokens: u32, supports_vision: bool, supports_grammar: bool }`, `AppInfo { bundle_id, name }`.
+**Task.** `TaskSpec { id: String, text: String }`. `SessionConfig { policy: Policy, tools: Vec<ToolSpec>, model: ModelProfile, known_apps: Vec<AppInfo>, agent_bundle_id: Option<String>, skill: Option<SkillContext> }` (the Jarvis app itself never needs first-use approval; `skill` is omitted from JSON when `None`), `SkillContext { id, name, instructions, apps, confine_to_apps, args: BTreeMap<String, String> }`, `ModelProfile { context_tokens: u32, supports_vision: bool, supports_grammar: bool }`, `AppInfo { bundle_id, name }`.
 
 ## jarvis-observe
 
@@ -148,6 +149,15 @@ Loop per step: **observe → decide → gate → act → verify**.
 - Budget exceeded / `Cancel` → `Finished` with the right status. `Cancel` is honoured from every state.
 - Every transition for an unexpected event (e.g. `ActResult` while waiting for the model) is handled without panicking: finish `Failed` with a protocol-error summary.
 
+## jarvis-skills
+
+- `Skill { id, name, summary, kind: Learned | Written | BuiltIn, triggers, instructions, apps, confine_to_apps, params: Vec<SkillParam { name, description, required }>, flow_keys, enabled, created_ms, updated_ms, runs, last_run_ms }`. Triggers may hold `{param}` slots; every slot must be a declared param. Limits: name ≤ 60, ≤ 12 triggers ≤ 120 chars, instructions ≤ 2,000, ≤ 16 apps, ≤ 8 params, ≤ 500 skills; ids `[a-z0-9-]{1,48}`, params `[a-z_][a-z0-9_]{0,23}`. `Skill::context(args) -> SkillContext`, `task_text(args)`.
+- `SkillStore`: add/update/upsert/remove/get/list (by id), `record_run`, `promote_flow(&Flow, name, now_ms)`, `to_json`/`from_json` (versioned; unknown fields ignored; structural damage or a newer schema is an error, a damaged entry is skipped and reported by `from_json_with_issues`).
+- `match_task(text) -> Vec<SkillMatch { skill_id, score (per mille), args, matched_trigger, missing }>`: normalised like `intent_key`; literal triggers by equality (1000) or word overlap; slotted triggers by literals in order, shortest captures for all but the last slot. Disabled skills never match; `is_ambiguous()` when the best two are within 50. Requests over 500 chars match nothing; cost per trigger is `O(parts × words)`.
+- A session with `SessionConfig::skill` gets an "Owner's guidance" block after the task (sanitised, each line prefixed `| `, capped) and, with `confine_to_apps`, `jarvis_safety::check_confinement` refuses actions in or into other apps (SpringBoard allowed, `open_url` refused, tools confined by their app), treated like a deny-list hit. A skill only narrows: every other gate applies.
+- `Workflow { id, name, enabled, trigger: Manual | Phrase | Schedule { days, hour, minute } | External { key }, steps: RunSkill | RunTask | AskOwner | Notify | Wait | StopUnless { LastSucceeded | LastSummaryContains | OwnerSaidYes }, on_failure: Stop | Continue, … }`, ≤ 24 steps. `WorkflowRun::step(now_ms, WorkflowEvent) -> Result<WorkflowEffect, RunError>`: effects `StartSession { task, skill }`, `AskOwner`, `Notify`, `Wait { until_ms }`, `Finished { outcome }`; events `Start`, `SessionFinished`, `OwnerAnswered`, `Notified`, `WaitElapsed`, `Cancel`. A wrong event is an error that leaves the run unchanged. Each `StartSession` is an ordinary session under the owner's policy: a workflow never widens policy.
+- `schedule::minutes_until_next(schedule, weekday, minute_of_day)` and friends are pure; the shell supplies local time. `WorkflowStore`: CRUD, JSON, `warnings` (missing skills), `match_phrase`, `for_external`, `due`, `next_scheduled`, `record_run`.
+
 ## jarvis-sim
 
 Not shipped on the phone. Makes the agent runnable on a laptop.
@@ -159,7 +169,7 @@ Not shipped on the phone. Makes the agent runnable on a laptop.
 
 ## jarvis-ffi
 
-UniFFI (proc-macro mode). Exposes `JarvisSession` (`new`, `step`, `progress`, `finish`), memory load/save, `action_json_schema`, `action_gbnf`, and the proto types as Swift enums/structs. Panics must not unwind into Swift. Build script produces `JarvisCore.xcframework` (device + simulator) and the generated Swift file on a Mac. On Linux, CI checks that the crate compiles for `aarch64-apple-ios` and that bindings generate.
+UniFFI (proc-macro mode). Exposes `JarvisSession` (`new`, `step`, `progress`, `finish`), `JarvisSkills` (skill store and matcher over its JSON snapshot), memory load/save, `action_json_schema`, `action_gbnf`, and the proto types as Swift enums/structs. Panics must not unwind into Swift. Build script produces `JarvisCore.xcframework` (device + simulator) and the generated Swift file on a Mac. On Linux, CI checks that the crate compiles for `aarch64-apple-ios` and that bindings generate.
 
 ## Swift shell (outline)
 

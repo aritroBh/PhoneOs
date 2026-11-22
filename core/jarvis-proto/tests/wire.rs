@@ -417,6 +417,7 @@ fn session_config_and_progress_round_trip() {
         },
         known_apps: vec![AppInfo::new("com.apple.MobileSMS", "Messages")],
         agent_bundle_id: Some("com.example.jarvis".into()),
+        skill: None,
     };
     round_trip(&cfg);
     // Everything in SessionConfig is defaulted, so an empty object is a valid config.
@@ -548,4 +549,37 @@ fn policy_json_from_before_the_structural_controls_is_migrated() {
     .unwrap();
     assert_eq!(cfg.agent_bundle_id, None);
     assert!(cfg.policy.confirm.contains(&RiskCategory::Unverified));
+}
+
+#[test]
+fn session_config_skill_is_optional_and_omitted_when_absent() {
+    use jarvis_proto::SkillContext;
+    // Without a skill the JSON is exactly what it was before skills existed.
+    let plain = serde_json::to_value(SessionConfig::default()).unwrap();
+    assert!(plain.get("skill").is_none(), "{plain}");
+    let cfg = SessionConfig {
+        skill: Some(SkillContext {
+            id: "text-someone".into(),
+            name: "Text someone".into(),
+            instructions: "Use the existing thread.".into(),
+            apps: vec!["com.apple.MobileSMS".into()],
+            confine_to_apps: true,
+            args: [("contact".to_owned(), "Mom".to_owned())]
+                .into_iter()
+                .collect(),
+        }),
+        ..SessionConfig::default()
+    };
+    round_trip(&cfg);
+    let v = serde_json::to_value(&cfg).unwrap();
+    assert_eq!(v["skill"]["confine_to_apps"], json!(true));
+    assert_eq!(v["skill"]["args"]["contact"], json!("Mom"));
+    // Every SkillContext field is optional; unknown fields are ignored.
+    let partial: SessionConfig =
+        serde_json::from_str(r#"{"skill":{"id":"x","future":1}}"#).unwrap();
+    let skill = partial.skill.unwrap();
+    assert_eq!(skill.id, "x");
+    assert!(!skill.confine_to_apps && skill.apps.is_empty() && skill.args.is_empty());
+    let null: SessionConfig = serde_json::from_str(r#"{"skill":null}"#).unwrap();
+    assert!(null.skill.is_none());
 }

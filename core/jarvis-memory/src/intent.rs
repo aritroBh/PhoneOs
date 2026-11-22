@@ -6,8 +6,10 @@ use crate::flow::Bindings;
 /// Maximum number of slots in one flow's intent key.
 pub const MAX_SLOTS: usize = 8;
 
-/// Filler phrases dropped from intent keys, as lowercase word sequences (any order).
-const FILLER_PHRASES: &[&[&str]] = &[
+/// Filler phrases dropped from intent keys, as lowercase word sequences; at each position
+/// the longest matching phrase wins. Public (read-only) so other crates that tokenise task
+/// text, such as the skill matcher, drop exactly the same words as [`intent_key`].
+pub const FILLER_PHRASES: &[&[&str]] = &[
     &["i", "want", "you", "to"],
     &["i", "need", "you", "to"],
     &["go", "ahead", "and"],
