@@ -53,7 +53,27 @@ struct AskView: View {
                             .font(Theme.body)
                             .foregroundStyle(Theme.textSecondary)
                     }
-                    if let error = model.setupError {
+                    if let problem = model.settingsProblem {
+                        VStack(alignment: .leading, spacing: Theme.gapSmall) {
+                            Label {
+                                Text(problem).font(Theme.meta)
+                            } icon: {
+                                Image.decorative(.warning, size: Theme.iconStandard)
+                            }
+                            .foregroundStyle(Theme.textPrimary)
+                            if model.settingsNeedReview {
+                                Button("I have reviewed my rules") { model.acknowledgeRulesReview() }
+                                    .font(Theme.rowTitle)
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .accessibilityIdentifier("ask.rulesReviewed")
+                            }
+                        }
+                        .padding(Theme.gap)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .card(fill: Theme.warningFill, radius: Theme.radiusElement)
+                        .accessibilityIdentifier("ask.settingsProblem")
+                    }
+                    if let error = model.setupError, error != model.settingsProblem {
                         Label {
                             Text(error).font(Theme.meta)
                         } icon: {

@@ -66,6 +66,8 @@ public final class WorkflowRunner {
         case busy(String)
         case notFound(String)
         case core(String)
+        /// The owner's rules cannot be used yet (`TaskCenter.Refusal.settingsUnavailable`).
+        case settingsUnavailable(String)
 
         public var description: String {
             switch self {
@@ -73,6 +75,7 @@ public final class WorkflowRunner {
             case .busy(let why): why
             case .notFound(let key): "There is no workflow \u{201C}\(key)\u{201D}."
             case .core(let message): message
+            case .settingsUnavailable(let why): why
             }
         }
     }
@@ -125,8 +128,11 @@ public final class WorkflowRunner {
         }
         let slot = TaskCenter.WorkflowSlot(runId: UUID().uuidString, workflowId: workflow.id, name: workflow.name, origin: origin)
         if let refusal = center.beginWorkflow(slot) {
-            if case .workflowRunning(let name) = refusal { return .failure(.alreadyRunning(name)) }
-            return .failure(.busy(refusal.description))
+            switch refusal {
+            case .workflowRunning(let name): return .failure(.alreadyRunning(name))
+            case .settingsUnavailable(let why): return .failure(.settingsUnavailable(why))
+            case .emptyTask, .busy: return .failure(.busy(refusal.description))
+            }
         }
         progress = Progress(runId: slot.runId, workflow: workflow, origin: origin, current: nil,
                             states: Array(repeating: .pending, count: workflow.steps.count), activity: .starting,

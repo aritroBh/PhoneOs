@@ -342,28 +342,139 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     }
 }
 
-/// `JarvisSettings` in one JSON file. Reads never fail (a missing or unreadable file gives
-/// the defaults); writes are atomic.
+/// What reading the settings file found (see `StoredFileRead`).
+public typealias SettingsRead = StoredFileRead<JarvisSettings>
+
+/// `JarvisSettings` in one JSON file. The settings are the owner's safety rules, so a read
+/// reports which case it was (`read()`): a missing file means the defaults; an unreadable
+/// one (before the first unlock, an I/O error) is never overwritten; a damaged one is set
+/// aside. Writes are atomic and protected like `FileMemoryStore`.
 public struct SettingsStore: Sendable {
     public let fileURL: URL
+    private let now: @Sendable () -> Date
 
-    public init(fileURL: URL) {
+    public init(fileURL: URL, now: @escaping @Sendable () -> Date = Date.init) {
         self.fileURL = fileURL
+        self.now = now
     }
 
+    /// Reads the file. A damaged file (not a JSON object the settings decode from) is
+    /// renamed to `settings.json.corrupt-<ms>` and reported with its new URL.
+    public func read() -> SettingsRead {
+        StoredFile.read(fileURL, now: now) { try JSONDecoder().decode(JarvisSettings.self, from: $0) }
+    }
+
+    /// The settings, or the defaults when there are none to use. Nothing that runs a task
+    /// may use this: it cannot tell "no file" from "could not read the file". Use `read()`
+    /// (or `SettingsGate`).
     public func load() -> JarvisSettings {
-        guard let data = try? Data(contentsOf: fileURL),
-              let settings = try? JSONDecoder().decode(JarvisSettings.self, from: data) else {
-            return JarvisSettings()
-        }
-        return settings
+        read().value(or: JarvisSettings())
     }
 
+    /// Writes `settings` atomically. Refused (`StoredFileError`, nothing changes on disk)
+    /// while the existing file cannot be read, or is damaged and could not be set aside.
     public func save(_ settings: JarvisSettings) throws {
+        try StoredFile.requireWritable(read(), fileURL)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(settings)
-        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: fileURL, options: [.atomic])
+        try StoredFile.write(try encoder.encode(settings), to: fileURL)
+    }
+}
+
+/// Why the owner's rules cannot be used yet.
+public enum SettingsProblem: Sendable, Equatable {
+    /// The file is there but could not be read (before the first unlock after a restart,
+    /// or an I/O error). Tasks wait until it can be read.
+    case unreadable(reason: String)
+    /// The file was damaged and set aside (`setAside`, `nil` when it could not be moved):
+    /// the defaults are in effect, and tasks wait until the owner has reviewed the rules.
+    case damaged(reason: String, setAside: URL?)
+
+    /// Plain words for the owner (also the text of `TaskCenter.Refusal.settingsUnavailable`).
+    public var ownerMessage: String {
+        switch self {
+        case .unreadable:
+            return "Jarvis cannot read your rules yet. Unlock the phone and try again."
+        case .damaged(_, let setAside):
+            let kept = setAside.map { " It was kept as \($0.lastPathComponent); nothing was deleted." }
+                ?? " It could not be moved aside, so Jarvis leaves it as it is."
+            return "Your rules file was damaged and has been set aside." + kept
+                + " Your rules are back to the defaults until you review them. Check them, then confirm you have reviewed them."
+        }
+    }
+
+    /// The technical reason (for a details line).
+    public var reason: String {
+        switch self {
+        case .unreadable(let reason), .damaged(let reason, _): reason
+        }
+    }
+}
+
+/// The owner's rules as the app runs them: reads them through `SettingsStore.read()`, keeps
+/// why they cannot be used (`problem`) and feeds `TaskCenter` (`settings` and
+/// `settingsProblem`), so no task runs under defaults because the rules were unreadable or
+/// damaged.
+///
+/// - Unreadable: `settings` are the defaults (shown, never saved: the store refuses), and
+///   `refresh()` reads again (call it when the app becomes active and when protected data
+///   becomes available). Once readable, the file's rules are used and the problem is gone.
+/// - Damaged: the file was set aside; the defaults are in effect, and the problem stays
+///   until `acknowledgeReview()`.
+@MainActor
+public final class SettingsGate {
+    public let store: SettingsStore
+    public private(set) var settings: JarvisSettings
+    public private(set) var problem: SettingsProblem?
+
+    public init(store: SettingsStore) {
+        self.store = store
+        self.settings = JarvisSettings()
+        self.problem = nil
+        apply(store.read())
+    }
+
+    /// What `TaskCenter` refuses with, `nil` when tasks may start.
+    public var refusal: String? { problem?.ownerMessage }
+
+    /// Reads the file again while it could not be read. Returns whether `settings` or
+    /// `problem` changed. A damaged file waits for `acknowledgeReview()` instead.
+    @discardableResult
+    public func refresh() -> Bool {
+        guard case .unreadable = problem else { return false }
+        let before = (settings, problem)
+        apply(store.read())
+        return before.0 != settings || before.1 != problem
+    }
+
+    /// The owner reviewed the rules after a damaged file was set aside: tasks may run again
+    /// under the rules as they now are. No effect in any other state.
+    public func acknowledgeReview() {
+        guard case .damaged = problem else { return }
+        problem = nil
+    }
+
+    /// Saves `settings` (the owner changed them). Refused while the file cannot be read; the
+    /// rules on disk stay as they were.
+    public func save(_ new: JarvisSettings) throws {
+        try store.save(new)
+        settings = new
+    }
+
+    private func apply(_ read: SettingsRead) {
+        switch read {
+        case .loaded(let loaded):
+            settings = loaded
+            problem = nil
+        case .missing:
+            settings = JarvisSettings()
+            problem = nil
+        case .unreadable(let reason):
+            settings = JarvisSettings()
+            problem = .unreadable(reason: reason)
+        case .damaged(let reason, let setAside):
+            settings = JarvisSettings()
+            problem = .damaged(reason: reason, setAside: setAside)
+        }
     }
 }

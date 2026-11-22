@@ -189,6 +189,10 @@ public final class JarvisCoordinator: Sendable {
         return MemorySnapshot(json: json)
     }
 
+    /// Why a run did not start when its memory file could not be read (owner-facing).
+    public static let memoryUnreadable =
+        "Jarvis cannot read what it has learned yet, so it did not start. Unlock the phone and try again; nothing was changed."
+
     /// The demo script for a task text (Delete-account task or the Wi-Fi task).
     public static func demoScript(for text: String) -> [ScriptStep] {
         text.lowercased().contains("delete") ? DemoPhone.deleteAccountScript : DemoPhone.wifiOffScript
@@ -257,8 +261,23 @@ public final class JarvisCoordinator: Sendable {
             return .notStarted("the core rejected the configuration: \(error)")
         }
 
+        // The memory holds the learned flows and the apps the owner approved. A run saves it
+        // when it ends, so a run that could not read it must not start: it would replace the
+        // file with a fresh memory (and forget every first-use approval).
         let memory = FileMemoryStore(fileURL: memoryURL)
-        let memoryJSON = (try? await memory.load()) ?? ""
+        let memoryJSON: String
+        switch await memory.read() {
+        case .loaded(let json):
+            memoryJSON = json
+        case .missing:
+            memoryJSON = ""
+        case .unreadable:
+            return .notStarted(Self.memoryUnreadable)
+        case .damaged(_, let setAside):
+            // Set aside (never deleted): the run starts with a fresh memory.
+            guard setAside != nil else { return .notStarted(Self.memoryUnreadable) }
+            memoryJSON = ""
+        }
         let deps = DriverDependencies(
             runner: runner, model: model, tools: tools, human: human, memory: memory, screenshots: screenshots,
             attention: attention
@@ -267,8 +286,13 @@ public final class JarvisCoordinator: Sendable {
         do {
             driver = try SessionDriver(config: config, task: task, memoryJSON: memoryJSON, dependencies: deps, configuration: configuration)
         } catch {
-            // The core rejected the saved memory: set it aside and start fresh.
-            _ = try? await memory.quarantine()
+            // The core rejected the saved memory: set it aside and start fresh. If it cannot be
+            // set aside, the run would overwrite it at the end: do not start.
+            do {
+                _ = try await memory.quarantine()
+            } catch {
+                return .notStarted(Self.memoryUnreadable)
+            }
             do {
                 driver = try SessionDriver(config: config, task: task, memoryJSON: "", dependencies: deps, configuration: configuration)
             } catch {

@@ -79,12 +79,14 @@ final class AppHarness {
     init(_ name: String, rules: ScriptedOwner.Rules = ScriptedOwner.Rules(), limits: RunLimits? = nil,
          libraryNow: @escaping @Sendable () -> Date = Date.init,
          clock: any MonotonicClock = SystemMonotonicClock(),
-         sleep: (@Sendable (Duration) async throws -> Void)? = nil) {
+         sleep: (@Sendable (Duration) async throws -> Void)? = nil,
+         settingsProblem: @escaping @MainActor () -> String? = { nil }) {
         dir = scratchDirectory(name)
         owner = ScriptedOwner(rules)
         let paths = JarvisPaths(directory: dir)
         coordinator = JarvisCoordinator(paths: paths, selection: .demo, demoDelay: .zero)
-        center = TaskCenter(coordinator: coordinator, broker: owner.broker, settings: { JarvisSettings() })
+        center = TaskCenter(coordinator: coordinator, broker: owner.broker, settings: { JarvisSettings() },
+                            settingsProblem: settingsProblem)
         skills = SkillLibrary(fileURL: paths.skills)
         library = WorkflowLibrary(fileURL: paths.workflows, skills: skills, now: libraryNow)
         runner = WorkflowRunner(library: library, center: center, notifier: notifier, clock: clock, limits: limits, sleep: sleep)
@@ -265,8 +267,9 @@ final class RemoteHarness {
     let probes = Probes()
     let service: RemoteControlService
 
-    init(_ name: String, rules: ScriptedOwner.Rules = ScriptedOwner.Rules(), random: any RandomSource = GeneratorRandomSource()) {
-        base = AppHarness(name, rules: rules)
+    init(_ name: String, rules: ScriptedOwner.Rules = ScriptedOwner.Rules(), random: any RandomSource = GeneratorRandomSource(),
+         settingsProblem: @escaping @MainActor () -> String? = { nil }) {
+        base = AppHarness(name, rules: rules, settingsProblem: settingsProblem)
         secrets = RecordingSecretStore(log: log)
         let transport = RecordingTransport(self.transport, log: log)
         let probes = self.probes

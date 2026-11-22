@@ -112,36 +112,51 @@ public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-/// The task records in one JSON file, newest first, bounded.
+/// The task records in one JSON file, newest first, bounded. Follows the store rules
+/// (`StoredFileRead`): a file that cannot be read is never overwritten (`append` throws and
+/// changes nothing until it can be read again); a damaged one is set aside and `read()`
+/// says where.
 public struct TaskHistoryStore: Sendable {
     public let fileURL: URL
     public let capacity: Int
+    private let now: @Sendable () -> Date
 
-    public init(fileURL: URL, capacity: Int = 200) {
+    public init(fileURL: URL, capacity: Int = 200, now: @escaping @Sendable () -> Date = Date.init) {
         self.fileURL = fileURL
         self.capacity = max(1, capacity)
+        self.now = now
     }
 
-    /// The records, newest first (empty when none or unreadable).
+    /// The records, newest first, and which case the file was in. A damaged file is renamed
+    /// to `<name>.corrupt-<ms>`.
+    public func read() -> StoredFileRead<[TaskRecord]> {
+        StoredFile.read(fileURL, now: now) { data in
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode([TaskRecord].self, from: data)
+        }
+    }
+
+    /// The records, newest first (empty when there are none to show; `read()` says why).
     public func load() -> [TaskRecord] {
-        guard let data = try? Data(contentsOf: fileURL) else { return [] }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([TaskRecord].self, from: data)) ?? []
+        read().value(or: [])
     }
 
-    /// Adds `record` in front and returns the new list.
+    /// Adds `record` in front and returns the new list. Throws `StoredFileError` (nothing
+    /// written) while the file cannot be read; a damaged file is set aside first and the
+    /// list starts again from `record`.
     @discardableResult
     public func append(_ record: TaskRecord) throws -> [TaskRecord] {
-        var records = load()
+        let current = read()
+        try StoredFile.requireWritable(current, fileURL)
+        var records = current.value(or: [])
         records.removeAll { $0.id == record.id }
         records.insert(record, at: 0)
         if records.count > capacity { records.removeLast(records.count - capacity) }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
-        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try encoder.encode(records).write(to: fileURL, options: [.atomic])
+        try StoredFile.write(try encoder.encode(records), to: fileURL)
         return records
     }
 }

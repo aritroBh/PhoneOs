@@ -22,7 +22,8 @@ Shell/
 │     │                          LockScreenSignature, LockSignals (lock decision rule)
 │     ├─ Model/                  ModelProvider + ModelCapabilities, OpenAICompatibleModel,
 │     │                          ModelError, ScreenshotAnnotator
-│     ├─ Store/                  MemoryPersisting, FileMemoryStore, ScreenshotStore
+│     ├─ Store/                  MemoryPersisting, FileMemoryStore, ScreenshotStore, StoredFile
+│     │                          (StoredFileRead: missing / unreadable / damaged)
 │     ├─ Tools/                  ToolHost, ToolRegistry, ToolSpecs, SampleTools
 │     ├─ Support/                JSONValue, HTTPTransport, SessionConfigBuilder
 │     ├─ QA/                     PromptScreen, ScriptedModel (+ ElementQuery, ScriptStep),
@@ -35,7 +36,7 @@ Shell/
 │     ├─ Remote/                 RemoteControlService, RemotePorts (SecretStore, RandomSource,
 │     │                          RemoteTransport, Redacted), InMemoryRemoteTransport + InProcessRemote,
 │     │                          RemoteAuditLog
-│     └─ App/                    JarvisSettings (+ Codable mirrors), SettingsStore, TaskHistory,
+│     └─ App/                    JarvisSettings (+ Codable mirrors), SettingsStore, SettingsGate, TaskHistory,
 │                                MemorySnapshot, HumanPromptBroker, LiveRun, JarvisCoordinator,
 │                                TaskCenter, ModelBackendFactory, ConnectionProbe, AwayMode, AppAccess
 ├─ App/                          Apple-only, outside Sources/ (never in the Linux build)
@@ -145,6 +146,37 @@ of `Policy` or `SessionConfig`, so new core fields keep their defaults. `RunnerS
 `ToolSpec` and `ToolParam` have no core defaults. Each is built in exactly one place
 (`RunnerObservation.runnerSnapshot`, `ToolSpecs`), so a new field means one edit.
 
+## Stored files (JarvisKit side, Linux-tested)
+
+Every JSON store keeps three cases apart (`StoredFileRead`): **missing** (defaults or empty,
+normal), **unreadable** (the file exists but reading failed: on iOS every read before the
+first unlock after a restart, or an I/O error) and **damaged** (read, but not valid for the
+schema). A file that could not be read is never overwritten: writes are refused (or kept in
+memory) and the next call reads it again, so the store recovers after the first unlock
+without a relaunch. A damaged file is renamed to `<name>.corrupt-<ms>` next to it (never
+deleted or overwritten, as `SkillLibrary` does) and the caller is told.
+
+- **`SettingsStore`**: `read() -> SettingsRead` (`.loaded`, `.missing`, `.unreadable(reason:)`,
+  `.damaged(reason:setAside:)`); `save` throws `StoredFileError` while the file is unreadable;
+  `load()` (defaults for anything but `.loaded`) must not feed a task. **`SettingsGate`** (main
+  actor) holds the settings the app runs with and the `problem`; `refresh()` re-reads while
+  unreadable, `acknowledgeReview()` ends the damaged state. `TaskCenter(…, settingsProblem:)`
+  refuses `start` and `beginWorkflow` with `Refusal.settingsUnavailable(text)` while it
+  returns a text (`WorkflowRunner.StartRefusal.settingsUnavailable`; the scheduler retries
+  inside its window; a remote start is answered as a failed task).
+- **`TaskHistoryStore`**: `read()`; `append` throws while unreadable; a damaged file is set
+  aside and the list starts again.
+- **`RemoteAuditLog`**: while unreadable new entries stay in memory and the file is not
+  touched (`clear()` empties only memory); once readable both are merged, newest first,
+  bounded. `loadIssue` says what happened.
+- **`WorkflowScheduler`**: while its state is unreadable nothing fires (what fired is
+  unknown) and nothing is written; a minute marked meanwhile is merged in later. A damaged
+  state is set aside and minutes up to that moment count as fired (no double run).
+- **`FileMemoryStore`**: `read()` reports the case; `JarvisCoordinator.run` does not start
+  (`.notStarted(JarvisCoordinator.memoryUnreadable)`) when the memory cannot be read or a
+  rejected memory cannot be set aside, because the run's save would replace the learned
+  flows and first-use approvals.
+
 ## Skills, Away mode, Apps (JarvisKit side, Linux-tested)
 
 - **`SkillLibrary`** (`Skills/SkillLibrary.swift`): the owner's skills in `skills.json`
@@ -233,7 +265,8 @@ of `Policy` or `SessionConfig`, so new core fields keep their defaults. `RunnerS
 
 `SessionDriver` is an actor. `init(config:task:memoryJSON:dependencies:configuration:)`
 throws when the core rejects the memory. In that case call `FileMemoryStore.quarantine()`
-and retry with `""`. `run() async -> RunResult` never throws. `cancel()` stops the run, and
+and retry with `""` (only if the quarantine succeeded: otherwise the run's save would
+overwrite the file). `run() async -> RunResult` never throws. `cancel()` stops the run, and
 `nonisolated updates: AsyncStream<DriverUpdate>` reports progress.
 
 | Effect | IO | Event on success | Event on error / timeout |

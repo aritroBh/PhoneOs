@@ -89,12 +89,16 @@ public final class TaskCenter {
         case emptyTask
         case busy
         case workflowRunning(String)
+        /// The owner's rules cannot be used yet (unreadable before the first unlock, or
+        /// damaged and not yet reviewed); the text says why in plain words.
+        case settingsUnavailable(String)
 
         public var description: String {
             switch self {
             case .emptyTask: "There is nothing to do."
             case .busy: "Jarvis is already running a task."
             case .workflowRunning(let name): "The workflow \u{201C}\(name)\u{201D} is running."
+            case .settingsUnavailable(let why): why
             }
         }
     }
@@ -103,6 +107,7 @@ public final class TaskCenter {
     public let broker: HumanPromptBroker
     private let attention: any OwnerAttention
     private let settings: @MainActor () -> JarvisSettings
+    private let settingsProblem: @MainActor () -> String?
 
     public private(set) var session: Session?
     public private(set) var workflow: WorkflowSlot?
@@ -110,12 +115,17 @@ public final class TaskCenter {
     private var observers: [UUID: @MainActor (Event) -> Void] = [:]
     private var observerOrder: [UUID] = []
 
+    /// `settingsProblem` says why the owner's rules cannot be used (`SettingsGate.refusal`);
+    /// while it returns a text, every session and workflow start is refused with it, so no
+    /// task runs under defaults because the rules could not be read.
     public init(coordinator: JarvisCoordinator, broker: HumanPromptBroker, attention: any OwnerAttention = NoOwnerAttention(),
-                settings: @escaping @MainActor () -> JarvisSettings) {
+                settings: @escaping @MainActor () -> JarvisSettings,
+                settingsProblem: @escaping @MainActor () -> String? = { nil }) {
         self.coordinator = coordinator
         self.broker = broker
         self.attention = attention
         self.settings = settings
+        self.settingsProblem = settingsProblem
     }
 
     public var isBusy: Bool { session != nil || workflow != nil }
@@ -143,13 +153,15 @@ public final class TaskCenter {
 
     // MARK: - Sessions
 
-    /// Starts `text` (under `skill`) for `origin`. Refused while a session runs, and while a
-    /// workflow runs unless the session is one of its steps. The returned task ends after
+    /// Starts `text` (under `skill`) for `origin`. Refused while the owner's rules cannot be
+    /// used, while a session runs, and while a workflow runs unless the session is one of
+    /// its steps. The returned task ends after
     /// `.sessionFinished` went to every observer.
     public func start(_ text: String, skill: SkillContext? = nil, origin: TaskOrigin = .owner)
         -> Result<Task<TaskRunOutcome, Never>, Refusal> {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .failure(.emptyTask) }
+        if let why = settingsProblem() { return .failure(.settingsUnavailable(why)) }
         guard session == nil else { return .failure(.busy) }
         if let workflow, origin.workflow?.runId != workflow.runId {
             return .failure(.workflowRunning(workflow.name))
@@ -214,8 +226,10 @@ public final class TaskCenter {
 
     // MARK: - Workflows
 
-    /// Takes the workflow slot (refused while anything runs).
+    /// Takes the workflow slot (refused while anything runs, and while the owner's rules
+    /// cannot be used).
     public func beginWorkflow(_ slot: WorkflowSlot) -> Refusal? {
+        if let why = settingsProblem() { return .settingsUnavailable(why) }
         if let workflow { return .workflowRunning(workflow.name) }
         if session != nil { return .busy }
         workflow = slot

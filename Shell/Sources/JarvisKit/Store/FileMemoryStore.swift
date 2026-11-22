@@ -43,6 +43,17 @@ public final class FileMemoryStore: MemoryPersisting {
         try await onQueue { try self.loadSync() }
     }
 
+    /// The saved memory JSON with which case the file was in: `missing`, `loaded`,
+    /// `unreadable` (the file is there but could not be read; it is left untouched) or
+    /// `damaged` (not a JSON object; renamed aside, `setAside` says where). Never throws.
+    public func read() async -> StoredFileRead<String> {
+        do {
+            return try await onQueue { self.readSync() }
+        } catch {
+            return .unreadable(reason: String(describing: error))
+        }
+    }
+
     /// Writes `memoryJSON` atomically, replacing the previous file.
     public func save(_ memoryJSON: String) async throws {
         try await onQueue { try self.saveSync(memoryJSON) }
@@ -57,20 +68,33 @@ public final class FileMemoryStore: MemoryPersisting {
     // MARK: - Synchronous parts (on `queue` only)
 
     private func loadSync() throws -> String {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: fileURL.path) else { return "" }
+        switch readSync() {
+        case .loaded(let text): return text
+        case .missing: return ""
+        case .unreadable(let reason): throw MemoryStoreError.io("cannot read \(fileURL.path): \(reason)")
+        case .damaged(let reason, let setAside):
+            if setAside == nil { throw MemoryStoreError.io("cannot quarantine \(fileURL.path): \(reason)") }
+            return ""
+        }
+    }
+
+    private func readSync() -> StoredFileRead<String> {
         let data: Data
-        do {
-            data = try Data(contentsOf: fileURL)
-        } catch {
-            throw MemoryStoreError.io("cannot read \(fileURL.path): \(error)")
+        switch StoredFile.readData(fileURL) {
+        case .missing: return .missing
+        case .unreadable(let reason): return .unreadable(reason: reason)
+        case .damaged(let reason, let setAside): return .damaged(reason: reason, setAside: setAside)
+        case .loaded(let bytes): data = bytes
         }
         let isObject = (try? JSONSerialization.jsonObject(with: data)) is [String: Any]
         guard isObject, let text = String(data: data, encoding: .utf8) else {
-            _ = try quarantineSync()
-            return ""
+            do {
+                return .damaged(reason: "not a JSON object", setAside: try quarantineSync())
+            } catch {
+                return .damaged(reason: "not a JSON object; \(error)", setAside: nil)
+            }
         }
-        return text
+        return .loaded(text)
     }
 
     private func saveSync(_ memoryJSON: String) throws {

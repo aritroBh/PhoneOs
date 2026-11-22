@@ -68,9 +68,14 @@ final class AppModel: ObservableObject {
     @Published var settings: JarvisSettings {
         didSet {
             guard settings != oldValue else { return }
-            try? settingsStore.save(settings)
+            // Refused while the rules file cannot be read: it is never overwritten.
+            try? settingsGate.save(settings)
         }
     }
+    /// Why the owner's rules cannot be used yet (tasks are refused with these words).
+    @Published private(set) var settingsProblem: String?
+    /// The rules file was damaged and set aside: tasks wait for "I have reviewed my rules".
+    @Published private(set) var settingsNeedReview = false
     @Published private(set) var live = LiveRun()
     @Published private(set) var prompt: HumanPrompt?
     @Published private(set) var history: [TaskRecord] = []
@@ -121,7 +126,7 @@ final class AppModel: ObservableObject {
     let skills: SkillLibrary
     let workflows: WorkflowLibrary
     private let paths: JarvisPaths
-    private let settingsStore: SettingsStore
+    private let settingsGate: SettingsGate
     private let historyStore: TaskHistoryStore
     private let coreDeniedApps: [String]
     /// The in-memory transport of playground mode (the seeded device connects through it).
@@ -137,7 +142,8 @@ final class AppModel: ObservableObject {
     }
     /// The one entry every task takes (Ask, Siri, Run now, workflow steps, paired devices).
     private(set) lazy var center = TaskCenter(coordinator: coordinator, broker: broker, attention: UnlockNotifier(),
-                                              settings: { [weak self] in self?.settings ?? JarvisSettings() })
+                                              settings: { [weak self] in self?.settings ?? JarvisSettings() },
+                                              settingsProblem: { [weak self] in self?.settingsGate.refusal })
     private(set) lazy var workflowRunner: WorkflowRunner = {
         let runner = WorkflowRunner(library: workflows, center: center,
                                     notifier: launch.playground ? SilentWorkflowNotifier() as any WorkflowNotifier : UserNotificationWorkflowNotifier())
@@ -166,6 +172,7 @@ final class AppModel: ObservableObject {
         display: UIKitAwayDisplay(), acknowledged: settings.awayAcknowledged, proximity: settings.awayProximity
     )
     private var terminateObserver: NSObjectProtocol?
+    private var protectedDataObserver: NSObjectProtocol?
     /// The start chosen in the Ask sheet, made when the sheet has gone.
     private var pendingStart: PendingStart?
 
@@ -187,9 +194,10 @@ final class AppModel: ObservableObject {
         let paths = JarvisPaths(directory: directory)
         self.paths = paths
         Self.seedSkills(launch, at: paths.skills)
-        self.settingsStore = SettingsStore(fileURL: paths.settings)
+        let settingsGate = SettingsGate(store: SettingsStore(fileURL: paths.settings))
+        self.settingsGate = settingsGate
         self.historyStore = TaskHistoryStore(fileURL: paths.history)
-        self.settings = settingsStore.load()
+        self.settings = settingsGate.settings
         // Playground mode backs the UI tests: lock polls and the lock watch run every
         // 0.5 s / 1 s and a lock wait ends after 20 s, so a wrong lock signal fails a test in
         // seconds. The demo phone stays locked for 12 polls (about 6 s) so the "Unlock to
@@ -218,6 +226,13 @@ final class AppModel: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.appWillTerminate() }
         }
+        // The first unlock after a restart: the rules can be read now.
+        protectedDataObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadSettings() }
+        }
+        mirrorSettingsProblem()
         if launch.playground && launch.seedRemoteDevice {
             settings.remoteControlEnabled = true
         }
@@ -771,6 +786,7 @@ final class AppModel: ObservableObject {
     /// schedules are checked when it comes back.
     func sceneBecameActive(_ active: Bool) {
         if active {
+            reloadSettings()
             away.appReturnedToForeground()
             checkSchedules()
         } else {
@@ -782,6 +798,34 @@ final class AppModel: ObservableObject {
     private func appWillTerminate() {
         away.appWillTerminate()
         awayPhase = away.phase
+    }
+
+    // MARK: - The owner's rules
+
+    /// Reads the rules again while they could not be read (the app became active, or
+    /// protected data became available after the first unlock).
+    func reloadSettings() {
+        if settingsGate.refresh() {
+            let loaded = settingsGate.settings
+            if settings != loaded { settings = loaded }
+            if settings.remoteControlEnabled && !remote.isOn { remote.setEnabled(true) }
+        }
+        mirrorSettingsProblem()
+    }
+
+    /// "I have reviewed my rules" after a damaged rules file was set aside.
+    func acknowledgeRulesReview() {
+        settingsGate.acknowledgeReview()
+        mirrorSettingsProblem()
+    }
+
+    private func mirrorSettingsProblem() {
+        settingsProblem = settingsGate.refusal
+        if case .damaged? = settingsGate.problem {
+            settingsNeedReview = true
+        } else {
+            settingsNeedReview = false
+        }
     }
 
     // MARK: - Data

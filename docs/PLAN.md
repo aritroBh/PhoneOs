@@ -201,6 +201,8 @@ Researched from runner source (WebDriverAgent, LoopCtrl, iCTRL) and Apple docume
 6. **Verify typing.** After typing, read the field back and retry once; needed anyway because of the iOS 27 dropped-character bug. (Being built in the core now.)
 7. **Try Siri AI as a second voice entry.** Expose Jarvis actions as `ToolIntent`s plus an app skills bundle and test with the development build: whether a free account qualifies and what it does while locked are unknown.
 
+**Before the first unlock after a restart, Jarvis cannot read its rules, so it refuses tasks.** Its files (your rules, what it has learned, the history, the schedule record, the remote-control audit log) are protected until the phone has been unlocked once. Until then every task, workflow and remote request is refused with "Jarvis cannot read your rules yet. Unlock the phone and try again.", and no file it could not read is ever overwritten; after the first unlock everything works again without restarting the app. A damaged rules file is set aside (never deleted), and tasks wait until you confirm you have reviewed your rules, which are back to the defaults.
+
 `BGContinuedProcessingTask` is not the mechanism: it must be user-started, must report progress, the user can cancel it, and background GPU is unavailable on iPhone. The background audio session is the keepalive.
 
 ---
