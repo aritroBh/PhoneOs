@@ -1,13 +1,39 @@
 import SwiftUI
+import UIKit
 import JarvisCore
 import JarvisKit
 
-/// The confirmation gate (`HumanGate.confirm`): category chip, question, the exact element
-/// line, Decline / Approve.
+/// The confirmation gate (`HumanGate.confirm`): category chip, the screen Jarvis evaluated
+/// with the target outlined (`ApprovalPreview`; the real screen when "Show the real screen
+/// when Jarvis asks" is on and a frame of that very observation was kept, else its layout),
+/// question, the exact element line, Decline / Approve. The picture gives way first when
+/// the sheet is small, so Decline and Approve stay where they are.
 struct ConfirmationSheet: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var prompt: HumanPrompt
     var request: ConfirmRequest
+    @State private var images = ApprovalImageCache()
+    @State private var enlarged = false
+
+    /// The picture of this very question, while it is the one pending.
+    private var preview: ApprovalPreview? {
+        guard let preview = model.approvalPreview(for: prompt), preview.isLive(pending: model.prompt) else { return nil }
+        return preview
+    }
+
+    /// The real screen, never while the app is not active (app switcher snapshot).
+    private func image(for preview: ApprovalPreview) -> UIImage? {
+        guard scenePhase == .active else { return nil }
+        return images.image(for: preview, in: model.approvalFrames)
+    }
+
+    private func open() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = reduceMotion
+        withTransaction(transaction) { enlarged = true }
+    }
 
     /// The element line the model chose, when the request came from a model step.
     private var elementLine: String? {
@@ -27,6 +53,25 @@ struct ConfirmationSheet: View {
             Chip(text: wording.chip, icon: .warning,
                  foreground: Theme.warning, fill: Theme.warningFill)
                 .accessibilityIdentifier("confirm.category")
+            if let preview {
+                VStack(spacing: 6) {
+                    ApprovalPreviewThumbnail(preview: preview, screen: model.approvalScreen(preview),
+                                             image: image(for: preview), onOpen: { open() })
+                        .frame(maxWidth: .infinity, minHeight: 0, maxHeight: Theme.approvalPreviewMaxHeight)
+                    Text(preview.caption)
+                        .font(Theme.meta)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .accessibilityIdentifier("confirm.preview.caption")
+                }
+                .layoutPriority(-1)
+                .fullScreenCover(isPresented: $enlarged) {
+                    ApprovalPreviewFullScreen(preview: preview, screen: model.approvalScreen(preview),
+                                              image: image(for: preview), onClose: { enlarged = false })
+                        .preferredColorScheme(.dark)
+                }
+            }
             Text(wording.title)
                 .font(Theme.question)
                 .foregroundStyle(Theme.textPrimary)
@@ -53,6 +98,7 @@ struct ConfirmationSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .card(fill: Theme.well, radius: Theme.radiusElement)
             Spacer(minLength: 0)
+                .layoutPriority(-2)
             HStack(spacing: Theme.gap) {
                 Button("Decline") { model.decline(prompt) }
                     .buttonStyle(SecondaryButtonStyle())

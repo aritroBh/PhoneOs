@@ -101,6 +101,17 @@ struct ControlView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 4)
                             .accessibilityIdentifier("control.liveView.footnote")
+                        SwitchRow(title: "Show the real screen when Jarvis asks", icon: .wayScreen, isOn: Binding(
+                            get: { model.settings.approvalScreenshots },
+                            set: { model.setApprovalScreenshots($0) }
+                        ), identifier: "control.approval.realScreen")
+                        .card()
+                        Text("When Jarvis asks for your OK it shows the screen it looked at, with what it will tap outlined. One screenshot, kept in memory only while it asks. Off: an outline of the screen instead.")
+                            .font(Theme.meta)
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 4)
+                            .accessibilityIdentifier("control.approval.footnote")
                     }
 
                     VStack(alignment: .leading, spacing: 8) {

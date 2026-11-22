@@ -22,6 +22,10 @@ public struct DriverDependencies: Sendable {
     /// Where the Live view's frames go when `DriverConfiguration.viewerScreenshots` is on
     /// (keyed by `ViewerFrameKey(taskId:observation:)`); `nil` keeps none.
     public var viewerFrames: ViewerFrameStore?
+    /// Where the approval sheet's real-screen frame goes when
+    /// `DriverConfiguration.approvalScreenshots` is on (one frame, held only while the owner
+    /// is asked); `nil` keeps none.
+    public var approvalFrames: ApprovalFrameStore?
 
     /// Bundles the dependencies; the clock defaults to the system's monotonic clock.
     public init(
@@ -33,7 +37,8 @@ public struct DriverDependencies: Sendable {
         screenshots: ScreenshotStore,
         attention: any OwnerAttention = NoOwnerAttention(),
         clock: any MonotonicClock = SystemMonotonicClock(),
-        viewerFrames: ViewerFrameStore? = nil
+        viewerFrames: ViewerFrameStore? = nil,
+        approvalFrames: ApprovalFrameStore? = nil
     ) {
         self.runner = runner
         self.model = model
@@ -44,6 +49,7 @@ public struct DriverDependencies: Sendable {
         self.attention = attention
         self.clock = clock
         self.viewerFrames = viewerFrames
+        self.approvalFrames = approvalFrames
     }
 }
 
@@ -100,6 +106,9 @@ public actor SessionDriver {
     private var pendingViewerFrame: (key: ViewerFrameKey, frame: CapturedScreenshot)?
     /// A failed Live view capture was reported (`.note`, once per run).
     private var viewerFailureNoted = false
+    /// The last observation the core was given, with the number of the effect that took
+    /// it: what a confirmation is computed from (memory only; replaced by the next one).
+    private var lastObservation: (number: Int, observation: RunnerObservation)?
 
     /// Creates the session. Throws when the core rejects `memoryJSON` (corrupt or from an
     /// incompatible core); quarantine that memory and retry with `""` (fresh memory).
@@ -252,6 +261,7 @@ public actor SessionDriver {
                 for note in observation.notes { emit(.note(note)) }
                 let ref = screenshot ? observation.screenshot.map { deps.screenshots.store($0) } : nil
                 let event = observation.event(screenshot: ref)
+                lastObservation = (currentEffectNumber, observation)
                 if forViewer {
                     await captureViewerFrame(of: observation, coreAsked: screenshot)
                 }
@@ -326,7 +336,17 @@ public actor SessionDriver {
         }
     }
 
+    /// Asks the owner, with the approval sheet's frame held for exactly as long as the
+    /// question is open: whatever resolves it (a decision, a timeout, a decline by error,
+    /// a lock, cancellation), the frame is removed before the core hears the answer.
     private func confirm(_ request: ConfirmRequest) async -> Event {
+        let held = await captureApprovalFrame()
+        let event = await askToConfirm(request)
+        if let held { deps.approvalFrames?.remove(held) }
+        return event
+    }
+
+    private func askToConfirm(_ request: ConfirmRequest) async -> Event {
         emit(.confirmationPending(request))
         let human = deps.human
         do {
@@ -458,6 +478,47 @@ public actor SessionDriver {
         return true
     }
 
+    // MARK: - Approval frames
+
+    /// The approval store when the option is on and the store takes frames now.
+    private var activeApprovalFrames: ApprovalFrameStore? {
+        guard configuration.approvalScreenshots, let store = deps.approvalFrames, store.accepts else { return nil }
+        return store
+    }
+
+    /// Puts a frame of the observation the confirmation was computed from into the approval
+    /// store, best effort; returns its key when one was kept. Never changes the event the
+    /// core gets, never retried, its own deadline (`viewerScreenshotTimeout`), every error
+    /// ignored. Fail closed: only after an observation the runner reported unlocked, never
+    /// in an unlock wait; a fresh capture is kept only when a tree read right after it
+    /// shows the very screen evaluated with the phone still reported unlocked.
+    private func captureApprovalFrame() async -> ViewerFrameKey? {
+        guard let store = activeApprovalFrames, !waitingForUnlock, let last = lastObservation,
+              last.observation.isKnownUnlocked else { return nil }
+        let key = ViewerFrameKey(taskId: task.id, observation: last.number)
+        // That very observation's pixels (the core asked for them), or the Live view's frame
+        // of it: no capture at all.
+        if let own = last.observation.screenshot ?? deps.viewerFrames?.frame(for: key) {
+            return store.put(own, for: key) ? key : nil
+        }
+        let runner = deps.runner
+        let evaluated = last.observation
+        do {
+            let frame = try await io(.viewerScreenshot, configuration.viewerScreenshotTimeout) { () -> CapturedScreenshot? in
+                guard let taken = try await runner.viewerScreenshot() else { return nil }
+                // The screen must not have moved on since it was evaluated, and the phone
+                // must still be unlocked: otherwise nothing is kept.
+                let now = try await runner.snapshot(includeScreenshot: false)
+                guard now.isKnownUnlocked, now.showsSameScreen(as: evaluated) else { return nil }
+                return taken
+            }
+            guard let frame else { return nil }
+            return store.put(frame, for: key) ? key : nil
+        } catch {
+            return nil
+        }
+    }
+
     private func endUnlockWait() async {
         guard waitingForUnlock else { return }
         waitingForUnlock = false
@@ -581,5 +642,15 @@ public actor SessionDriver {
 
     private func describe(_ error: any Error) -> String {
         String(describing: error)
+    }
+}
+
+extension RunnerObservation {
+    /// The same screen as `other`: the same tree, app, size, keyboard and orientation, both
+    /// unlocked (stricter than the core's approval digest; anything that moved fails).
+    func showsSameScreen(as other: RunnerObservation) -> Bool {
+        !deviceLocked && !other.deviceLocked && ui == other.ui && appBundleId == other.appBundleId
+            && screenSize == other.screenSize && keyboardVisible == other.keyboardVisible
+            && orientation == other.orientation
     }
 }

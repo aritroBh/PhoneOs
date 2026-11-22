@@ -188,6 +188,10 @@ final class AppModel: ObservableObject {
     )
     private var terminateObserver: NSObjectProtocol?
     private var protectedDataObserver: NSObjectProtocol?
+    /// The phone is locking: the approval sheet's real-screen frame goes.
+    private var protectedDataLockObserver: NSObjectProtocol?
+    /// The scene is active (the approval sheet draws the real screen only then).
+    @Published private(set) var appIsActive = true
     /// The start chosen in the Ask sheet, made when the sheet has gone.
     private var pendingStart: PendingStart?
 
@@ -246,6 +250,11 @@ final class AppModel: ObservableObject {
             forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.reloadSettings() }
+        }
+        protectedDataLockObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.coordinator.approvalFrames.removeAll() }
         }
         mirrorSettingsProblem()
         if launch.playground && launch.seedRemoteDevice {
@@ -448,6 +457,31 @@ final class AppModel: ObservableObject {
     /// Feeds one event to the Live view (one FFI call); republishes only on a change.
     private func feedViewer(_ event: RunEvent) {
         if viewer.apply(event) { viewerTimeline = viewer.timeline }
+    }
+
+    // MARK: - Approval preview
+
+    /// The approval sheet's real-screen frame (one, memory only, held only while asked).
+    var approvalFrames: ApprovalFrameStore { coordinator.approvalFrames }
+
+    /// The approval sheet's picture of `prompt`: the core's picture of the pending
+    /// confirmation (from the Live view's viewer) bound to that request, with the real
+    /// screen only when a frame of exactly the evaluated observation is held and the app is
+    /// active. `nil` for any other prompt.
+    func approvalPreview(for prompt: HumanPrompt) -> ApprovalPreview? {
+        ApprovalPreview.make(prompt: prompt, target: viewer.approvalTarget, frames: coordinator.approvalFrames,
+                             appActive: appIsActive)
+    }
+
+    /// The wireframe of the evaluated screen (the "Layout only" backdrop).
+    func approvalScreen(_ preview: ApprovalPreview) -> CoreViewerScreen? {
+        viewer.screen(id: preview.screenId)
+    }
+
+    /// "Show the real screen when Jarvis asks". Turning it off drops a held frame at once.
+    func setApprovalScreenshots(_ on: Bool) {
+        settings.approvalScreenshots = on
+        if !on { coordinator.approvalFrames.isEnabled = false }
     }
 
     /// "Show real screen in Live view". Turning it off drops the frames at once, also those
@@ -835,6 +869,10 @@ final class AppModel: ObservableObject {
     /// Scene phase changes (RootView): the screen is put back whenever Jarvis is not active;
     /// schedules are checked when it comes back.
     func sceneBecameActive(_ active: Bool) {
+        appIsActive = active
+        // The approval sheet's real screen only while Jarvis is in front: it goes as soon
+        // as the app leaves the foreground, and none is taken until it is back.
+        coordinator.approvalFrames.isAppActive = active
         if active {
             reloadSettings()
             away.appReturnedToForeground()

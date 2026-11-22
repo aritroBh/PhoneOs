@@ -451,8 +451,8 @@ private struct WireframeCanvas: View {
     }
 }
 
-/// How each kind of element is drawn on the wireframe.
-private struct WireframeStyle {
+/// How each kind of element is drawn on the wireframe (also the approval sheet's).
+struct WireframeStyle {
     var color: Color
     var fillOpacity: Double
     var strokeOpacity: Double

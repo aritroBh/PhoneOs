@@ -349,6 +349,45 @@ final class JarvisAppUITests: QATestCase {
         require(app.descendants(matching: .any)["run.sight"].firstMatch, "the element list", in: app)
     }
 
+    /// A demo task that asks for approval: the sheet shows the screen Jarvis evaluated with
+    /// the target outlined (the demo phone has no screenshots, so its layout), above the
+    /// question; the owner approves each question and the run finishes.
+    @MainActor
+    func testApprovalSheetShowsTheScreenWithTheTarget() {
+        let app = launch(["-jarvis-playground", "-jarvis-reset"])
+        tab("Ask", in: app).tap()
+        let composer = app.textFields["ask.composer"]
+        require(composer, "the composer", in: app)
+        composer.tap()
+        composer.typeText("Delete my account")
+        app.buttons["ask.send"].tap()
+
+        // First use of the demo app, then the delete itself: both are asked with a picture.
+        let approve = app.buttons["confirm.approve"]
+        let status = app.staticTexts["run.status"]
+        var asked = 0
+        let deadline = Date().addingTimeInterval(60)
+        while !status.exists && Date() < deadline {
+            if approve.waitForExistence(timeout: 1) {
+                let preview = app.descendants(matching: .any)["confirm.preview"].firstMatch
+                require(preview, "the approval preview", timeout: 10, in: app)
+                XCTAssertTrue(preview.label.hasPrefix("Outlined:"), "the preview does not name the target: \(preview.label)")
+                XCTAssertTrue(app.descendants(matching: .any)["confirm.preview.caption"].firstMatch.exists, "no caption")
+                XCTAssertTrue(approve.isHittable, "Approve is not reachable without scrolling")
+                approve.tap()
+                asked += 1
+                // Let this sheet go before looking for the next question.
+                let gone = Date().addingTimeInterval(5)
+                while approve.exists && Date() < gone {
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+                }
+            }
+        }
+        XCTAssertGreaterThan(asked, 0, "no approval was asked")
+        require(status, "the run result", timeout: 30, in: app)
+        XCTAssertEqual(status.label, "Done")
+    }
+
     /// The demo phone starts locked: the run view shows "Unlock to continue" with the time
     /// waited, then the phone "unlocks", the run asks for first use and finishes.
     @MainActor

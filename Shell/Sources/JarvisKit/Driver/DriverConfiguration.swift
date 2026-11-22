@@ -45,8 +45,26 @@ public struct DriverConfiguration: Sendable, Equatable {
     /// unlock wait. Frames are kept in `viewerFrames` (memory only). Without
     /// `viewerFrames` this does nothing.
     public var viewerScreenshots: Bool
-    /// Deadline for one Live view capture (the screenshot plus the lock check after it).
+    /// Deadline for one Live view capture (the screenshot plus the lock check after it),
+    /// and for one approval capture (`approvalScreenshots`).
     public var viewerScreenshotTimeout: Duration
+    /// The approval sheet's real-screen option ("Show the real screen when Jarvis asks";
+    /// the app's setting is on by default, this driver default is off so a driver built
+    /// without it captures nothing). It never changes the run: when the core asks the owner
+    /// to confirm (`Effect.confirm`), and only then, the driver makes one best-effort
+    /// capture of the screen the confirmation was computed from, bounded by
+    /// `viewerScreenshotTimeout`, before the question goes out. The frame is bound to that
+    /// observation (`ViewerFrameKey`): the observation's own pixels when the core asked for
+    /// them, else the Live view's frame of it, else `PhoneRunner.viewerScreenshot()`
+    /// followed by a tree read that must show the very screen evaluated (same tree, app,
+    /// size, keyboard and orientation) and report the phone unlocked; a screen that moved
+    /// on keeps nothing. Fail closed on the lock: only after an observation the runner
+    /// reported unlocked, never in an unlock wait. Errors and timeouts are ignored (no note,
+    /// no IO failure, never retried). The frame goes to `DriverDependencies.approvalFrames`
+    /// (memory only) and is removed as soon as the question is resolved, whatever resolved
+    /// it. Without `approvalFrames`, or while it does not accept frames, nothing is
+    /// captured at all.
+    public var approvalScreenshots: Bool
 
     /// The defaults, each overridable.
     public init(
@@ -63,7 +81,8 @@ public struct DriverConfiguration: Sendable, Equatable {
         unlockPollInterval: Duration = .seconds(2),
         lockWatchInterval: Duration? = .seconds(3),
         viewerScreenshots: Bool = false,
-        viewerScreenshotTimeout: Duration = .seconds(1)
+        viewerScreenshotTimeout: Duration = .seconds(1),
+        approvalScreenshots: Bool = false
     ) {
         self.observeTimeout = observeTimeout
         self.observeAttempts = observeAttempts
@@ -79,5 +98,6 @@ public struct DriverConfiguration: Sendable, Equatable {
         self.lockWatchInterval = lockWatchInterval
         self.viewerScreenshots = viewerScreenshots
         self.viewerScreenshotTimeout = viewerScreenshotTimeout
+        self.approvalScreenshots = approvalScreenshots
     }
 }

@@ -108,6 +108,9 @@ enum Theme {
     static let rippleGrowth: CGFloat = 40
     static let pressRing: CGFloat = 40
     static let swipeTrailWidth: CGFloat = 8
+    /// The approval sheet's picture of the screen at most this tall (it shrinks first on a
+    /// small sheet).
+    static let approvalPreviewMaxHeight: CGFloat = 300
 
     // MARK: Motion (ease-out; Reduce Motion disables movement)
     static let fast = Animation.easeOut(duration: 0.125)

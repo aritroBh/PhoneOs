@@ -39,6 +39,7 @@ private final class CountingViewer: JarvisViewerProtocol {
     func scene(query: CoreSceneQuery) throws -> CoreLiveScene { try call("scene") { try inner.scene(query: query) } }
     func screen(id: UInt32) throws -> CoreViewerScreen? { try call("screen") { try inner.screen(id: id) } }
     func timeline() throws -> CoreViewerTimeline { try call("timeline") { try inner.timeline() } }
+    func approvalTarget() throws -> CoreApprovalTarget? { try call("approvalTarget") { try inner.approvalTarget() } }
 }
 
 private let phone = Size(width: 393, height: 852)

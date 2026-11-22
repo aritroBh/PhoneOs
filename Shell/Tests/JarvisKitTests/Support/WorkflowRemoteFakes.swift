@@ -80,11 +80,16 @@ final class AppHarness {
          libraryNow: @escaping @Sendable () -> Date = Date.init,
          clock: any MonotonicClock = SystemMonotonicClock(),
          sleep: (@Sendable (Duration) async throws -> Void)? = nil,
-         settingsProblem: @escaping @MainActor () -> String? = { nil }) {
+         settingsProblem: @escaping @MainActor () -> String? = { nil },
+         demoRunner: (@Sendable (Duration, Int) -> any PhoneRunner)? = nil) {
         dir = scratchDirectory(name)
         owner = ScriptedOwner(rules)
         let paths = JarvisPaths(directory: dir)
-        coordinator = JarvisCoordinator(paths: paths, selection: .demo, demoDelay: .zero)
+        coordinator = JarvisCoordinator(
+            paths: paths, selection: .demo, agentBundleId: "dev.jarvis.app", tools: nil, configuration: DriverConfiguration(),
+            demoDelay: .zero, demoLockedPolls: 0, maxLockedWaitOverrideMs: nil, viewerFrames: ViewerFrameStore(),
+            approvalFrames: ApprovalFrameStore(), demoRunner: demoRunner
+        )
         center = TaskCenter(coordinator: coordinator, broker: owner.broker, settings: { JarvisSettings() },
                             settingsProblem: settingsProblem)
         skills = SkillLibrary(fileURL: paths.skills)
@@ -270,8 +275,9 @@ final class RemoteHarness {
     let service: RemoteControlService
 
     init(_ name: String, rules: ScriptedOwner.Rules = ScriptedOwner.Rules(), random: any RandomSource = GeneratorRandomSource(),
-         settingsProblem: @escaping @MainActor () -> String? = { nil }) {
-        base = AppHarness(name, rules: rules, settingsProblem: settingsProblem)
+         settingsProblem: @escaping @MainActor () -> String? = { nil },
+         demoRunner: (@Sendable (Duration, Int) -> any PhoneRunner)? = nil) {
+        base = AppHarness(name, rules: rules, settingsProblem: settingsProblem, demoRunner: demoRunner)
         secrets = RecordingSecretStore(log: log)
         let transport = RecordingTransport(self.transport, log: log)
         let probes = self.probes

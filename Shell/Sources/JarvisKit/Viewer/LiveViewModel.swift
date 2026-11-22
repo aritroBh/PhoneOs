@@ -10,6 +10,8 @@ import Synchronization
 ///   switch and calls `feed` once. The light timeline (steps and screen summaries, no
 ///   wireframes) is fetched again only when the change says something changed.
 /// - **One call per drawn frame**: `scene(_:)`.
+/// - **On a change of the pending confirmation**: `approvalTarget()` (the approval sheet's
+///   picture; see `ApprovalPreview`).
 /// - **On demand**: `screen(id:)` (a wireframe, cached by id: a screen never changes once
 ///   made; the cache is bounded and drops screens the timeline no longer refers to),
 ///   `replay(_:nowMs:reduceMotion:)`, `replayStatus()`, `encode()`.
@@ -30,6 +32,8 @@ public final class LiveViewModel: Sendable {
         var stale = false
         /// Most recently used last.
         var screens: [CoreViewerScreen] = []
+        /// The core's picture of the confirmation pending now (fetched when it changes).
+        var approval: CoreApprovalTarget?
     }
 
     private let viewer: (any JarvisViewerProtocol)?
@@ -85,7 +89,10 @@ public final class LiveViewModel: Sendable {
                 s.stale = true
                 return false
             }
-            guard change.steps || change.screens || change.activity || s.stale else { return false }
+            if change.approval {
+                s.approval = (try? viewer.approvalTarget()) ?? nil
+            }
+            guard change.steps || change.screens || change.activity || change.approval || s.stale else { return false }
             do {
                 s.timeline = try viewer.timeline()
                 s.stale = false
@@ -101,6 +108,11 @@ public final class LiveViewModel: Sendable {
 
     /// Steps, screen summaries and the activity (republished by `apply` only on a change).
     public var timeline: CoreViewerTimeline { state.withLock { $0.timeline } }
+
+    /// The core's picture of the confirmation pending now (the evaluated observation's key
+    /// and screen, the target, the caption), for the approval sheet; `nil` when none is
+    /// pending. Fetched once per change (one FFI call), never encoded.
+    public var approvalTarget: CoreApprovalTarget? { state.withLock { $0.approval } }
 
     // MARK: - Drawing
 

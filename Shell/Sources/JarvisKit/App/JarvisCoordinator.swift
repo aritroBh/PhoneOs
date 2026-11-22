@@ -145,8 +145,14 @@ public final class JarvisCoordinator: Sendable {
     /// The Live view's real-screen frames (memory only; emptied when a run starts). Filled
     /// only while `JarvisSettings.liveViewScreenshots` is on.
     public let viewerFrames: ViewerFrameStore
+    /// The approval sheet's real-screen frame (one, memory only, held only while the owner
+    /// is asked; emptied when a run starts and ends). Filled only while
+    /// `JarvisSettings.approvalScreenshots` is on.
+    public let approvalFrames: ApprovalFrameStore
+    /// Test seam: the runner of a demo run (default `DemoPhone(delay:lockedPolls:)`).
+    private let demoRunner: (@Sendable (Duration, Int) -> any PhoneRunner)?
 
-    public init(
+    public convenience init(
         paths: JarvisPaths,
         selection: BackendSelection,
         agentBundleId: String = "dev.jarvis.app",
@@ -155,9 +161,33 @@ public final class JarvisCoordinator: Sendable {
         demoDelay: Duration = .milliseconds(350),
         demoLockedPolls: Int = 0,
         maxLockedWaitOverrideMs: UInt64? = nil,
-        viewerFrames: ViewerFrameStore = ViewerFrameStore()
+        viewerFrames: ViewerFrameStore = ViewerFrameStore(),
+        approvalFrames: ApprovalFrameStore = ApprovalFrameStore()
+    ) {
+        self.init(
+            paths: paths, selection: selection, agentBundleId: agentBundleId, tools: tools, configuration: configuration,
+            demoDelay: demoDelay, demoLockedPolls: demoLockedPolls, maxLockedWaitOverrideMs: maxLockedWaitOverrideMs,
+            viewerFrames: viewerFrames, approvalFrames: approvalFrames, demoRunner: nil
+        )
+    }
+
+    /// The designated initialiser; `demoRunner` replaces the demo phone (tests).
+    init(
+        paths: JarvisPaths,
+        selection: BackendSelection,
+        agentBundleId: String,
+        tools: ToolRegistry?,
+        configuration: DriverConfiguration,
+        demoDelay: Duration,
+        demoLockedPolls: Int,
+        maxLockedWaitOverrideMs: UInt64?,
+        viewerFrames: ViewerFrameStore,
+        approvalFrames: ApprovalFrameStore,
+        demoRunner: (@Sendable (Duration, Int) -> any PhoneRunner)?
     ) {
         self.paths = paths
+        self.approvalFrames = approvalFrames
+        self.demoRunner = demoRunner
         self.viewerFrames = viewerFrames
         self.selection = selection
         self.agentBundleId = agentBundleId
@@ -227,7 +257,7 @@ public final class JarvisCoordinator: Sendable {
         let knownApps: [AppInfo]
         switch selection {
         case .demo:
-            runner = DemoPhone(delay: demoDelay, lockedPolls: demoLockedPolls)
+            runner = demoRunner?(demoDelay, demoLockedPolls) ?? DemoPhone(delay: demoDelay, lockedPolls: demoLockedPolls)
             baseModel = ScriptedModel(steps: Self.demoScript(for: text))
             knownApps = self.knownApps
         case .live:
@@ -287,12 +317,16 @@ public final class JarvisCoordinator: Sendable {
         // accepted unless the owner turned the option on.
         viewerFrames.removeAll()
         viewerFrames.isEnabled = settings.liveViewScreenshots
+        // The approval sheet's frame: none carried over; none at all with the option off.
+        approvalFrames.removeAll()
+        approvalFrames.isEnabled = settings.approvalScreenshots
         let deps = DriverDependencies(
             runner: runner, model: model, tools: tools, human: human, memory: memory, screenshots: screenshots,
-            attention: attention, viewerFrames: viewerFrames
+            attention: attention, viewerFrames: viewerFrames, approvalFrames: approvalFrames
         )
         var configuration = self.configuration
         configuration.viewerScreenshots = settings.liveViewScreenshots
+        configuration.approvalScreenshots = settings.approvalScreenshots
         let driver: SessionDriver
         switch await Self.startDriver(memoryJSON: memoryJSON, memory: memory, make: {
             try SessionDriver(config: config, task: task, memoryJSON: $0, dependencies: deps, configuration: configuration)
@@ -318,6 +352,8 @@ public final class JarvisCoordinator: Sendable {
         // Nobody watches this run's Live view (started remotely or by a schedule, or the app
         // is in the background): its real-screen frames go now; the wireframe stays.
         viewerFrames.runEnded()
+        // No question is open once the run has ended.
+        approvalFrames.removeAll()
         _ = try? TaskHistoryStore(fileURL: paths.history).append(TaskRecord(task: task, result: result, apps: apps, skill: skill, origin: origin))
         return .finished(task, result)
     }

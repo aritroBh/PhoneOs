@@ -162,7 +162,8 @@ deleted or overwritten, as `SkillLibrary` does) and the caller is told.
   `relaxed_categories`, `deny_categories`, `app_trust`, `remote_control_enabled`, `max_steps`,
   `max_minutes`, `max_locked_wait_minutes`: wrong type, `null`, or a value this build does not
   know, also one entry of a list) makes the whole file damaged, so it is set aside and the owner
-  must review; the model/runner addresses, context size and Away toggles stay lenient; `save` throws `StoredFileError` while the file is unreadable;
+  must review; the model/runner addresses, context size, Away toggles and the two real-screen
+  options stay lenient; `save` throws `StoredFileError` while the file is unreadable;
   `load()` (defaults for anything but `.loaded`) must not feed a task. **`SettingsGate`** (main
   actor) holds the settings the app runs with and the `problem`; `refresh()` re-reads while
   unreadable, `acknowledgeReview()` ends the damaged state. `TaskCenter(…, settingsProblem:)`
@@ -317,6 +318,23 @@ typed (else "Type into “<field>”" or "Type text"); never on runner-text scre
 host of http(s) URLs and only `<scheme>:` otherwise. iOS does not let an app draw over other
 apps, so the cursor is shown inside Jarvis, not over the app being driven.
 
+### Approval preview
+
+The confirmation sheet shows the screen Jarvis evaluated with the control it will act on
+outlined (docs/ARCHITECTURE.md, *Approval preview*). The core's viewer computes the picture
+(`LiveViewModel.approvalTarget`: the evaluated observation's `ViewerFrameKey`, its screen id,
+the target in unit coordinates, caption, VoiceOver label). With "Show the real screen when
+Jarvis asks" on (`JarvisSettings.approvalScreenshots`, default on →
+`DriverConfiguration.approvalScreenshots`, driver default off), `SessionDriver` makes one
+best-effort capture of that observation before it asks (`viewerScreenshotTimeout`; the core's
+own pixels or the Live view's frame of it are reused; a fresh capture is kept only when a tree
+read right after it shows the very screen evaluated, phone unlocked) into an
+`ApprovalFrameStore` (one frame, memory only), and removes it as soon as the question is
+resolved. `ApprovalPreview.make(prompt:target:frames:appActive:)` binds the picture to the
+pending confirmation and shows the real screen only under exactly the evaluated key with the app
+active, else the wireframe ("Layout only"). Nothing of it reaches the encoded timeline, the
+history or a paired device (tested in `ApprovalPreviewTests`).
+
 ## SessionDriver
 
 `SessionDriver` is an actor. `init(config:task:memoryJSON:dependencies:configuration:)`
@@ -379,8 +397,11 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   banner, detail (phrases, guidance, guardrails, on/off, Run now, Delete), editor for Written
   skills with the core's messages inline. Activity (from Ask and Control) offers "Save as
   skill" for finished tasks with a learned flow, and lists a workflow run with its sessions
-  under it. Apps: ways in + trust. Control: Remote control, Activity, Away mode rows, then the
-  rules (identifiers `rules.*` kept). Workflows: list (trigger, steps, on/off, next run,
+  under it. Apps: ways in + trust. Control: Remote control, Activity, Away mode rows, the Live
+  view section with its two settings, then the rules (identifiers `rules.*` kept). The
+  settings beyond the rules: "Show real screen in Live view" (`liveViewScreenshots`,
+  `live_view_screenshots`, off by default) and "Show the real screen when Jarvis asks"
+  (`approvalScreenshots`, `approval_screenshots`, on by default; see *Approval preview*). Workflows: list (trigger, steps, on/off, next run,
   load-issue banner, schedule note), detail as a node chain, editor (trigger kinds, ordered
   steps with add/remove/reorder, on-failure, the core's messages inline, skill warnings), Run
   now with the workflow run view (step states, the session inside, Stop, outcome). Ask runs a
@@ -414,7 +435,8 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   (`notificationAccess`), and Control shows one line when notifications are denied. In playground mode the
   Playground tab replaces Workflows (a sixth tab would go behind "More"); Workflows is then a
   row in Control. Also: the run view (what Jarvis sees, step timeline, Stop, "Using skill"),
-  confirmation and question sheets (`HumanPromptBroker`), Away mode (explanation, then a black
+  confirmation and question sheets (`HumanPromptBroker`; the confirmation sheet shows the
+  approval preview above the question), Away mode (explanation, then a black
   full-screen cover; leave by a 2 s touch and hold; `UIKitAwayDisplay` is the thin adapter),
   App Intent `AskJarvisIntent` + `JarvisShortcuts`. Tokens in
   `App/Jarvis/Design/Theme.swift`, icons in `JarvisIcon`. Launch arguments:
