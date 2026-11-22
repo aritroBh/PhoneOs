@@ -39,15 +39,12 @@ use std::rc::Rc;
 use jarvis_proto::{CompactScreen, Element, Rect, Role, Screen, ScreenCues, UiNode};
 
 use crate::fingerprint::{identity_key, FingerprintAssigner};
+use crate::layout::{addr, Layout, RawIndex};
 
 /// Trees deeper than this are cut (real iOS trees stay far below).
 pub(crate) const MAX_DEPTH: usize = 160;
 /// Vertical jitter (points) tolerated between elements of the same visual row.
 const ROW_TOLERANCE: f64 = 6.0;
-/// An element must keep this share of its area visible...
-const MIN_VISIBLE_FRACTION: f64 = 0.3;
-/// ...or at least this many points in both directions.
-const MIN_VISIBLE_SIDE: f64 = 24.0;
 /// At most this many child texts are merged into one label.
 const MAX_MERGED_PARTS: usize = 12;
 /// How far (points) an inner control may stick out of its wrapper and still count as inside.
@@ -67,6 +64,8 @@ struct Cand {
     fingerprint: u64,
     /// Nodes sharing a group are siblings or cell-mates (used to drop duplicate texts).
     group: usize,
+    /// The raw node's index in the digest's node order (see [`CompactView::sources`]).
+    source: u32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -91,7 +90,7 @@ fn is_transparent(node: &UiNode) -> bool {
 /// A node that is positively hidden: flagged invisible while having a real frame (off-screen
 /// or hidden by the app). Its whole subtree is out. An invisible node with an empty frame is
 /// not hidden in this sense: the runner flags every zero-size node, see [`is_transparent`].
-fn is_pruned(node: &UiNode) -> bool {
+pub(crate) fn is_pruned(node: &UiNode) -> bool {
     !node.visible && !node.frame.is_empty()
 }
 
@@ -187,12 +186,8 @@ struct Summaries<'a> {
     spans: BTreeMap<usize, Span>,
 }
 
-fn addr(node: &UiNode) -> usize {
-    node as *const UiNode as usize
-}
-
 impl<'a> Summaries<'a> {
-    fn build(root: &'a UiNode) -> Self {
+    fn build(root: &'a UiNode, layout: &Layout<'_>) -> Self {
         let mut s = Summaries {
             texts: Vec::new(),
             images: Vec::new(),
@@ -218,7 +213,7 @@ impl<'a> Summaries<'a> {
                 }
                 continue;
             }
-            if !is_live(node) || depth > MAX_DEPTH {
+            if !is_live(node) || depth > MAX_DEPTH || layout.is_excluded(node) {
                 continue;
             }
             let label = non_empty(&node.label).or_else(|| non_empty(&node.value));
@@ -325,11 +320,11 @@ fn contains_rect(outer: &Rect, inner: &Rect) -> bool {
 /// The only nearest same-role descendant of `node` (matches are not searched below), or `None`
 /// when there is none or more than one. Pruned subtrees and nodes without area do not count.
 /// Costs the size of `node`'s subtree minus the part below the match.
-fn single_nested<'a>(node: &'a UiNode) -> Option<&'a UiNode> {
+fn single_nested<'a>(node: &'a UiNode, layout: &Layout<'_>) -> Option<&'a UiNode> {
     let mut found: Option<&'a UiNode> = None;
     let mut stack: Vec<(&'a UiNode, usize)> = node.children.iter().rev().map(|c| (c, 1)).collect();
     while let Some((n, depth)) = stack.pop() {
-        if is_pruned(n) || depth > MAX_DEPTH {
+        if is_pruned(n) || depth > MAX_DEPTH || layout.is_excluded(n) {
             continue;
         }
         if n.role == node.role && !n.frame.is_empty() {
@@ -351,7 +346,7 @@ impl Target {
     /// only a tap on the inner one toggles. The target then takes the innermost frame; label
     /// and value stay the outer node's (the inner values are used where the outer has none).
     /// The chain is followed while each step stays unambiguous.
-    fn of(node: &UiNode) -> Target {
+    fn of(node: &UiNode, layout: &Layout<'_>) -> Target {
         let mut t = Target {
             frame: node.frame,
             label: None,
@@ -367,7 +362,7 @@ impl Target {
             return t;
         }
         let mut current = node;
-        while let Some(inner) = single_nested(current) {
+        while let Some(inner) = single_nested(current, layout) {
             if !same_control(node, inner) || !contains_rect(&current.frame, &inner.frame) {
                 break;
             }
@@ -399,6 +394,8 @@ struct State {
 }
 
 struct Walker<'a> {
+    layout: &'a Layout<'a>,
+    index: &'a RawIndex,
     sums: Summaries<'a>,
     scope: Option<&'a UiNode>,
     cands: Vec<Cand>,
@@ -409,7 +406,7 @@ struct Walker<'a> {
 
 impl<'a> Walker<'a> {
     fn walk(&mut self, node: &'a UiNode, st: &State) {
-        if is_pruned(node) || st.depth > MAX_DEPTH {
+        if is_pruned(node) || st.depth > MAX_DEPTH || self.layout.is_excluded(node) {
             return;
         }
         let id = self.next_id;
@@ -428,7 +425,7 @@ impl<'a> Walker<'a> {
                 self.descend(node, id, &inner);
             }
             Kind::Input => {
-                let target = Target::of(node);
+                let target = Target::of(node, self.layout);
                 let label = non_empty(&node.label)
                     .or_else(|| non_empty(&node.placeholder))
                     .or_else(|| target.label.clone())
@@ -439,7 +436,7 @@ impl<'a> Walker<'a> {
                 self.push(node, label, &st, Some(target));
             }
             Kind::Control => {
-                let target = Target::of(node);
+                let target = Target::of(node, self.layout);
                 let label = non_empty(&node.label)
                     .or_else(|| target.label.clone())
                     .or_else(|| {
@@ -566,29 +563,14 @@ impl<'a> Walker<'a> {
             secure,
             fingerprint,
             group: st.group,
+            source: self
+                .index
+                .by_addr
+                .get(&addr(node))
+                .copied()
+                .unwrap_or(u32::MAX),
         });
     }
-}
-
-/// The topmost visible Alert/Sheet (last in document order) and the first visible keyboard.
-fn find_overlays(root: &UiNode) -> (Option<&UiNode>, Option<&UiNode>) {
-    let mut alert = None;
-    let mut keyboard = None;
-    let mut stack = vec![root];
-    while let Some(n) = stack.pop() {
-        if is_pruned(n) {
-            continue;
-        }
-        match n.role {
-            Role::Alert | Role::Sheet if !n.frame.is_empty() => alert = Some(n),
-            Role::Keyboard if keyboard.is_none() && !n.frame.is_empty() => {
-                keyboard = Some(n);
-            }
-            _ => {}
-        }
-        stack.extend(n.children.iter().rev());
-    }
-    (alert, keyboard)
 }
 
 /// Longest Return-key label kept, in characters (real ones are one or two words).
@@ -637,36 +619,32 @@ pub(crate) fn return_key_label(keyboard: &UiNode) -> Option<String> {
     by_label
 }
 
-/// Clips `frame` to the screen and above the keyboard; `None` when too little remains visible.
-fn visible_frame(frame: Rect, bounds: Rect, keyboard: Option<Rect>) -> Option<Rect> {
-    if frame.is_empty() {
-        return None;
-    }
-    let mut vis = if bounds.is_empty() {
-        frame
-    } else {
-        frame.intersection(&bounds)?
-    };
-    if let Some(kb) = keyboard {
-        if kb.intersects(&vis) {
-            if vis.y >= kb.y {
-                return None;
-            }
-            vis.height = kb.y - vis.y;
-        }
-    }
-    let fraction = vis.area() / frame.area();
-    let big_enough = vis.width >= MIN_VISIBLE_SIDE && vis.height >= MIN_VISIBLE_SIDE;
-    (!vis.is_empty() && (fraction >= MIN_VISIBLE_FRACTION || big_enough)).then_some(vis)
-}
-
 fn round(f: &Rect) -> [i64; 4] {
     // Float to int saturates; frames are small screen coordinates.
     [f.x, f.y, f.width, f.height].map(|v| v.round() as i64)
 }
 
+/// A compact screen plus where its elements come from in the raw tree. Kept out of the
+/// FFI: the agent holds it beside the screen.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompactView {
+    /// The compact screen ([`compact`]).
+    pub screen: CompactScreen,
+    /// For each element of `screen` (by position), the index of the raw node it was listed
+    /// from, in the digest's node order (depth-first pre-order over the nodes that are not
+    /// excluded; see `screen_digest`). An approval pins its target's raw node by it.
+    pub sources: Vec<u32>,
+    /// For each raw node (by that index), its parent's index (`u32::MAX` for the root).
+    pub parents: Vec<u32>,
+    /// For each raw node, one past the index of its last descendant: node `j` is inside
+    /// node `i`'s subtree when `i < j < ends[i]`.
+    pub ends: Vec<u32>,
+}
+
 /// Flattens a screen to its indexed, ordered, deduplicated actionable/informative elements.
 ///
+/// * Excluded subtrees (the keyboard's own window, SpringBoard's status bar; see
+///   `crate::layout`) are never listed.
 /// * Invisible, zero-area, off-screen (or mostly off-screen) and keyboard-covered nodes are
 ///   dropped; partly visible ones keep the visible part of their frame. A hidden node with a
 ///   real frame takes its subtree with it, a zero-size one (flagged hidden by the runner) does
@@ -680,9 +658,18 @@ fn round(f: &Rect) -> [i64; 4] {
 ///   texts are not listed again. A row holding controls is not listed; its controls are.
 /// * Secure fields never carry a value; a value equal to the placeholder is dropped.
 pub fn compact(screen: &Screen) -> CompactScreen {
-    let (alert, keyboard) = find_overlays(&screen.root);
+    compact_view(screen).screen
+}
+
+/// [`compact`], plus each element's raw node and the raw tree's shape ([`CompactView`]).
+pub fn compact_view(screen: &Screen) -> CompactView {
+    let layout = Layout::of(screen);
+    let index = RawIndex::build(&layout, &screen.root);
+    let alert = layout.alert;
     let mut walker = Walker {
-        sums: Summaries::build(&screen.root),
+        layout: &layout,
+        index: &index,
+        sums: Summaries::build(&screen.root, &layout),
         scope: alert,
         cands: Vec::new(),
         ordinals: FingerprintAssigner::default(),
@@ -701,13 +688,11 @@ pub fn compact(screen: &Screen) -> CompactScreen {
     walker.walk(&screen.root, &start);
 
     let bounds = screen.bounds();
-    let return_key = keyboard.and_then(return_key_label);
-    let keyboard = keyboard.map(|k| k.frame);
-    let occluder = if alert.is_some() { None } else { keyboard };
+    let return_key = layout.keyboard.and_then(return_key_label);
     let mut kept: Vec<(Cand, Rect)> = walker
         .cands
         .into_iter()
-        .filter_map(|c| visible_frame(c.frame, bounds, occluder).map(|f| (c, f)))
+        .filter_map(|c| layout.shown_frame(c.frame).map(|f| (c, f)))
         .collect();
 
     // Texts duplicating a control's label inside the same group are redundant.
@@ -733,8 +718,10 @@ pub fn compact(screen: &Screen) -> CompactScreen {
     let frames: Vec<Rect> = kept.iter().map(|(_, f)| *f).collect();
     let mut slots: Vec<Option<(Cand, Rect)>> = kept.into_iter().map(Some).collect();
     let mut elements = Vec::with_capacity(slots.len());
+    let mut sources = Vec::with_capacity(slots.len());
     for i in reading_order(&frames) {
         if let Some((c, frame)) = slots.get_mut(i).and_then(Option::take) {
+            sources.push(c.source);
             elements.push(Element {
                 index: u32::try_from(elements.len() + 1).unwrap_or(u32::MAX),
                 role: c.role,
@@ -751,19 +738,24 @@ pub fn compact(screen: &Screen) -> CompactScreen {
         }
     }
 
-    CompactScreen {
+    let screen_out = CompactScreen {
         app_bundle_id: screen.app_bundle_id.clone(),
         app_name: screen.app_name.clone(),
         size: screen.size,
-        keyboard_visible: screen.keyboard_visible || keyboard.is_some(),
+        keyboard_visible: screen.keyboard_visible || layout.keyboard.is_some(),
         elements,
         cues: ScreenCues {
             return_key,
-            ..cues(alert.unwrap_or(&screen.root), bounds)
+            ..cues(alert.unwrap_or(&screen.root), bounds, &layout)
         },
+    };
+    CompactView {
+        screen: screen_out,
+        sources,
+        parents: index.parents,
+        ends: index.ends,
     }
 }
-
 /// `(pages, percent)` of an iOS scroll indicator: label `Vertical scroll bar, N pages`
 /// (`1 page`), value `P%`. `None` for anything else.
 fn vertical_scroll_bar(node: &UiNode) -> Option<(u32, Option<u32>)> {
@@ -806,11 +798,11 @@ fn page_indicator(node: &UiNode) -> Option<(u32, u32)> {
 /// that is hidden or off screen says nothing. The page indicator is any node whose value
 /// reads `Page N of M` (SpringBoard's page control and its search pill carry it). The
 /// labels are English; other locales simply get no cue.
-fn cues(root: &UiNode, bounds: Rect) -> ScreenCues {
+fn cues(root: &UiNode, bounds: Rect, layout: &Layout<'_>) -> ScreenCues {
     let mut out = ScreenCues::default();
     let mut stack: Vec<(&UiNode, usize)> = vec![(root, 0)];
     while let Some((n, depth)) = stack.pop() {
-        if is_pruned(n) || depth > MAX_DEPTH {
+        if is_pruned(n) || depth > MAX_DEPTH || layout.is_excluded(n) {
             continue;
         }
         let on_screen = !n.frame.is_empty() && (bounds.is_empty() || n.frame.intersects(&bounds));

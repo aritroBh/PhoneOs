@@ -5,36 +5,40 @@
 //! asked. The digest is taken from the raw tree as the runner reported it, *before*
 //! compaction cuts or drops anything (merged-label caps, unlabeled images, placeholders,
 //! identifiers, hidden or off-screen nodes, depth cuts), so nothing the compact screen
-//! leaves out can change under a standing approval.
+//! leaves out can change under a standing approval. It is one of four parts of the record
+//! (see `jarvis-agent`): the digest (A1), the compact screen's content (A2), the target's
+//! raw node (A3, see [`crate::CompactView::sources`]) and the summary (A4).
 //!
 //! # Input
 //!
-//! The foreground app's bundle id, then every node in depth-first pre-order: its depth,
-//! role, label, value, identifier, placeholder, and the `enabled`, `selected` and `secure`
-//! flags. Every field is length-prefixed, so no two trees share an input.
+//! The foreground app's bundle id, then every node that is not excluded (see
+//! [`crate::layout`]), in depth-first pre-order: its depth, role, label, value, identifier,
+//! placeholder, the `enabled`, `selected` and `secure` flags, and whether it is **shown**:
+//! the exact predicate compaction uses to list a node (no pruned ancestor, within the depth
+//! cap, inside the alert while one is up, and enough of its frame on screen and above the
+//! keyboard; one function, `Layout::shown_frame`, decides it for both). Every field is
+//! length-prefixed, so no two trees share an input.
+//!
+//! So a list that scrolls a row out of (or into) the shown set, a hidden panel that becomes
+//! shown, or a keyboard that now covers a row changes the digest; a scroll or layout shift
+//! that keeps every node's shown bit does not.
 //!
 //! Not part of it:
 //!
-//! * **frames** (content may scroll; the agent re-plans the point on the fresh screen), and
-//!   the geometric flags derived from them (`visible`, `hittable`) and `focused`;
+//! * **frames** themselves (the agent re-plans the point on the fresh screen), `focused`,
+//!   and the raw `visible`/`hittable` flags (the shown bit covers them);
 //! * the **value of a secure field** (its presence, role and label are hashed; the value is
 //!   never even read into the input);
-//! * the subtree of the system **status bar** (`Other("StatusBar")`, XCUIElement type 25):
-//!   its clock, battery and signal change on their own;
-//! * the subtree of the **keyboard** (`Keyboard`), and of the keyboard's input-assistant bar
-//!   (identifier `SystemInputAssistantView`: typing predictions, the autofill bar) while a
-//!   keyboard is in the tree: keys and predictions change on their own. The keyboard's
-//!   Return-key label (what Return does: send, search, go) stays in, as one entry;
-//! * on SpringBoard only, the badge part of an icon's label after its first comma
-//!   (`Mail, 3 unread` → `Mail`): the app's name stays in;
+//! * **excluded** subtrees (see [`crate::layout`]): the keyboard's own top-level window (or
+//!   only the `Keyboard` node's subtree when it shares a window with app content), and on
+//!   SpringBoard only the status bar under a top-level window. Nothing is excluded by
+//!   identifier. The keyboard's Return-key label is not hashed: the approval record carries
+//!   it only for an action that presses Return;
+//! * on SpringBoard only, the badge part after the first comma of an app **icon**'s label
+//!   (role `Icon`: `Mail, 3 unread` → `Mail`); other nodes keep their whole label;
 //! * the position (`12%`) of iOS's scroll indicators (`Vertical scroll bar, N pages` /
 //!   `Horizontal scroll bar, N page`: an `Other` node with a whole percentage as value).
-//!   Their label, page count included, stays in. UIKit and SwiftUI lists keep only the rows
-//!   near the viewport in the tree, so a list that scrolled usually differs in its rows
-//!   anyway and voids the approval (fail closed).
-//!
-//! Exclusions go by role (status bar, keyboard) or by iOS's fixed identifier/label
-//! (input-assistant bar, scroll indicator), never by position on the screen.
+//!   Their label, page count included, stays in.
 //!
 //! **Consequence, deliberately fail-closed:** a screen with live-updating text inside the
 //! app (an ETA, a countdown, a ticking clock) never shows the same digest twice, so an
@@ -50,7 +54,7 @@ use std::fmt;
 use jarvis_proto::{Role, Screen, UiNode, SPRINGBOARD_BUNDLE_ID};
 use sha2::{Digest, Sha256};
 
-use crate::compact::return_key_label;
+use crate::layout::Layout;
 
 /// The exact digest of a raw screen (see the module docs). `Debug` shows a short hex prefix.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -109,23 +113,10 @@ fn put_opt(sink: &mut impl Sink, s: Option<&str>) {
     }
 }
 
-/// Whether `role` is the system status bar (`Other("StatusBar")`, any naming style).
-fn is_status_bar(role: &Role) -> bool {
-    match role {
-        Role::Other(name) => {
-            let n: String = name
-                .chars()
-                .filter(|c| !matches!(c, '_' | '-' | ' '))
-                .flat_map(char::to_lowercase)
-                .collect();
-            n == "statusbar"
-        }
-        _ => false,
-    }
+/// Whether `role` is a SpringBoard app icon (`Icon`, any letter case).
+fn is_icon(role: &Role) -> bool {
+    matches!(role, Role::Other(name) if name.trim().eq_ignore_ascii_case("icon"))
 }
-
-/// iOS's identifier of the bar above the keyboard (typing predictions, autofill).
-const INPUT_ASSISTANT_ID: &str = "SystemInputAssistantView";
 
 /// Whether `node` is one of iOS's scroll indicators, whose value (the position) is left out.
 fn is_scroll_indicator(node: &UiNode) -> bool {
@@ -155,31 +146,17 @@ fn is_scroll_indicator(node: &UiNode) -> bool {
 
 /// Writes the digest input of `screen` (see the module docs) to `sink`.
 fn feed(screen: &Screen, sink: &mut impl Sink) {
-    sink.put(b"jarvis-screen-digest-v1");
+    sink.put(b"jarvis-screen-digest-v2");
     put_str(sink, screen.app_bundle_id.trim());
     let springboard = screen
         .app_bundle_id
         .trim()
         .eq_ignore_ascii_case(SPRINGBOARD_BUNDLE_ID);
-    let keyboard_up = screen.root.iter().any(|n| n.role == Role::Keyboard);
-    let mut stack: Vec<(&UiNode, u32)> = vec![(&screen.root, 0)];
-    while let Some((node, depth)) = stack.pop() {
-        if is_status_bar(&node.role) {
-            continue;
-        }
-        if node.role == Role::Keyboard {
-            // One entry for the keyboard: what its Return key does.
-            sink.put(b"K");
-            sink.put(&depth.to_le_bytes());
-            put_opt(sink, return_key_label(node).as_deref());
-            continue;
-        }
-        if keyboard_up && node.identifier.as_deref() == Some(INPUT_ASSISTANT_ID) {
-            continue;
-        }
+    let layout = Layout::of(screen);
+    layout.walk(&screen.root, |node, depth, shown| {
         let secure = node.secure || node.role == Role::SecureTextField;
         let label = node.label.as_deref().map(|l| {
-            if springboard && node.role != Role::StaticText {
+            if springboard && is_icon(&node.role) {
                 l.split_once(',').map_or(l, |(name, _badge)| name)
             } else {
                 l
@@ -201,10 +178,9 @@ fn feed(screen: &Screen, sink: &mut impl Sink) {
             u8::from(node.enabled),
             u8::from(node.selected),
             u8::from(secure),
+            u8::from(shown),
         ]);
-        let child = depth.saturating_add(1);
-        stack.extend(node.children.iter().rev().map(|c| (c, child)));
-    }
+    });
 }
 
 /// The exact digest of `screen`'s raw tree (see the module docs).

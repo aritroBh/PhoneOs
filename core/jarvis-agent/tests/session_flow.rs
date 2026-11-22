@@ -745,6 +745,43 @@ fn record_a_flow_then_replay_it_with_zero_model_calls() {
     assert_eq!(second.memory.log.len(), 2);
 }
 
+/// Fifth review: a learned flow replayed on a screen read from runner text does not skip
+/// the unverified-screen question: its first step (a harmless row tap on a typed tree)
+/// asks, with the warning, and no model call is made.
+#[test]
+fn a_replay_on_a_runner_text_screen_still_asks() {
+    let script = wifi_script();
+    let first = run(
+        config(),
+        "Turn off Wi-Fi",
+        MemoryStore::new(),
+        wifi_phone(),
+        Script::model(&strs(&script)).decisions(&[true, true]),
+    );
+    assert_eq!(first.memory.flows.len(), 1);
+    let mut session = jarvis_agent::Session::new(
+        config(),
+        jarvis_proto::TaskSpec::new("t2", "turn off Wi-Fi."),
+        first.memory,
+    );
+    let at = |n: u64, e: jarvis_proto::Event| jarvis_proto::TimedEvent::new(n, e);
+    assert!(matches!(
+        session.step(at(1_000, jarvis_proto::Event::Start)),
+        Effect::Observe { .. }
+    ));
+    let e = session.step(at(
+        1_050,
+        jarvis_proto::Event::ObservedRunnerText(jarvis_proto::Observation::new(settings_screen())),
+    ));
+    let Effect::Confirm(req) = e else {
+        panic!("expected the question, got {e:?}")
+    };
+    assert_eq!(req.category, RiskCategory::Unverified);
+    assert!(req
+        .summary
+        .starts_with(jarvis_safety::UNVERIFIED_SCREEN_WARNING));
+}
+
 #[test]
 fn replay_divergence_falls_back_to_the_model() {
     let script = wifi_script();

@@ -11,8 +11,9 @@
 //! - Two proto names collide with Apple frameworks in Swift and are renamed:
 //!   `Observation` (the Swift `Observation` module) is [`ScreenObservation`] and `Progress`
 //!   (`Foundation.Progress`) is [`SessionProgress`].
-//! - [`Event::ObservedRunnerText`] has no proto counterpart: it carries the runner's raw
-//!   text tree, which Rust parses (see `crate::runner`).
+//! - [`Event::ObservedRunnerText`] carries the runner's raw text tree, which Rust parses
+//!   (see `crate::runner`) into the proto `Event::ObservedRunnerText`: the session treats
+//!   that screen as unverified (every state-changing action on it asks, with a warning).
 //!
 //! Conversions live in `crate::convert`.
 
@@ -472,8 +473,11 @@ pub enum Event {
     Observed {
         observation: ScreenObservation,
     },
-    /// The device path: the runner's raw text tree, parsed in Rust. A tree that cannot be
+    /// The third-party runner's raw text tree, parsed in Rust. A tree that cannot be
     /// parsed becomes an observation of an empty screen of that app (see `crate::runner`).
+    /// The format is ambiguous and forgeable by on-screen text, so the session treats the
+    /// screen as unverified: every state-changing action on it asks, and the question starts
+    /// with a warning. The typed tree (`observed`) is the supported path for acting.
     ObservedRunnerText {
         snapshot: RunnerSnapshot,
     },

@@ -13,11 +13,12 @@ mod compact;
 mod diff;
 mod digest;
 mod fingerprint;
+mod layout;
 mod lookup;
 mod render;
 mod runner_text;
 
-pub use compact::compact;
+pub use compact::{compact, compact_view, CompactView};
 pub use diff::{diff, screen_hash, ScreenDiff};
 pub use digest::{screen_digest, screen_digest_input, ScreenDigest};
 pub use fingerprint::{fingerprint, fnv1a64, identity_key};

@@ -28,8 +28,14 @@ use crate::ui::Observation;
 pub enum Event {
     /// Begin the task.
     Start,
-    /// Result of `Effect::Observe`.
+    /// Result of `Effect::Observe`: a typed tree (Jarvis's own runner).
     Observed(Observation),
+    /// Result of `Effect::Observe` whose tree was parsed from the third-party runner's text
+    /// format. That format is ambiguous and forgeable by on-screen text, so the session
+    /// treats such a screen as unverified: every state-changing runner action on it asks,
+    /// with a warning (see `jarvis_safety::ScreenSource`). Answers `Observe` exactly like
+    /// `Observed` otherwise.
+    ObservedRunnerText(Observation),
     /// Result of `Effect::Infer`.
     ModelOutput(ModelOutput),
     /// `Effect::Infer` failed in the runtime.
@@ -80,6 +86,7 @@ impl std::fmt::Debug for Event {
         match self {
             Event::Start => f.write_str("Start"),
             Event::Observed(o) => f.debug_tuple("Observed").field(o).finish(),
+            Event::ObservedRunnerText(o) => f.debug_tuple("ObservedRunnerText").field(o).finish(),
             Event::ModelOutput(o) => f.debug_tuple("ModelOutput").field(o).finish(),
             Event::ModelFailed { error } => {
                 f.debug_struct("ModelFailed").field("error", error).finish()
@@ -112,6 +119,7 @@ impl Event {
         match self {
             Event::Start => "start",
             Event::Observed(_) => "observed",
+            Event::ObservedRunnerText(_) => "observed_runner_text",
             Event::ModelOutput(_) => "model_output",
             Event::ModelFailed { .. } => "model_failed",
             Event::ActResult(_) => "act_result",

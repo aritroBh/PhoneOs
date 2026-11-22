@@ -117,3 +117,30 @@ pub fn state<'a>(r: &'a RunReport, app: &str) -> &'a serde_json::Value {
 pub fn categories(r: &RunReport) -> Vec<RiskCategory> {
     r.confirm_categories()
 }
+
+/// `typed` on a typed tree, `text` in runner-text mode. A screen read from runner text is
+/// unverified (fifth review): every state-changing runner action on it asks (category
+/// `Unverified`, the summary starting with the warning), so the owner sees more questions
+/// there than on the typed path.
+pub fn per_mode<T>(mode: ObserveMode, typed: T, text: T) -> T {
+    match mode {
+        ObserveMode::Structured => typed,
+        ObserveMode::RunnerText => text,
+    }
+}
+
+/// In runner-text mode, every `Unverified` question starts with the warning.
+pub fn assert_text_warnings(r: &RunReport, mode: ObserveMode) {
+    for c in &r.confirmations {
+        let warned = c
+            .request
+            .summary
+            .starts_with(jarvis_safety::UNVERIFIED_SCREEN_WARNING);
+        match mode {
+            ObserveMode::RunnerText if c.request.category != RiskCategory::FirstUse => {
+                assert!(warned, "{}", c.request.summary)
+            }
+            _ => assert!(!warned, "{}", c.request.summary),
+        }
+    }
+}

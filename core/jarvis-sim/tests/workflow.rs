@@ -222,9 +222,19 @@ fn three_step_workflow_with_a_confined_skill_runs_end_to_end() {
         assert!(!launched(text, SHOP), "{}", text.transcript());
         // The skill skipped neither first-use approval of Messages nor the send
         // confirmation.
+        // Runner text: the tap on Mom and the typing ask too (unverified screen).
         assert_eq!(
             text.confirm_categories(),
-            vec![RiskCategory::FirstUse, RiskCategory::SendMessage]
+            per_mode(
+                mode,
+                vec![RiskCategory::FirstUse, RiskCategory::SendMessage],
+                vec![
+                    RiskCategory::FirstUse,
+                    RiskCategory::Unverified,
+                    RiskCategory::Unverified,
+                    RiskCategory::SendMessage
+                ]
+            )
         );
         assert_eq!(text.confirmations[0].request.app, MESSAGES);
 
@@ -232,9 +242,20 @@ fn three_step_workflow_with_a_confined_skill_runs_end_to_end() {
         let wifi = &d.sessions[1];
         assert!(!wifi.requests[0].user.contains("Owner's guidance"));
         assert!(launched(wifi, "com.apple.Preferences"));
+        // Runner text: `open_app` and the tap on the Wi-Fi row ask too (unverified
+        // screen; `open_app` is a runner action that changes state).
         assert_eq!(
             wifi.confirm_categories(),
-            vec![RiskCategory::FirstUse, RiskCategory::SystemSetting]
+            per_mode(
+                mode,
+                vec![RiskCategory::FirstUse, RiskCategory::SystemSetting],
+                vec![
+                    RiskCategory::Unverified,
+                    RiskCategory::FirstUse,
+                    RiskCategory::Unverified,
+                    RiskCategory::SystemSetting
+                ]
+            )
         );
         // Approvals carry over in memory like for any two sessions.
         assert!(wifi.memory.is_app_approved(MESSAGES));

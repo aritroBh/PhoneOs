@@ -23,11 +23,18 @@
 //!
 //! Approvals are not acted on blind: the owner may answer long after the question, so once
 //! the last confirmation of a runner action is approved the session observes again and runs
-//! the action only if the fresh raw tree's exact digest equals the one the owner approved
-//! (`jarvis_observe::screen_digest`: no tolerance; a screen with live-updating text cannot
-//! be confirmed, fail closed) and the target is the same; the action is re-planned on the
-//! fresh screen, see `recheck_approved`; otherwise the model is told it was not done and
-//! the action goes through the full gate again. Within one approval, and never as a step,
+//! the action only if the four records of the approval hold on the fresh screen: the raw
+//! tree's exact digest with every node's shown bit (A1, `jarvis_observe::screen_digest`: no
+//! tolerance; a screen with live-updating text cannot be confirmed, fail closed), the
+//! compact screen's content (A2), the target's raw node (A3) and the identical summary in
+//! the same category (A4); the action is re-planned on the fresh screen, see
+//! `recheck_approved`; otherwise the model is told it was not done and the action goes
+//! through the full gate again.
+//!
+//! Screen source: an observation parsed from the third-party runner's text format
+//! (`Event::ObservedRunnerText`) is unverified: every state-changing runner action on it
+//! asks (at least `Unverified`, the summary starting with a fixed warning), learned flows
+//! included (`jarvis_safety::ScreenSource`). Within one approval, and never as a step,
 //! the look may bring the asked app back once (when the agent's own app or the home screen
 //! is in front) and wait [`APPROVAL_SETTLE_MS`] once for a settling screen before a last
 //! look: `Observe`, (`LaunchApp`, `Observe`), (`Wait`, `Observe`) (see `act_approved`).
@@ -80,7 +87,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use jarvis_memory::{LogEntry, LogStep, MemoryStore, Next, RecordedStep, Recorder, Replayer};
-use jarvis_observe::{compact, diff, marks, screen_digest, screen_hash, ScreenDigest};
+use jarvis_observe::{compact_view, diff, marks, screen_digest, screen_hash, ScreenDigest};
 use std::collections::VecDeque;
 
 use jarvis_proto::{
@@ -90,10 +97,10 @@ use jarvis_proto::{
 };
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
-    approval_context, check_app, check_app_name, check_confinement, evaluate, first_use_app,
+    approval_context, check_app, check_app_name, check_confinement, evaluate_from, first_use_app,
     first_use_request, is_springboard, label_names_denied_app, redact, redact_screen,
-    sanitize_screen_text, search_names_denied_app, summarize, widget_names_denied_app, Budget,
-    BudgetVerdict, Decision, Verdict,
+    sanitize_screen_text, search_names_denied_app, summary_for, widget_names_denied_app, Budget,
+    BudgetVerdict, Decision, ScreenSource, ScreenTree, Verdict,
 };
 
 use crate::changes::describe_change;
@@ -166,6 +173,18 @@ struct Current {
     screen: CompactScreen,
     /// Prompt-safe copy: profile values masked, secrets redacted, text sanitised.
     safe: CompactScreen,
+    /// `screen` with the owner's profile values masked (nothing else changed): what
+    /// confirmation summaries are built from.
+    masked: CompactScreen,
+    /// Per element of `screen` (by position), the raw node it was listed from, and the raw
+    /// tree's shape (see `jarvis_observe::CompactView`): an approval pins its target's raw
+    /// node; summaries prefer the target's own container.
+    sources: Vec<u32>,
+    parents: Vec<u32>,
+    ends: Vec<u32>,
+    /// Where the tree came from: a typed tree, or runner text (unverified, see
+    /// `jarvis_safety::ScreenSource`).
+    source: ScreenSource,
     /// `screen_hash` of `screen`.
     hash: u64,
     /// The exact digest of the raw tree `screen` was compacted from (see
@@ -190,7 +209,12 @@ impl Default for Current {
         };
         Self {
             screen: empty.clone(),
+            masked: empty.clone(),
             safe: empty,
+            sources: Vec::new(),
+            parents: Vec::new(),
+            ends: Vec::new(),
+            source: ScreenSource::Typed,
             hash: 0,
             digest: ScreenDigest::default(),
             screenshot: None,
@@ -424,6 +448,8 @@ pub struct Session {
     /// Approved actions not carried out because the screen changed after the approval
     /// (see [`MAX_STALE_APPROVALS`]).
     stale_approvals: u32,
+    /// Where the observation being handled came from (`Observed` or `ObservedRunnerText`).
+    incoming_source: ScreenSource,
 }
 
 impl std::fmt::Debug for Session {
@@ -463,10 +489,9 @@ fn minutes(ms: u64) -> String {
     }
 }
 
-/// The prompt-safe copy of a screen: profile values masked back to placeholders, secrets
-/// redacted (secure fields lose their value), every text sanitised. Fingerprints, frames
-/// and indices are kept, so element numbers match the original.
-fn prompt_safe(screen: &CompactScreen, memory: &MemoryStore) -> CompactScreen {
+/// `screen` with the owner's profile values masked back to placeholders (and secure fields'
+/// values dropped); nothing else changed, so element numbers, frames and states match.
+fn profile_masked(screen: &CompactScreen, memory: &MemoryStore) -> CompactScreen {
     let profile = &memory.profile;
     let mut masked = screen.clone();
     for e in &mut masked.elements {
@@ -478,6 +503,16 @@ fn prompt_safe(screen: &CompactScreen, memory: &MemoryStore) -> CompactScreen {
         };
         e.placeholder = e.placeholder.as_deref().map(|p| mask(p, profile));
     }
+    masked.cues.return_key = masked.cues.return_key.as_deref().map(|k| mask(k, profile));
+    masked
+}
+
+/// The prompt-safe copy of a screen: profile values masked back to placeholders, secrets
+/// redacted (secure fields lose their value), every text sanitised. Fingerprints, frames
+/// and indices are kept, so element numbers match the original.
+fn prompt_safe(screen: &CompactScreen, memory: &MemoryStore) -> CompactScreen {
+    let profile = &memory.profile;
+    let masked = profile_masked(screen, memory);
     let mut safe = redact_screen(&masked);
     for e in &mut safe.elements {
         e.label = sanitize_screen_text(&e.label);
@@ -552,12 +587,26 @@ impl Session {
             lock_waits: 0,
             lock_uncertain: false,
             stale_approvals: 0,
+            incoming_source: ScreenSource::Typed,
         }
     }
 
     /// Feeds one event and returns the one thing the shell must do next.
     pub fn step(&mut self, ev: TimedEvent) -> Effect {
         let TimedEvent { now_ms: now, event } = ev;
+        // An observation parsed from runner text is handled like any other, but the screen
+        // it carries is marked unverified (see `ingest`).
+        let event = match event {
+            Event::ObservedRunnerText(obs) => {
+                self.incoming_source = ScreenSource::RunnerText;
+                Event::Observed(obs)
+            }
+            Event::Observed(obs) => {
+                self.incoming_source = ScreenSource::Typed;
+                Event::Observed(obs)
+            }
+            other => other,
+        };
         let state = std::mem::replace(&mut self.state, State::Idle);
         let state = match state {
             State::Finished(outcome) => {
@@ -1290,18 +1339,19 @@ impl Session {
     }
 
     /// `pending` re-planned on the current screen, when it is still the action the owner
-    /// approved: the exact digest of the fresh raw tree **equals** the one taken when the
-    /// question was asked (`pending.before_digest`; see [`jarvis_observe::screen_digest`]:
-    /// every node's role, texts, identifier, placeholder and states, before compaction
-    /// drops anything; no tolerance, so live-updating text voids the approval), the target
-    /// sits at the same position in the compact screen with the same role, texts and
-    /// states (`jarvis_safety::ApprovalContext::target_holds_on`, so a twin cannot take its
-    /// place) and its fresh frame contains the re-planned point; on the home screen a launch that cannot be
-    /// named still finds no denied app among the results; and a gate decision on the
-    /// fresh screen asks for nothing new (no denial, and no confirmation other than the one
-    /// approved, in the same category: the record already pins everything the summary is
-    /// built from). Frames are not compared, so a list that only scrolled keeps the
-    /// approval and the action is re-planned where its target is now. `None` otherwise.
+    /// approved: (A1) the exact digest of the fresh raw tree **equals** the one taken when
+    /// the question was asked (`pending.before_digest`; see [`jarvis_observe::screen_digest`]:
+    /// every node's role, texts, identifier, placeholder, states and shown bit; no
+    /// tolerance, so live-updating text voids the approval); (A2) the compact screen's
+    /// content is equal, frames only ignored, with the target at the same position
+    /// (`jarvis_safety::ApprovalContext::holds_on`); (A3) that element comes from the same
+    /// raw node (`pending.before_target_source`), so a twin cannot take its place; (A4) the
+    /// gate on the fresh screen asks for nothing new: no denial, and the same category with
+    /// the identical summary recomputed for this target ([`Self::risk_summary`]); the
+    /// target's fresh frame contains the re-planned point; and on the home screen a launch
+    /// that cannot be named still finds no denied app among the results. Frames are not
+    /// compared, so a scroll that keeps every node's shown bit keeps the approval and the
+    /// action is re-planned where its target is now. `None` otherwise.
     fn recheck_approved(
         &self,
         pending: &Pending,
@@ -1309,8 +1359,11 @@ impl Session {
     ) -> Option<Pending> {
         let screen = &self.current.screen;
         let action = pending.action.clone();
+        // A1: the raw digest; A2: the compact content (and the target's position, the app,
+        // and the Return key for a submit); A3: the target is the same raw node.
         if self.current.digest != pending.before_digest
-            || !approval_context(&action, &pending.before).target_holds_on(&action, screen)
+            || !approval_context(&action, &pending.before).holds_on(&action, screen)
+            || self.target_source(&action) != pending.before_target_source
         {
             return None;
         }
@@ -1335,11 +1388,27 @@ impl Session {
             },
             other => other.clone(),
         };
-        match evaluate(&self.config.policy, &executed, screen, None) {
-            Decision::Allow => {}
+        // A4 and the gate: nothing new is asked, and an approved risk is the same category
+        // with the identical summary, recomputed for this target on this screen.
+        match evaluate_from(
+            &self.config.policy,
+            &executed,
+            screen,
+            None,
+            self.current.source,
+        ) {
+            Decision::Allow => {
+                if approved.is_some() {
+                    return None;
+                }
+            }
             Decision::Deny(_) => return None,
             Decision::Confirm(request) => {
-                if !approved.is_some_and(|a| a.category == request.category) {
+                let same = approved.is_some_and(|a| {
+                    a.category == request.category
+                        && a.summary == self.risk_summary(&action, request.category)
+                });
+                if !same {
                     return None;
                 }
             }
@@ -1358,6 +1427,7 @@ impl Session {
         Some(Pending {
             expect_change: should_change(&action, screen),
             described: describe(&action, &self.current.safe),
+            before_target_source: self.target_source(&action),
             action,
             source: pending.source,
             before: screen.clone(),
@@ -1409,15 +1479,48 @@ impl Session {
     fn ingest(&mut self, obs: Observation) {
         // The digest is taken from the raw tree before compaction cuts or drops anything.
         let digest = screen_digest(&obs.screen);
-        let screen = compact(&obs.screen);
+        let view = compact_view(&obs.screen);
+        let screen = view.screen;
         self.current = Current {
             hash: screen_hash(&screen),
             digest,
             safe: prompt_safe(&screen, &self.memory),
+            masked: profile_masked(&screen, &self.memory),
+            sources: view.sources,
+            parents: view.parents,
+            ends: view.ends,
+            source: self.incoming_source,
             screen,
             screenshot: obs.screenshot,
             seen: true,
         };
+    }
+
+    /// The raw node (index in the digest's order) of `action`'s target on the current
+    /// screen, if it has one.
+    fn target_source(&self, action: &Action) -> Option<u32> {
+        let target = action_target(action, &self.current.screen)?;
+        let pos = usize::try_from(target.index).ok()?.checked_sub(1)?;
+        self.current.sources.get(pos).copied()
+    }
+
+    /// The confirmation summary of `action` (as decided: placeholders kept) in `category`
+    /// on the current screen: built from the profile-masked screen, with the raw tree for
+    /// `under "…"` and the unverified-screen warning on runner text. The same function
+    /// builds it when asked and when an approval is checked (A4: it must be identical).
+    fn risk_summary(&self, action: &Action, category: RiskCategory) -> String {
+        let tree = ScreenTree {
+            sources: &self.current.sources,
+            parents: &self.current.parents,
+            ends: &self.current.ends,
+        };
+        summary_for(
+            action,
+            &self.current.masked,
+            category,
+            self.current.source,
+            Some(&tree),
+        )
     }
 
     /// Finishes when a budget is exhausted.
@@ -1981,8 +2084,10 @@ impl Session {
                 )));
             }
         }
-        // 3. Safety: validation, deny list, risk classification, confirmation gate.
-        let decision = evaluate(policy, &executed, screen, tool);
+        // 3. Safety: validation, deny list, risk classification, confirmation gate. A screen
+        //    read from runner text is unverified: every state-changing runner action on it
+        //    is at least `Unverified` (asks), with a warning in its summary.
+        let decision = evaluate_from(policy, &executed, screen, tool, self.current.source);
         if let Decision::Deny(reason) = &decision {
             return Err(Reject::Failed(format!("not allowed: {reason}")));
         }
@@ -2016,16 +2121,16 @@ impl Session {
             before: screen.clone(),
             before_safe: self.current.safe.clone(),
             before_digest: self.current.digest,
+            before_target_source: self.target_source(&normalized),
             described,
             exec,
             check,
         };
         let risk = match decision {
             Decision::Confirm(mut request) => {
-                if executed != normalized {
-                    // Describe the placeholder, never the substituted personal value.
-                    request.summary = summarize(&normalized, screen, tool);
-                }
+                // Describe the placeholder, never the substituted personal value, from the
+                // profile-masked screen (see `risk_summary`).
+                request.summary = self.risk_summary(&normalized, request.category);
                 Some(request)
             }
             Decision::Allow | Decision::Deny(_) => None,

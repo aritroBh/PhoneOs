@@ -59,17 +59,20 @@ pub use approval::{approval_context, ApprovalContext};
 pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;
 pub use confine::check_confinement;
-pub use evaluate::{evaluate, first_use_app, first_use_request, summarize, Decision};
+pub use evaluate::{
+    classify_from, evaluate, evaluate_from, first_use_app, first_use_request, summarize,
+    summary_for, Decision, ScreenSource, ScreenTree, UNVERIFIED_SCREEN_WARNING,
+};
 pub use gate::{changes_state, gate, gate_in, Gate, TRUSTED_ALLOWED};
 pub use phrases::{
     label_risk, AppRule, Phrase, RuleTarget, ACTION_PHRASES, APP_PHRASES, APP_RULES,
     APP_STORE_BUNDLE_ID, COMPOSE_FIELD_PHRASES, CONTEXT_PHRASES, CREDENTIAL_FIELD_PHRASES,
-    NAVIGATION_PHRASES, PRICE_VERB_PHRASES, SETTINGS_ACTION_PHRASES, SETTINGS_BUNDLE_ID,
-    SETTINGS_CONTEXT_PHRASES, SF_SYMBOLS, SHARE_SAFE_PHRASES,
+    HIDDEN_FIELD_PHRASES, NAVIGATION_PHRASES, PRICE_VERB_PHRASES, SETTINGS_ACTION_PHRASES,
+    SETTINGS_BUNDLE_ID, SETTINGS_CONTEXT_PHRASES, SF_SYMBOLS, SHARE_SAFE_PHRASES,
 };
 pub use redact::{
-    contains_secret, redact, redact_element, redact_screen, ACCOUNT_MASK, CARD_MASK, CODE_MASK,
-    KEY_MASK, SECRET_MASK,
+    contains_secret, credential_like_field, redact, redact_element, redact_screen, ACCOUNT_MASK,
+    CARD_MASK, CODE_MASK, KEY_MASK, SECRET_MASK,
 };
 pub use sanitize::{
     sanitize_screen_text, sanitize_screen_text_with_limit, MAX_SCREEN_TEXT_CHARS, SCREEN_BLOCK_END,

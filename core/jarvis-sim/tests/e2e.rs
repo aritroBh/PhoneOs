@@ -53,11 +53,17 @@ fn wifi_toggle_succeeds_in_both_modes() {
         );
         assert_success(&r, &format!("{mode:?}"));
         assert!(r.final_state.check("settings.wifi == false").unwrap());
+        // Runner text: the tap on the Wi-Fi row asks too (unverified screen).
         assert_eq!(
             categories(&r),
-            vec![RiskCategory::SystemSetting],
+            per_mode(
+                mode,
+                vec![RiskCategory::SystemSetting],
+                vec![RiskCategory::Unverified, RiskCategory::SystemSetting]
+            ),
             "{mode:?}"
         );
+        assert_text_warnings(&r, mode);
         assert_eq!(m.calls(), 3);
         assert_eq!(r.counts.model_calls, 3);
         assert_eq!(r.outcome.steps, 3);
@@ -133,7 +139,20 @@ fn send_message_approved_appears_in_the_thread() {
             .final_state
             .check(r#"messages.thread["Mom"].last == "running late""#)
             .unwrap());
-        assert_eq!(categories(&r), vec![RiskCategory::SendMessage]);
+        // Runner text: the tap on Mom and the typing ask too (unverified screen).
+        assert_eq!(
+            categories(&r),
+            per_mode(
+                mode,
+                vec![RiskCategory::SendMessage],
+                vec![
+                    RiskCategory::Unverified,
+                    RiskCategory::Unverified,
+                    RiskCategory::SendMessage
+                ]
+            )
+        );
+        assert_text_warnings(&r, mode);
         assert!(r.confirmations[0].approved);
         // The send happens only after the owner approved.
         let confirm = index_of_step(&r, |e, _| e.starts_with("confirm"));
@@ -172,12 +191,19 @@ fn asking_again_after_a_decline_blocks_without_asking_the_owner_twice() {
     for mode in MODES {
         let mut script = text_mom_script();
         script.insert(3, tap("Button:Send"));
+        // Runner text asks before the tap on Mom and the typing as well: the owner says
+        // yes to those and no to the send.
+        let mut human = per_mode(
+            mode,
+            Human::decline_all(),
+            Human::decline_categories(&[RiskCategory::SendMessage]),
+        );
         let (r, m) = go(
             mode,
             "messages",
             "Text Mom that I'm running late",
             &script,
-            &mut Human::decline_all(),
+            &mut human,
         );
         assert_eq!(
             r.outcome.status,
@@ -186,7 +212,7 @@ fn asking_again_after_a_decline_blocks_without_asking_the_owner_twice() {
             r.transcript()
         );
         assert!(r.outcome.summary.contains("declined"));
-        assert_eq!(r.confirmations.len(), 1);
+        assert_eq!(r.confirmations.len(), per_mode(mode, 1, 3));
         assert_eq!(m.remaining(), 1, "the final done was never requested");
         assert!(r
             .final_state
@@ -502,10 +528,20 @@ fn delete_goes_through_an_alert_and_two_confirmations() {
             .final_state
             .check(r#"notes.last_deleted == "Old receipts" && notes.items.len == 27"#)
             .unwrap());
+        // Runner text: the tap on the note's row asks too (unverified screen).
         assert_eq!(
             categories(&r),
-            vec![RiskCategory::Delete, RiskCategory::Delete]
+            per_mode(
+                mode,
+                vec![RiskCategory::Delete, RiskCategory::Delete],
+                vec![
+                    RiskCategory::Unverified,
+                    RiskCategory::Delete,
+                    RiskCategory::Delete
+                ]
+            )
         );
+        assert_text_warnings(&r, mode);
         assert!(r.requests[3].user.contains("Delete Note?"), "{mode:?}");
         assert_eq!(r.final_state.screen, "list");
     }

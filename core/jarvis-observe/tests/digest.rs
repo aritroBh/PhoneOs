@@ -51,18 +51,27 @@ fn row(parts: usize, last: &str) -> Screen {
     ])
 }
 
+/// Frames, `hittable` and `focus` are not hashed; what is shown is (fifth review: the
+/// digest covers the effective visibility compaction uses, so a scroll that moves a row out
+/// of the shown set, or a hidden panel that becomes shown, changes it).
 #[test]
 fn equal_trees_with_different_frames_are_equal() {
     let a = fixture("long_list_scrolled");
     let mut b = a.clone();
     edit(&mut b, |n| {
-        n.frame.y -= 137.0;
-        n.frame.x += 3.0;
-        n.visible = !n.visible;
+        n.frame.x += 0.5;
         n.hittable = !n.hittable;
         n.focused = !n.focused;
     });
     assert!(same(&a, &b));
+    // A big scroll moves rows out of (and into) the shown set.
+    let mut c = a.clone();
+    edit(&mut c, |n| n.frame.y -= 137.0);
+    assert!(!same(&a, &c));
+    // So does flipping the runner's visibility flag of shown nodes.
+    let mut d = a.clone();
+    edit(&mut d, |n| n.visible = !n.visible);
+    assert!(!same(&a, &d));
 }
 
 /// What compaction drops still counts: the 13th text of a row (past `MAX_MERGED_PARTS`),
@@ -182,7 +191,8 @@ fn the_status_bar_is_left_out_by_role() {
             n.label = Some("99% battery power".to_owned());
         }
     });
-    assert_ne!(compact(&a), compact(&b));
+    // Excluded everywhere: not hashed and not listed either (fifth review).
+    assert_eq!(compact(&a), compact(&b));
     assert!(same(&a, &b));
     // A clock that is an ordinary text in the app (no status-bar role) counts.
     let clock = |t: &str| {
@@ -194,29 +204,37 @@ fn the_status_bar_is_left_out_by_role() {
     assert!(!same(&clock("9:41"), &clock("9:42")));
 }
 
-/// On SpringBoard an icon's badge (after the first comma) is left out; its name is not.
-/// Elsewhere the same label counts whole.
+/// On SpringBoard an app icon's badge (after the first comma) is left out; its name is
+/// not. Only the icon role gets the cut (fifth review): any other node, also on
+/// SpringBoard, and the same label in an app count whole.
 #[test]
 fn springboard_badges_are_left_out_but_names_are_not() {
-    let home =
-        |mail: &str| {
+    let home_with =
+        |role: Role, mail: &str| {
             let root = UiNode::new(Role::Application, IPHONE_SIZE.to_rect()).with_children(vec![
                 UiNode::new(Role::Window, IPHONE_SIZE.to_rect()).with_children(vec![
-                    node(Role::Button, mail, rect(20.0, 100.0, 70.0, 90.0)),
-                    node(Role::Button, "Settings", rect(110.0, 100.0, 70.0, 90.0)),
+                    node(role.clone(), mail, rect(20.0, 100.0, 70.0, 90.0)),
+                    node(role, "Settings", rect(110.0, 100.0, 70.0, 90.0)),
                 ]),
             ]);
             screen("com.apple.springboard", "Home", root, false)
         };
+    let home = |mail: &str| home_with(Role::Other("Icon".into()), mail);
     assert!(same(&home("Mail, 3 unread"), &home("Mail, 4 unread")));
     assert!(same(&home("Mail"), &home("Mail, 1 unread")));
     assert!(!same(&home("Mail, 3 unread"), &home("Mall, 3 unread")));
+    let buttons = |mail: &str| home_with(Role::Button, mail);
+    assert!(!same(
+        &buttons("Mail, 3 unread"),
+        &buttons("Mail, 4 unread")
+    ));
     let app = |l: &str| app_screen(vec![button(l, 20.0, 100.0, 70.0, 90.0)]);
     assert!(!same(&app("Mail, 3 unread"), &app("Mail, 4 unread")));
 }
 
-/// Keys and typing predictions change on their own and are left out; the Return key's
-/// label (what Return does) is not.
+/// Keys and typing predictions change on their own and are left out: on iOS 26 they share
+/// the keyboard's own top-level window. The Return key's label is not hashed either (fifth
+/// review): the approval record carries it only for an action that presses Return.
 #[test]
 fn the_keyboard_and_its_prediction_bar_are_left_out_but_not_the_return_key() {
     let a = fixture("login_keyboard");
@@ -236,8 +254,9 @@ fn the_keyboard_and_its_prediction_bar_are_left_out_but_not_the_return_key() {
             n.label = Some("send".to_owned());
         }
     });
-    assert!(!same(&a, &c));
-    // Without a keyboard in the tree the identifier hides nothing.
+    assert!(same(&a, &c));
+    assert_eq!(compact(&c).cues.return_key.as_deref(), Some("send"));
+    // The identifier hides nothing, keyboard or not.
     let bar = |l: &str| {
         app_screen(vec![UiNode::new(
             Role::Other("Other".into()),
@@ -319,4 +338,110 @@ fn the_digest_of_a_huge_tree_is_cheap() {
     println!("5,000 nodes: digest {took:?}");
     assert_eq!(d, screen_digest(&s));
     assert!(took < Duration::from_millis(1000), "{took:?}");
+}
+
+/// Fifth review probe: a pathological 200,000-deep typed tree (an FFI `Observed` is not
+/// capped) is digested and compacted on a 2 MiB stack.
+#[test]
+fn a_200k_deep_tree_does_not_overflow() {
+    let handle = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let mut n = UiNode::new(Role::Button, Rect::new(0.0, 0.0, 10.0, 10.0)).with_label("x");
+            for _ in 0..200_000 {
+                n = UiNode::new(Role::Other("Other".into()), Rect::new(0.0, 0.0, 10.0, 10.0))
+                    .with_children(vec![n]);
+            }
+            let s = screen("com.example.app", "App", n, false);
+            let _ = screen_digest(&s);
+            let _ = compact(&s);
+            let _ = jarvis_observe::compact_view(&s);
+            std::mem::forget(s); // dropping is a separate question
+        })
+        .unwrap();
+    assert!(handle.join().is_ok());
+}
+
+/// Fifth review: a `StatusBar` container deep inside an app (with a button and an amount)
+/// is ordinary content: hashed and listed, and a change in it changes the digest. Only on
+/// SpringBoard, directly under a top-level window, is it excluded.
+#[test]
+fn a_status_bar_role_inside_an_app_is_hashed_and_listed() {
+    let bar = |amount: &str| {
+        UiNode::new(
+            Role::Other("StatusBar".into()),
+            rect(0.0, 150.0, 393.0, 400.0),
+        )
+        .with_children(vec![
+            text(&format!("Send {amount}"), rect(16.0, 200.0, 361.0, 30.0)),
+            button("Confirm", 16.0, 400.0, 361.0, 50.0),
+        ])
+    };
+    let app = |amount: &str| app_screen(vec![other(vec![bar(amount)])]);
+    assert!(!same(&app("$5.00"), &app("$5,000.00")));
+    let c = compact(&app("$5.00"));
+    assert!(labels(&c).contains(&"Send $5.00"), "{:?}", labels(&c));
+    assert!(labels(&c).contains(&"Confirm"));
+    // As a direct child of a top-level window: still content outside SpringBoard...
+    let top =
+        |bundle: &str, amount: &str| {
+            let root = UiNode::new(Role::Application, IPHONE_SIZE.to_rect())
+                .with_children(vec![UiNode::new(Role::Window, IPHONE_SIZE.to_rect())
+                    .with_children(vec![bar(amount)])]);
+            screen(bundle, "X", root, false)
+        };
+    assert!(!same(
+        &top("com.example.app", "$5.00"),
+        &top("com.example.app", "$5,000.00")
+    ));
+    // ...and excluded (not hashed, not listed) on SpringBoard.
+    let sb = "com.apple.springboard";
+    assert!(same(&top(sb, "$5.00"), &top(sb, "$5,000.00")));
+    assert!(compact(&top(sb, "$5.00")).elements.is_empty());
+}
+
+/// The iOS 26 keyboard lives in a top-level window of its own, with the prediction /
+/// autofill bar above it and the emoji and dictation buttons below it: the whole window is
+/// excluded (not hashed, never listed), while the Return key is still read as a cue.
+#[test]
+fn the_ios26_keyboard_window_is_excluded_whole() {
+    let s = fixture("login_keyboard");
+    let view = jarvis_observe::compact_view(&s);
+    let keyboard_window = s.root.children.last().unwrap();
+    assert!(keyboard_window.iter().any(|n| n.role == Role::Keyboard));
+    assert_eq!(
+        view.parents.len(),
+        s.root.count() - keyboard_window.count(),
+        "every node but the keyboard's window is indexed"
+    );
+    for gone in ["Passwords", "Emoji", "Dictate", "Typing Predictions"] {
+        assert!(!labels(&view.screen).contains(&gone), "{gone} listed");
+    }
+    assert_eq!(view.screen.cues.return_key.as_deref(), Some("return"));
+    assert!(view.screen.keyboard_visible);
+    // Each listed element names a raw node, in range.
+    assert_eq!(view.sources.len(), view.screen.elements.len());
+    assert!(view
+        .sources
+        .iter()
+        .all(|i| (*i as usize) < view.parents.len()));
+}
+
+/// A `Keyboard` node that shares its top-level window with app content excludes only its
+/// own subtree: the content next to it is hashed (an app cannot hide content by putting a
+/// keyboard-role node beside it).
+#[test]
+fn a_keyboard_beside_app_content_excludes_only_itself() {
+    let s = |amount: &str, key: &str| {
+        app_screen_with(
+            vec![
+                label(&format!("Pay {amount}"), 16.0, 300.0),
+                UiNode::new(Role::Keyboard, rect(0.0, 516.0, 393.0, 336.0))
+                    .with_children(vec![node(Role::Key, key, rect(3.0, 527.0, 37.0, 46.0))]),
+            ],
+            true,
+        )
+    };
+    assert!(same(&s("$5", "q"), &s("$5", "Q")));
+    assert!(!same(&s("$5", "q"), &s("$500", "q")));
 }

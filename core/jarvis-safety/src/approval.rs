@@ -1,14 +1,12 @@
 //! What an owner's approval was given on, as far as the compact screen shows it.
 //!
-//! The agent checks an approval against two records. The decisive one is the **exact
-//! digest of the raw accessibility tree** (`jarvis_observe::screen_digest`), taken before
-//! compaction drops anything; it needs the raw tree, so the agent keeps it beside the
-//! screen. This module holds the compact-screen record: every listed element's role,
-//! texts and states, compared **exactly** (no tolerance of any kind), plus where the
-//! approved action's target sits. The agent uses its target part
-//! ([`ApprovalContext::target_holds_on`]) beside the digest, and [`ApprovalContext::change_note`]
-//! to tell the model and the owner what changed; callers that only have compact screens
-//! use [`ApprovalContext::holds_on`].
+//! The agent binds an approval to four records (see `jarvis-agent`): the **exact digest of
+//! the raw accessibility tree** (`jarvis_observe::screen_digest`, A1), this module's
+//! **compact-screen record** (A2: every listed element in order with its role, texts and
+//! states, compared **exactly**, frames only ignored, plus the target's position in the
+//! list), the target's raw node (A3) and the full summary with its category (A4).
+//! [`ApprovalContext::holds_on`] is the A2 check; [`ApprovalContext::change_note`] tells
+//! the model and the owner what changed.
 //!
 //! Earlier designs tolerated digit changes in free-standing texts (so a live ETA or a
 //! clock could tick). A fourth review showed that tolerance let a list shift by one card
@@ -38,15 +36,18 @@ struct Fact {
 /// The compact-screen record an approval was given on, captured from the screen the
 /// question was asked about.
 ///
-/// It holds the app, the keyboard's Return-key label (the cue the classifier reads), the
-/// approved action's target (its position in the list) and, for every element of the
+/// It holds the app, the keyboard's Return-key label (the cue the classifier reads) **only
+/// when the action presses Return** (`type … submit`; for any other action the keyboard's
+/// presence or its Return key does not matter), the approved action's target (its position
+/// in the list) and, for every element of the
 /// compact screen in order: role, label, value (never a secure field's), placeholder,
 /// selected/checked state, enabled flag and secure flag. Frames and focus are not part of
 /// it, so a list that only moved keeps it.
 ///
 /// [`ApprovalContext::holds_on`] requires the fresh record to **equal** it exactly; the
-/// one exception is the home screen, where an icon's badge (the part of its label after
-/// the first comma: `Mail, 3 unread`) may change on every icon but the target.
+/// one exception is the home screen, where an app icon's badge (role `Icon`: the part of its
+/// label after the first comma, `Mail, 3 unread`) may change on every icon but the target,
+/// exactly as the digest leaves it out.
 ///
 /// `Debug` shows counts only: the facts are screen text.
 #[derive(Clone, PartialEq)]
@@ -207,7 +208,7 @@ impl ApprovalContext {
             return true;
         }
         let badge_only = self.springboard
-            && a.role != Role::StaticText
+            && is_icon(&a.role)
             && Some(a.index) != self.target
             && a.index == b.index;
         if !badge_only {
@@ -222,6 +223,16 @@ impl ApprovalContext {
             ..b.clone()
         }
     }
+}
+
+/// Whether `role` is a SpringBoard app icon (`Icon`, any letter case).
+fn is_icon(role: &Role) -> bool {
+    matches!(role, Role::Other(name) if name.trim().eq_ignore_ascii_case("icon"))
+}
+
+/// Whether `action` presses the keyboard's Return key.
+fn presses_return(action: &Action) -> bool {
+    matches!(action, Action::Type { submit: true, .. })
 }
 
 /// Longest screen text quoted in a [`ApprovalContext::change_note`], in characters.
@@ -260,7 +271,11 @@ fn record(action: &Action, screen: &CompactScreen) -> ApprovalContext {
         .collect();
     ApprovalContext {
         app: screen.app_bundle_id.clone(),
-        return_key: screen.cues.return_key.clone(),
+        return_key: if presses_return(action) {
+            screen.cues.return_key.clone()
+        } else {
+            None
+        },
         springboard: is_springboard(&screen.app_bundle_id),
         facts,
         target: target.map(|t| t.index),

@@ -77,8 +77,22 @@ fn second_run_replays_with_zero_model_calls_and_the_same_final_state() {
             .final_state
             .check(r#"messages.thread["Mom"].last == "running late""#)
             .unwrap());
-        // A replay is still gated: the send was confirmed again.
-        assert_eq!(categories(&second), vec![RiskCategory::SendMessage]);
+        // A replay is still gated: the send was confirmed again, and on runner text every
+        // replayed step that changes something asks again (fifth review: a replay never
+        // skips the unverified-screen question).
+        assert_eq!(
+            categories(&second),
+            per_mode(
+                mode,
+                vec![RiskCategory::SendMessage],
+                vec![
+                    RiskCategory::Unverified,
+                    RiskCategory::Unverified,
+                    RiskCategory::SendMessage
+                ]
+            )
+        );
+        assert_text_warnings(&second, mode);
         // The flow's statistics and the log recorded both runs.
         assert!(second.memory.flows.flows()[0].successes >= 2);
         assert_eq!(second.memory.log.entries().len(), 2);

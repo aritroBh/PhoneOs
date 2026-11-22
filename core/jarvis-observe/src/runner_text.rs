@@ -1,12 +1,39 @@
 //! Parser for the indented text tree the LoopCtrl-style runners return in `page_source`.
+//!
+//! # Trust: the format is ambiguous and forgeable
+//!
+//! A node line is `Type, label: '…', value: '…', id: '…', {{x, y}, {w, h}}` with quotes and
+//! newlines **not escaped**. On-screen text (a text field's value, a web page's text) can
+//! therefore contain characters that read as format: a newline followed by a well-formed
+//! line, a fake role, a fake frame. No parser can make an ambiguous format unambiguous, so
+//! the session treats every screen read this way as unverified (it asks before any
+//! state-changing action, with a warning; see `jarvis-agent`). What the parser does stop:
+//!
+//! * **Newline injection inside an open quote.** A line that starts a node but leaves a
+//!   quoted field open (`TextView, label: 'Note', value: 'thanks` with no closing `', {{`)
+//!   makes every following line continuation text of that value until a line closes the
+//!   node (`…', {{x, y}, {w, h}}`), however many lines that takes and whatever those lines
+//!   look like: a continuation line is never promoted to a node. A node that never closes
+//!   swallows the rest of the text (counted as skipped lines): fail closed.
+//!
+//! What it cannot stop (the residual):
+//!
+//! * **Closing-quote injection.** Text that itself contains `', {{x, y}, {w, h}}` at the end
+//!   of a line closes the node early, and the lines after it parse as nodes the page chose
+//!   (any role, any frame, any depth). That is indistinguishable from a real tree.
+//! * Text that contains `', value: '` or `', id: '` can move the boundary between fields.
+//!
+//! The typed tree from Jarvis's own runner has none of these problems and is the supported
+//! path for acting; this text path is for experiments (see `docs/RUNNER.md`, "Trust").
 
 use jarvis_proto::{Rect, Role, UiNode};
 
 use crate::compact::MAX_DEPTH;
 use thiserror::Error;
 
-/// How many physical lines one node (a label with embedded newlines) may span.
-const MAX_CONTINUATION_LINES: usize = 8;
+/// How many times one open node tries to close on a line that looks like its end before
+/// it is given up (bounds the work on adversarial text: each try parses the joined text).
+const MAX_CLOSE_ATTEMPTS: usize = 16;
 
 /// The parsed tree plus how many lines had to be skipped.
 #[derive(Debug, Clone, PartialEq)]
@@ -121,6 +148,35 @@ fn looks_like_node_start(line: &str) -> bool {
     })
 }
 
+/// Whether `line` (a node start that did not parse) leaves a quoted field open: after its
+/// last field marker (`, label: '`, `, value: '`, `, id: '`) there is no closing `', {{`.
+/// A line whose quote closed but whose frame is broken (`…', {{10, 10}, {80`) is not open:
+/// it is a truncated line, skipped on its own.
+fn quote_open(line: &str) -> bool {
+    let last = ["label", "value", "id"]
+        .iter()
+        .filter_map(|k| {
+            let m = format!(", {k}: '");
+            line.rfind(&m).map(|at| at + m.len())
+        })
+        .max();
+    last.and_then(|at| line.get(at..))
+        .is_some_and(|rest| !rest.contains("', {{"))
+}
+
+/// Whether `line` can end an open node: a valid frame at its end right after a closing
+/// quote (`third', {{10, 10}, {300, 120}}`).
+fn closes_node(line: &str) -> bool {
+    let line = line.trim_end();
+    let Some(at) = line.rfind("{{") else {
+        return false;
+    };
+    line.get(at..).and_then(parse_frame).is_some()
+        && line
+            .get(..at)
+            .is_some_and(|head| head.trim_end().trim_end_matches(',').ends_with('\''))
+}
+
 fn to_node(f: Fields) -> UiNode {
     let role = Role::from_name(&f.type_name);
     let mut node = UiNode::new(role, f.frame).hittable(true);
@@ -140,9 +196,11 @@ fn to_node(f: Fields) -> UiNode {
 /// `SecureTextField`.
 ///
 /// Robustness: labels may contain commas, quotes and braces; blank lines and trailing
-/// whitespace are ignored; a label with embedded newlines is rejoined; unparseable lines are
-/// skipped and counted in [`ParsedTree::warnings`]; a jump of more than one level attaches to
-/// the nearest open parent; nesting deeper than the compaction depth cap is flattened to
+/// whitespace are ignored; a label or value with embedded newlines is rejoined, and every
+/// line after a node start with an open quote is continuation text until the node closes
+/// (never a node of its own, see the module docs); unparseable lines are skipped and
+/// counted in [`ParsedTree::warnings`]; a jump of more than one level attaches to the
+/// nearest open parent; nesting deeper than the compaction depth cap is flattened to
 /// siblings at the cap; several top-level lines are wrapped in a synthetic `Application`.
 ///
 /// The format comes from reading the runner's source (see `docs/RUNNER.md` section 2.1) and
@@ -160,29 +218,34 @@ pub fn parse_runner_text(source: &str) -> Result<ParsedTree, ParseError> {
         }
         let indent = line.chars().take_while(|c| c.is_whitespace()).count();
         let mut parsed = parse_node(body);
-        if parsed.is_none() && looks_like_node_start(body) {
+        if parsed.is_none() && looks_like_node_start(body) && quote_open(body) {
+            // Every following line is text of the open field until one closes the node.
             let mut joined = body.to_owned();
-            for (n, extra) in lines
-                .iter()
-                .skip(i)
-                .take(MAX_CONTINUATION_LINES)
-                .enumerate()
-            {
+            let mut attempts = 0usize;
+            let mut consumed = 0usize;
+            while let Some(extra) = lines.get(i + consumed) {
+                consumed += 1;
                 let extra = extra.trim_end();
-                if parse_node(extra.trim()).is_some() {
-                    // A complete node of its own: the first line was truncated, not wrapped.
-                    break;
-                }
                 joined.push('\n');
                 joined.push_str(extra);
-                if extra.ends_with("}}") {
+                if attempts < MAX_CLOSE_ATTEMPTS && closes_node(extra) {
+                    attempts += 1;
                     if let Some(f) = parse_node(&joined) {
                         parsed = Some(f);
-                        i += n + 1;
+                        break;
                     }
-                    break;
                 }
             }
+            if parsed.is_none() {
+                // Never closed: the rest is text of a broken node, never nodes.
+                warnings += lines
+                    .iter()
+                    .skip(i)
+                    .take(consumed)
+                    .filter(|l| !l.trim().is_empty())
+                    .count();
+            }
+            i += consumed;
         }
         match parsed {
             Some(f) => entries.push((indent, f)),

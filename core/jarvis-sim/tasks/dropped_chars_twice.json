@@ -22,5 +22,9 @@
     "{\"thought\":\"type again\",\"action\":\"type\",\"element\":\"@TextView:Message\",\"text\":\"running late\"}",
     "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Send\"}",
     "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Sent\"}"
-  ]
+  ],
+  "runner_text": {
+    "expect_confirm": ["first_use", "unverified", "send_message"],
+    "expect_confirm_count": 6
+  }
 }

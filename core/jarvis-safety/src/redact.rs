@@ -21,9 +21,9 @@
 //! Phone numbers, dates, times, prices and ordinary numbers are left alone. Invisible
 //! characters are dropped first so they cannot split a secret.
 
-use jarvis_proto::{CompactScreen, Element, RiskCategory};
+use jarvis_proto::{CompactScreen, Element, RiskCategory, Role};
 
-use crate::phrases::{match_label, CREDENTIAL_FIELD_PHRASES};
+use crate::phrases::{match_label, CREDENTIAL_FIELD_PHRASES, HIDDEN_FIELD_PHRASES};
 use crate::text::{fold_fullwidth, is_invisible};
 
 /// Replacement for a card number.
@@ -70,15 +70,36 @@ pub fn contains_secret(text: &str) -> bool {
     !find_spans(&chars).is_empty() || is_password_like(text)
 }
 
+/// Whether `el` is an entry field (a text input, or a picker, slider or other value
+/// control) whose label or placeholder names a credential or a bank or card detail
+/// (password, passcode, PIN, SSN, card number, CVV/CVC, security code, expiry,
+/// recovery/seed phrase, one-time/verification code, IBAN, routing or account number...).
+/// Its value is never shown: not in prompts ([`redact_element`]) and not in the owner's
+/// summaries (listed by name, "(hidden)"). An identifier only counts where compaction used
+/// it as the label.
+pub fn credential_like_field(el: &Element) -> bool {
+    let entry = el.role.is_text_input()
+        || matches!(el.role, Role::Picker | Role::Slider)
+        || matches!(&el.role, Role::Other(n) if {
+            let n = n.to_lowercase();
+            ["stepper", "slider", "picker", "segmented", "field"]
+                .iter()
+                .any(|k| n.contains(k))
+        });
+    let tables = [CREDENTIAL_FIELD_PHRASES, HIDDEN_FIELD_PHRASES];
+    let named = |t: &str| match_label(t, &tables).category != RiskCategory::None;
+    entry && (named(&el.label) || el.placeholder.as_deref().is_some_and(named))
+}
+
 /// A copy of `el` safe for prompts and logs: secure fields lose their value, a field
-/// labelled as a credential ("Verification code", "CVV") has its value masked, and label,
-/// value and placeholder are passed through [`redact`].
+/// named as a credential or bank/card detail ("Verification code", "CVV", "IBAN"; see
+/// [`credential_like_field`]) has its value masked, and label, value and placeholder are
+/// passed through [`redact`].
 pub fn redact_element(el: &Element) -> Element {
     let mut out = el.clone();
     out.label = redact(&el.label);
     out.placeholder = el.placeholder.as_deref().map(redact);
-    let credential_field = el.role.is_text_input()
-        && match_label(&el.label, &[CREDENTIAL_FIELD_PHRASES]).category != RiskCategory::None;
+    let credential_field = credential_like_field(el);
     out.value = if el.secure {
         None
     } else if credential_field {
@@ -286,6 +307,7 @@ fn labelled_secret_spans(chars: &[char], spans: &mut Vec<(usize, usize, &'static
                     k = ne;
                 } else if next.is_empty()
                     || next
+                        .trim_start_matches('(')
                         .trim_end_matches(['.', ',', ';', '!', '?', ')'])
                         .chars()
                         .all(char::is_alphabetic)

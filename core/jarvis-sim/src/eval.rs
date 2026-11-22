@@ -113,6 +113,27 @@ pub struct TaskPolicy {
     pub max_locked_wait_ms: Option<u64>,
 }
 
+/// What a task expects instead when it runs in runner-text mode (`--mode runner-text`).
+///
+/// A screen read from runner text is unverified, so the session asks (category
+/// `unverified`, with a warning) before every state-changing runner action on it: the
+/// confirmations differ from the typed path, and with them the effect numbers faults are
+/// placed at. Unset fields keep the task's own value.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct RunnerTextExpect {
+    /// Replaces `expect_confirm`.
+    pub expect_confirm: Option<Vec<RiskCategory>>,
+    /// Replaces `forbid_confirm`.
+    pub forbid_confirm: Option<Vec<RiskCategory>>,
+    /// Replaces `expect_confirm_count`.
+    pub expect_confirm_count: Option<usize>,
+    /// Replaces `expect_model_calls`.
+    pub expect_model_calls: Option<usize>,
+    /// Replaces `faults`.
+    pub faults: Option<Faults>,
+}
+
 /// One eval task.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -164,6 +185,36 @@ pub struct TaskDef {
     /// Exact number of model calls in the judged run, when given.
     #[serde(default)]
     pub expect_model_calls: Option<usize>,
+    /// What changes in runner-text mode (see [`RunnerTextExpect`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_text: Option<RunnerTextExpect>,
+}
+
+impl TaskDef {
+    /// The task as judged in `mode`: in runner-text mode with its `runner_text` overrides.
+    pub fn for_mode(&self, mode: crate::phone::ObserveMode) -> TaskDef {
+        let mut t = self.clone();
+        if mode == crate::phone::ObserveMode::RunnerText {
+            if let Some(o) = &self.runner_text {
+                if let Some(v) = &o.expect_confirm {
+                    t.expect_confirm = v.clone();
+                }
+                if let Some(v) = &o.forbid_confirm {
+                    t.forbid_confirm = v.clone();
+                }
+                if o.expect_confirm_count.is_some() {
+                    t.expect_confirm_count = o.expect_confirm_count;
+                }
+                if o.expect_model_calls.is_some() {
+                    t.expect_model_calls = o.expect_model_calls;
+                }
+                if let Some(f) = &o.faults {
+                    t.faults = f.clone();
+                }
+            }
+        }
+        t
+    }
 }
 
 fn default_start() -> String {
@@ -251,6 +302,7 @@ pub fn run_one(
     model: &mut dyn Model,
     override_approve: Option<bool>,
 ) -> Result<TaskResult, SimError> {
+    let task = &task.for_mode(setup.mode);
     let mut setup = setup.clone();
     if let Some(n) = task.max_steps {
         setup.max_steps = Some(n);

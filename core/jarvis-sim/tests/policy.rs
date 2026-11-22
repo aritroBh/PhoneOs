@@ -54,10 +54,21 @@ fn a_fresh_store_asks_once_per_app_then_remembers() {
             "{}",
             r.transcript()
         );
+        // Runner text: the tap on Mom and the typing ask too (unverified screen).
         assert_eq!(
             categories(&r),
-            vec![RiskCategory::FirstUse, RiskCategory::SendMessage]
+            per_mode(
+                mode,
+                vec![RiskCategory::FirstUse, RiskCategory::SendMessage],
+                vec![
+                    RiskCategory::FirstUse,
+                    RiskCategory::Unverified,
+                    RiskCategory::Unverified,
+                    RiskCategory::SendMessage
+                ]
+            )
         );
+        assert_text_warnings(&r, mode);
         assert_eq!(
             r.confirmations[0].request.summary,
             "Let Jarvis act in Messages (com.apple.MobileSMS)?"
@@ -87,7 +98,19 @@ fn a_fresh_store_asks_once_per_app_then_remembers() {
             mem,
         );
         assert_eq!(again.outcome.status, OutcomeStatus::Success);
-        assert_eq!(categories(&again), vec![RiskCategory::SendMessage]);
+        // No first-use question the second time; runner text still asks per step.
+        assert_eq!(
+            categories(&again),
+            per_mode(
+                mode,
+                vec![RiskCategory::SendMessage],
+                vec![
+                    RiskCategory::Unverified,
+                    RiskCategory::Unverified,
+                    RiskCategory::SendMessage
+                ]
+            )
+        );
     }
 }
 

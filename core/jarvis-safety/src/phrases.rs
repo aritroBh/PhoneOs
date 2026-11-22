@@ -485,6 +485,29 @@ pub const CREDENTIAL_FIELD_PHRASES: &[Phrase] = &[
     p("recovery phrase", Credential),
 ];
 
+/// Field names (label or placeholder) whose value is never shown, in prompts or in the
+/// owner's summaries, beyond [`CREDENTIAL_FIELD_PHRASES`]: card expiry and bank account
+/// entry fields. Not used for classification (typing into them is not a credential).
+pub const HIDDEN_FIELD_PHRASES: &[Phrase] = &[
+    p("expiry", Credential),
+    p("expiry date", Credential),
+    p("expiration", Credential),
+    p("exp date", Credential),
+    p("valid thru", Credential),
+    p("one time", Credential),
+    p("pin code", Credential),
+    p("iban", Credential),
+    p("routing number", Credential),
+    p("routing", Credential),
+    p("account number", Credential),
+    p("bank account", Credential),
+    p("sort code", Credential),
+    p("bic", Credential),
+    p("swift code", Credential),
+    p("security answer", Credential),
+    p("mnemonic", Credential),
+];
+
 /// Text-input labels whose Return key publishes or sends what was typed.
 pub const COMPOSE_FIELD_PHRASES: &[Phrase] = &[
     p("message", SendMessage),
@@ -793,6 +816,7 @@ fn compiled_tables() -> &'static [(&'static [Phrase], Compiled)] {
             ACTION_PHRASES,
             CONTEXT_PHRASES,
             CREDENTIAL_FIELD_PHRASES,
+            HIDDEN_FIELD_PHRASES,
             COMPOSE_FIELD_PHRASES,
             SETTINGS_CONTEXT_PHRASES,
             SETTINGS_ACTION_PHRASES,

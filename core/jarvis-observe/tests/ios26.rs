@@ -199,8 +199,9 @@ fn springboard_does_not_resurrect_off_screen_pages_or_zero_size_icons() {
         c.elements.iter().all(|e| e.frame.x >= 0.0),
         "left-of-home page leaked"
     );
-    // 3 status bar items, 2 widgets, 8 icons, spotlight image, 2 dock icons.
-    assert_eq!(c.elements.len(), 16, "{labels:?}");
+    // 2 widgets, 8 icons, spotlight image, 2 dock icons. The status bar (3 items) is
+    // excluded on SpringBoard (fifth review).
+    assert_eq!(c.elements.len(), 13, "{labels:?}");
 }
 
 #[test]

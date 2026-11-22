@@ -17,5 +17,9 @@
     "{\"thought\":\"open Wi-Fi\",\"action\":\"tap\",\"element\":\"@Cell:Wi-Fi\"}",
     "{\"thought\":\"switch it off\",\"action\":\"tap\",\"element\":\"@Switch:Wi-Fi\"}",
     "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Wi-Fi is off\"}"
-  ]
+  ],
+  "runner_text": {
+    "expect_confirm": ["first_use", "unverified", "system_setting"],
+    "expect_confirm_count": 3
+  }
 }

@@ -1611,21 +1611,39 @@ fn the_screen_record_of_a_huge_screen_is_cheap() {
     );
 }
 
-/// On the home screen an icon's badge (after its first comma) may tick; its name may not,
-/// and the tapped icon itself compares exactly.
+/// On the home screen an app icon's badge (after its first comma) may tick; its name may
+/// not, and the tapped icon itself compares exactly. Only the icon role gets the badge
+/// exception (fifth review: the digest cuts only icons), so the icons here are `Icon`s;
+/// the same labels on buttons compare whole.
 #[test]
 fn home_screen_badges_may_tick_but_names_may_not() {
+    let icon = |i: u32, l: &str| el(i, Role::Other("Icon".into()), l);
     let home = |mail: &str, weather: &str| {
         screen(
             "com.apple.springboard",
             "Home",
             vec![
+                at5(icon(1, mail), 20.0, 100.0, 70.0, 90.0),
+                at5(icon(2, weather), 110.0, 100.0, 70.0, 90.0),
+                at5(icon(3, "Settings"), 200.0, 100.0, 70.0, 90.0),
+            ],
+        )
+    };
+    let buttons = |mail: &str| {
+        screen(
+            "com.apple.springboard",
+            "Home",
+            vec![
                 at5(button(1, mail), 20.0, 100.0, 70.0, 90.0),
-                at5(button(2, weather), 110.0, 100.0, 70.0, 90.0),
                 at5(button(3, "Settings"), 200.0, 100.0, 70.0, 90.0),
             ],
         )
     };
+    assert!(!holds(
+        &buttons("Mail, 3 unread"),
+        &tap(3),
+        &buttons("Mail, 4 unread")
+    ));
     let before = home("Mail, 3 unread", "Weather, 72°");
     assert!(holds(
         &before,
@@ -2005,8 +2023,10 @@ fn a_card_list_names_the_paying_account() {
         at5(button(4, "Send money"), 16.0, 700.0, 361.0, 50.0),
     ]);
     let sum = summarize(&tap(4), &s, None);
+    // Fifth review: ranked by closeness to the target (the email sits closer to "Send
+    // money"), so the order changed; both are listed.
     assert!(
-        sum.contains("To/Account: +1 (555) 010-0100; alex@example.com"),
+        sum.contains("To/Account: alex@example.com; +1 (555) 010-0100"),
         "{sum}"
     );
     let s = app_screen(vec![
@@ -2047,19 +2067,34 @@ fn hostile_text_cannot_forge_the_new_facts() {
 /// A lone full-width card that pages sideways is not a list row: a sideways swipe on it,
 /// or a sideways scroll across it, is not Delete. (Adapted from the fourth review's probe,
 /// which asserted that the swipe *was* Delete to show the false positive.)
+///
+/// Fifth review: a tall card is a page only when no element of its family is stacked
+/// above or below it at a similar width, so the "Continue" button here is narrower than
+/// the card (it was full-width before); with a full-width one the card reads as a row of
+/// a stack and the swipe asks as Delete (a deliberate false positive: height alone must
+/// never let a stack of tall Mail rows lose its Delete).
 #[test]
 fn a_lone_paging_card_is_not_a_list_row() {
-    let s = app_screen(vec![
-        at5(label(1, "Welcome"), 16.0, 100.0, 361.0, 30.0),
-        at5(
-            el(2, Role::Button, "Track your spending, page 1 of 4"),
-            16.0,
-            200.0,
-            361.0,
-            420.0,
-        ),
-        at5(button(3, "Continue"), 16.0, 700.0, 361.0, 50.0),
-    ]);
+    let with_continue = |w: f64| {
+        app_screen(vec![
+            at5(label(1, "Welcome"), 16.0, 100.0, 361.0, 30.0),
+            at5(
+                el(2, Role::Button, "Track your spending, page 1 of 4"),
+                16.0,
+                200.0,
+                361.0,
+                420.0,
+            ),
+            at5(button(3, "Continue"), 16.0, 700.0, w, 50.0),
+        ])
+    };
+    let full = with_continue(361.0);
+    let swipe = Action::Swipe {
+        direction: Direction::Left,
+        element: Some(2),
+    };
+    assert_eq!(classify(&swipe, &full, None), Delete);
+    let s = with_continue(200.0);
     let swipe = Action::Swipe {
         direction: Direction::Left,
         element: Some(2),

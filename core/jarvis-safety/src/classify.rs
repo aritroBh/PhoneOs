@@ -752,22 +752,64 @@ fn beside_siblings(screen: &CompactScreen) -> BTreeSet<u32> {
 /// drag pages. There is no screen-width threshold: a row in a split view's narrow column
 /// (beside the wider detail column's rows) or an inset-grouped list is still a row.
 ///
-/// A row is also short: taller than [`MAX_LIST_ROW_SHARE`] of the screen height, a lone
-/// cell or button is a page (an onboarding page, a story, a paging card), where a sideways
-/// drag turns the page. With an unknown screen height only the sibling rule applies.
+/// A **page** is not a row: a full-width cell or button (at least [`PAGE_MIN_WIDTH_SHARE`]
+/// of the screen width) taller than [`MAX_LIST_ROW_SHARE`] of the screen height **with no
+/// element of its family stacked above or below it at a similar width** (ratio at least
+/// [`STACK_MIN_WIDTH_RATIO`]) in the shown set: an onboarding page, a story, a paging card,
+/// where a sideways drag turns the page. A stack of tall rows is a list (Mail rows with a
+/// long preview in landscape, rows at an accessibility text size), whose sideways drag
+/// reveals Delete. Height alone never makes a page. With an unknown screen size only the
+/// sibling rules apply.
 fn is_list_row(el: &Element, r: &Reader<'_>) -> bool {
-    let screen_h = r.screen.size.height;
-    let page =
-        screen_h.is_finite() && screen_h > 0.0 && el.frame.height > screen_h * MAX_LIST_ROW_SHARE;
     row_family(&el.role)
-        && !page
+        && !is_page(el, r.screen)
         && !in_app(&r.screen.app_bundle_id, SPRINGBOARD_BUNDLE_ID)
         && !r.is_beside_sibling(el)
 }
 
-/// Tallest share of the screen height a list row with swipe actions takes (see
-/// [`is_list_row`]): a 200 pt row on an 852 pt screen is a row, a 420 pt card is a page.
+/// Whether `el` is a lone full-width tall card, see [`is_list_row`].
+fn is_page(el: &Element, screen: &CompactScreen) -> bool {
+    let (w, h) = (screen.size.width, screen.size.height);
+    let known = w.is_finite() && w > 0.0 && h.is_finite() && h > 0.0;
+    if !known
+        || el.frame.height <= h * MAX_LIST_ROW_SHARE
+        || el.frame.width < w * PAGE_MIN_WIDTH_SHARE
+    {
+        return false;
+    }
+    !screen.elements.iter().any(|o| {
+        let ratio = {
+            let (lo, hi) = (
+                o.frame.width.min(el.frame.width),
+                o.frame.width.max(el.frame.width),
+            );
+            if hi > 0.0 {
+                lo / hi
+            } else {
+                0.0
+            }
+        };
+        o.index != el.index
+            && row_family(&o.role)
+            && !o.frame.is_empty()
+            && ratio >= STACK_MIN_WIDTH_RATIO
+            && o.frame.x < el.frame.max_x()
+            && el.frame.x < o.frame.max_x()
+            && (o.frame.max_y() <= el.frame.y + STACK_OVERLAP_TOLERANCE
+                || el.frame.max_y() <= o.frame.y + STACK_OVERLAP_TOLERANCE)
+    })
+}
+
+/// Tallest share of the screen height a lone full-width card may take and still be a row
+/// (see [`is_list_row`]): a 200 pt row on an 852 pt screen is a row; a lone 420 pt card is
+/// a page, three 240 pt rows stacked are a list.
 pub(crate) const MAX_LIST_ROW_SHARE: f64 = 0.25;
+/// Share of the screen width a page spans (a full-width card).
+pub(crate) const PAGE_MIN_WIDTH_SHARE: f64 = 0.9;
+/// Width ratio at which an element stacked above or below a tall card makes it a row.
+pub(crate) const STACK_MIN_WIDTH_RATIO: f64 = 0.9;
+/// Overlap (points) tolerated between rows stacked one above the other.
+const STACK_OVERLAP_TOLERANCE: f64 = 1.0;
 
 /// Whether a drag in finger direction `finger` that crosses `el` acts on it. Sideways:
 /// adjustable controls (sliders, switches, steppers, slide-to-act controls) and list rows

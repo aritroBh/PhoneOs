@@ -8,7 +8,7 @@ use jarvis_proto::{
 use crate::app::{app_level, check_app, is_springboard, mode_level, Verdict};
 use crate::classify::{classify, type_target};
 use crate::gate::{changes_state, gate_in, Gate};
-use crate::redact::{contains_secret, redact};
+use crate::redact::{contains_secret, credential_like_field, redact, redact_screen};
 use crate::sanitize::sanitize_screen_text_with_limit;
 use crate::text::{has_money, CURRENCY_WORDS};
 use crate::validate::{looks_like_url, validate_action, validate_url};
@@ -22,6 +22,77 @@ pub enum Decision {
     Confirm(ConfirmRequest),
     /// Never execute it; the reason is safe to show the model and the user.
     Deny(String),
+}
+
+/// Where the screen an action is judged on came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScreenSource {
+    /// A typed accessibility tree (Jarvis's own runner): the supported path for acting.
+    #[default]
+    Typed,
+    /// The third-party runner's text tree: ambiguous and forgeable by on-screen text (see
+    /// `jarvis_observe::parse_runner_text`). Every state-changing runner action on it is
+    /// at least [`RiskCategory::Unverified`] and its summary starts with
+    /// [`UNVERIFIED_SCREEN_WARNING`].
+    RunnerText,
+}
+
+/// The fixed start of every confirmation summary of an action judged on a screen read from
+/// runner text ([`ScreenSource::RunnerText`]).
+pub const UNVERIFIED_SCREEN_WARNING: &str =
+    "Warning: this screen was read through an unverified text format and may not be what is on the phone. ";
+
+/// Where each compact element comes from in the raw tree (from
+/// `jarvis_observe::CompactView`), for summaries that prefer the target's own container.
+#[derive(Debug, Clone, Copy)]
+pub struct ScreenTree<'a> {
+    /// Per compact element (by position), its raw node's index.
+    pub sources: &'a [u32],
+    /// Per raw node, its parent's index (`u32::MAX` for the root).
+    pub parents: &'a [u32],
+    /// Per raw node, one past its last descendant's index.
+    pub ends: &'a [u32],
+}
+
+impl ScreenTree<'_> {
+    fn source(&self, el: &Element) -> Option<u32> {
+        let pos = usize::try_from(el.index).ok()?.checked_sub(1)?;
+        self.sources.get(pos).copied()
+    }
+
+    /// The raw ancestors of `el`'s node, innermost first, the root excepted (it holds
+    /// everything, so it is no one's container).
+    fn ancestors(&self, el: &Element) -> Vec<u32> {
+        let mut out = Vec::new();
+        let mut at = self.source(el).and_then(|s| self.parent_of(s));
+        while let Some(p) = at {
+            let up = self.parent_of(p);
+            if up.is_none() || out.len() > self.parents.len() {
+                break;
+            }
+            out.push(p);
+            at = up;
+        }
+        out
+    }
+
+    fn parent_of(&self, i: u32) -> Option<u32> {
+        usize::try_from(i)
+            .ok()
+            .and_then(|i| self.parents.get(i))
+            .copied()
+            .filter(|p| *p != u32::MAX)
+    }
+
+    /// Whether `el`'s node is inside raw node `container`'s subtree.
+    fn inside(&self, el: &Element, container: u32) -> bool {
+        let end = usize::try_from(container)
+            .ok()
+            .and_then(|i| self.ends.get(i))
+            .copied()
+            .unwrap_or(0);
+        self.source(el).is_some_and(|s| s > container && s < end)
+    }
 }
 
 /// Longest quoted fragment (label, typed text, argument) in a summary, in characters.
@@ -66,6 +137,44 @@ pub fn evaluate(
     action: &Action,
     screen: &CompactScreen,
     tool: Option<&ToolSpec>,
+) -> Decision {
+    evaluate_from(policy, action, screen, tool, ScreenSource::Typed)
+}
+
+/// The category of `action` on a screen from `source`: [`classify`]'s, raised to
+/// [`RiskCategory::Unverified`] (from `None`) when the screen came from runner text and the
+/// action is one the runner carries out that [`changes_state`] (everything but waits,
+/// reads, asking, finishing and plain vertical scrolls; tool calls do not go to the
+/// runner).
+pub fn classify_from(
+    action: &Action,
+    screen: &CompactScreen,
+    tool: Option<&ToolSpec>,
+    source: ScreenSource,
+) -> RiskCategory {
+    let category = classify(action, screen, tool);
+    let runner_action = !matches!(action, Action::CallTool { .. });
+    if source == ScreenSource::RunnerText
+        && category == RiskCategory::None
+        && runner_action
+        && changes_state(action, screen)
+    {
+        RiskCategory::Unverified
+    } else {
+        category
+    }
+}
+
+/// [`evaluate`] for a screen from `source`: on a screen read from runner text every
+/// state-changing runner action is at least `Unverified` ([`classify_from`]), so it asks
+/// under every policy that asks for unverified controls, and its summary starts with
+/// [`UNVERIFIED_SCREEN_WARNING`]. Deny-list and category denials apply unchanged.
+pub fn evaluate_from(
+    policy: &Policy,
+    action: &Action,
+    screen: &CompactScreen,
+    tool: Option<&ToolSpec>,
+    source: ScreenSource,
 ) -> Decision {
     if let Err(e) = validate_action(action, screen) {
         return Decision::Deny(clean(&e.to_string(), MAX_SUMMARY_CHARS));
@@ -130,13 +239,13 @@ pub fn evaluate(
         // Leaving a denied app stays possible; how it is gated does not depend on it.
         level = app_level(&without_app_denials(policy), &affected_app);
     }
-    let category = classify(action, screen, tool);
+    let category = classify_from(action, screen, tool, source);
     match gate_in(policy, category, level, action, screen) {
         Gate::Allow => Decision::Allow,
         Gate::Deny => Decision::Deny(format!("{category:?} actions are not allowed")),
         Gate::Confirm => Decision::Confirm(ConfirmRequest {
             category,
-            summary: summarize_with(action, screen, category),
+            summary: summary_for(action, screen, category, source, None),
             app: affected_app,
         }),
     }
@@ -564,8 +673,8 @@ const MAX_NEIGHBOUR_CHARS: usize = 40;
 pub(crate) const MAX_LISTED_AMOUNTS: usize = 5;
 /// Most selected options listed after "Selected:"; more are counted.
 pub(crate) const MAX_LISTED_SELECTED: usize = 3;
-/// Most recipient or account texts listed after "To/Account:".
-pub(crate) const MAX_LISTED_RECIPIENTS: usize = 2;
+/// Most recipient or account texts listed after "To/Account:"; more are counted.
+pub(crate) const MAX_LISTED_RECIPIENTS: usize = 3;
 /// Most field values listed after "Fields:"; more are counted.
 pub(crate) const MAX_LISTED_FIELDS: usize = 2;
 /// Most static texts that name the target's item after "under".
@@ -582,8 +691,14 @@ const STACKED_LABEL_GAP: f64 = 8.0;
 /// Field labels (or placeholders) whose bare number is an amount ("Amount: 500").
 const AMOUNT_FIELD_WORDS: &[&str] = &["amount", "total", "price", "tip", "quantity", "qty"];
 /// Word starts that mark an amount as the charge (listed first): total, due, pay,
-/// charge, billed.
-const CHARGE_WORD_STARTS: &[&str] = &["total", "due", "pay", "charg", "bill", "subtotal"];
+/// charge, billed, renews.
+const CHARGE_WORD_STARTS: &[&str] = &["total", "due", "pay", "charg", "bill", "subtotal", "renew"];
+/// Words after "per" that make a recurring charge ("per month").
+const PER_PERIOD_WORDS: &[&str] = &["year", "yr", "annum", "month", "mo", "week", "wk", "day"];
+/// Period suffixes written after a slash ("$9.99/mo").
+const SLASH_PERIODS: &[&str] = &[
+    "/yr", "/year", "/mo", "/month", "/week", "/wk", "/day", "/ year", "/ mo", "/ month",
+];
 
 /// Whether `el` is an on/off switch, and if so whether it is on (`value` "1"/"on"/"true"
 /// or "0"/"off"/"false"; any other value is unknown).
@@ -664,11 +779,19 @@ fn row_texts<'a>(el: &Element, screen: &'a CompactScreen) -> Vec<&'a str> {
 /// `el` in screen order that sit above it (bottom within [`ITEM_REACH`] of its top),
 /// overlap it horizontally, are not in its row band and show no amount (amounts are
 /// listed as facts); the first [`MAX_ITEM_TEXTS`].
-fn item_texts<'a>(el: &Element, screen: &'a CompactScreen) -> Vec<&'a str> {
+///
+/// When more than one text qualifies and the raw tree is known (`tree`), texts in the
+/// target's own container are preferred over mere proximity: the innermost raw ancestor of
+/// the target that holds any of them decides, and only the texts inside it are kept.
+fn item_texts<'a>(
+    el: &Element,
+    screen: &'a CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> Vec<&'a str> {
     let Some(pos) = screen.elements.iter().position(|e| e.index == el.index) else {
         return Vec::new();
     };
-    let mut found: Vec<&'a str> = Vec::new();
+    let mut found: Vec<&'a Element> = Vec::new();
     for e in screen.elements.iter().take(pos).rev() {
         if e.role.is_interactive() {
             break;
@@ -684,12 +807,21 @@ fn item_texts<'a>(el: &Element, screen: &'a CompactScreen) -> Vec<&'a str> {
             && !e.label.trim().is_empty()
             && !has_money(&e.label)
         {
-            found.push(e.label.trim());
+            found.push(e);
         }
     }
     found.reverse();
+    if let Some(tree) = tree.filter(|_| found.len() > 1) {
+        let own = tree
+            .ancestors(el)
+            .into_iter()
+            .find(|a| found.iter().any(|e| tree.inside(e, *a)));
+        if let Some(a) = own {
+            found.retain(|e| tree.inside(e, a));
+        }
+    }
     found.truncate(MAX_ITEM_TEXTS);
-    found
+    found.into_iter().map(|e| e.label.trim()).collect()
 }
 
 /// One amount on the screen, for the summary: the text it is shown with (its element's
@@ -701,11 +833,27 @@ struct AmountFact {
     charge: bool,
 }
 
-/// Whether `text` has charge wording (a word starting with total, due, pay, charge, bill).
+/// Whether `text` has charge wording: a word starting with total, due, pay, charge, bill
+/// or renew; "then"; "per year / month / week" (and `/yr`, `/mo`...); "after (the / free)
+/// trial".
 fn has_charge_words(text: &str) -> bool {
-    text.split(|c: char| !c.is_alphanumeric())
-        .map(str::to_lowercase)
-        .any(|w| CHARGE_WORD_STARTS.iter().any(|s| w.starts_with(s)))
+    let lower = text.to_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let starts = words
+        .iter()
+        .any(|w| CHARGE_WORD_STARTS.iter().any(|s| w.starts_with(s)) || *w == "then");
+    let per = words
+        .windows(2)
+        .any(|p| matches!(p, [a, b] if *a == "per" && PER_PERIOD_WORDS.contains(b)));
+    let slash = SLASH_PERIODS.iter().any(|s| lower.contains(s));
+    let trial = words.windows(2).any(|p| matches!(p, ["after", "trial"]))
+        || words
+            .windows(3)
+            .any(|p| matches!(p, ["after", "the" | "free" | "your", "trial"]));
+    starts || per || slash || trial
 }
 
 /// Whether `field`'s name (label or placeholder) is amount-like.
@@ -778,8 +926,10 @@ fn max_amount(chars: &[char], ranges: &[(usize, usize)]) -> f64 {
 ///   name is amount-like (amount, total, price, tip, quantity, qty) and whose value holds a
 ///   number, as `Name: value`.
 ///
-/// Order: the charge first (field amounts, and texts with total / due / pay / charge /
-/// billed wording), then the rest; largest first within each (ties: screen order).
+/// Order: the charge first (field amounts, and texts with charge wording, see
+/// `has_charge_words`), then the rest; largest first within each (ties: screen order). The
+/// facts list shows the first [`MAX_LISTED_AMOUNTS`] and always the largest amount on the
+/// screen, whatever its wording (see `facts_suffix`).
 fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountFact> {
     let mut out: Vec<AmountFact> = Vec::new();
     let push = |out: &mut Vec<AmountFact>, text: String, value: f64, charge: bool| {
@@ -804,6 +954,7 @@ fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountF
         };
         if e.secure
             || e.role == Role::Key
+            || credential_like_field(e)
             || target.is_some_and(|t| t.index == e.index)
             || joined.contains(&e.index)
         {
@@ -961,7 +1112,9 @@ fn selected_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<Strin
 }
 
 /// The values of the value fields on `screen` (text inputs, sliders, steppers, pickers;
-/// never secure ones, nor the target) that are not amounts, as `Name: value`.
+/// never secure ones, nor the target) that are not amounts, as `Name: value`. A field
+/// named as a credential or a bank or card detail ([`credential_like_field`]) that holds a
+/// value is listed by name only, as `Name (hidden)`.
 fn field_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for e in screen
@@ -970,6 +1123,18 @@ fn field_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<String> 
         .filter(|e| is_value_field(e) && !target.is_some_and(|t| t.index == e.index))
     {
         let Some(v) = field_value(e) else { continue };
+        if credential_like_field(e) {
+            let name = field_name(e);
+            let t = if name.is_empty() {
+                "A protected field (hidden)".to_owned()
+            } else {
+                format!("{name} (hidden)")
+            };
+            if !out.contains(&t) {
+                out.push(t);
+            }
+            continue;
+        }
         let chars: Vec<char> = v.chars().collect();
         let amount = !amount_ranges(&chars).is_empty()
             || (v.chars().any(|c| c.is_ascii_digit()) && amount_like_field(e));
@@ -1040,28 +1205,93 @@ fn has_phone_number(text: &str) -> bool {
     false
 }
 
-/// Up to [`MAX_LISTED_RECIPIENTS`] texts on `screen` (not the target's, never a secure
-/// field's) that say who is paid or messaged: phone numbers, masked account or card
-/// suffixes, email addresses, `@handles`. Money texts are left to the amounts.
+/// Words that say who is paid or messaged ("To", "Pay to", "Recipient", "Send to",
+/// "Account").
+const RECIPIENT_WORDS: &[&str] = &[
+    "to",
+    "recipient",
+    "recipients",
+    "payee",
+    "beneficiary",
+    "account",
+    "acct",
+    "iban",
+];
+/// Words next to which a long number is a reference, not a recipient.
+const REFERENCE_WORDS: &[&str] = &[
+    "order",
+    "reference",
+    "ref",
+    "invoice",
+    "help",
+    "support",
+    "tracking",
+    "confirmation",
+    "booking",
+    "receipt",
+    "ticket",
+    "case",
+];
+
+/// Whether `text` has a word of `table`.
+fn has_word(text: &str, table: &[&str]) -> bool {
+    text.split(|c: char| !c.is_alphanumeric())
+        .map(str::to_lowercase)
+        .any(|w| table.contains(&w.as_str()))
+}
+
+/// The texts on `screen` (not the target's, never a secure or protected field's) that say
+/// who is paid or messaged: phone numbers, masked account or card suffixes, email
+/// addresses, `@handles`. Money texts are left to the amounts. Ranked: texts with
+/// recipient wording (to, pay to, recipient, send to, account) first, then other
+/// recipients, and last a 7–15 digit number next to order / reference / invoice / help
+/// wording; within each, a selected option (the chosen card or account) first, then the
+/// closest to the target (screen order without a target). All
+/// are returned: the list shows [`MAX_LISTED_RECIPIENTS`] and counts the rest.
 fn recipient_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for e in screen
-        .elements
-        .iter()
-        .filter(|e| !e.secure && e.role != Role::Key && !target.is_some_and(|t| t.index == e.index))
-    {
+    let mut ranked: Vec<(u8, bool, f64, usize, String)> = Vec::new();
+    for (k, e) in screen.elements.iter().enumerate().filter(|(_, e)| {
+        !e.secure
+            && e.role != Role::Key
+            && !credential_like_field(e)
+            && !target.is_some_and(|t| t.index == e.index)
+    }) {
         let t = crate::classify::element_text(e).trim().to_owned();
-        if t.is_empty() || has_money(&t) {
+        if t.is_empty() || has_money(&t) || ranked.iter().any(|(_, _, _, _, x)| *x == t) {
             continue;
         }
-        if (t.split_whitespace().any(recipient_word) || has_phone_number(&t)) && !out.contains(&t) {
-            out.push(t);
-            if out.len() >= MAX_LISTED_RECIPIENTS {
-                break;
-            }
+        let word = t.split_whitespace().any(recipient_word);
+        let phone = has_phone_number(&t);
+        if !word && !phone {
+            continue;
         }
+        let tier = if has_word(&t, RECIPIENT_WORDS) {
+            0
+        } else if !word && has_word(&t, REFERENCE_WORDS) {
+            2
+        } else {
+            1
+        };
+        let distance = target
+            .filter(|tg| !tg.frame.is_empty() && !e.frame.is_empty())
+            .map_or(0.0, |tg| {
+                let (a, b) = (tg.frame.center(), e.frame.center());
+                let d = (a.x - b.x).hypot(a.y - b.y);
+                if d.is_finite() {
+                    d
+                } else {
+                    f64::MAX
+                }
+            });
+        ranked.push((tier, !e.selected, distance, k, t));
     }
-    out
+    ranked.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(a.1.cmp(&b.1))
+            .then(a.2.total_cmp(&b.2))
+            .then(a.3.cmp(&b.3))
+    });
+    ranked.into_iter().map(|(_, _, _, _, t)| t).collect()
 }
 
 /// One fact entry for the summary: cleaned like a label (amounts kept when shortened), with
@@ -1078,10 +1308,14 @@ struct Facts {
     fields: Vec<String>,
 }
 
-/// `Heading: a; b; c and N more` with at most `max` entries, each `entry`-formatted.
+/// `Heading: a; b; c and N more` with at most `max` entries, each `entry`-formatted; with
+/// `entry` 0 (no room) `Heading: N not shown`. Never silent about what it leaves out.
 fn fact_list(heading: &str, items: &[String], max: usize, entry: usize) -> Option<String> {
-    if items.is_empty() || entry == 0 {
+    if items.is_empty() {
         return None;
+    }
+    if entry == 0 {
+        return Some(format!("{heading}: {} not shown", items.len()));
     }
     let shown: Vec<String> = items
         .iter()
@@ -1103,19 +1337,37 @@ fn fact_list(heading: &str, items: &[String], max: usize, entry: usize) -> Optio
 /// - `Amounts on screen: Due today $199.00; Compare at $1,200.00 and 2 more` (every
 ///   distinct amount, the charge first, at most [`MAX_LISTED_AMOUNTS`], then always the
 ///   count of the rest);
-/// - `To/Account: Checking ••••4521` (payments and messages only, at most
-///   [`MAX_LISTED_RECIPIENTS`]);
+/// - `To/Account: To account ••••4521; @alex and 2 more` (payments and messages only, ranked
+///   by recipient wording and closeness to the target, at most [`MAX_LISTED_RECIPIENTS`],
+///   then `and N more`);
 /// - `Selected: Annual plan` (at most [`MAX_LISTED_SELECTED`], ranked, then `and N more`);
-/// - `Fields: Note: dinner` (at most [`MAX_LISTED_FIELDS`], then `and N more`).
+/// - `Fields: Note: dinner; Card number (hidden)` (at most [`MAX_LISTED_FIELDS`], then
+///   `and N more`; a protected field by name only).
 ///
-/// Empty parts are left out.
+/// Empty parts are left out; a part with no room left says how many entries it has
+/// (`Fields: 2 not shown`), so nothing is dropped silently.
 fn facts_suffix(facts: &Facts, limits: Limits) -> Vec<String> {
     let mut parts = Vec::new();
     let amounts = &facts.amounts;
     if !amounts.is_empty() {
-        let shown: Vec<String> = amounts
+        // The largest amount on the screen is always listed, whatever its wording: it
+        // takes the last listed place when the ranking left it out.
+        let largest = amounts
             .iter()
-            .take(MAX_LISTED_AMOUNTS)
+            .enumerate()
+            .fold(None::<(usize, f64)>, |best, (k, f)| match best {
+                Some((_, v)) if v >= f.value => best,
+                _ => Some((k, f.value)),
+            })
+            .map(|(k, _)| k);
+        let mut picked: Vec<&AmountFact> = amounts.iter().take(MAX_LISTED_AMOUNTS).collect();
+        if let Some(k) = largest.filter(|k| *k >= MAX_LISTED_AMOUNTS) {
+            if let (Some(last), Some(big)) = (picked.last_mut(), amounts.get(k)) {
+                *last = big;
+            }
+        }
+        let shown: Vec<String> = picked
+            .iter()
             .map(|f| {
                 if limits.amount_entry == 0 {
                     // The amounts alone.
@@ -1184,6 +1436,7 @@ fn press_summary(
     screen: &CompactScreen,
     in_app: &str,
     l: Limits,
+    tree: Option<&ScreenTree<'_>>,
 ) -> String {
     let what = describe_with(el, l.label);
     if verb == "Tap" {
@@ -1198,7 +1451,7 @@ fn press_summary(
     } else {
         format!(" next to \"{}\"", clean_label(&row, l.next_to))
     };
-    let item = item_texts(el, screen).join(", ");
+    let item = item_texts(el, screen, tree).join(", ");
     let under = if item.is_empty() || l.under == 0 {
         String::new()
     } else {
@@ -1210,10 +1463,50 @@ fn press_summary(
 /// A one-line, human-readable, sanitised description of `action` for a confirmation
 /// prompt, e.g. `Tap "Pay $42.10" in Amazon`. Typed secrets are never shown.
 pub fn summarize(action: &Action, screen: &CompactScreen, tool: Option<&ToolSpec>) -> String {
-    summarize_with(action, screen, classify(action, screen, tool))
+    summary_for(
+        action,
+        screen,
+        classify(action, screen, tool),
+        ScreenSource::Typed,
+        None,
+    )
 }
 
-fn summarize_with(action: &Action, screen: &CompactScreen, category: RiskCategory) -> String {
+/// The confirmation summary of `action` on `screen` for a known `category` (as
+/// [`evaluate_from`] builds it): on a runner-text screen it starts with
+/// [`UNVERIFIED_SCREEN_WARNING`]; with `tree`, the `under "…"` part prefers texts in the
+/// target's own container. The screen's facts are built from the label-aware redaction
+/// the prompt uses (`redact_screen`); fields named as credentials or bank/card details are
+/// listed by name only. Callers mask the owner's profile values in `screen` first.
+pub fn summary_for(
+    action: &Action,
+    screen: &CompactScreen,
+    category: RiskCategory,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+) -> String {
+    match source {
+        ScreenSource::Typed => summarize_with(action, screen, category, tree, MAX_SUMMARY_CHARS),
+        ScreenSource::RunnerText => {
+            let room = MAX_SUMMARY_CHARS.saturating_sub(UNVERIFIED_SCREEN_WARNING.chars().count());
+            format!(
+                "{UNVERIFIED_SCREEN_WARNING}{}",
+                summarize_with(action, screen, category, tree, room.max(120))
+            )
+        }
+    }
+}
+
+fn summarize_with(
+    action: &Action,
+    raw: &CompactScreen,
+    category: RiskCategory,
+    tree: Option<&ScreenTree<'_>>,
+    max: usize,
+) -> String {
+    // Facts and quoted labels come from the prompt's label-aware redaction.
+    let redacted = redact_screen(raw);
+    let screen = &redacted;
     // Actions in the foreground app state the screen's facts after the action itself.
     let target = match action {
         Action::Tap { element } | Action::LongPress { element, .. } | Action::Clear { element } => {
@@ -1252,14 +1545,14 @@ fn summarize_with(action: &Action, screen: &CompactScreen, category: RiskCategor
     };
     let mut line = String::new();
     for l in LIMITS {
-        let mut parts = vec![action_line(action, screen, category, l)];
+        let mut parts = vec![action_line(action, screen, category, l, tree)];
         parts.extend(facts_suffix(&facts, l));
         line = parts.join(". ");
-        if line.chars().count() <= MAX_SUMMARY_CHARS {
+        if line.chars().count() <= max {
             break;
         }
     }
-    sanitize_screen_text_with_limit(&line, MAX_SUMMARY_CHARS)
+    sanitize_screen_text_with_limit(&line, max)
 }
 
 /// What `action` does, without the screen's facts.
@@ -1268,6 +1561,7 @@ fn action_line(
     screen: &CompactScreen,
     category: RiskCategory,
     l: Limits,
+    tree: Option<&ScreenTree<'_>>,
 ) -> String {
     let app_name = screen
         .app_name
@@ -1277,11 +1571,11 @@ fn action_line(
     let in_app = format!(" in {}", clean(app_name, l.app));
     match action {
         Action::Tap { element } => match screen.get(*element) {
-            Some(el) => press_summary("Tap", el, screen, &in_app, l),
+            Some(el) => press_summary("Tap", el, screen, &in_app, l, tree),
             None => format!("Tap element {element}{in_app}"),
         },
         Action::LongPress { element, .. } => match screen.get(*element) {
-            Some(el) => press_summary("Long-press", el, screen, &in_app, l),
+            Some(el) => press_summary("Long-press", el, screen, &in_app, l, tree),
             None => format!("Long-press element {element}{in_app}"),
         },
         Action::Type {

@@ -11,7 +11,7 @@ use jarvis_proto::{
 
 use crate::human::Human;
 use crate::model::Model;
-use crate::phone::{SimObservation, SimPhone, SimSnapshot};
+use crate::phone::{ObserveMode, SimObservation, SimPhone, SimSnapshot};
 
 /// Limits and fault injection for one run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -318,7 +318,12 @@ pub fn run_with(
                                 obs.screen.root.count(),
                                 phone.mode().name(),
                             ),
-                            Some(Event::Observed(obs)),
+                            // The runner-text mode answers like the device path does: the
+                            // session marks such a screen unverified.
+                            Some(match phone.mode() {
+                                ObserveMode::RunnerText => Event::ObservedRunnerText(obs),
+                                ObserveMode::Structured => Event::Observed(obs),
+                            }),
                         )
                     }
                     Err(e) => {

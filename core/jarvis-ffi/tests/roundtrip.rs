@@ -231,6 +231,9 @@ fn event_variant(e: &p::Event) -> usize {
         p::Event::DeviceUnlocked => 10,
         p::Event::Tick => 11,
         p::Event::ObserveFailed { .. } => 12,
+        // No FFI round trip: its FFI form carries the runner's raw text (see
+        // `runner_text_events_reach_the_session_marked_as_runner_text`).
+        p::Event::ObservedRunnerText(_) => 13,
     }
 }
 
@@ -870,6 +873,30 @@ fn every_event_round_trips() {
         assert_eq!(back, e, "via {ffi:?}");
         assert_eq!(issue, None);
     }
+}
+
+/// The runner's text becomes `ObservedRunnerText` for the session (fifth review: the
+/// session treats such a screen as unverified), and maps back to a plain `Observed`.
+#[test]
+fn runner_text_events_reach_the_session_marked_as_runner_text() {
+    let snapshot = f::RunnerSnapshot {
+        source: "Application, label: 'Shop', {{0, 0}, {393, 852}}\n  Button, label: 'Pay', {{16, 700}, {361, 50}}\n".to_owned(),
+        app_bundle_id: "com.example.shop".to_owned(),
+        app_name: Some("Shop".to_owned()),
+        size: p::Size::new(393.0, 852.0).into(),
+        keyboard_visible: false,
+        orientation: p::Orientation::Portrait.into(),
+        screenshot: None,
+        device_locked: false,
+    };
+    let (e, issue) = f::event_to_proto(f::Event::ObservedRunnerText { snapshot });
+    assert_eq!(issue, None);
+    let p::Event::ObservedRunnerText(obs) = e.clone() else {
+        panic!("{e:?}")
+    };
+    assert_eq!(obs.screen.root.children.len(), 1);
+    let back: f::Event = e.into();
+    assert!(matches!(back, f::Event::Observed { .. }), "{back:?}");
 }
 
 #[test]

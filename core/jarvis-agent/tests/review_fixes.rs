@@ -1280,6 +1280,9 @@ fn checkout_with_chrome(clock: &str, password: &str, prediction: &str) -> Screen
     screen("com.example.shop", "Shop", root, true)
 }
 
+/// Fifth review: a `StatusBar` node is excluded only on SpringBoard, so inside an app a
+/// ticking status-bar clock voids the approval (it was kept before: an app can give any
+/// node that role). The secure value and the keyboard's own window still do not count.
 #[test]
 fn a_status_bar_clock_that_ticks_keeps_the_approval() {
     let before = checkout_with_chrome("9:41", "••••", "Hello");
@@ -1290,6 +1293,10 @@ fn a_status_bar_clock_that_ticks_keeps_the_approval() {
         jarvis_observe::compact(&after),
         "the clock is on the compact screen"
     );
+    let (asked, e) = approve_then_look(config(), &before, i, &after);
+    assert!(!matches!(e, Effect::Act(_)), "'{asked}': {e:?}");
+    // The clock unchanged: only the secure value and the keyboard's window changed.
+    let after = checkout_with_chrome("9:41", "•••••", "Thanks");
     let (asked, e) = approve_then_look(config(), &before, i, &after);
     assert!(
         matches!(e, Effect::Act(RunnerCommand::Tap { .. })),
@@ -1317,23 +1324,26 @@ fn a_status_bar_clock_that_ticks_keeps_the_approval() {
     assert!(!matches!(e, Effect::Act(_)), "{e:?}");
 }
 
-/// On the home screen an icon's badge may change between the question and the look.
+/// On the home screen an app icon's badge may change between the question and the look.
+/// Fifth review: only the icon role gets the badge cut (the icons here are `Icon`s; on a
+/// button the same change voids, see the end).
 #[test]
 fn a_home_screen_badge_that_changes_keeps_the_approval() {
-    let home = |mail: &str| {
+    let home_with = |role: Role, mail: &str| {
         screen(
             "com.apple.springboard",
             "Home",
             app_root(
                 "Home",
                 vec![
-                    node(Role::Button, mail, rect(20.0, 100.0, 64.0, 64.0)),
-                    node(Role::Button, "Gadgetry", rect(110.0, 100.0, 64.0, 64.0)),
+                    node(role.clone(), mail, rect(20.0, 100.0, 64.0, 64.0)),
+                    node(role, "Gadgetry", rect(110.0, 100.0, 64.0, 64.0)),
                 ],
             ),
             false,
         )
     };
+    let home = |mail: &str| home_with(Role::Other("Icon".into()), mail);
     let before = home("Mail, 3 unread");
     let i = index_of(&before, "Gadgetry");
     let (asked, e) = approve_then_look(first_use_config(), &before, i, &home("Mail, 4 unread"));
@@ -1343,6 +1353,11 @@ fn a_home_screen_badge_that_changes_keeps_the_approval() {
         "'{asked}': {e:?}"
     );
     let (_, e) = approve_then_look(first_use_config(), &before, i, &home("Mall, 3 unread"));
+    assert!(!matches!(e, Effect::Act(_)), "{e:?}");
+    let buttons = |mail: &str| home_with(Role::Button, mail);
+    let before = buttons("Mail, 3 unread");
+    let i = index_of(&before, "Gadgetry");
+    let (_, e) = approve_then_look(first_use_config(), &before, i, &buttons("Mail, 4 unread"));
     assert!(!matches!(e, Effect::Act(_)), "{e:?}");
 }
 

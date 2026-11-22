@@ -1062,9 +1062,13 @@ impl From<p::Event> for Event {
     fn from(v: p::Event) -> Self {
         match v {
             p::Event::Start => Event::Start,
-            p::Event::Observed(observation) => Event::Observed {
-                observation: observation.into(),
-            },
+            // The runner's text is gone once parsed: the FFI side gets the parsed tree as a
+            // plain observation (this direction is only used for inspection and tests).
+            p::Event::Observed(observation) | p::Event::ObservedRunnerText(observation) => {
+                Event::Observed {
+                    observation: observation.into(),
+                }
+            }
             p::Event::ModelOutput(output) => Event::ModelOutput {
                 output: output.into(),
             },
@@ -1094,7 +1098,8 @@ pub(crate) fn event_into_proto(v: Event) -> (p::Event, Option<String>) {
         Event::Observed { observation } => (p::Event::Observed(observation.into()), None),
         Event::ObservedRunnerText { snapshot } => {
             let (observation, issue) = snapshot_to_observation(snapshot);
-            (p::Event::Observed(observation), issue)
+            // Marked as runner text: the session treats the screen as unverified.
+            (p::Event::ObservedRunnerText(observation), issue)
         }
         Event::ModelOutput { output } => (p::Event::ModelOutput(output.into()), None),
         Event::ModelFailed { error } => (p::Event::ModelFailed { error }, None),
