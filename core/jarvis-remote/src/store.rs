@@ -2,8 +2,9 @@
 //!
 //! The JSON produced by [`DeviceStore::to_json`] contains every device's long-term key in
 //! hex. Anyone holding it can impersonate those devices. The shell must store it in the
-//! Keychain (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, not synced) and nowhere
-//! else: not in the app's documents, not in logs, not in backups. The returned string is
+//! Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, not synced: the hub must
+//! still read it while the phone is locked) and nowhere else: not in the app's documents,
+//! not in logs, not in backups. The returned string is
 //! zeroized on drop; serde's intermediate buffers while encoding and decoding are not
 //! (serde_json offers no way to do that), nor are copies the shell makes.
 
