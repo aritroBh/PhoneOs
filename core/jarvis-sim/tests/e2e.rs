@@ -768,7 +768,11 @@ fn a_runner_command_that_fails_once_is_retried_by_the_model() {
 
 #[test]
 fn a_model_failure_ends_the_run_with_the_error() {
-    let mut model = ScriptedModel::new([tap("Cell:Wi-Fi"), tap("Switch:Wi-Fi")]).fail_at(1);
+    // Three failures in a row (the request and its two retries) end the run.
+    let mut model = ScriptedModel::new([tap("Cell:Wi-Fi"), tap("Switch:Wi-Fi")])
+        .fail_at(1)
+        .fail_at(2)
+        .fail_at(3);
     let r = go_with(
         &setup(ObserveMode::Structured),
         "settings",
@@ -783,11 +787,34 @@ fn a_model_failure_ends_the_run_with_the_error() {
         "{}",
         r.outcome.summary
     );
-    assert_eq!(r.counts.model_failures, 1);
+    assert_eq!(r.counts.model_failures, 3);
+    assert_eq!(r.counts.model_calls, 4);
+    assert_eq!(model.remaining(), 1, "the switch tap was never served");
     assert_eq!(
         r.final_state.screen, "wifi",
         "the first step had already happened"
     );
+}
+
+#[test]
+fn a_transient_model_failure_is_retried_and_the_task_completes() {
+    let mut model =
+        ScriptedModel::new([tap("Cell:Wi-Fi"), tap("Switch:Wi-Fi"), done("off")]).fail_at(1);
+    let r = go_with(
+        &setup(ObserveMode::Structured),
+        "settings",
+        "Turn off Wi-Fi",
+        &mut model,
+        &mut Human::approve_all(),
+        MemoryStore::new(),
+    );
+    assert_success(&r, "retry");
+    assert_eq!(r.counts.model_failures, 1);
+    assert_eq!(r.counts.model_calls, 4);
+    assert_eq!(r.outcome.steps, 3);
+    // The retry is the very same request.
+    assert_eq!(model.requests()[1], model.requests()[2]);
+    assert!(r.final_state.check("settings.wifi == false").unwrap());
 }
 
 #[test]

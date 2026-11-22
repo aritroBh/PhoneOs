@@ -56,6 +56,12 @@ pub enum FlowText {
         /// Slot number (`{n}` in the intent key).
         slot: u32,
     },
+    /// A profile field, by key: replayed as the `{{profile.KEY}}` placeholder, which the
+    /// agent substitutes at execution time. The value is never stored.
+    Profile {
+        /// Profile key as the model wrote it (aliases resolve at substitution).
+        key: String,
+    },
 }
 
 /// What a recorded step does. Mirrors the UI subset of `Action`.

@@ -3,6 +3,9 @@
   "task": "Sign in to Acme with alex@example.com",
   "start_app": "acme",
   "success": "acme.signed_in == true",
+  "expect_confirm": [
+    "first_use"
+  ],
   "max_steps": 14,
   "human": {
     "type_on_ask": [

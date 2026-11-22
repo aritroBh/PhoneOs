@@ -857,6 +857,9 @@ impl From<p::RiskCategory> for RiskCategory {
             p::RiskCategory::AccountChange => RiskCategory::AccountChange,
             p::RiskCategory::SystemSetting => RiskCategory::SystemSetting,
             p::RiskCategory::Credential => RiskCategory::Credential,
+            p::RiskCategory::Unverified => RiskCategory::Unverified,
+            p::RiskCategory::Call => RiskCategory::Call,
+            p::RiskCategory::FirstUse => RiskCategory::FirstUse,
         }
     }
 }
@@ -873,6 +876,75 @@ impl From<RiskCategory> for p::RiskCategory {
             RiskCategory::AccountChange => p::RiskCategory::AccountChange,
             RiskCategory::SystemSetting => p::RiskCategory::SystemSetting,
             RiskCategory::Credential => p::RiskCategory::Credential,
+            RiskCategory::Unverified => p::RiskCategory::Unverified,
+            RiskCategory::Call => p::RiskCategory::Call,
+            RiskCategory::FirstUse => p::RiskCategory::FirstUse,
+        }
+    }
+}
+
+impl From<p::PolicyMode> for PolicyMode {
+    fn from(v: p::PolicyMode) -> Self {
+        match v {
+            p::PolicyMode::Guarded => PolicyMode::Guarded,
+            p::PolicyMode::StepByStep => PolicyMode::StepByStep,
+        }
+    }
+}
+
+impl From<PolicyMode> for p::PolicyMode {
+    fn from(v: PolicyMode) -> Self {
+        match v {
+            PolicyMode::Guarded => p::PolicyMode::Guarded,
+            PolicyMode::StepByStep => p::PolicyMode::StepByStep,
+        }
+    }
+}
+
+impl From<p::TrustLevel> for TrustLevel {
+    fn from(v: p::TrustLevel) -> Self {
+        match v {
+            p::TrustLevel::Trusted => TrustLevel::Trusted,
+            p::TrustLevel::Guarded => TrustLevel::Guarded,
+            p::TrustLevel::StepByStep => TrustLevel::StepByStep,
+            p::TrustLevel::Denied => TrustLevel::Denied,
+        }
+    }
+}
+
+impl From<TrustLevel> for p::TrustLevel {
+    fn from(v: TrustLevel) -> Self {
+        match v {
+            TrustLevel::Trusted => p::TrustLevel::Trusted,
+            TrustLevel::Guarded => p::TrustLevel::Guarded,
+            TrustLevel::StepByStep => p::TrustLevel::StepByStep,
+            TrustLevel::Denied => p::TrustLevel::Denied,
+        }
+    }
+}
+
+impl From<p::AppRule> for AppRule {
+    fn from(v: p::AppRule) -> Self {
+        let p::AppRule {
+            bundle_id_prefix,
+            level,
+        } = v;
+        AppRule {
+            bundle_id_prefix,
+            level: level.into(),
+        }
+    }
+}
+
+impl From<AppRule> for p::AppRule {
+    fn from(v: AppRule) -> Self {
+        let AppRule {
+            bundle_id_prefix,
+            level,
+        } = v;
+        p::AppRule {
+            bundle_id_prefix,
+            level: level.into(),
         }
     }
 }
@@ -882,6 +954,10 @@ impl From<p::Policy> for Policy {
         let p::Policy {
             denied_apps,
             confirm,
+            deny_categories,
+            mode,
+            app_rules,
+            first_use_approval,
             max_steps,
             max_duration_ms,
             max_consecutive_failures,
@@ -890,6 +966,10 @@ impl From<p::Policy> for Policy {
         Policy {
             denied_apps,
             confirm: confirm.into_iter().map(Into::into).collect(),
+            deny_categories: deny_categories.into_iter().map(Into::into).collect(),
+            mode: mode.into(),
+            app_rules: app_rules.into_iter().map(Into::into).collect(),
+            first_use_approval,
             max_steps,
             max_duration_ms,
             max_consecutive_failures,
@@ -903,6 +983,10 @@ impl From<Policy> for p::Policy {
         let Policy {
             denied_apps,
             confirm,
+            deny_categories,
+            mode,
+            app_rules,
+            first_use_approval,
             max_steps,
             max_duration_ms,
             max_consecutive_failures,
@@ -911,6 +995,10 @@ impl From<Policy> for p::Policy {
         p::Policy {
             denied_apps,
             confirm: confirm.into_iter().map(Into::into).collect(),
+            deny_categories: deny_categories.into_iter().map(Into::into).collect(),
+            mode: mode.into(),
+            app_rules: app_rules.into_iter().map(Into::into).collect(),
+            first_use_approval,
             max_steps,
             max_duration_ms,
             max_consecutive_failures,
@@ -1128,12 +1216,16 @@ impl From<p::Progress> for SessionProgress {
             phase,
             last_action,
             app,
+            model_calls,
+            parse_retries,
         } = v;
         SessionProgress {
             step,
             phase: phase.into(),
             last_action: last_action.map(Into::into),
             app,
+            model_calls,
+            parse_retries,
         }
     }
 }
@@ -1147,12 +1239,16 @@ impl TryFrom<SessionProgress> for p::Progress {
             phase,
             last_action,
             app,
+            model_calls,
+            parse_retries,
         } = v;
         Ok(p::Progress {
             step,
             phase: phase.into(),
             last_action: last_action.map(TryInto::try_into).transpose()?,
             app,
+            model_calls,
+            parse_retries,
         })
     }
 }
@@ -1196,12 +1292,14 @@ impl From<p::SessionConfig> for SessionConfig {
             tools,
             model,
             known_apps,
+            agent_bundle_id,
         } = v;
         SessionConfig {
             policy: policy.into(),
             tools: tools.into_iter().map(Into::into).collect(),
             model: model.into(),
             known_apps: known_apps.into_iter().map(Into::into).collect(),
+            agent_bundle_id,
         }
     }
 }
@@ -1213,12 +1311,14 @@ impl From<SessionConfig> for p::SessionConfig {
             tools,
             model,
             known_apps,
+            agent_bundle_id,
         } = v;
         p::SessionConfig {
             policy: policy.into(),
             tools: tools.into_iter().map(Into::into).collect(),
             model: model.into(),
             known_apps: known_apps.into_iter().map(Into::into).collect(),
+            agent_bundle_id,
         }
     }
 }

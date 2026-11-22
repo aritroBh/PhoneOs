@@ -10,7 +10,7 @@
 mod common;
 
 use common::*;
-use jarvis_memory::MemoryStore;
+use jarvis_memory::{FlowAction, FlowText, MemoryStore};
 use jarvis_proto::fixtures::{login_screen, settings_screen};
 use jarvis_proto::{
     Effect, Key, OutcomeStatus, ParamKind, RequestKind, RiskCategory, RunnerCommand, Screen, Tier,
@@ -631,7 +631,19 @@ fn profile_placeholder_is_substituted_and_never_reaches_a_prompt() {
         !flows.contains("sam.secret@example.org") && !log.contains("sam.secret"),
         "{flows}{log}"
     );
-    assert!(flows.contains("{{profile.email}}"));
+    // The flow stores the placeholder as a profile slot (the key, never the value).
+    let flow = &run.memory.flows.flows()[0];
+    assert!(flow.steps.iter().any(|st| st.action
+        == FlowAction::Type {
+            text: FlowText::Profile {
+                key: "email".into()
+            },
+            submit: false
+        }));
+    assert!(
+        flows.contains(r#""type":"profile","key":"email""#),
+        "{flows}"
+    );
     assert_eq!(
         run.memory.log.entries()[0].summary,
         "typed {{profile.email}}"

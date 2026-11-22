@@ -3,6 +3,9 @@
   "task": "Open the note called Passport renewal",
   "start_app": "notes",
   "success": "notes.open == \"Passport renewal\"",
+  "expect_confirm": [
+    "first_use"
+  ],
   "max_steps": 12,
   "script": [
     "{\"thought\":\"scroll to find it\",\"action\":\"scroll\",\"direction\":\"down\"}",

@@ -193,18 +193,24 @@ fn start_twice_is_a_protocol_error() {
 }
 
 #[test]
-fn model_failure_event_fails_the_session() {
+fn model_failure_is_retried_twice_then_fails_the_session() {
     let mut s = session();
-    let eff = drive(
-        &mut s,
-        vec![
-            Event::Start,
-            observed(),
-            Event::ModelFailed {
-                error: "out of memory".into(),
-            },
-        ],
-    );
+    let first = drive(&mut s, vec![Event::Start, observed()]);
+    let Effect::Infer(request) = first else {
+        panic!("{first:?}")
+    };
+    let fail = || Event::ModelFailed {
+        error: "out of memory".into(),
+    };
+    // Two retries of exactly the same request...
+    for attempt in 1..=2u32 {
+        let eff = s.step(ev(100 + u64::from(attempt), fail()));
+        assert_eq!(eff, Effect::Infer(request.clone()), "retry {attempt}");
+        assert_eq!(s.progress().phase, Phase::Thinking);
+        assert_eq!(s.progress().model_calls, 1 + attempt);
+    }
+    // ...then the third failure ends the session.
+    let eff = s.step(ev(200, fail()));
     let Effect::Finished(o) = eff else {
         panic!("{eff:?}")
     };
@@ -212,6 +218,55 @@ fn model_failure_event_fails_the_session() {
     assert_eq!(o.summary, "Model error: out of memory");
     let mem = s.into_memory();
     assert_eq!(mem.log.len(), 1);
+}
+
+#[test]
+fn model_recovers_after_a_transient_failure_and_counts_calls() {
+    let mut s = session();
+    let eff = drive(
+        &mut s,
+        vec![
+            Event::Start,
+            observed(),
+            Event::ModelFailed {
+                error: "model still loading".into(),
+            },
+            model("not json at all"),
+            model(r#"{"action":"tap","element":4}"#),
+        ],
+    );
+    assert!(matches!(eff, Effect::Act(_)), "{eff:?}");
+    let p = s.progress();
+    // First request, its retry after the failure, and the re-inference after the
+    // unparsable reply.
+    assert_eq!(p.model_calls, 3);
+    assert_eq!(p.parse_retries, 1);
+    // The retry budget is per request: two more failures are still retried.
+    let mut s = session();
+    drive(&mut s, vec![Event::Start, observed()]);
+    for i in 0..2 {
+        let eff = s.step(ev(50 + i, Event::ModelFailed { error: "x".into() }));
+        assert!(matches!(eff, Effect::Infer(_)), "{eff:?}");
+    }
+    let eff = s.step(ev(60, model(r#"{"action":"wait","ms":100}"#)));
+    assert!(matches!(eff, Effect::Act(_)), "{eff:?}");
+}
+
+#[test]
+fn model_failures_count_against_the_failure_budget() {
+    let mut c = config();
+    c.policy.max_consecutive_failures = 2;
+    let mut s = Session::new(c, TaskSpec::new("t", "Turn off Wi-Fi"), MemoryStore::new());
+    drive(&mut s, vec![Event::Start, observed()]);
+    let eff = s.step(ev(50, Event::ModelFailed { error: "x".into() }));
+    assert!(matches!(eff, Effect::Infer(_)), "{eff:?}");
+    // The second failure reaches the consecutive-failure budget before the retry cap.
+    let eff = s.step(ev(51, Event::ModelFailed { error: "x".into() }));
+    let Effect::Finished(o) = eff else {
+        panic!("{eff:?}")
+    };
+    assert_eq!(o.status, OutcomeStatus::Failed);
+    assert_eq!(o.summary, "Model error: x");
 }
 
 #[test]

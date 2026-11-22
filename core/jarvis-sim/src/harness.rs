@@ -2,7 +2,7 @@
 
 use jarvis_agent::Session;
 use jarvis_memory::MemoryStore;
-use jarvis_proto::{ModelProfile, Policy, SessionConfig, TaskSpec};
+use jarvis_proto::{AppRule, ModelProfile, Policy, PolicyMode, SessionConfig, TaskSpec};
 
 use crate::driver::{run_with, RunOptions, RunReport};
 use crate::error::SimError;
@@ -27,6 +27,14 @@ pub struct RunSetup {
     pub costs: ClockCosts,
     /// Driver limits.
     pub options: RunOptions,
+    /// Confirm every state-changing action (`PolicyMode::StepByStep`).
+    pub step_by_step: bool,
+    /// Ask before the first action inside each app (on by default, like `Policy`).
+    pub first_use_approval: bool,
+    /// Per-app trust levels added to the policy.
+    pub app_rules: Vec<AppRule>,
+    /// Bundle ids approved in memory before the run (no first-use prompt for them).
+    pub approved_apps: Vec<String>,
 }
 
 impl Default for RunSetup {
@@ -39,14 +47,24 @@ impl Default for RunSetup {
             max_duration_ms: None,
             costs: ClockCosts::default(),
             options: RunOptions::default(),
+            step_by_step: false,
+            first_use_approval: Policy::default().first_use_approval,
+            app_rules: Vec::new(),
+            approved_apps: Vec::new(),
         }
     }
 }
 
 impl RunSetup {
-    /// The session configuration for `phone`: default policy, no tools, no vision.
+    /// The session configuration for `phone`: the default policy with this setup's mode,
+    /// first-use flag, app rules and budgets; no tools, no vision.
     pub fn session_config(&self, phone: &SimPhone) -> SessionConfig {
         let mut policy = Policy::default();
+        if self.step_by_step {
+            policy.mode = PolicyMode::StepByStep;
+        }
+        policy.first_use_approval = self.first_use_approval;
+        policy.app_rules.extend(self.app_rules.iter().cloned());
         if let Some(n) = self.max_steps {
             policy.max_steps = n;
         }
@@ -62,6 +80,7 @@ impl RunSetup {
                 supports_grammar: self.grammar,
             },
             known_apps: phone.known_apps(),
+            agent_bundle_id: None,
         }
     }
 
@@ -74,8 +93,17 @@ impl RunSetup {
         Ok(phone)
     }
 
-    /// A session for `task` with `memory`.
-    pub fn session(&self, phone: &SimPhone, id: &str, task: &str, memory: MemoryStore) -> Session {
+    /// A session for `task` with `memory`, plus this setup's pre-approved apps.
+    pub fn session(
+        &self,
+        phone: &SimPhone,
+        id: &str,
+        task: &str,
+        mut memory: MemoryStore,
+    ) -> Session {
+        for app in &self.approved_apps {
+            memory.approve_app(app);
+        }
         Session::new(self.session_config(phone), TaskSpec::new(id, task), memory)
     }
 }

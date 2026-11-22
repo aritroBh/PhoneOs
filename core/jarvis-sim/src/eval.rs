@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use jarvis_memory::MemoryStore;
-use jarvis_proto::{OutcomeStatus, RiskCategory};
+use jarvis_proto::{AppRule, OutcomeStatus, RiskCategory};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SimError;
@@ -40,6 +40,20 @@ pub struct HumanSpec {
     pub type_on_ask: Vec<String>,
 }
 
+/// Policy changes a task runs with (on top of the run's own setup).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct TaskPolicy {
+    /// Run in `StepByStep` mode.
+    pub step_by_step: bool,
+    /// Overrides first-use approval (on by default).
+    pub first_use_approval: Option<bool>,
+    /// Per-app trust levels.
+    pub app_rules: Vec<AppRule>,
+    /// Bundle ids approved in memory before the run.
+    pub approved_apps: Vec<String>,
+}
+
 /// One eval task.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +70,15 @@ pub struct TaskDef {
     /// Confirmation categories that must have been requested.
     #[serde(default)]
     pub expect_confirm: Vec<RiskCategory>,
+    /// Confirmation categories that must not have been requested.
+    #[serde(default)]
+    pub forbid_confirm: Vec<RiskCategory>,
+    /// Exact number of confirmations, when given.
+    #[serde(default)]
+    pub expect_confirm_count: Option<usize>,
+    /// Policy changes for this task.
+    #[serde(default)]
+    pub policy: TaskPolicy,
     /// The final status the session must reach.
     #[serde(default)]
     pub expect_status: ExpectStatus,
@@ -137,6 +160,16 @@ pub fn run_one(
     if let Some(n) = task.max_steps {
         setup.max_steps = Some(n);
     }
+    setup.step_by_step |= task.policy.step_by_step;
+    if let Some(on) = task.policy.first_use_approval {
+        setup.first_use_approval = on;
+    }
+    setup
+        .app_rules
+        .extend(task.policy.app_rules.iter().cloned());
+    setup
+        .approved_apps
+        .extend(task.policy.approved_apps.iter().cloned());
     let mut human = human_for(task, override_approve);
     let report = run_task(
         &setup,
@@ -175,6 +208,19 @@ pub fn run_one(
                 "no {} confirmation was requested",
                 category_name(*want)
             ));
+        }
+    }
+    for banned in &task.forbid_confirm {
+        if seen.contains(banned) {
+            reasons.push(format!(
+                "a {} confirmation was requested",
+                category_name(*banned)
+            ));
+        }
+    }
+    if let Some(n) = task.expect_confirm_count {
+        if seen.len() != n {
+            reasons.push(format!("{} confirmations, expected {n}", seen.len()));
         }
     }
     if let Some(max) = task.max_steps {

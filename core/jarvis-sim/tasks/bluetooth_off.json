@@ -4,6 +4,7 @@
   "start_app": "settings",
   "success": "settings.bluetooth == false",
   "expect_confirm": [
+    "first_use",
     "system_setting"
   ],
   "max_steps": 12,

@@ -194,6 +194,25 @@ fn risk_variant(r: &p::RiskCategory) -> usize {
         p::RiskCategory::AccountChange => 6,
         p::RiskCategory::SystemSetting => 7,
         p::RiskCategory::Credential => 8,
+        p::RiskCategory::Unverified => 9,
+        p::RiskCategory::Call => 10,
+        p::RiskCategory::FirstUse => 11,
+    }
+}
+
+fn mode_variant(m: &p::PolicyMode) -> usize {
+    match m {
+        p::PolicyMode::Guarded => 0,
+        p::PolicyMode::StepByStep => 1,
+    }
+}
+
+fn level_variant(l: &p::TrustLevel) -> usize {
+    match l {
+        p::TrustLevel::Trusted => 0,
+        p::TrustLevel::Guarded => 1,
+        p::TrustLevel::StepByStep => 2,
+        p::TrustLevel::Denied => 3,
     }
 }
 
@@ -669,7 +688,7 @@ fn tools_round_trip() {
     let tools = all_tools();
     assert_covers(
         tools.iter().map(|t| risk_variant(&t.risk)),
-        9,
+        12,
         "RiskCategory",
     );
     assert_covers(tools.iter().map(|t| tier_variant(&t.tier)), 3, "Tier");
@@ -727,11 +746,46 @@ fn policy_task_and_config_round_trip() {
     rt::<_, f::Policy>(p::Policy {
         denied_apps: vec![],
         confirm: vec![],
+        deny_categories: vec![],
+        mode: p::PolicyMode::Guarded,
+        app_rules: vec![],
+        first_use_approval: false,
         max_steps: 0,
         max_duration_ms: u64::MAX,
         max_consecutive_failures: 1,
         max_parse_retries: 0,
     });
+    // Every mode, trust level and category, in every list.
+    let modes = [p::PolicyMode::Guarded, p::PolicyMode::StepByStep];
+    let levels = [
+        p::TrustLevel::Trusted,
+        p::TrustLevel::Guarded,
+        p::TrustLevel::StepByStep,
+        p::TrustLevel::Denied,
+    ];
+    assert_covers(modes.iter().map(mode_variant), 2, "PolicyMode");
+    assert_covers(levels.iter().map(level_variant), 4, "TrustLevel");
+    for mode in modes {
+        rt::<_, f::Policy>(p::Policy {
+            denied_apps: vec!["com.examplebank".to_owned()],
+            confirm: p::RiskCategory::ALL.to_vec(),
+            deny_categories: vec![p::RiskCategory::Payment, p::RiskCategory::FirstUse],
+            mode,
+            app_rules: levels
+                .iter()
+                .enumerate()
+                .map(|(i, l)| p::AppRule::new(format!("com.example.app{i}"), *l))
+                .collect(),
+            first_use_approval: true,
+            ..p::Policy::default()
+        });
+    }
+    let fp: f::Policy = p::Policy::default().into();
+    assert!(fp.first_use_approval);
+    assert_eq!(fp.mode, f::PolicyMode::Guarded);
+    assert!(fp.confirm.contains(&f::RiskCategory::Unverified));
+    assert!(fp.confirm.contains(&f::RiskCategory::Call));
+    assert!(fp.confirm.contains(&f::RiskCategory::FirstUse));
     rt::<_, f::TaskSpec>(p::TaskSpec::new("id-1", "Text Alex I'm late"));
     rt::<_, f::AppInfo>(p::AppInfo::new("com.apple.MobileSMS", "Messages"));
     rt::<_, f::SessionConfig>(p::SessionConfig::default());
@@ -747,6 +801,7 @@ fn policy_task_and_config_round_trip() {
             p::AppInfo::new("com.apple.Preferences", "Settings"),
             p::AppInfo::new("com.apple.MobileSMS", "Messages"),
         ],
+        agent_bundle_id: Some("com.example.jarvis".to_owned()),
     });
 }
 
@@ -807,6 +862,8 @@ fn every_phase_and_progress_round_trips() {
             phase,
             last_action: Some(action),
             app: Some("com.apple.Preferences".to_owned()),
+            model_calls: 7,
+            parse_retries: 2,
         });
     }
     rt_try::<_, f::SessionProgress>(p::Progress::default());

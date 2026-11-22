@@ -12,7 +12,9 @@ use crate::phrases::{
     SHARE_SAFE_PHRASES,
 };
 use crate::redact::contains_secret;
-use crate::text::{bounded, has_money, label_is_unreadable, tokens};
+use crate::text::{
+    bounded, has_foreign_word, has_money, has_non_english_letters, label_is_unreadable, tokens,
+};
 use crate::validate::{looks_like_url, url_scheme};
 
 /// Most elements read as context for one decision. On bigger screens the elements
@@ -20,11 +22,11 @@ use crate::validate::{looks_like_url, url_scheme};
 /// warning out of view of the button next to it.
 pub(crate) const MAX_CONTEXT_ELEMENTS: usize = 200;
 
-/// Category for a tap the phrase net cannot read (unknown script, oversized label) and for
-/// a tool call without a spec. `Payment` is the most conservative existing category: it
-/// is in every sensible confirm list, so `evaluate` asks. A dedicated "unknown" category
-/// is planned for jarvis-proto.
-pub(crate) const UNREADABLE_RISK: RiskCategory = RiskCategory::Payment;
+/// Category for a tap the phrase net cannot read (unknown script or language, oversized
+/// label, unknown symbol name, no label at all) and for a tool call without a spec. It
+/// ranks below every definite signal, so a known trash symbol or a checkout screen still
+/// wins.
+pub(crate) const UNREADABLE_RISK: RiskCategory = RiskCategory::Unverified;
 
 /// Most string arguments of one tool call that are read.
 const MAX_TOOL_STRINGS: usize = 64;
@@ -35,18 +37,21 @@ const MAX_TOOL_STRINGS: usize = 64;
 ///   (`delete_event`). Shortcut-tier tools (or tools whose name or arguments mention a
 ///   shortcut) also have their string arguments read (`run_shortcut {name: "Delete All
 ///   Photos"}` is `Delete`); URL arguments are classified like `OpenUrl`. Without a spec
-///   the call is `Payment` at least (and `evaluate` denies it).
+///   the call is `Unverified` at least (and `evaluate` denies it).
 /// * Taps and long presses read the target's label (and value, for non-inputs) through the
 ///   phrase tables, with app-specific rows (`APP_PHRASES`) and rules (`APP_RULES`: Phone
-///   rows dial, Home tiles operate accessories, Settings/Control Center switches). Generic
+///   and FaceTime rows and phone numbers are `Call`, Home tiles operate accessories,
+///   Settings/Control Center switches). Generic
 ///   confirmations ("OK", "Continue"), unlabeled buttons and unknown SF Symbol names take
 ///   on the riskiest signal elsewhere on the screen (prices, "Delete 3 photos?", a Send
 ///   button). A price in a button label is at least a `Purchase`; "Book"/"Order"/"Get"
 ///   with a price on screen is a `Purchase`. On a checkout screen (a price plus payment
 ///   wording such as "Total" or "Card ending"), every pressable element that is not
 ///   plainly navigation is a `Payment`. Rows of a share sheet (a screen with AirDrop) send.
-///   "Save" on an account or settings screen is `AccountChange`. A pressable element whose
-///   label the tables cannot read (see `label_is_unreadable`) is `Payment`.
+///   "Save" on an account or settings screen is `AccountChange`. A pressable element (not a
+///   tab or key) that is unlabeled, named by an unknown SF Symbol, or whose label the
+///   tables cannot read (see `label_is_unreadable` and `label_is_foreign`) is at least
+///   `Unverified`.
 /// * `Type` is `Credential` for secure fields, credential-labelled fields or secret-looking
 ///   text; with `submit` it also takes the compose field's, the keyboard Return key's and
 ///   the screen's risk, so Return in a message field next to a Send button is
@@ -55,7 +60,7 @@ const MAX_TOOL_STRINGS: usize = 64;
 ///   context when only text or nothing is there.
 /// * Swipes are read like taps of their element (with context); a sideways swipe on a cell
 ///   or button row is at least `Delete` (full swipes trigger the destructive action).
-/// * `OpenUrl` to `tel:`/`facetime:` is `SendMessage` (it starts a call).
+/// * `OpenUrl` to `tel:`/`facetime:` is `Call`.
 /// * Everything else is `None`. An element index that does not exist falls back to the
 ///   screen context (and is rejected by `validate_action` anyway).
 pub fn classify(action: &Action, screen: &CompactScreen, tool: Option<&ToolSpec>) -> RiskCategory {
@@ -92,11 +97,11 @@ pub fn classify(action: &Action, screen: &CompactScreen, tool: Option<&ToolSpec>
     }
 }
 
-/// Risk of opening `url`: calls are `SendMessage`, everything else `None` (schemes are
-/// policed by `validate_action`).
+/// Risk of opening `url`: calls are `Call`, everything else `None` (schemes are policed
+/// by `validate_action`).
 pub(crate) fn url_risk(url: &str) -> RiskCategory {
     match url_scheme(url.trim()).as_deref() {
-        Some("tel" | "telprompt" | "facetime" | "facetime-audio") => RiskCategory::SendMessage,
+        Some("tel" | "telprompt" | "facetime" | "facetime-audio") => RiskCategory::Call,
         _ => RiskCategory::None,
     }
 }
@@ -367,8 +372,14 @@ pub(crate) fn element_risk(el: &Element, screen: &CompactScreen) -> RiskCategory
             risk = RiskCategory::Payment;
         }
     }
-    let unreadable =
-        label_is_unreadable(&el.label) || el.value.as_deref().is_some_and(label_is_unreadable);
+    // Latin-script accents are only a language signal on controls: rows and texts carry
+    // names ("José", "Café Central").
+    let foreign = has_foreign_word(&el.label)
+        || (!is_free_text_role(&el.role) && has_non_english_letters(&el.label));
+    let unreadable = label_is_unreadable(&el.label)
+        || el.value.as_deref().is_some_and(label_is_unreadable)
+        || foreign
+        || unlabeled;
     if pressable && !content_row && !matches!(el.role, Role::Tab | Role::Key) && unreadable {
         risk = max_risk(risk, UNREADABLE_RISK);
     }

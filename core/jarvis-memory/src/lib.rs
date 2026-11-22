@@ -24,9 +24,15 @@ pub mod replayer;
 pub mod store;
 
 pub use flow::{flow_id, fnv1a64, Bindings, Flow, FlowAction, FlowStep, FlowText};
-pub use intent::{intent_key, match_slotted};
+pub use intent::{intent_key, match_slotted, renormalize_key, EQUIVALENT_PHRASES};
 pub use log::{LogEntry, LogStep, TaskLog};
-pub use profile::{Profile, ProfileField};
+pub use profile::{
+    placeholder_key, profile_placeholder, Profile, ProfileField, PLACEHOLDER_CLOSE,
+    PLACEHOLDER_OPEN, PLACEHOLDER_PREFIX,
+};
 pub use recorder::{RecordedStep, Recorder};
 pub use replayer::{Divergence, Next, Replayer};
-pub use store::{FlowStore, MemoryError, MemoryStore, UpsertOutcome, SCHEMA_VERSION};
+pub use store::{
+    FlowStore, MemoryError, MemoryStore, UpsertOutcome, MAX_APPROVED_APPS, MAX_BUNDLE_ID_LEN,
+    SCHEMA_VERSION,
+};

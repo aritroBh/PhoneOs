@@ -1,0 +1,9 @@
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Produced by scripts/bootstrap.sh; never committed.
+Generated/
+Frameworks/
+Sources/JarvisCore/

@@ -8,8 +8,18 @@
 //!
 //! Budget accounting (what guarantees termination): every action taken from the model or a
 //! learned flow counts one step before anything else happens to it, every model request is
-//! preceded by a budget check, parse retries are capped per step, and every wait for the
-//! shell is bounded by the time budget, checked on each event.
+//! preceded by a budget check, parse retries are capped per step, model failures are retried
+//! at most [`MAX_MODEL_RETRIES`] times in a row (each counting as a failed action), and every
+//! wait for the shell is bounded by the time budget, checked on each event.
+//!
+//! First-use approval: before the first state-changing action inside an app that is neither
+//! approved in memory, approved earlier in this session, `Trusted`, SpringBoard nor the
+//! agent's own app, the session asks `FirstUse` ("Let Jarvis act in Shop
+//! (com.example.shop)?"). When the same action also needs a risk confirmation, that is asked
+//! second, as its own prompt (a first Pay tap in a new app asks twice). A declined app is off
+//! limits for the rest of the session: any later action inside it, `open_app` into it, or a
+//! tool acting on it finishes the session `Blocked`. Learned-flow steps take exactly the same
+//! path as model actions.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,8 +31,8 @@ use jarvis_proto::{
     TimedEvent, ToolCall, ToolSpec,
 };
 use jarvis_safety::{
-    check_app, evaluate, redact, redact_screen, sanitize_screen_text, summarize, Budget,
-    BudgetVerdict, Decision,
+    check_app, evaluate, first_use_app, first_use_request, redact, redact_screen,
+    sanitize_screen_text, summarize, Budget, BudgetVerdict, Decision,
 };
 
 use crate::commands::{plan, resolve_app, should_change, AppTarget};
@@ -44,6 +54,8 @@ const MAX_APP_DENIALS: u32 = 2;
 const MAX_RESULT_CHARS: usize = 300;
 /// Known app names listed when `open_app` names an unknown app.
 const MAX_APPS_LISTED: usize = 12;
+/// Times a failed model request is re-sent before the session fails.
+pub const MAX_MODEL_RETRIES: u32 = 2;
 
 /// The latest observation in three forms.
 #[derive(Debug, Clone)]
@@ -85,6 +97,18 @@ enum Prepared {
     Execute(Pending),
     /// Needs the owner's approval first.
     Confirm(Pending, ConfirmRequest),
+    /// Needs the owner to approve acting in `app` first, then (if `then`) the risk
+    /// confirmation.
+    FirstUse {
+        /// The action.
+        pending: Pending,
+        /// The app to approve.
+        app: String,
+        /// The `FirstUse` request.
+        request: ConfirmRequest,
+        /// The risk confirmation that follows an approval.
+        then: Option<ConfirmRequest>,
+    },
     /// Ask the owner a question.
     Ask {
         /// Cleaned question for the shell.
@@ -102,6 +126,8 @@ enum Reject {
     Failed(String),
     /// The action targets a deny-listed app.
     AppDenied(String),
+    /// The action targets an app the owner declined in this session: finish `Blocked`.
+    Blocked(String),
 }
 
 /// One task's agent loop. See the module docs and `ARCHITECTURE.md`.
@@ -129,6 +155,12 @@ pub struct Session {
     vision_hash: Option<u64>,
     last_request_vision: bool,
     parse_retries: u32,
+    total_parse_retries: u32,
+    model_calls: u32,
+    model_failures: u32,
+    last_request: Option<ModelRequest>,
+    approved_apps: BTreeSet<String>,
+    declined_apps: BTreeSet<String>,
     last_action: Option<Action>,
     log_steps: Vec<LogStep>,
 }
@@ -202,6 +234,12 @@ impl Session {
             vision_hash: None,
             last_request_vision: false,
             parse_retries: 0,
+            total_parse_retries: 0,
+            model_calls: 0,
+            model_failures: 0,
+            last_request: None,
+            approved_apps: BTreeSet::new(),
+            declined_apps: BTreeSet::new(),
             last_action: None,
             log_steps: Vec::new(),
         }
@@ -238,9 +276,12 @@ impl Session {
                 self.on_act(now, queue, pending, event, state_name)
             }
             State::AwaitingTool { pending } => self.on_tool(now, pending, event, state_name),
-            State::AwaitingConfirm { pending, request } => {
-                self.on_confirm(now, pending, request, event, state_name)
-            }
+            State::AwaitingConfirm {
+                pending,
+                request,
+                approves_app,
+                then,
+            } => self.on_confirm(now, pending, request, approves_app, then, event, state_name),
             State::AwaitingAnswer { described } => {
                 self.on_answer(now, described, event, state_name)
             }
@@ -261,11 +302,14 @@ impl Session {
                 .current
                 .seen
                 .then(|| self.current.screen.app_bundle_id.clone()),
+            model_calls: self.model_calls,
+            parse_retries: self.total_parse_retries,
         }
     }
 
-    /// The memory store, updated with the recorded flow, flow statistics and the task log
-    /// entry once the session has finished (an unfinished session adds nothing).
+    /// The memory store, updated with the recorded flow, flow statistics, the task log entry
+    /// and the apps approved in this session once the session has finished (an unfinished
+    /// session adds nothing).
     pub fn into_memory(self) -> MemoryStore {
         self.memory
     }
@@ -328,13 +372,16 @@ impl Session {
         match event {
             Event::ModelOutput(out) => match parse_model_output(&out.text) {
                 Ok(parsed) => {
+                    self.model_failures = 0;
                     self.parse_retries = 0;
                     self.correction = None;
                     self.notes.clear();
                     self.propose(now, parsed.action, Source::Model)
                 }
                 Err(e) if self.parse_retries < self.config.policy.max_parse_retries => {
+                    self.model_failures = 0;
                     self.parse_retries = self.parse_retries.saturating_add(1);
+                    self.total_parse_retries = self.total_parse_retries.saturating_add(1);
                     self.correction = Some(prompt::correction(&e));
                     self.infer(kind)
                 }
@@ -344,8 +391,26 @@ impl Session {
                 }
             },
             Event::ModelFailed { error } => {
-                let summary = format!("Model error: {}", clean(&error, 200));
-                self.finish(now, OutcomeStatus::Failed, &summary)
+                // The runtime may fail transiently (model still loading, memory pressure):
+                // re-send the same request a bounded number of times.
+                self.model_failures = self.model_failures.saturating_add(1);
+                self.budget.record_failure();
+                let retry = self
+                    .last_request
+                    .clone()
+                    .filter(|_| self.model_failures <= MAX_MODEL_RETRIES)
+                    .filter(|_| self.budget.check(now) == BudgetVerdict::Ok);
+                match retry {
+                    Some(request) => {
+                        self.model_calls = self.model_calls.saturating_add(1);
+                        self.state = State::AwaitingModel { kind };
+                        Effect::Infer(request)
+                    }
+                    None => {
+                        let summary = format!("Model error: {}", clean(&error, 200));
+                        self.finish(now, OutcomeStatus::Failed, &summary)
+                    }
+                }
             }
             other => self.protocol_error(now, &other, state),
         }
@@ -405,21 +470,45 @@ impl Session {
         self.observe(ObservePurpose::Decide, false)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn on_confirm(
         &mut self,
         now: u64,
         pending: Box<Pending>,
         request: ConfirmRequest,
+        approves_app: Option<String>,
+        then: Option<ConfirmRequest>,
         event: Event,
         state: &str,
     ) -> Effect {
         match event {
-            Event::UserDecision { approved: true } => self.execute(*pending),
+            Event::UserDecision { approved: true } => {
+                if let Some(app) = approves_app {
+                    self.approved_apps.insert(app);
+                }
+                match then {
+                    Some(next) => self.ask_confirm(now, *pending, next, None, None),
+                    None => self.execute(*pending),
+                }
+            }
             Event::UserDecision { approved: false } => {
-                self.declined.insert(request.category);
+                let result = match approves_app {
+                    Some(app) => {
+                        self.declined_apps.insert(app);
+                        prompt::RESULT_APP_DECLINED
+                    }
+                    None => {
+                        // A step-by-step confirmation of a harmless-looking action says
+                        // nothing about the next one; risky categories are remembered.
+                        if request.category != RiskCategory::None {
+                            self.declined.insert(request.category);
+                        }
+                        prompt::RESULT_DECLINED
+                    }
+                };
                 self.history.push(
                     pending.described.clone(),
-                    prompt::RESULT_DECLINED,
+                    result,
                     pending.source == Source::Replay,
                 );
                 self.log_step(&pending.action, false);
@@ -541,6 +630,8 @@ impl Session {
         let vision = screenshot.is_some();
         let request = self.build_request(screenshot);
         self.last_request_vision = vision;
+        self.model_calls = self.model_calls.saturating_add(1);
+        self.last_request = Some(request.clone());
         self.state = State::AwaitingModel { kind: request.kind };
         Effect::Infer(request)
     }
@@ -647,18 +738,25 @@ impl Session {
         match self.prepare(&action, source) {
             Ok(Prepared::Execute(pending)) => self.execute(pending),
             Ok(Prepared::Confirm(pending, request)) => {
-                if self.declined.contains(&request.category) {
+                self.ask_confirm(now, pending, request, None, None)
+            }
+            Ok(Prepared::FirstUse {
+                pending,
+                app,
+                request,
+                then,
+            }) => {
+                if let Some(next) = then
+                    .as_ref()
+                    .filter(|n| self.declined.contains(&n.category))
+                {
                     let summary = format!(
                         "Blocked: the owner already declined a {} action.",
-                        category_name(request.category)
+                        category_name(next.category)
                     );
                     return self.finish(now, OutcomeStatus::Blocked, &summary);
                 }
-                self.state = State::AwaitingConfirm {
-                    pending: Box::new(pending),
-                    request: request.clone(),
-                };
-                Effect::Confirm(request)
+                self.ask_confirm(now, pending, request, Some(app), then)
             }
             Ok(Prepared::Ask {
                 question,
@@ -688,7 +786,74 @@ impl Session {
                 self.reject(now, &action, source, &format!("not allowed: {msg}"))
             }
             Err(Reject::Failed(msg)) => self.reject(now, &action, source, &msg),
+            Err(Reject::Blocked(msg)) => {
+                self.log_step(&action, false);
+                if source == Source::Replay {
+                    self.diverge("a saved step needs an app the owner declined");
+                }
+                let summary = format!("Blocked: {msg}.");
+                self.finish(now, OutcomeStatus::Blocked, &summary)
+            }
         }
+    }
+
+    /// Emits `Effect::Confirm(request)`, or finishes `Blocked` when the owner already
+    /// declined this risk category in this session.
+    fn ask_confirm(
+        &mut self,
+        now: u64,
+        pending: Pending,
+        request: ConfirmRequest,
+        approves_app: Option<String>,
+        then: Option<ConfirmRequest>,
+    ) -> Effect {
+        if approves_app.is_none() && self.declined.contains(&request.category) {
+            let summary = format!(
+                "Blocked: the owner already declined a {} action.",
+                category_name(request.category)
+            );
+            return self.finish(now, OutcomeStatus::Blocked, &summary);
+        }
+        self.state = State::AwaitingConfirm {
+            pending: Box::new(pending),
+            request: request.clone(),
+            approves_app,
+            then,
+        };
+        Effect::Confirm(request)
+    }
+
+    /// Whether the owner approved acting in `app` (in memory or in this session), or it is
+    /// the agent's own app.
+    fn app_approved(&self, app: &str) -> bool {
+        self.memory.is_app_approved(app)
+            || self.approved_apps.contains(app)
+            || self
+                .config
+                .agent_bundle_id
+                .as_deref()
+                .is_some_and(|own| own.trim().eq_ignore_ascii_case(app.trim()))
+    }
+
+    /// The display name of `bundle_id`: the screen's, when it is in front, else from
+    /// `known_apps`.
+    fn app_name(&self, bundle_id: &str) -> Option<String> {
+        if self.current.screen.app_bundle_id == bundle_id {
+            if let Some(n) = &self.current.screen.app_name {
+                return Some(n.clone());
+            }
+        }
+        self.config
+            .known_apps
+            .iter()
+            .find(|a| a.bundle_id == bundle_id)
+            .map(|a| a.name.clone())
+    }
+
+    /// The "declined" message for `app`.
+    fn declined_message(&self, app: &str) -> String {
+        let name = self.app_name(app).unwrap_or_else(|| app.to_owned());
+        format!("the owner did not let Jarvis act in {}", clean(&name, 60))
     }
 
     /// A refused action: tell the model, count a failure, decide again on the same screen.
@@ -712,6 +877,13 @@ impl Session {
     fn prepare(&self, action: &Action, source: Source) -> Result<Prepared, Reject> {
         let screen = &self.current.screen;
         let policy = &self.config.policy;
+        // 0. Nothing happens inside an app the owner declined in this session, not even
+        //    reading it closer.
+        if uses_foreground_app(action) && self.declined_apps.contains(&screen.app_bundle_id) {
+            return Err(Reject::Blocked(
+                self.declined_message(&screen.app_bundle_id),
+            ));
+        }
         // 1. Normalise: resolve app names, check tool calls, gate tap_point on vision.
         let mut tool: Option<&ToolSpec> = None;
         let normalized = match action {
@@ -724,6 +896,9 @@ impl Session {
                             "{} is on the deny list",
                             clean(&bundle_id, 80)
                         )));
+                    }
+                    if self.declined_apps.contains(&bundle_id) {
+                        return Err(Reject::Blocked(self.declined_message(&bundle_id)));
                     }
                     Action::OpenApp { app: bundle_id }
                 }
@@ -740,6 +915,9 @@ impl Session {
             Action::CallTool { name, args } => match check_call(&self.config.tools, name, args) {
                 Ok((spec, args)) => {
                     if let Some(app) = &spec.app {
+                        if self.declined_apps.contains(app) {
+                            return Err(Reject::Blocked(self.declined_message(app)));
+                        }
                         if check_app(policy, app).is_denied() {
                             return Err(Reject::AppDenied(format!(
                                 "tool {} acts on {}, which is on the deny list",
@@ -847,16 +1025,38 @@ impl Session {
             described,
             exec,
         };
-        match decision {
+        let risk = match decision {
             Decision::Confirm(mut request) => {
                 if executed != normalized {
                     // Describe the placeholder, never the substituted personal value.
                     request.summary = summarize(&normalized, screen, tool);
                 }
-                Ok(Prepared::Confirm(pending, request))
+                Some(request)
             }
-            Decision::Allow | Decision::Deny(_) => Ok(Prepared::Execute(pending)),
+            Decision::Allow | Decision::Deny(_) => None,
+        };
+        // 5. First-use approval of the app the action acts in (asked before the risk).
+        if let Some(app) =
+            first_use_app(policy, &executed, screen, tool).filter(|a| !self.app_approved(a))
+        {
+            if policy.denies_category(RiskCategory::FirstUse) {
+                return Err(Reject::AppDenied(format!(
+                    "{} has not been approved for Jarvis",
+                    clean(&app, 80)
+                )));
+            }
+            let request = first_use_request(&app, self.app_name(&app).as_deref());
+            return Ok(Prepared::FirstUse {
+                pending,
+                app,
+                request,
+                then: risk,
+            });
         }
+        Ok(match risk {
+            Some(request) => Prepared::Confirm(pending, request),
+            None => Prepared::Execute(pending),
+        })
     }
 
     fn unknown_app_message(&self, app: &str) -> String {
@@ -993,6 +1193,9 @@ impl Session {
 
     /// Stores the learned flow, flow statistics and the log entry.
     fn update_memory(&mut self, now: u64, outcome: &Outcome) {
+        for app in &self.approved_apps {
+            self.memory.approve_app(app);
+        }
         let success = outcome.status == OutcomeStatus::Success;
         let failed = matches!(
             outcome.status,
@@ -1040,5 +1243,23 @@ fn category_name(c: RiskCategory) -> &'static str {
         RiskCategory::AccountChange => "account-change",
         RiskCategory::SystemSetting => "system-setting",
         RiskCategory::Credential => "credential",
+        RiskCategory::Unverified => "unverified",
+        RiskCategory::Call => "call",
+        RiskCategory::FirstUse => "first-use",
     }
+}
+
+/// Whether `action` touches or reads the foreground app (leaving it does not).
+fn uses_foreground_app(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::Tap { .. }
+            | Action::LongPress { .. }
+            | Action::Type { .. }
+            | Action::Clear { .. }
+            | Action::Scroll { .. }
+            | Action::Swipe { .. }
+            | Action::TapPoint { .. }
+            | Action::Look
+    )
 }

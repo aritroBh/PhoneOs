@@ -13,6 +13,8 @@ pub const APP_SOURCES: &[(&str, &str)] = &[
     ("shop.json", include_str!("../apps/shop.json")),
     ("notes.json", include_str!("../apps/notes.json")),
     ("passwords.json", include_str!("../apps/passwords.json")),
+    ("phone.json", include_str!("../apps/phone.json")),
+    ("laden.json", include_str!("../apps/laden.json")),
 ];
 
 /// Built-in task files as `(file name, JSON text)`.
@@ -69,6 +71,27 @@ pub const TASK_SOURCES: &[(&str, &str)] = &[
         "denied_passwords.json",
         include_str!("../tasks/denied_passwords.json"),
     ),
+    (
+        "step_by_step_wifi.json",
+        include_str!("../tasks/step_by_step_wifi.json"),
+    ),
+    (
+        "first_use_declined.json",
+        include_str!("../tasks/first_use_declined.json"),
+    ),
+    (
+        "app_rule_denied.json",
+        include_str!("../tasks/app_rule_denied.json"),
+    ),
+    (
+        "app_rule_trusted.json",
+        include_str!("../tasks/app_rule_trusted.json"),
+    ),
+    (
+        "foreign_pay.json",
+        include_str!("../tasks/foreign_pay.json"),
+    ),
+    ("phone_call.json", include_str!("../tasks/phone_call.json")),
 ];
 
 /// Parses one app definition.

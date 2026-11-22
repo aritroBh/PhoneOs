@@ -267,14 +267,27 @@ pub fn known_apps() -> Vec<AppInfo> {
     ]
 }
 
-/// A config with the default policy and a 4096-token text model.
+/// A config with the default policy, except first-use approval, and a 4096-token text
+/// model. Most tests exercise other behaviour; `tests/first_use.rs` covers first-use
+/// approval with [`first_use_config`].
 pub fn config() -> SessionConfig {
     SessionConfig {
-        policy: Policy::default(),
+        policy: Policy {
+            first_use_approval: false,
+            ..Policy::default()
+        },
         tools: Vec::new(),
         model: ModelProfile::default(),
         known_apps: known_apps(),
+        agent_bundle_id: None,
     }
+}
+
+/// [`config`] with the full default policy (first-use approval on).
+pub fn first_use_config() -> SessionConfig {
+    let mut c = config();
+    c.policy = Policy::default();
+    c
 }
 
 /// A config with a vision-capable model.

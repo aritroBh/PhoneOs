@@ -216,7 +216,16 @@ pub struct Run {
 
 /// Drives one session through the FFI object until `Finished`, then calls `finish()`.
 pub fn drive(memory_json: &str) -> Run {
-    let session = JarvisSession::new(config(), task(), memory_json.to_owned()).unwrap();
+    drive_with(config(), memory_json, |_| true)
+}
+
+/// [`drive`] with an explicit config and owner.
+pub fn drive_with(
+    config: SessionConfig,
+    memory_json: &str,
+    decide: impl Fn(&ConfirmRequest) -> bool,
+) -> Run {
+    let session = JarvisSession::new(config, task(), memory_json.to_owned()).unwrap();
     let mut page = Page::Settings;
     let mut script = model_script();
     let mut run = Run::default();
@@ -280,8 +289,9 @@ pub fn drive(memory_json: &str) -> Run {
                 }
             }
             Effect::Confirm { request } => {
+                let approved = decide(&request);
                 run.confirms.push(request);
-                Event::UserDecision { approved: true }
+                Event::UserDecision { approved }
             }
             Effect::CallTool { call } => panic!("unexpected tool call {call:?}"),
             Effect::AskUser { question } => panic!("unexpected question {question:?}"),

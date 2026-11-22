@@ -9,7 +9,10 @@
 //!   different index than the action names;
 //! * `Look`, `Done` and `Fail` are not UI steps and are ignored;
 //! * typing into a secure field (or typing a value registered as sensitive) is never stored:
-//!   the step becomes [`FlowAction::HandBack`] and the flow ends there.
+//!   the step becomes [`FlowAction::HandBack`] and the flow ends there;
+//! * typing exactly one `{{profile.KEY}}` placeholder is stored as
+//!   [`FlowText::Profile`] (the key, never the value), sensitive fields included, and
+//!   replays as the placeholder for the agent to substitute.
 
 use jarvis_proto::{Action, CompactScreen, Element};
 
@@ -17,6 +20,7 @@ use crate::flow::{flow_id, screen_signature, Flow, FlowAction, FlowStep, FlowTex
 use crate::intent::{
     find_span, intent_key, is_slotted, literal_count, match_slotted, slotted_key, MAX_SLOTS,
 };
+use crate::profile::placeholder_key;
 
 /// One successful step handed to the [`Recorder`].
 #[derive(Debug, Clone)]
@@ -154,7 +158,8 @@ impl Recorder {
             Action::Wait { ms } => FlowAction::Wait { ms },
             Action::Type { text, submit, .. } => {
                 let secure = unknown_secure || target.is_some_and(|e| e.secure);
-                let sensitive = self.is_sensitive(&text);
+                let profile_key = placeholder_key(&text);
+                let sensitive = profile_key.is_none() && self.is_sensitive(&text);
                 if secure || sensitive {
                     self.handed_back = true;
                     FlowAction::HandBack {
@@ -163,6 +168,11 @@ impl Recorder {
                         } else {
                             "sensitive value".to_owned()
                         },
+                    }
+                } else if let Some(key) = profile_key {
+                    FlowAction::Type {
+                        text: FlowText::Profile { key },
+                        submit,
                     }
                 } else {
                     FlowAction::Type {

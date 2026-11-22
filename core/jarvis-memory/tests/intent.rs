@@ -14,7 +14,7 @@ fn intent_key_table() {
             "Hey Jarvis, can you please open the Settings app?",
             "open settings app",
         ),
-        ("  Turn ON   airplane mode!!! ", "turn on airplane mode"),
+        ("  Turn ON   airplane mode!!! ", "enable airplane mode"),
         ("Text my mom: I'm running late.", "text mom im running late"),
         (
             "could you set a timer for 10 minutes",
@@ -30,6 +30,59 @@ fn intent_key_table() {
     for (input, want) in table {
         assert_eq!(intent_key(input), want, "input: {input:?}");
     }
+}
+
+#[test]
+fn spelling_variants_share_one_key() {
+    let groups: &[&[&str]] = &[
+        &[
+            "Turn off Wi-Fi",
+            "turn off wifi",
+            "Switch off wi fi",
+            "disable WiFi",
+            "Disable Wi‑Fi",
+        ],
+        &["Turn on Wi-Fi", "switch on wifi", "Enable Wi Fi"],
+        &[
+            "Send an e-mail to Sam",
+            "send an email to sam",
+            "Send an E Mail to Sam",
+        ],
+        &["Log in to Shop", "login to shop", "log-in to Shop"],
+        &["Sign in to Shop", "signin to shop", "sign-in to shop"],
+        &["Sign out of Shop", "signout of shop"],
+    ];
+    for group in groups {
+        let keys: Vec<String> = group.iter().map(|t| intent_key(t)).collect();
+        assert!(
+            keys.windows(2).all(|w| w[0] == w[1]),
+            "{group:?} -> {keys:?}"
+        );
+    }
+    assert_eq!(intent_key("Turn off Wi-Fi"), "disable wifi");
+    assert_eq!(intent_key("Log in to Shop"), "login to shop");
+    // Words that only look similar stay apart.
+    assert_ne!(intent_key("turn off wifi"), intent_key("turn on wifi"));
+    assert_ne!(intent_key("log in"), intent_key("log out"));
+    assert_eq!(intent_key("switch to dark mode"), "switch to dark mode");
+    assert_eq!(intent_key("e"), "e");
+    // Every canonical word is itself stable.
+    for (_, canon) in EQUIVALENT_PHRASES {
+        assert_eq!(intent_key(canon), *canon);
+    }
+}
+
+#[test]
+fn stored_keys_are_renormalized_and_slots_survive() {
+    assert_eq!(renormalize_key("turn off wi fi"), "disable wifi");
+    assert_eq!(
+        renormalize_key("text mom {1} via e mail"),
+        "text mom {1} via email"
+    );
+    assert_eq!(renormalize_key("disable wifi"), "disable wifi");
+    // Slot values keep the task's own spelling.
+    let b = match_slotted("email {1} to sam", "E-mail Wi-Fi password to Sam").unwrap();
+    assert_eq!(b.get(&1).map(String::as_str), Some("Wi-Fi password"));
 }
 
 #[test]

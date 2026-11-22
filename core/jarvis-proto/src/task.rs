@@ -56,4 +56,6 @@ pub struct SessionConfig {
     pub model: ModelProfile,
     /// Installed apps for name to bundle id resolution.
     pub known_apps: Vec<AppInfo>,
+    /// Bundle id of the Jarvis app itself, which never needs first-use approval.
+    pub agent_bundle_id: Option<String>,
 }

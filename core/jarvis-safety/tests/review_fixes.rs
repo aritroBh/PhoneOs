@@ -13,7 +13,9 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{app_screen, button, el, field, label, screen};
-use jarvis_proto::{Action, Direction, Policy, Rect, RiskCategory, Role, Tier, ToolSpec};
+use jarvis_proto::{
+    Action, ConfirmRequest, Direction, Policy, Rect, RiskCategory, Role, Tier, ToolSpec,
+};
 use jarvis_safety::{
     check_app, classify, contains_secret, evaluate, label_is_unreadable, label_risk, redact,
     sanitize_screen_text, sanitize_screen_text_with_limit, summarize, Budget, BudgetVerdict,
@@ -114,9 +116,9 @@ fn new_phrase_rows() {
         ("Revoke", Delete),
         ("Accept Invitation", SendMessage),
         ("Decline", SendMessage),
-        ("Answer", SendMessage),
-        ("Call", SendMessage),
-        ("FaceTime", SendMessage),
+        ("Answer", RiskCategory::Call),
+        ("Call", RiskCategory::Call),
+        ("FaceTime", RiskCategory::Call),
         ("AirDrop", SendMessage),
     ] {
         assert_eq!(label_risk(lbl), cat, "{lbl}");
@@ -155,7 +157,7 @@ fn app_scoped_rules() {
     mom.value = Some("mobile".to_owned());
     assert_eq!(
         tap_in("com.apple.mobilephone", vec![label(1, "Favorites"), mom], 2),
-        SendMessage
+        RiskCategory::Call
     );
     // Contacts: a phone-number row dials, the name header does not.
     let mut row = el(2, Role::Cell, "mobile");
@@ -163,7 +165,7 @@ fn app_scoped_rules() {
     let contact = vec![label(1, "John Appleseed"), row, el(3, Role::Cell, "Notes")];
     assert_eq!(
         tap_in("com.apple.MobileAddressBook", contact.clone(), 2),
-        SendMessage
+        RiskCategory::Call
     );
     assert_eq!(tap_in("com.apple.MobileAddressBook", contact, 3), NONE);
     // Home: any accessory tile, but not navigation or tabs.
@@ -283,9 +285,9 @@ fn sf_symbol_labels() {
         let s = app_screen(vec![button(1, lbl)]);
         assert_eq!(classify(&tap(1), &s, None), cat, "{lbl}");
     }
-    // Unknown symbols are unlabeled: harmless alone, inherit a risky context.
+    // Unknown symbols are unlabeled: unverified alone, inherit a risky context.
     let s = app_screen(vec![button(1, "chevron.right")]);
-    assert_eq!(classify(&tap(1), &s, None), NONE);
+    assert_eq!(classify(&tap(1), &s, None), RiskCategory::Unverified);
     let s = app_screen(vec![
         label(1, "Delete this photo?"),
         button(2, "checkmark.circle"),
@@ -371,10 +373,17 @@ fn unreadable_labels_ask() {
     ] {
         assert!(label_is_unreadable(lbl), "{lbl}");
         let s = app_screen(vec![button(1, lbl)]);
-        assert_eq!(classify(&tap(1), &s, None), Payment, "{lbl}");
+        assert_eq!(
+            classify(&tap(1), &s, None),
+            RiskCategory::Unverified,
+            "{lbl}"
+        );
         assert!(matches!(
             evaluate(&Policy::default(), &tap(1), &s, None),
-            Decision::Confirm(_)
+            Decision::Confirm(ConfirmRequest {
+                category: RiskCategory::Unverified,
+                ..
+            })
         ));
     }
     for lbl in [
@@ -612,7 +621,7 @@ fn typed_dangerous_urls_are_denied() {
         text: "tel:+15551234567".to_owned(),
         submit: true,
     };
-    assert_eq!(classify(&a, &s, None), SendMessage);
+    assert_eq!(classify(&a, &s, None), RiskCategory::Call);
 }
 
 #[test]
@@ -625,7 +634,7 @@ fn tool_calls_are_read_deeper() {
     // No spec: conservative (and evaluate denies).
     assert_eq!(
         classify(&call("mystery", serde_json::json!({})), &s, None),
-        Payment
+        RiskCategory::Unverified
     );
     let shortcut = ToolSpec {
         name: "run_shortcut".to_owned(),
@@ -790,5 +799,5 @@ fn command_rows_and_buttons_still_match() {
         "Phone",
         vec![el(1, Role::Cell, "Mom, mobile, yesterday at 7:42 PM")],
     );
-    assert_eq!(classify(&tap(1), &s, None), SendMessage);
+    assert_eq!(classify(&tap(1), &s, None), RiskCategory::Call);
 }

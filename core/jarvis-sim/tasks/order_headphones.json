@@ -4,6 +4,7 @@
   "start_app": "shop",
   "success": "shop.ordered == true",
   "expect_confirm": [
+    "first_use",
     "payment"
   ],
   "max_steps": 14,

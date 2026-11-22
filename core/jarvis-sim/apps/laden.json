@@ -1,0 +1,25 @@
+{
+  "id": "laden",
+  "bundle_id": "com.example.laden",
+  "name": "Laden",
+  "start": "kasse",
+  "state": {
+    "paid": false
+  },
+  "screens": {
+    "kasse": {
+      "title": "Warenkorb",
+      "elements": [
+        { "role": "static_text", "label": "Kopfhörer", "frame": [16, 160, 361, 30] },
+        { "role": "static_text", "label": "129,00 €", "frame": [16, 200, 200, 30] },
+        { "id": "bezahlen", "role": "button", "label": "Bezahlen", "frame": [16, 620, 361, 50], "on_tap": [{ "do": "set", "var": "paid", "value": true }, { "do": "goto", "screen": "danke", "replace": true }] }
+      ]
+    },
+    "danke": {
+      "title": "Danke",
+      "elements": [
+        { "role": "static_text", "label": "Vielen Dank für Ihre Bestellung", "frame": [16, 200, 361, 30] }
+      ]
+    }
+  }
+}

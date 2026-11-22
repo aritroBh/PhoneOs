@@ -349,8 +349,19 @@ fn unit_enums_are_snake_case_strings() {
             "public_post",
             "account_change",
             "system_setting",
-            "credential"
+            "credential",
+            "unverified",
+            "call",
+            "first_use"
         ])
+    );
+    assert_eq!(
+        serde_json::to_value(PolicyMode::StepByStep).unwrap(),
+        json!("step_by_step")
+    );
+    assert_eq!(
+        serde_json::to_value(TrustLevel::Denied).unwrap(),
+        json!("denied")
     );
     assert_eq!(
         serde_json::to_value(Tier::Shortcut).unwrap(),
@@ -405,6 +416,7 @@ fn session_config_and_progress_round_trip() {
             supports_grammar: true,
         },
         known_apps: vec![AppInfo::new("com.apple.MobileSMS", "Messages")],
+        agent_bundle_id: Some("com.example.jarvis".into()),
     };
     round_trip(&cfg);
     // Everything in SessionConfig is defaulted, so an empty object is a valid config.
@@ -417,8 +429,15 @@ fn session_config_and_progress_round_trip() {
         phase: Phase::Acting,
         last_action: Some(Action::Tap { element: 2 }),
         app: Some("com.apple.Preferences".into()),
+        model_calls: 5,
+        parse_retries: 1,
     });
     round_trip(&Progress::default());
+    // Progress JSON from before the counters existed still loads.
+    let old: Progress =
+        serde_json::from_str(r#"{"step":2,"phase":"acting","last_action":null,"app":null}"#)
+            .unwrap();
+    assert_eq!((old.model_calls, old.parse_retries), (0, 0));
 }
 
 #[test]
@@ -438,5 +457,95 @@ fn policy_default_is_conservative() {
     assert_eq!(partial.max_steps, 10);
     assert_eq!(partial.confirm, p.confirm);
     assert_eq!(partial.denied_apps, p.denied_apps);
+    assert!(partial.first_use_approval);
+    assert_eq!(partial.mode, PolicyMode::Guarded);
     round_trip(&p);
+    assert!(p.first_use_approval);
+    assert_eq!(p.mode, PolicyMode::Guarded);
+    assert!(p.deny_categories.is_empty() && p.app_rules.is_empty());
+    assert!(!p.denies_category(RiskCategory::Payment));
+}
+
+#[test]
+fn policy_with_the_new_fields_round_trips() {
+    let p = Policy {
+        deny_categories: vec![RiskCategory::Payment, RiskCategory::None],
+        mode: PolicyMode::StepByStep,
+        app_rules: vec![
+            AppRule::new("com.example", TrustLevel::Denied),
+            AppRule::new("com.apple.Preferences", TrustLevel::Trusted),
+        ],
+        first_use_approval: false,
+        confirm: vec![RiskCategory::Delete],
+        ..Policy::default()
+    };
+    round_trip(&p);
+    let v = serde_json::to_value(&p).unwrap();
+    assert_eq!(v["mode"], "step_by_step");
+    assert_eq!(
+        v["app_rules"][1],
+        json!({"bundle_id_prefix": "com.apple.Preferences", "level": "trusted"})
+    );
+    assert!(p.denies_category(RiskCategory::Payment));
+    assert!(
+        !p.denies_category(RiskCategory::None),
+        "None is never denied"
+    );
+    // A current-format confirm list is taken as written (no migration).
+    assert_eq!(
+        serde_json::from_value::<Policy>(v).unwrap().confirm,
+        vec![RiskCategory::Delete]
+    );
+}
+
+/// A policy exactly as the shell stored it before the structural controls existed: it must
+/// load, keep every old setting, and behave as before (unreadable taps used to classify as
+/// `payment`, calls as `send_message`).
+#[test]
+fn policy_json_from_before_the_structural_controls_is_migrated() {
+    let old = r#"{
+        "denied_apps": ["com.apple.Passwords", "com.examplebank"],
+        "confirm": ["send_message", "payment", "delete"],
+        "max_steps": 25,
+        "max_duration_ms": 120000,
+        "max_consecutive_failures": 3,
+        "max_parse_retries": 1
+    }"#;
+    let p: Policy = serde_json::from_str(old).unwrap();
+    assert_eq!(
+        p.denied_apps,
+        vec!["com.apple.Passwords", "com.examplebank"]
+    );
+    assert_eq!(
+        p.confirm,
+        vec![
+            RiskCategory::SendMessage,
+            RiskCategory::Payment,
+            RiskCategory::Delete,
+            RiskCategory::Unverified,
+            RiskCategory::Call,
+            RiskCategory::FirstUse,
+        ]
+    );
+    assert_eq!((p.max_steps, p.max_duration_ms), (25, 120_000));
+    assert_eq!((p.max_consecutive_failures, p.max_parse_retries), (3, 1));
+    assert_eq!(p.mode, PolicyMode::Guarded);
+    assert!(p.first_use_approval);
+    assert!(p.app_rules.is_empty() && p.deny_categories.is_empty());
+    // A list without payment/send_message gains only first_use.
+    let p: Policy = serde_json::from_str(r#"{"confirm": ["delete"]}"#).unwrap();
+    assert_eq!(
+        p.confirm,
+        vec![RiskCategory::Delete, RiskCategory::FirstUse]
+    );
+    // Saving and loading again is stable (the saved form is current).
+    let again: Policy = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+    assert_eq!(again, p);
+    // A whole SessionConfig from before loads too.
+    let cfg: SessionConfig = serde_json::from_str(&format!(
+        r#"{{"policy": {old}, "tools": [], "known_apps": []}}"#
+    ))
+    .unwrap();
+    assert_eq!(cfg.agent_bundle_id, None);
+    assert!(cfg.policy.confirm.contains(&RiskCategory::Unverified));
 }

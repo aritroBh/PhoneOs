@@ -4,6 +4,7 @@
   "start_app": "notes",
   "success": "notes.last_deleted == \"Old receipts\" && notes.items.len == 27",
   "expect_confirm": [
+    "first_use",
     "delete"
   ],
   "max_steps": 16,

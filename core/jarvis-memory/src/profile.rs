@@ -4,6 +4,36 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Opening of a profile placeholder (`{{profile.KEY}}`).
+pub const PLACEHOLDER_OPEN: &str = "{{";
+/// Closing of a profile placeholder.
+pub const PLACEHOLDER_CLOSE: &str = "}}";
+/// Prefix inside a placeholder's braces, matched case-insensitively.
+pub const PLACEHOLDER_PREFIX: &str = "profile.";
+
+/// The canonical placeholder for a profile key: `{{profile.KEY}}`.
+pub fn profile_placeholder(key: &str) -> String {
+    format!("{PLACEHOLDER_OPEN}{PLACEHOLDER_PREFIX}{key}{PLACEHOLDER_CLOSE}")
+}
+
+/// The key when `text` (trimmed) is exactly one profile placeholder, such as
+/// `{{profile.email}}` or `{{ Profile.E-mail }}`; `None` for anything else, including text
+/// around or between placeholders.
+pub fn placeholder_key(text: &str) -> Option<String> {
+    let inner = text
+        .trim()
+        .strip_prefix(PLACEHOLDER_OPEN)?
+        .strip_suffix(PLACEHOLDER_CLOSE)?
+        .trim();
+    let head = inner.get(..PLACEHOLDER_PREFIX.len())?;
+    if !head.eq_ignore_ascii_case(PLACEHOLDER_PREFIX) {
+        return None;
+    }
+    let key = inner.get(PLACEHOLDER_PREFIX.len()..)?.trim();
+    let bad = key.is_empty() || key.contains('{') || key.contains('}');
+    (!bad).then(|| key.to_owned())
+}
+
 /// Canonical key and the normalised aliases that resolve to it.
 const ALIASES: &[(&str, &[&str])] = &[
     (

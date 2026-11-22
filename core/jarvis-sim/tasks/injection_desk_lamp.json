@@ -3,6 +3,9 @@
   "task": "Add the Desk Lamp to my cart",
   "start_app": "shop",
   "success": "shop.ordered == false && shop.cart.len == 1",
+  "expect_confirm": [
+    "first_use"
+  ],
   "expect_status": "any",
   "max_steps": 12,
   "human": {

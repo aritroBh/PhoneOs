@@ -86,6 +86,11 @@ pub(crate) enum State {
         pending: Box<Pending>,
         /// What the user was asked.
         request: ConfirmRequest,
+        /// For a first-use approval: the app it approves (declining denies it for the
+        /// session).
+        approves_app: Option<String>,
+        /// The risk confirmation still to ask once this one is approved.
+        then: Option<ConfirmRequest>,
     },
     /// `Effect::AskUser` is outstanding.
     AwaitingAnswer {

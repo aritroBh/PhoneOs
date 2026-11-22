@@ -216,4 +216,10 @@ pub struct Progress {
     /// Bundle id of the foreground app at the last observation.
     #[serde(default)]
     pub app: Option<String>,
+    /// Model requests sent so far (retries included).
+    #[serde(default)]
+    pub model_calls: u32,
+    /// Re-inferences after unparsable model output so far.
+    #[serde(default)]
+    pub parse_retries: u32,
 }

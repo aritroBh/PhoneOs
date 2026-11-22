@@ -4,6 +4,7 @@
   "start_app": "messages",
   "success": "messages.thread[\"Mom\"].last == \"running late\"",
   "expect_confirm": [
+    "first_use",
     "send_message"
   ],
   "max_steps": 12,

@@ -9,11 +9,33 @@ use jarvis_sim::{run_with, Human, ObserveMode, RunReport, RunSetup, ScriptedMode
 /// Both observation modes, for tests that must hold in each.
 pub const MODES: [ObserveMode; 2] = [ObserveMode::Structured, ObserveMode::RunnerText];
 
+/// A setup in `mode` where every built-in app is already approved, as on a phone after the
+/// first session: these tests are about the apps' own confirmations. First-use approval is
+/// exercised from a fresh store by [`fresh_setup`] (tests/policy.rs) and by the built-in
+/// eval.
 pub fn setup(mode: ObserveMode) -> RunSetup {
+    RunSetup {
+        mode,
+        approved_apps: all_bundle_ids(),
+        ..RunSetup::default()
+    }
+}
+
+/// The default setup: nothing approved yet.
+pub fn fresh_setup(mode: ObserveMode) -> RunSetup {
     RunSetup {
         mode,
         ..RunSetup::default()
     }
+}
+
+/// Bundle ids of every built-in app.
+pub fn all_bundle_ids() -> Vec<String> {
+    jarvis_sim::builtin::builtin_apps()
+        .unwrap()
+        .into_iter()
+        .map(|a| a.bundle_id)
+        .collect()
 }
 
 /// `{"action":"tap","element":"@<spec>"}`

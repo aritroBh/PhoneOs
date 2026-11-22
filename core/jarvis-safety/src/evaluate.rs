@@ -1,12 +1,12 @@
 //! The single entry point the agent calls before executing an action.
 
 use jarvis_proto::{
-    Action, CompactScreen, ConfirmRequest, Element, Policy, RiskCategory, ToolSpec,
+    Action, CompactScreen, ConfirmRequest, Element, Policy, RiskCategory, ToolSpec, TrustLevel,
 };
 
-use crate::app::{check_app, Verdict};
+use crate::app::{app_level, check_app, is_springboard, Verdict};
 use crate::classify::{classify, type_target};
-use crate::gate::{gate, Gate};
+use crate::gate::{changes_state, gate_in, Gate};
 use crate::redact::{contains_secret, redact};
 use crate::sanitize::sanitize_screen_text_with_limit;
 use crate::validate::{looks_like_url, validate_action, validate_url};
@@ -43,13 +43,21 @@ fn uses_foreground_app(action: &Action) -> bool {
     )
 }
 
-/// Runs `validate_action`, `check_app`, `classify` and `gate` in that order.
+/// Runs `validate_action`, `check_app`, `classify` and `gate_in` in that order.
 ///
-/// Denies: invalid actions; any action that touches or reads a deny-listed foreground
-/// app; `OpenApp` into a denied app; `CallTool` without a matching `tool` spec or whose
-/// tool acts on a denied app. Otherwise confirms when the action's category is in
-/// `policy.confirm`, with a one-line sanitised summary such as
+/// Denies: invalid actions; any action that touches or reads a denied foreground app
+/// (`denied_apps` or a `Denied` app rule); `OpenApp` into a denied app; `CallTool` without
+/// a matching `tool` spec, with a URL argument whose scheme is not allowed, or whose tool
+/// acts on a denied app; any action whose category is in `policy.deny_categories`.
+///
+/// Otherwise the gate depends on the trust level ([`crate::app_level`]) of the app the
+/// action affects (the tool's app for `CallTool`, else the foreground app): `StepByStep`
+/// confirms every action that [`changes_state`] (with category `None` when nothing riskier
+/// was found), `Trusted` lets [`crate::TRUSTED_ALLOWED`] categories through, and in every
+/// case a category in `policy.confirm` asks, with a one-line sanitised summary such as
 /// `Tap "Pay $42.10" in Amazon`.
+///
+/// First-use approval is not part of this decision; see [`first_use_app`].
 pub fn evaluate(
     policy: &Policy,
     action: &Action,
@@ -68,6 +76,7 @@ pub fn evaluate(
         }
     }
     let mut affected_app = screen.app_bundle_id.clone();
+    let mut level = app_level(policy, &screen.app_bundle_id);
     match action {
         Action::OpenApp { app } => {
             if check_app(policy, app).is_denied() {
@@ -105,12 +114,17 @@ pub fn evaluate(
                     ));
                 }
                 affected_app = app.clone();
+                level = app_level(policy, app);
             }
         }
         _ => {}
     }
+    if level == TrustLevel::Denied && !uses_foreground_app(action) {
+        // Leaving a denied app stays possible; how it is gated does not depend on it.
+        level = app_level(&without_app_denials(policy), &affected_app);
+    }
     let category = classify(action, screen, tool);
-    match gate(policy, category) {
+    match gate_in(policy, category, level, action, screen) {
         Gate::Allow => Decision::Allow,
         Gate::Deny => Decision::Deny(format!("{category:?} actions are not allowed")),
         Gate::Confirm => Decision::Confirm(ConfirmRequest {
@@ -118,6 +132,68 @@ pub fn evaluate(
             summary: summarize_with(action, screen, category),
             app: affected_app,
         }),
+    }
+}
+
+/// `policy` with no app denied, for gating the way out of a denied app.
+fn without_app_denials(policy: &Policy) -> Policy {
+    let mut p = policy.clone();
+    p.denied_apps.clear();
+    p.app_rules.retain(|r| r.level != TrustLevel::Denied);
+    p
+}
+
+/// The app that `action` would act inside and that therefore needs first-use approval
+/// under `policy`, before the agent's own bookkeeping (already-approved apps, its own
+/// app) is applied.
+///
+/// `None` when `policy.first_use_approval` is off, when the action does not act inside an
+/// app (`PressHome`, `OpenApp`, `OpenUrl`, `Wait`, `Look`, asking, finishing, plain
+/// vertical scrolls — see [`changes_state`]), when the app is SpringBoard, and when its
+/// trust level is `Trusted` (or `Denied`, which `evaluate` refuses anyway). UI actions act
+/// inside the foreground app; a `CallTool` acts inside its spec's `app`, if any.
+pub fn first_use_app(
+    policy: &Policy,
+    action: &Action,
+    screen: &CompactScreen,
+    tool: Option<&ToolSpec>,
+) -> Option<String> {
+    if !policy.first_use_approval || !changes_state(action, screen) {
+        return None;
+    }
+    let app = match action {
+        Action::CallTool { name, .. } => tool.filter(|t| t.name == *name)?.app.clone()?,
+        Action::Tap { .. }
+        | Action::LongPress { .. }
+        | Action::Type { .. }
+        | Action::Clear { .. }
+        | Action::Scroll { .. }
+        | Action::Swipe { .. }
+        | Action::TapPoint { .. } => screen.app_bundle_id.clone(),
+        _ => return None,
+    };
+    if app.trim().is_empty() || is_springboard(&app) {
+        return None;
+    }
+    match app_level(policy, &app) {
+        TrustLevel::Trusted | TrustLevel::Denied => None,
+        TrustLevel::Guarded | TrustLevel::StepByStep => Some(app),
+    }
+}
+
+/// The `FirstUse` confirmation for acting in `bundle_id`, e.g.
+/// `Let Jarvis act in Shop (com.example.shop)?` (sanitised; the name is left out when
+/// unknown or blank).
+pub fn first_use_request(bundle_id: &str, app_name: Option<&str>) -> ConfirmRequest {
+    let id = clean(bundle_id, MAX_QUOTE_CHARS);
+    let summary = match app_name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => format!("Let Jarvis act in {} ({id})?", clean(name, MAX_QUOTE_CHARS)),
+        None => format!("Let Jarvis act in {id}?"),
+    };
+    ConfirmRequest {
+        category: RiskCategory::FirstUse,
+        summary: sanitize_screen_text_with_limit(&summary, MAX_SUMMARY_CHARS),
+        app: bundle_id.to_owned(),
     }
 }
 

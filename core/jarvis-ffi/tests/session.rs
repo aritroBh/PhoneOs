@@ -31,12 +31,19 @@ fn end_to_end_then_replay_with_zero_model_calls() {
     assert_eq!(first.infers, 3);
     assert_eq!(first.acts, 2);
     assert!(first.typed_observations >= 1 && first.text_observations >= 2);
-    assert_eq!(first.confirms.len(), 1, "{:?}", first.confirms);
-    assert_eq!(first.confirms[0].category, RiskCategory::SystemSetting);
-    assert_eq!(first.confirms[0].app, SETTINGS);
+    // First use of Settings, then the setting itself.
+    assert_eq!(first.confirms.len(), 2, "{:?}", first.confirms);
+    assert_eq!(first.confirms[0].category, RiskCategory::FirstUse);
+    assert_eq!(
+        first.confirms[0].summary,
+        "Let Jarvis act in Settings (com.apple.Preferences)?"
+    );
+    assert_eq!(first.confirms[1].category, RiskCategory::SystemSetting);
+    assert_eq!(first.confirms[1].app, SETTINGS);
 
     let memory: serde_json::Value = serde_json::from_str(&first.memory_json).unwrap();
     assert_eq!(memory["flows"]["flows"].as_array().unwrap().len(), 1);
+    assert_eq!(memory["approved_apps"], serde_json::json!([SETTINGS]));
 
     let second = drive(&first.memory_json);
     let outcome = second.outcome.clone().unwrap();
@@ -48,7 +55,9 @@ fn end_to_end_then_replay_with_zero_model_calls() {
     );
     assert_eq!(second.infers, 0, "replay must not call the model");
     assert_eq!(second.acts, 2);
+    // The approval was remembered; the replayed toggle passes the same risk gate.
     assert_eq!(second.confirms.len(), 1, "replay passes the same gate");
+    assert_eq!(second.confirms[0].category, RiskCategory::SystemSetting);
     assert_eq!(second.final_page, Some(Page::WifiOff));
     let memory: serde_json::Value = serde_json::from_str(&second.memory_json).unwrap();
     assert_eq!(memory["flows"]["flows"][0]["successes"], 2);
@@ -320,4 +329,89 @@ fn a_driver_and_a_progress_poller_on_two_threads_do_not_interfere() {
     );
     assert!(poller.join().unwrap() >= 1);
     assert!(session.finish().is_ok());
+}
+
+#[test]
+fn step_by_step_and_first_use_settings_cross_the_bridge() {
+    let defaults = api::default_policy().unwrap();
+    assert!(defaults.first_use_approval);
+    assert_eq!(defaults.mode, PolicyMode::Guarded);
+    assert!(defaults.app_rules.is_empty() && defaults.deny_categories.is_empty());
+    for c in [
+        RiskCategory::Unverified,
+        RiskCategory::Call,
+        RiskCategory::FirstUse,
+    ] {
+        assert!(defaults.confirm.contains(&c), "{c:?}");
+    }
+
+    // StepByStep without first-use: the plain row tap asks too (category None).
+    let mut c = config();
+    c.policy.mode = PolicyMode::StepByStep;
+    c.policy.first_use_approval = false;
+    let run = drive_with(c, "", |_| true);
+    assert_eq!(run.outcome.unwrap().status, OutcomeStatus::Success);
+    let cats: Vec<RiskCategory> = run.confirms.iter().map(|r| r.category).collect();
+    assert_eq!(cats, vec![RiskCategory::None, RiskCategory::SystemSetting]);
+
+    // A Trusted rule for Settings: no confirmation at all.
+    let mut c = config();
+    c.policy.app_rules = vec![AppRule {
+        bundle_id_prefix: SETTINGS.to_owned(),
+        level: TrustLevel::Trusted,
+    }];
+    let run = drive_with(c, "", |_| false);
+    assert_eq!(run.outcome.unwrap().status, OutcomeStatus::Success);
+    assert!(run.confirms.is_empty(), "{:?}", run.confirms);
+}
+
+#[test]
+fn a_declined_first_use_blocks_through_the_bridge() {
+    let session = JarvisSession::new(config(), task(), String::new()).unwrap();
+    assert!(matches!(
+        session.step(1, Event::Start),
+        Effect::Observe { .. }
+    ));
+    let observed = || Event::Observed {
+        observation: ScreenObservation {
+            screen: settings_screen(),
+            screenshot: None,
+        },
+    };
+    let tap_row = |user: &str| {
+        let i = index_in_prompt(user, "Cell", "Wi-Fi, HomeNet").unwrap();
+        Event::ModelOutput {
+            output: ModelOutput {
+                text: format!(r#"{{"action":"tap","element":{i}}}"#),
+            },
+        }
+    };
+    let Effect::Infer { request } = session.step(2, observed()) else {
+        panic!("expected infer")
+    };
+    let Effect::Confirm { request: ask } = session.step(3, tap_row(&request.user)) else {
+        panic!("expected confirm")
+    };
+    assert_eq!(ask.category, RiskCategory::FirstUse);
+    assert_eq!(
+        ask.summary,
+        "Let Jarvis act in Settings (com.apple.Preferences)?"
+    );
+    let Effect::Infer { request } = session.step(4, Event::UserDecision { approved: false }) else {
+        panic!("expected infer after the decline")
+    };
+    let progress = session.progress().unwrap();
+    assert_eq!(progress.model_calls, 2);
+    assert_eq!(progress.parse_retries, 0);
+    let Effect::Finished { outcome } = session.step(5, tap_row(&request.user)) else {
+        panic!("expected finished")
+    };
+    assert_eq!(
+        outcome.status,
+        OutcomeStatus::Blocked,
+        "{}",
+        outcome.summary
+    );
+    let memory: serde_json::Value = serde_json::from_str(&session.finish().unwrap()).unwrap();
+    assert_eq!(memory["approved_apps"], serde_json::json!([]));
 }

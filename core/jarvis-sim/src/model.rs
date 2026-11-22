@@ -121,14 +121,16 @@ impl Model for ScriptedModel {
         if self.fail_at.remove(&n) {
             return Err(ModelError::Injected(n + 1));
         }
-        let text = self.outputs.pop_front().ok_or(ModelError::Exhausted {
+        let text = self.outputs.front().ok_or(ModelError::Exhausted {
             served: self.served,
             call: n + 1,
         })?;
+        // An output whose `@reference` matches nothing stays queued: the session retries a
+        // failed request unchanged, and the retry fails the same way.
+        let text = resolve_labels(text, &req.user)?;
+        self.outputs.pop_front();
         self.served += 1;
-        Ok(ModelOutput {
-            text: resolve_labels(&text, &req.user)?,
-        })
+        Ok(ModelOutput { text })
     }
 
     fn name(&self) -> String {

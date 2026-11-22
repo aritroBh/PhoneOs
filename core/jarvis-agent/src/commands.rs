@@ -184,7 +184,7 @@ pub(crate) fn plan(
 }
 
 /// Bundle id of the home screen.
-pub(crate) const SPRINGBOARD: &str = "com.apple.springboard";
+pub(crate) const SPRINGBOARD: &str = jarvis_proto::SPRINGBOARD_BUNDLE_ID;
 
 /// Whether executing `action` on `screen` should visibly change something; when it should
 /// and verification sees no change, the step counts as a failure.

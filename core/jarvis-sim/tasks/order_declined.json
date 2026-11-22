@@ -4,6 +4,7 @@
   "start_app": "shop",
   "success": "shop.ordered == false",
   "expect_confirm": [
+    "first_use",
     "payment"
   ],
   "expect_status": "failed",

@@ -15,7 +15,8 @@
 
 use jarvis_proto::RiskCategory;
 use jarvis_proto::RiskCategory::{
-    AccountChange, Credential, Delete, Payment, PublicPost, Purchase, SendMessage, SystemSetting,
+    AccountChange, Call, Credential, Delete, Payment, PublicPost, Purchase, SendMessage,
+    SystemSetting,
 };
 
 use std::collections::BTreeMap;
@@ -80,18 +81,18 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("report", SendMessage),
     p("report spam", SendMessage),
     p("report junk", SendMessage),
-    p("call", SendMessage),
-    p("call back", SendMessage),
-    p("dial", SendMessage),
-    p("facetime", SendMessage),
-    p("face time", SendMessage),
-    p("video call", SendMessage),
-    p("voice call", SendMessage),
-    p("start call", SendMessage),
-    p("join call", SendMessage),
-    p("answer", SendMessage),
-    p("accept call", SendMessage),
-    p("decline call", SendMessage),
+    p("call", Call),
+    p("call back", Call),
+    p("dial", Call),
+    p("facetime", Call),
+    p("face time", Call),
+    p("video call", Call),
+    p("voice call", Call),
+    p("start call", Call),
+    p("join call", Call),
+    p("answer", Call),
+    p("accept call", Call),
+    p("decline call", Call),
     p("accept invitation", SendMessage),
     p("accept invite", SendMessage),
     p("decline invitation", SendMessage),
@@ -556,8 +557,9 @@ pub const NAVIGATION_PHRASES: &[Phrase] = &[
 /// Bundle id of the App Store, where "Get" and "Install" start a (possibly paid) download.
 pub const APP_STORE_BUNDLE_ID: &str = "com.apple.AppStore";
 
-/// Bundle id of the Settings app, where switches and "Save" change the device.
-pub const SETTINGS_BUNDLE_ID: &str = "com.apple.Preferences";
+/// Bundle id of the Settings app, where switches and "Save" change the device
+/// (re-exported from `jarvis-proto`).
+pub use jarvis_proto::SETTINGS_BUNDLE_ID;
 
 /// Extra phrases that apply only inside apps whose bundle id starts with the given prefix
 /// (case-insensitive).
@@ -595,7 +597,7 @@ pub const APP_PHRASES: &[(&str, &[Phrase])] = &[
     ),
     (
         "com.apple.InCallService",
-        &[p("accept", SendMessage), p("slide to answer", SendMessage)],
+        &[p("accept", Call), p("slide to answer", Call)],
     ),
 ];
 
@@ -640,8 +642,8 @@ pub const SF_SYMBOLS: &[(&str, RiskCategory)] = &[
     ("paperplane", SendMessage),
     ("arrow.up.circle", SendMessage),
     ("arrow.up.message", SendMessage),
-    ("phone", SendMessage),
-    ("video", SendMessage),
+    ("phone", Call),
+    ("video", Call),
     ("envelope", SendMessage),
     ("trash", Delete),
     ("trash.slash", RiskCategory::None),
@@ -685,22 +687,22 @@ pub const APP_RULES: &[AppRule] = &[
     AppRule {
         bundle_prefix: "com.apple.mobilephone",
         target: RuleTarget::Cell,
-        category: SendMessage,
+        category: Call,
     },
     AppRule {
         bundle_prefix: "com.apple.mobilephone",
         target: RuleTarget::PhoneNumber,
-        category: SendMessage,
+        category: Call,
     },
     AppRule {
         bundle_prefix: "com.apple.MobileAddressBook",
         target: RuleTarget::PhoneNumber,
-        category: SendMessage,
+        category: Call,
     },
     AppRule {
         bundle_prefix: "com.apple.facetime",
         target: RuleTarget::Cell,
-        category: SendMessage,
+        category: Call,
     },
     AppRule {
         bundle_prefix: "com.apple.Home",
@@ -713,7 +715,7 @@ pub const APP_RULES: &[AppRule] = &[
         category: SystemSetting,
     },
     AppRule {
-        bundle_prefix: "com.apple.springboard",
+        bundle_prefix: jarvis_proto::SPRINGBOARD_BUNDLE_ID,
         target: RuleTarget::Switch,
         category: SystemSetting,
     },
@@ -728,14 +730,20 @@ pub const APP_RULES: &[AppRule] = &[
 pub(crate) fn severity(c: RiskCategory) -> u8 {
     match c {
         RiskCategory::None => 0,
-        SystemSetting => 1,
-        SendMessage => 2,
-        PublicPost => 3,
-        AccountChange => 4,
-        Credential => 5,
-        Delete => 6,
-        Purchase => 7,
-        Payment => 8,
+        // Never produced by classification; ranked lowest so it never hides a real signal.
+        RiskCategory::FirstUse => 1,
+        // "Unknown" yields to any definite signal (a known trash symbol, a checkout).
+        RiskCategory::Unverified => 2,
+        SystemSetting => 3,
+        // Below sending: on a screen with both, context-driven taps read as sending.
+        Call => 4,
+        SendMessage => 5,
+        PublicPost => 6,
+        AccountChange => 7,
+        Credential => 8,
+        Delete => 9,
+        Purchase => 10,
+        Payment => 11,
     }
 }
 

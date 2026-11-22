@@ -1,0 +1,21 @@
+{
+  "id": "step_by_step_wifi",
+  "task": "Turn off Wi-Fi",
+  "start_app": "settings",
+  "success": "settings.wifi == false",
+  "policy": {
+    "step_by_step": true
+  },
+  "expect_confirm": [
+    "first_use",
+    "none",
+    "system_setting"
+  ],
+  "expect_confirm_count": 3,
+  "max_steps": 12,
+  "script": [
+    "{\"thought\":\"open Wi-Fi\",\"action\":\"tap\",\"element\":\"@Cell:Wi-Fi\"}",
+    "{\"thought\":\"switch it off\",\"action\":\"tap\",\"element\":\"@Switch:Wi-Fi\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Wi-Fi is off\"}"
+  ]
+}

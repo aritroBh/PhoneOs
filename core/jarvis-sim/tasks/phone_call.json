@@ -1,0 +1,16 @@
+{
+  "id": "phone_call",
+  "task": "Call Mom",
+  "start_app": "dialer",
+  "success": "dialer.calling == \"Mom\"",
+  "expect_confirm": [
+    "first_use",
+    "call"
+  ],
+  "expect_confirm_count": 2,
+  "max_steps": 8,
+  "script": [
+    "{\"thought\":\"call\",\"action\":\"tap\",\"element\":\"@Cell:Mom\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Calling Mom\"}"
+  ]
+}

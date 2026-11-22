@@ -224,6 +224,125 @@ pub fn label_is_unreadable(label: &str) -> bool {
         .any(|c| c.is_alphabetic() && !is_readable_letter(c))
 }
 
+/// Common UI words of other languages written in Latin script (German, French, Spanish,
+/// Italian, Portuguese, Dutch), as tokens (accents folded: `löschen` is `loschen`). The
+/// English tables read these as harmless, so a control labelled with one is unverified.
+/// Not a translation table: it only says "this is not English".
+pub const FOREIGN_UI_WORDS: &[&str] = &[
+    // German
+    "bezahlen",
+    "zahlen",
+    "jetzt",
+    "kaufen",
+    "bestellen",
+    "senden",
+    "absenden",
+    "schicken",
+    "loschen",
+    "entfernen",
+    "bestatigen",
+    "weiter",
+    "abbrechen",
+    "zuruck",
+    "anrufen",
+    "buchen",
+    "speichern",
+    "andern",
+    "abmelden",
+    "anmelden",
+    "kasse",
+    "zahlungspflichtig",
+    "teilen",
+    "veroffentlichen",
+    "uberweisen",
+    // French
+    "payer",
+    "acheter",
+    "envoyer",
+    "supprimer",
+    "effacer",
+    "confirmer",
+    "valider",
+    "commander",
+    "appeler",
+    "annuler",
+    "enregistrer",
+    "publier",
+    "partager",
+    "maintenant",
+    "virement",
+    // Spanish / Portuguese
+    "pagar",
+    "comprar",
+    "enviar",
+    "eliminar",
+    "borrar",
+    "confirmar",
+    "aceptar",
+    "llamar",
+    "ligar",
+    "excluir",
+    "apagar",
+    "publicar",
+    "compartir",
+    "compartilhar",
+    "guardar",
+    "cancelar",
+    "pedir",
+    "ahora",
+    "agora",
+    "transferir",
+    // Italian
+    "pagare",
+    "acquista",
+    "acquistare",
+    "invia",
+    "inviare",
+    "elimina",
+    "eliminare",
+    "cancella",
+    "conferma",
+    "confermare",
+    "chiama",
+    "ordina",
+    "compra",
+    "condividi",
+    // Dutch
+    "betalen",
+    "kopen",
+    "verzenden",
+    "verwijderen",
+    "bevestigen",
+    "bellen",
+    "afrekenen",
+    "versturen",
+    "delen",
+];
+
+/// True when `label` contains a word of [`FOREIGN_UI_WORDS`].
+pub(crate) fn has_foreign_word(label: &str) -> bool {
+    tokens(&bounded(label))
+        .iter()
+        .any(|t| FOREIGN_UI_WORDS.contains(&t.as_str()))
+}
+
+/// True when `label` contains an accented or extended Latin letter (`ä`, `é`, `ß`, `ñ`,
+/// `ł`...), which English control labels do not use.
+pub(crate) fn has_non_english_letters(label: &str) -> bool {
+    bounded(label).chars().any(|c| {
+        c.is_alphabetic()
+            && matches!(u32::from(c), 0x00C0..=0x00FF | 0x0100..=0x024F | 0x1E00..=0x1EFF)
+    })
+}
+
+/// True when `label` reads as a language other than English: it has a common non-English
+/// UI word ([`FOREIGN_UI_WORDS`]) or accented/extended Latin letters. `classify` treats a
+/// tap on such a control as `Unverified` (rows and texts only count the word list, since
+/// names carry accents).
+pub fn label_is_foreign(label: &str) -> bool {
+    has_foreign_word(label) || has_non_english_letters(label)
+}
+
 /// True for apostrophe-like characters, which are deleted inside words (`don't` → `dont`).
 fn is_apostrophe(c: char) -> bool {
     matches!(c, '\'' | '’' | '‘' | 'ʼ' | '`' | '´')

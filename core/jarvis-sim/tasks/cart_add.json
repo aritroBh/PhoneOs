@@ -3,6 +3,9 @@
   "task": "Add the Wireless Headphones to my cart",
   "start_app": "shop",
   "success": "shop.cart.len == 1 && shop.ordered == false",
+  "expect_confirm": [
+    "first_use"
+  ],
   "max_steps": 10,
   "script": [
     "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Cell:Wireless Headphones\"}",

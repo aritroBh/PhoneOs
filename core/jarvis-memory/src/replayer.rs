@@ -11,6 +11,7 @@ use std::fmt;
 use jarvis_proto::{Action, CompactScreen, Element};
 
 use crate::flow::{Bindings, Flow, FlowAction, FlowStep, FlowText};
+use crate::profile::profile_placeholder;
 
 /// Why a replay stopped and handed control back to the model. Never an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +207,7 @@ impl Replayer {
                         .get(slot)
                         .cloned()
                         .ok_or(Divergence::UnboundSlot { slot: *slot })?,
+                    FlowText::Profile { key } => profile_placeholder(key),
                 };
                 Ok(Action::Type {
                     element,

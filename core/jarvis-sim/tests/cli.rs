@@ -232,9 +232,75 @@ fn run_accepts_a_script_file_modes_and_owner_flags() {
         "--script",
         script.to_str().unwrap(),
         "--decline",
+        "--approve-app",
+        "settings",
     ]);
     assert!(out.contains("owner declines"), "{out}");
+    assert!(out.contains("pre-approved: com.apple.Preferences"), "{out}");
+    assert!(!out.contains("confirm [FirstUse]"), "{out}");
     assert!(out.contains("final: settings/wifi"), "{out}");
+}
+
+#[test]
+fn policy_flags_reach_the_session() {
+    let script = tmp("cli-policy-script.jsonl");
+    std::fs::write(
+        &script,
+        "{\"action\":\"tap\",\"element\":\"@Cell:Wi-Fi\"}\n{\"action\":\"tap\",\"element\":\"@Switch:Wi-Fi\"}\n{\"action\":\"done\",\"summary\":\"off\"}\n",
+    )
+    .unwrap();
+    let base = [
+        "run",
+        "--task",
+        "Turn off Wi-Fi",
+        "--start-app",
+        "settings",
+        "--script",
+        script.to_str().unwrap(),
+        "--approve",
+    ];
+    // Default: first-use approval on, guarded.
+    let (code, out, err) = cli(&base);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("policy: guarded, first-use approval on"),
+        "{out}"
+    );
+    assert!(
+        out.contains("confirm [FirstUse] Let Jarvis act in Settings (com.apple.Preferences)?"),
+        "{out}"
+    );
+    assert!(!out.contains("confirm [None]"), "{out}");
+    // --step-by-step confirms the plain row tap too.
+    let mut args = base.to_vec();
+    args.push("--step-by-step");
+    let (code, out, err) = cli(&args);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("policy: step-by-step"), "{out}");
+    assert!(out.contains("confirm [None] Tap"), "{out}");
+    assert!(out.contains("outcome: Success"), "{out}");
+    // --no-first-use drops the app prompt.
+    let mut args = base.to_vec();
+    args.push("--no-first-use");
+    let (code, out, err) = cli(&args);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("first-use approval off"), "{out}");
+    assert!(!out.contains("FirstUse"), "{out}");
+    assert!(out.contains("confirm [SystemSetting]"), "{out}");
+    // Eval accepts the same flags.
+    let (code, out, err) = cli(&[
+        "eval",
+        "builtin",
+        "--filter",
+        "wifi_off",
+        "--no-first-use",
+        "--strict",
+    ]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("no first_use confirmation was requested"),
+        "{out}"
+    );
 }
 
 #[test]

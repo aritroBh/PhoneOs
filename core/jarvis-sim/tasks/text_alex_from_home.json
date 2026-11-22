@@ -4,6 +4,7 @@
   "start_app": "home",
   "success": "messages.thread[\"Alex\"].last == \"on my way\"",
   "expect_confirm": [
+    "first_use",
     "send_message"
   ],
   "max_steps": 14,

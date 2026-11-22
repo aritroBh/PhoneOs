@@ -188,3 +188,72 @@ fn loaded_flows_are_revalidated() {
     );
     assert!(loaded.retired);
 }
+
+#[test]
+fn approved_apps_round_trip_and_are_bounded() {
+    let mut m = populated();
+    assert!(m.approve_app("com.example.shop"));
+    assert!(m.approve_app(" com.apple.Preferences "));
+    assert!(!m.approve_app("   "));
+    assert!(!m.approve_app(&"x".repeat(MAX_BUNDLE_ID_LEN + 1)));
+    assert!(m.is_app_approved("com.example.shop"));
+    assert!(!m.is_app_approved("com.example"));
+    let json = m.to_json().unwrap();
+    assert!(json.contains(r#""approved_apps":["com.apple.Preferences","com.example.shop"]"#));
+    assert_eq!(MemoryStore::from_json(&json).unwrap(), m);
+    // Malformed entries are skipped; a malformed list is ignored.
+    let back =
+        MemoryStore::from_json(r#"{"approved_apps":["com.a", 7, null, "", "com.b"]}"#).unwrap();
+    assert_eq!(
+        back.approved_apps.iter().cloned().collect::<Vec<_>>(),
+        vec!["com.a".to_owned(), "com.b".to_owned()]
+    );
+    assert!(MemoryStore::from_json(r#"{"approved_apps":"com.a"}"#)
+        .unwrap()
+        .approved_apps
+        .is_empty());
+    let mut full = MemoryStore::new();
+    for i in 0..MAX_APPROVED_APPS + 5 {
+        full.approve_app(&format!("com.app{i}"));
+    }
+    assert_eq!(full.approved_apps.len(), MAX_APPROVED_APPS);
+}
+
+/// A snapshot exactly as written before first-use approval and the spelling-variant table
+/// existed: no `approved_apps`, a flow keyed with the old spelling.
+#[test]
+fn snapshot_from_before_first_use_approval_loads() {
+    let old = r#"{
+      "schema_version": 1,
+      "flows": {"flows": [{
+        "id": "0000000000000000",
+        "app_bundle_id": "com.apple.Preferences",
+        "intent_key": "turn off wi fi",
+        "steps": [{
+          "fingerprint": 42, "role": "switch", "label": "Wi-Fi",
+          "app_bundle_id": "com.apple.Preferences",
+          "action": {"type": "tap"}, "screen_hash_before": 7
+        }],
+        "successes": 2, "failures": 0, "last_used_ms": 5, "retired": false
+      }]},
+      "profile": {"fields": {"email": {"value": "a@b.c", "sensitive": false}}},
+      "log": {"entries": [{
+        "task": "Turn off Wi-Fi", "steps": [{"action": "tap", "app": "com.apple.Preferences", "ok": true}],
+        "outcome": "success", "summary": "Done.", "started_ms": 1, "finished_ms": 4
+      }]}
+    }"#;
+    let m = MemoryStore::from_json(old).unwrap();
+    assert!(m.approved_apps.is_empty());
+    assert_eq!(m.profile.lookup("email").unwrap().value, "a@b.c");
+    assert_eq!(m.log.len(), 1);
+    assert_eq!(m.flows.len(), 1);
+    // The old key is re-normalised, so today's spellings find it.
+    for task in ["Turn off Wi-Fi", "disable wifi", "switch off wi fi"] {
+        let (flow, _) = m.flows.find(task).unwrap();
+        assert_eq!(flow.intent_key, "disable wifi");
+        assert_eq!(flow.id, flow_id("disable wifi", "com.apple.Preferences"));
+    }
+    // And it saves in the current shape.
+    let again = MemoryStore::from_json(&m.to_json().unwrap()).unwrap();
+    assert_eq!(again, m);
+}

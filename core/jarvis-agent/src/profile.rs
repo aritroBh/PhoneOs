@@ -5,20 +5,16 @@
 //! back to its placeholder before the screen is rendered. History, flows and the task log
 //! keep the placeholder.
 
-use jarvis_memory::Profile;
-
-/// Opening of a placeholder.
-const OPEN: &str = "{{";
-/// Closing of a placeholder.
-const CLOSE: &str = "}}";
-/// Prefix inside the braces.
-const PREFIX: &str = "profile.";
+use jarvis_memory::{
+    profile_placeholder, Profile, PLACEHOLDER_CLOSE as CLOSE, PLACEHOLDER_OPEN as OPEN,
+    PLACEHOLDER_PREFIX as PREFIX,
+};
 /// Profile values shorter than this are not masked on screen (too likely to match noise).
 const MIN_MASK_CHARS: usize = 3;
 
 /// The canonical placeholder for a profile key.
 pub(crate) fn placeholder(key: &str) -> String {
-    format!("{OPEN}{PREFIX}{key}{CLOSE}")
+    profile_placeholder(key)
 }
 
 /// Why substitution failed.
@@ -117,14 +113,14 @@ pub(crate) fn sanitize_keys(profile: &Profile) -> Vec<String> {
         .collect()
 }
 
-/// Texts the recorder must treat as sensitive: the values of sensitive fields and their
-/// canonical placeholders.
+/// Texts the recorder must treat as sensitive: the values of sensitive fields. Placeholders
+/// need no registration: the recorder stores a typed `{{profile.KEY}}` as a profile slot.
 pub(crate) fn sensitive_texts(profile: &Profile) -> Vec<String> {
     profile
         .fields
-        .iter()
-        .filter(|(_, f)| f.sensitive)
-        .flat_map(|(k, f)| [f.value.clone(), placeholder(k)])
+        .values()
+        .filter(|f| f.sensitive)
+        .map(|f| f.value.clone())
         .collect()
 }
 
@@ -181,9 +177,6 @@ mod tests {
             mask("Signed in as alex@example.com", &p),
             "Signed in as {{profile.email}}"
         );
-        assert_eq!(
-            sensitive_texts(&p),
-            vec!["+1 555 0100".to_owned(), "{{profile.phone}}".to_owned()]
-        );
+        assert_eq!(sensitive_texts(&p), vec!["+1 555 0100".to_owned()]);
     }
 }

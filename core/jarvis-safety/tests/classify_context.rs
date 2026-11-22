@@ -390,11 +390,11 @@ fn urls_and_non_ui_actions() {
     let url = |u: &str| Action::OpenUrl { url: u.to_owned() };
     assert_eq!(
         classify(&url("tel:+14155550123"), &s, None),
-        RiskCategory::SendMessage
+        RiskCategory::Call
     );
     assert_eq!(
         classify(&url("FaceTime:alex@example.com"), &s, None),
-        RiskCategory::SendMessage
+        RiskCategory::Call
     );
     assert_eq!(
         classify(&url("https://example.com/checkout"), &s, None),

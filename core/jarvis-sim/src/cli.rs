@@ -25,6 +25,7 @@ USAGE
                  [--model-url URL --model NAME [--api-key KEY] [--timeout SECS]]
                  [--script FILE.jsonl] [--approve | --decline] [--context-tokens N]
                  [--max-steps N] [--grammar] [--memory FILE.json]
+                 [--step-by-step] [--no-first-use] [--approve-app APP]...
   jarvis-sim eval <DIR | FILE | builtin> [same model, mode and owner flags]
                  [--filter TEXT] [--json] [--strict]
   jarvis-sim apps
@@ -35,6 +36,11 @@ MODELS
   --model-url/--model   an OpenAI-compatible server (build with --features http)
   --script FILE         one model output per line; `\"element\":\"@Label\"` resolves by label
   (neither)             a built-in task's bundled script, matched by its task text
+
+POLICY
+  --step-by-step        confirm every state-changing action (StepByStep mode)
+  --no-first-use        do not ask before the first action inside each app
+  --approve-app APP     treat APP (sim app id or bundle id) as already approved; repeatable
 
 --approve/--decline answer every confirmation (default: approve). `eval` exits non-zero on
 failed tasks only with --strict.
@@ -47,7 +53,19 @@ struct Args {
     flags: BTreeSet<String>,
 }
 
-const BOOL_FLAGS: [&str; 6] = ["approve", "decline", "json", "strict", "grammar", "help"];
+const BOOL_FLAGS: [&str; 8] = [
+    "approve",
+    "decline",
+    "json",
+    "strict",
+    "grammar",
+    "help",
+    "step-by-step",
+    "no-first-use",
+];
+
+/// Options every command that runs a session accepts, besides its own.
+const POLICY_OPTS: [&str; 3] = ["step-by-step", "no-first-use", "approve-app"];
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
     let mut out = Args::default();
@@ -126,6 +144,18 @@ fn setup_from(args: &Args) -> Result<RunSetup, String> {
         setup.max_steps = Some(n);
     }
     setup.grammar = args.flag("grammar");
+    setup.step_by_step = args.flag("step-by-step");
+    setup.first_use_approval = !args.flag("no-first-use");
+    if !args.all("approve-app").is_empty() {
+        let apps = builtin_apps().map_err(|e| e.to_string())?;
+        for a in args.all("approve-app") {
+            let id = apps
+                .iter()
+                .find(|d| d.id == *a)
+                .map_or_else(|| a.clone(), |d| d.bundle_id.clone());
+            setup.approved_apps.push(id);
+        }
+    }
     Ok(setup)
 }
 
@@ -254,6 +284,9 @@ fn cmd_run(args: &Args, out: &mut dyn Write) -> Result<i32, String> {
         "max-steps",
         "grammar",
         "memory",
+        POLICY_OPTS[0],
+        POLICY_OPTS[1],
+        POLICY_OPTS[2],
     ])?;
     let task = args.get("task").ok_or("run needs --task \"...\"")?;
     let setup = setup_from(args)?;
@@ -300,6 +333,25 @@ fn cmd_run(args: &Args, out: &mut dyn Write) -> Result<i32, String> {
             "approves"
         },
     );
+    let _ = writeln!(
+        out,
+        "policy: {}, first-use approval {}{}",
+        if setup.step_by_step {
+            "step-by-step"
+        } else {
+            "guarded"
+        },
+        if setup.first_use_approval {
+            "on"
+        } else {
+            "off"
+        },
+        if setup.approved_apps.is_empty() {
+            String::new()
+        } else {
+            format!(", pre-approved: {}", setup.approved_apps.join(", "))
+        },
+    );
     let report = run_task(
         &setup,
         start,
@@ -338,6 +390,9 @@ fn cmd_eval(args: &Args, out: &mut dyn Write) -> Result<i32, String> {
         "filter",
         "json",
         "strict",
+        POLICY_OPTS[0],
+        POLICY_OPTS[1],
+        POLICY_OPTS[2],
     ])?;
     let spec = args
         .positional

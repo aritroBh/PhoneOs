@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::flow::{flow_id, Bindings, Flow, MAX_STEPS};
-use crate::intent::{intent_key, is_slotted, match_slotted};
+use std::collections::BTreeSet;
+
+use crate::intent::{intent_key, is_slotted, match_slotted, renormalize_key};
 use crate::log::{LogEntry, TaskLog};
 use crate::profile::{Profile, ProfileField};
 
@@ -12,6 +14,10 @@ use crate::profile::{Profile, ProfileField};
 pub const SCHEMA_VERSION: u32 = 1;
 /// Default cap on stored flows.
 pub const MAX_FLOWS: usize = 200;
+/// Most approved apps kept and read from one input.
+pub const MAX_APPROVED_APPS: usize = 500;
+/// Longest bundle id accepted into `approved_apps`, in bytes.
+pub const MAX_BUNDLE_ID_LEN: usize = 256;
 /// Most flows, profile fields or log entries read from one input; the rest are ignored.
 pub const MAX_PARSED_ITEMS: usize = 1000;
 
@@ -204,8 +210,9 @@ impl FlowStore {
         Some(flow.retired)
     }
 
-    /// Validates loaded flows: ids are recomputed, retirement re-applied, invalid flows
-    /// (no key, no steps, too many steps) dropped, duplicates merged, the cap enforced.
+    /// Validates loaded flows: keys re-normalised (spelling variants added since they were
+    /// stored), ids recomputed, retirement re-applied, invalid flows (no key, no steps, too
+    /// many steps) dropped, duplicates merged, the cap enforced.
     fn from_flows(flows: Vec<Flow>) -> Self {
         let mut flows: Vec<Flow> = flows
             .into_iter()
@@ -213,6 +220,7 @@ impl FlowStore {
                 !f.intent_key.is_empty() && !f.steps.is_empty() && f.steps.len() <= MAX_STEPS
             })
             .map(|mut f| {
+                f.intent_key = renormalize_key(&f.intent_key);
                 f.id = flow_id(&f.intent_key, &f.app_bundle_id);
                 if f.should_retire() {
                     f.retired = true;
@@ -242,6 +250,8 @@ pub struct MemoryStore {
     pub profile: Profile,
     /// Task log.
     pub log: TaskLog,
+    /// Bundle ids the owner has let the agent act in (first-use approval), sorted.
+    pub approved_apps: BTreeSet<String>,
 }
 
 impl Default for MemoryStore {
@@ -251,6 +261,7 @@ impl Default for MemoryStore {
             flows: FlowStore::default(),
             profile: Profile::default(),
             log: TaskLog::default(),
+            approved_apps: BTreeSet::new(),
         }
     }
 }
@@ -259,6 +270,28 @@ impl MemoryStore {
     /// An empty store.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Records that the owner approved acting in `bundle_id`. Blank or oversized ids are
+    /// ignored, as are new ids once [`MAX_APPROVED_APPS`] are stored. Returns whether the id
+    /// is now approved.
+    pub fn approve_app(&mut self, bundle_id: &str) -> bool {
+        let id = bundle_id.trim();
+        if id.is_empty() || id.len() > MAX_BUNDLE_ID_LEN {
+            return false;
+        }
+        if self.approved_apps.contains(id) {
+            return true;
+        }
+        if self.approved_apps.len() >= MAX_APPROVED_APPS {
+            return false;
+        }
+        self.approved_apps.insert(id.to_owned())
+    }
+
+    /// Whether `bundle_id` was approved (exact match, surrounding whitespace ignored).
+    pub fn is_app_approved(&self, bundle_id: &str) -> bool {
+        self.approved_apps.contains(bundle_id.trim())
     }
 
     /// Serializes to JSON (always at [`SCHEMA_VERSION`]).
@@ -270,7 +303,8 @@ impl MemoryStore {
 
     /// Parses JSON written by this or an older/minor-newer version.
     ///
-    /// Unknown fields are ignored; missing sections become empty. Individual flows, profile
+    /// Unknown fields are ignored; missing sections become empty (`approved_apps` too, so
+    /// data from before first-use approval loads with nothing approved). Individual flows, profile
     /// fields or log entries that cannot be understood (for example a step type from a newer
     /// minor version) are skipped rather than failing the load. A `schema_version` above
     /// [`SCHEMA_VERSION`] is rejected with [`MemoryError::NewerSchema`].
@@ -313,6 +347,13 @@ impl MemoryStore {
         if let Some(section) = section(obj, "log")? {
             let entries = lenient_list::<LogEntry>(section.get("entries"), "log.entries", true)?;
             store.log = TaskLog::from_entries(entries);
+        }
+        // Absent in data written before first-use approval existed: nothing approved.
+        // A malformed list is ignored rather than failing the whole load.
+        if let Some(Value::Array(ids)) = obj.get("approved_apps") {
+            for id in ids.iter().take(MAX_PARSED_ITEMS).filter_map(Value::as_str) {
+                store.approve_app(id);
+            }
         }
         Ok(store)
     }

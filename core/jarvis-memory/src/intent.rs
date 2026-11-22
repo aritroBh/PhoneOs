@@ -28,6 +28,88 @@ const FILLER_PHRASES: &[&[&str]] = &[
     &["my"],
 ];
 
+/// Spelling variants of the same word or phrase, as lowercase word sequences (hyphens and
+/// spaces are both separators, so `Wi-Fi` arrives as `wi fi`), and the one word they are
+/// keyed as. Longest match wins. Deliberately small and explicit.
+pub const EQUIVALENT_PHRASES: &[(&[&str], &str)] = &[
+    (&["wi", "fi"], "wifi"),
+    (&["e", "mail"], "email"),
+    (&["e", "mails"], "emails"),
+    (&["log", "in"], "login"),
+    (&["log", "out"], "logout"),
+    (&["sign", "in"], "signin"),
+    (&["sign", "out"], "signout"),
+    (&["sign", "up"], "signup"),
+    (&["turn", "off"], "disable"),
+    (&["switch", "off"], "disable"),
+    (&["turn", "on"], "enable"),
+    (&["switch", "on"], "enable"),
+];
+
+/// The length and canonical word of the longest [`EQUIVALENT_PHRASES`] entry starting at
+/// `norms[i]`.
+fn equivalent_at<S: AsRef<str>>(norms: &[S], i: usize) -> Option<(usize, &'static str)> {
+    EQUIVALENT_PHRASES
+        .iter()
+        .filter(|(phrase, _)| {
+            norms
+                .get(i..i + phrase.len())
+                .is_some_and(|w| w.iter().zip(phrase.iter()).all(|(a, b)| a.as_ref() == *b))
+        })
+        .map(|(phrase, canon)| (phrase.len(), *canon))
+        .max_by_key(|(len, _)| *len)
+}
+
+/// Replaces variant spellings in already-normalised words (see [`EQUIVALENT_PHRASES`]).
+fn merge_equivalents(ws: Vec<Word>) -> Vec<Word> {
+    let norms: Vec<&str> = ws.iter().map(|w| w.norm.as_str()).collect();
+    let mut out: Vec<Word> = Vec::with_capacity(ws.len());
+    let mut i = 0usize;
+    while let Some(w) = ws.get(i) {
+        match equivalent_at(&norms, i) {
+            Some((len, canon)) => {
+                let end = ws.get(i + len - 1).map_or(w.end, |last| last.end);
+                out.push(Word {
+                    norm: canon.to_owned(),
+                    start: w.start,
+                    end,
+                });
+                i += len;
+            }
+            None => {
+                out.push(Word {
+                    norm: w.norm.clone(),
+                    start: w.start,
+                    end: w.end,
+                });
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Re-applies [`EQUIVALENT_PHRASES`] to a stored intent key (space-separated words and
+/// `{n}` slots), so keys stored before an entry existed still match new task texts.
+pub fn renormalize_key(key: &str) -> String {
+    let toks: Vec<&str> = key.split(' ').filter(|t| !t.is_empty()).collect();
+    let mut out: Vec<&str> = Vec::with_capacity(toks.len());
+    let mut i = 0usize;
+    while let Some(t) = toks.get(i) {
+        match equivalent_at(&toks, i) {
+            Some((len, canon)) => {
+                out.push(canon);
+                i += len;
+            }
+            None => {
+                out.push(t);
+                i += 1;
+            }
+        }
+    }
+    out.join(" ")
+}
+
 /// One word of a text with its byte span.
 struct Word {
     norm: String,
@@ -63,7 +145,7 @@ fn words(text: &str) -> Vec<Word> {
     if let Some((s, e)) = current {
         push_word(&mut out, text, s, e);
     }
-    out
+    merge_equivalents(out)
 }
 
 fn push_word(out: &mut Vec<Word>, text: &str, start: usize, end: usize) {
@@ -123,8 +205,10 @@ fn join_non_filler(toks: &[Tok]) -> String {
         .join(" ")
 }
 
-/// Normalises a task text: lowercase, punctuation stripped, filler words dropped, whitespace
-/// collapsed. Braces are punctuation, so the result never contains a slot placeholder.
+/// Normalises a task text: lowercase, punctuation stripped, spelling variants unified
+/// ([`EQUIVALENT_PHRASES`]: `Wi-Fi`/`wifi`/`wi fi`, `turn off`/`switch off`/`disable`...),
+/// filler words dropped, whitespace collapsed. Braces are punctuation, so the result never
+/// contains a slot placeholder.
 pub fn intent_key(task_text: &str) -> String {
     let toks: Vec<Tok> = words(task_text)
         .into_iter()

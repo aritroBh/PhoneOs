@@ -360,3 +360,71 @@ fn sensitive_values_match_by_normalised_containment() {
     assert!(matches!(flow.steps[1].action, FlowAction::HandBack { .. }));
     assert!(!serde_json::to_string(&flow).unwrap().contains("4111"));
 }
+
+#[test]
+fn profile_placeholders_are_stored_as_profile_slots() {
+    for (typed, key) in [
+        ("{{profile.phone}}", "phone"),
+        (" {{ Profile.E-mail }} ", "E-mail"),
+    ] {
+        let t = thread();
+        let mut rec = Recorder::new("send my phone number to mom");
+        // The value is registered as sensitive; the placeholder never needs to be.
+        rec.set_sensitive_values(vec!["555-0100".into()]);
+        rec_step(&mut rec, Action::Tap { element: 3 }, Some(3), &t);
+        rec_step(
+            &mut rec,
+            Action::Type {
+                element: Some(2),
+                text: typed.into(),
+                submit: true,
+            },
+            Some(2),
+            &t,
+        );
+        let flow = rec.finish(true, 1).unwrap();
+        assert_eq!(
+            flow.steps[1].action,
+            FlowAction::Type {
+                text: FlowText::Profile { key: key.into() },
+                submit: true
+            },
+            "{typed}"
+        );
+        let json = serde_json::to_string(&flow).unwrap();
+        assert!(!json.contains("555-0100"));
+        // Replay hands the placeholder (never a value) to the agent.
+        let mut rp = Replayer::new(flow, Bindings::new());
+        rp.advance();
+        match rp.next(&t) {
+            Next::Action(Action::Type { text, submit, .. }) => {
+                assert_eq!(text, profile_placeholder(key));
+                assert!(submit);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    // Text around a placeholder is not a profile slot; it is kept literally (placeholder
+    // included, value excluded).
+    assert_eq!(placeholder_key("Call me at {{profile.phone}}"), None);
+    assert_eq!(placeholder_key("{{profile.}}"), None);
+    assert_eq!(placeholder_key("{{profile.a}}{{profile.b}}"), None);
+    assert_eq!(placeholder_key("{{other.phone}}"), None);
+    // Typing the raw sensitive value is still handed back.
+    let t = thread();
+    let mut rec = Recorder::new("send my phone number to mom");
+    rec.set_sensitive_values(vec!["555-0100".into()]);
+    rec_step(&mut rec, Action::Tap { element: 3 }, Some(3), &t);
+    rec_step(
+        &mut rec,
+        Action::Type {
+            element: Some(2),
+            text: "my number is 555-0100".into(),
+            submit: false,
+        },
+        Some(2),
+        &t,
+    );
+    let flow = rec.finish(true, 1).unwrap();
+    assert!(matches!(flow.steps[1].action, FlowAction::HandBack { .. }));
+}

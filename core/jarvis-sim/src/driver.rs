@@ -13,9 +13,6 @@ use crate::human::Human;
 use crate::model::Model;
 use crate::phone::{SimPhone, SimSnapshot};
 
-/// Text the session adds to a re-inference after unusable model output.
-const RETRY_MARKER: &str = "Your last reply could not be used";
-
 /// Limits and fault injection for one run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunOptions {
@@ -58,7 +55,7 @@ pub struct RunCounts {
     pub model_calls: usize,
     /// Model calls that failed.
     pub model_failures: usize,
-    /// Re-inferences after unparsable output (seen from the correction note in the prompt).
+    /// Re-inferences after unparsable output (the session's `Progress::parse_retries`).
     pub parse_retries: usize,
     /// Runner commands sent.
     pub acts: usize,
@@ -266,9 +263,6 @@ pub fn run_with(
             }
             Effect::Infer(req) => {
                 report.counts.model_calls += 1;
-                if req.user.contains(RETRY_MARKER) {
-                    report.counts.parse_retries += 1;
-                }
                 phone.advance(costs.infer_ms);
                 let kind = format!("{:?}", req.kind).to_lowercase();
                 let label = format!(
@@ -401,6 +395,8 @@ pub fn run_with(
         }
     }
     report.final_state = phone.snapshot();
+    let progress = session.progress();
+    report.counts.parse_retries = usize::try_from(progress.parse_retries).unwrap_or(usize::MAX);
     report.memory = session.into_memory();
     report
 }

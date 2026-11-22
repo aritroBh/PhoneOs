@@ -2,8 +2,9 @@
 //
 // Mirrors `core/jarvis-ffi/tests/common/mod.rs`: Settings -> Wi-Fi -> switch off, with the
 // Settings screen sent as a typed tree and the Wi-Fi page as runner text, a canned model
-// that reads element numbers from the prompt, and an approved confirmation. Then replays
-// from the saved memory with zero model calls.
+// that reads element numbers from the prompt, and approved confirmations (first use of
+// Settings, then the setting). Then replays from the saved memory with zero model calls,
+// and checks StepByStep mode, a Trusted app rule and a declined first-use approval.
 //
 // Built and run by `core/jarvis-ffi/scripts/swift-smoke.sh` (needs the `panic-hooks`
 // feature for the containment checks). Prints one PASS/FAIL line per check and exits 1 on
@@ -111,11 +112,13 @@ struct Run {
     var error: String?
 }
 
-func drive(memoryJson: String) -> Run {
+func drive(memoryJson: String, config: SessionConfig? = nil,
+           decide: (ConfirmRequest) -> Bool = { _ in true }) -> Run {
     var run = Run()
     let session: JarvisSession
     do {
-        session = try JarvisSession(config: try makeConfig(), task: task, memoryJson: memoryJson)
+        session = try JarvisSession(config: try config ?? makeConfig(), task: task,
+                                    memoryJson: memoryJson)
     } catch {
         run.error = "init threw \(error)"
         return run
@@ -163,7 +166,7 @@ func drive(memoryJson: String) -> Run {
             event = .actResult(result: RunnerResult(ok: true, error: nil))
         case .confirm(let request):
             run.confirms.append(request)
-            event = .userDecision(approved: true)
+            event = .userDecision(approved: decide(request))
         case .callTool(let call):
             run.error = "unexpected tool call \(call)"
             return run
@@ -205,15 +208,20 @@ check("session 1 used 3 model calls", first.infers == 3, "\(first.infers)")
 check("session 1 sent 2 runner commands", first.acts == 2, "\(first.acts)")
 check("session 1 observed a typed screen", first.typedObservations >= 1, "\(first.typedObservations)")
 check("session 1 observed runner text", first.textObservations >= 2, "\(first.textObservations)")
-check("session 1 asked one system-setting confirmation",
-      first.confirms.count == 1 && first.confirms.first?.category == .systemSetting
-          && first.confirms.first?.app == settingsBundle,
+check("session 1 asked first use of Settings, then the setting",
+      first.confirms.count == 2 && first.confirms.first?.category == .firstUse
+          && first.confirms.first?.summary == "Let Jarvis act in Settings (com.apple.Preferences)?"
+          && first.confirms.last?.category == .systemSetting
+          && first.confirms.last?.app == settingsBundle,
       "\(first.confirms)")
 check("session 1 left the switch off", first.page == .wifiOff)
 let memory = jsonObject(first.memoryJson)
 check("finish() returned memory JSON that parses", memory != nil, String(first.memoryJson.prefix(200)))
 let flows = (memory?["flows"] as? [String: Any])?["flows"] as? [Any]
 check("memory holds one learned flow", flows?.count == 1, "\(String(describing: flows?.count))")
+check("memory remembers the approved app",
+      (memory?["approved_apps"] as? [String]) == [settingsBundle],
+      "\(String(describing: memory?["approved_apps"]))")
 
 // 2. Replay from that memory.
 let second = drive(memoryJson: first.memoryJson)
@@ -221,8 +229,72 @@ check("session 2 ran without driver errors", second.error == nil, second.error ?
 check("session 2 finished with success", second.outcome?.status == .success,
       "\(String(describing: second.outcome))")
 check("session 2 replayed with zero Infer effects", second.infers == 0, "\(second.infers)")
-check("session 2 replay passed the same confirmation gate", second.confirms.count == 1)
+check("session 2 replay passed the same confirmation gate (no first-use prompt)",
+      second.confirms.count == 1 && second.confirms.first?.category == .systemSetting,
+      "\(second.confirms)")
 check("session 2 left the switch off", second.page == .wifiOff)
+
+// 2b. The policy model: defaults, StepByStep, a Trusted rule, a declined first use.
+do {
+    let p = try defaultPolicy()
+    check("defaultPolicy() has first-use approval on and Guarded mode",
+          p.firstUseApproval && p.mode == .guarded && p.appRules.isEmpty && p.denyCategories.isEmpty)
+    check("defaultPolicy() confirms unverified, call and first-use",
+          p.confirm.contains(.unverified) && p.confirm.contains(.call) && p.confirm.contains(.firstUse))
+
+    var step = try makeConfig()
+    step.policy.mode = .stepByStep
+    step.policy.firstUseApproval = false
+    let stepRun = drive(memoryJson: "", config: step)
+    check("StepByStep run succeeds", stepRun.error == nil && stepRun.outcome?.status == .success,
+          stepRun.error ?? "\(String(describing: stepRun.outcome))")
+    check("StepByStep asks for the plain row tap, then the setting",
+          stepRun.confirms.map { $0.category } == [RiskCategory.none, RiskCategory.systemSetting],
+          "\(stepRun.confirms)")
+
+    var trusted = try makeConfig()
+    trusted.policy.appRules = [AppRule(bundleIdPrefix: settingsBundle, level: .trusted)]
+    let trustedRun = drive(memoryJson: "", config: trusted, decide: { _ in false })
+    check("a Trusted app toggles a setting with no confirmation",
+          trustedRun.outcome?.status == .success && trustedRun.confirms.isEmpty,
+          "\(trustedRun.confirms) \(String(describing: trustedRun.outcome))")
+
+    let s = try JarvisSession(config: try makeConfig(), task: task, memoryJson: "")
+    _ = s.step(nowMs: 1, event: .start)
+    var effect = s.step(nowMs: 2, event: .observed(observation: ScreenObservation(screen: settingsScreen(), screenshot: nil)))
+    func tapRow(_ e: Effect) -> Event? {
+        guard case let .infer(request) = e,
+              let i = indexInPrompt(request.user, role: "Cell", label: "Wi-Fi, HomeNet") else { return nil }
+        return .modelOutput(output: ModelOutput(text: #"{"action":"tap","element":\#(i)}"#))
+    }
+    if let tap = tapRow(effect) {
+        effect = s.step(nowMs: 3, event: tap)
+        if case let .confirm(request) = effect {
+            check("first action in Settings asks first-use approval", request.category == .firstUse,
+                  "\(request)")
+        } else {
+            check("first action in Settings asks first-use approval", false, "\(effect)")
+        }
+        effect = s.step(nowMs: 4, event: .userDecision(approved: false))
+        check("progress() counts model calls", (try s.progress()).modelCalls == 2)
+        if let again = tapRow(effect) {
+            effect = s.step(nowMs: 5, event: again)
+        }
+        if case let .finished(outcome) = effect {
+            check("a declined first use ends the session blocked", outcome.status == .blocked,
+                  outcome.summary)
+        } else {
+            check("a declined first use ends the session blocked", false, "\(effect)")
+        }
+        let mem = jsonObject(try s.finish())
+        check("a declined app is not remembered as approved",
+              (mem?["approved_apps"] as? [String]) == [], "\(String(describing: mem?["approved_apps"]))")
+    } else {
+        check("first-use decline scenario reached the model", false, "\(effect)")
+    }
+} catch {
+    check("policy model checks", false, "\(error)")
+}
 
 // 3. Memory errors throw.
 for bad in ["{", "not json", "[1]", #"{"schema_version": 999}"#] {

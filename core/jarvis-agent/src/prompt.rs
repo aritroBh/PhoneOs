@@ -85,6 +85,9 @@ pub(crate) const RESULT_SCROLL_END: &str = "failed: nothing changed (end of the 
 /// History result for a declined confirmation.
 pub(crate) const RESULT_DECLINED: &str =
     "not done: the owner declined. Do not try this again; find another way or use fail";
+/// History result for a declined first-use approval.
+pub(crate) const RESULT_APP_DECLINED: &str =
+    "not done: the owner does not want Jarvis to act in this app. Do not use it again; leave it or use fail";
 /// History result when vision is not available.
 pub(crate) const RESULT_NO_VISION: &str = "not available: this model reads the element list only";
 /// History result when `look` takes a screenshot.

@@ -376,6 +376,43 @@ pub enum RiskCategory {
     AccountChange,
     SystemSetting,
     Credential,
+    /// The target could not be classified (unreadable, foreign, unlabeled, unknown tool).
+    Unverified,
+    /// Placing a phone or FaceTime call.
+    Call,
+    /// The first time Jarvis acts inside an app.
+    FirstUse,
+}
+
+/// Supervision for apps without an [`AppRule`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum PolicyMode {
+    /// Confirm risky categories only.
+    Guarded,
+    /// Confirm every action that can change state.
+    StepByStep,
+}
+
+/// Per-app trust level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum TrustLevel {
+    /// No first-use approval; settings and unverified controls run without asking.
+    Trusted,
+    /// Like `PolicyMode.guarded`.
+    Guarded,
+    /// Like `PolicyMode.stepByStep`.
+    StepByStep,
+    /// Never operated.
+    Denied,
+}
+
+/// A per-app trust level; the longest matching prefix wins.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AppRule {
+    /// Bundle id or bundle id prefix (matched at `.` boundaries).
+    pub bundle_id_prefix: String,
+    /// Trust level for matching apps.
+    pub level: TrustLevel,
 }
 
 /// Safety policy and budgets. Start from `defaultPolicy()` in Swift.
@@ -383,6 +420,14 @@ pub enum RiskCategory {
 pub struct Policy {
     pub denied_apps: Vec<String>,
     pub confirm: Vec<RiskCategory>,
+    /// Categories that are never executed.
+    pub deny_categories: Vec<RiskCategory>,
+    /// Supervision for apps without a rule.
+    pub mode: PolicyMode,
+    /// Per-app trust levels.
+    pub app_rules: Vec<AppRule>,
+    /// Ask before the first state-changing action in an unapproved app.
+    pub first_use_approval: bool,
     pub max_steps: u32,
     pub max_duration_ms: u64,
     pub max_consecutive_failures: u32,
@@ -481,6 +526,10 @@ pub struct SessionProgress {
     pub phase: Phase,
     pub last_action: Option<Action>,
     pub app: Option<String>,
+    /// Model requests sent so far (retries included).
+    pub model_calls: u32,
+    /// Re-inferences after unparsable model output so far.
+    pub parse_retries: u32,
 }
 
 /// The task the owner asked for.
@@ -504,4 +553,6 @@ pub struct SessionConfig {
     pub tools: Vec<ToolSpec>,
     pub model: ModelProfile,
     pub known_apps: Vec<AppInfo>,
+    /// Bundle id of the Jarvis app itself (never needs first-use approval).
+    pub agent_bundle_id: Option<String>,
 }

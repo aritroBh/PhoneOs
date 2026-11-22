@@ -14,7 +14,8 @@ use jarvis_proto::{Action, RiskCategory};
 use jarvis_safety::{classify, label_risk};
 
 use RiskCategory::{
-    AccountChange, Credential, Delete, Payment, PublicPost, Purchase, SendMessage, SystemSetting,
+    AccountChange, Call, Credential, Delete, Payment, PublicPost, Purchase, SendMessage,
+    SystemSetting,
 };
 
 /// Classifies tapping a lone button labelled `label` in a neutral app.
@@ -32,6 +33,23 @@ fn check(category: RiskCategory, labels: &[&str]) {
         })
         .collect();
     assert!(wrong.is_empty(), "misclassified:\n{}", wrong.join("\n"));
+}
+
+#[test]
+fn call_labels() {
+    // Placing (or answering) a call is its own category since calls cost and reach people
+    // immediately; they used to be filed under SendMessage.
+    check(
+        Call,
+        &[
+            "Call",
+            "Call Mobile",
+            "FaceTime",
+            "Video Call",
+            "Dial",
+            "Answer",
+        ],
+    );
 }
 
 #[test]
@@ -55,10 +73,6 @@ fn send_message_labels() {
             "Submit",
             "Submit application",
             "Report Junk",
-            "Call",
-            "Call Mobile",
-            "FaceTime",
-            "Video Call",
             "Send Feedback",
             "sendButton",
             "Se\u{200B}nd",
