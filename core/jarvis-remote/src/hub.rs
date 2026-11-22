@@ -566,6 +566,37 @@ impl RemoteHub {
         )
     }
 
+    /// The hub's monotonic clock as of the last call (see the module docs): the clock
+    /// that `expires_at_ms`, `at_ms` and the lockout ends are on. 0 before the first call.
+    pub fn clock_ms(&self) -> u64 {
+        self.last_now_ms
+    }
+
+    /// Renames a paired device (the owner edits the name on the phone). The name is
+    /// cleaned like a pairing name ([`clean_name`]); a name that is empty once cleaned is
+    /// [`HubError::InvalidName`]. Returns [`HubEffect::StoreChanged`] when the name
+    /// changed, nothing when it is already that name.
+    pub fn rename_device(
+        &mut self,
+        device_id: DeviceId,
+        name: &str,
+    ) -> Result<Vec<HubEffect>, HubError> {
+        let name = clean_name(name);
+        if name.is_empty() {
+            return Err(HubError::InvalidName);
+        }
+        let dev = self
+            .devices
+            .iter_mut()
+            .find(|d| d.id == device_id)
+            .ok_or(HubError::UnknownDevice)?;
+        if dev.name == name {
+            return Ok(Vec::new());
+        }
+        dev.name = name;
+        Ok(vec![HubEffect::StoreChanged])
+    }
+
     /// End of the pairing lockout (0 when none has happened).
     pub fn pairing_locked_until_ms(&self) -> u64 {
         self.pair_lockout.locked_until_ms
@@ -1999,5 +2030,38 @@ mod tests {
         clash.insert("a".to_owned(), "1".to_owned());
         clash.insert("a\u{200B}".to_owned(), "2".to_owned());
         assert!(clean_args(clash).is_none());
+    }
+
+    #[test]
+    fn rename_device_cleans_and_persists() {
+        let id = DeviceId([1; 16]);
+        let store = DeviceStore {
+            devices: vec![DeviceRecord {
+                id,
+                name: "Mac".into(),
+                key: crate::crypto::Secret32::from_bytes([9; 32]),
+                permissions: RemotePermissions::NEW_DEVICE,
+                paired_at_ms: 1,
+            }],
+            nonce_lease: 0,
+        };
+        let mut hub = RemoteHub::with_store("Phone", store).unwrap();
+        assert_eq!(hub.clock_ms(), 0);
+        assert_eq!(
+            hub.rename_device(id, "  Work\u{202E} Mac \n"),
+            Ok(vec![HubEffect::StoreChanged])
+        );
+        assert_eq!(hub.devices()[0].name, "Work Mac");
+        assert_eq!(hub.rename_device(id, "Work Mac"), Ok(vec![]));
+        assert_eq!(
+            hub.rename_device(id, " \u{200B} "),
+            Err(HubError::InvalidName)
+        );
+        assert_eq!(
+            hub.rename_device(DeviceId([2; 16]), "x"),
+            Err(HubError::UnknownDevice)
+        );
+        hub.tick(42);
+        assert_eq!(hub.clock_ms(), 42);
     }
 }

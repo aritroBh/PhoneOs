@@ -57,6 +57,9 @@ pub enum HubError {
     /// The key schedule failed (not expected to happen).
     #[error("internal cryptographic error")]
     Crypto,
+    /// A device name is empty once cleaned ([`crate::RemoteHub::rename_device`]).
+    #[error("invalid device name")]
+    InvalidName,
 }
 
 /// What went wrong on the remote's side of a connection.
