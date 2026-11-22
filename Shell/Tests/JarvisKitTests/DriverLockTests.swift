@@ -221,8 +221,10 @@ struct DriverLockTests {
 
         #expect(result.outcome.status == .success, "\(result.outcome.summary)")
         #expect(updates.contains(.lockDetected(.confirm)))
-        #expect(gate.inner.confirms.count == 2, "asked again after the unlock: \(gate.inner.confirms)")
-        #expect(gate.inner.confirms.allSatisfy { $0.category == .systemSetting })
+        // On runner text the first question is the row tap (unverified): it is asked again
+        // after the unlock, then the switch (system setting).
+        #expect(gate.inner.confirms.map(\.category) == [.unverified, .unverified, .systemSetting], "asked again after the unlock: \(gate.inner.confirms)")
+        #expect(allWarned(gate.inner.confirms))
         #expect(phone.inner.page == .wifiOff)
         #expect(phone.snapshotState.staleActs == 0)
         latch.release()
@@ -399,7 +401,9 @@ final class TapsThroughLockPhone: PhoneRunner {
 struct PreCommandLockTests {
     @Test("the phone locks between the observation and the command: nothing is sent, the run waits, re-observes and chooses again")
     func lockedBeforeCommand() async throws {
-        let phone = TapsThroughLockPhone(lockAfterSnapshot: 1)
+        // Runner text: the first tap is asked, and the look after the approval is the second
+        // snapshot; the lock lands right after it, before the command.
+        let phone = TapsThroughLockPhone(lockAfterSnapshot: 2)
         // No lock watch: the lock lands after the model answered, right before the command.
         let (result, updates) = try await runLocked(LockCheckingRunner(phone), lockWatch: nil)
 

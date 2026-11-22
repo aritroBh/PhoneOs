@@ -19,8 +19,10 @@ struct DriverTests {
         #expect(h.phone.page == .wifiOff)
         #expect(h.phone.commands.count == 2)
         #expect(h.phone.snapshots >= 3)
-        #expect(h.gate.confirms.count == 1)
-        #expect(h.gate.confirms.first?.category == .systemSetting)
+        // Runner text is unverified: the row tap is asked too, and both questions start
+        // with the warning.
+        #expect(h.gate.confirms.map(\.category) == [.unverified, .systemSetting])
+        #expect(allWarned(h.gate.confirms))
         #expect(h.gate.confirms.first?.app == settingsBundle)
         #expect(result.memory == .saved)
         #expect(h.memory.saves.count == 1)
@@ -34,14 +36,15 @@ struct DriverTests {
         first.firstUseApproval = true
         let (result, _) = try await first.run()
         #expect(result.outcome.status == .success)
-        #expect(first.gate.confirms.map(\.category) == [.firstUse, .systemSetting])
+        #expect(first.gate.confirms.map(\.category) == [.firstUse, .unverified, .systemSetting])
+        #expect(allWarned(first.gate.confirms))
         #expect(first.gate.confirms.first?.app == settingsBundle)
 
         var second = Harness()
         second.firstUseApproval = true
         let (again, _) = try await second.run(memoryJSON: try #require(first.memory.saves.first))
         #expect(again.outcome.status == .success)
-        #expect(second.gate.confirms.map(\.category) == [.systemSetting])
+        #expect(second.gate.confirms.map(\.category) == [.unverified, .systemSetting])
     }
 
     @Test("a second run from the saved memory replays with zero model calls")
@@ -57,7 +60,8 @@ struct DriverTests {
         #expect(result.modelCalls == 0)
         #expect(second.model.callCount == 0)
         #expect(second.phone.page == .wifiOff)
-        #expect(second.gate.confirms.count == 1, "the replay passes the same confirmation gate")
+        #expect(second.gate.confirms.map(\.category) == [.unverified, .systemSetting], "the replay passes the same confirmation gate, runner-text question included")
+        #expect(allWarned(second.gate.confirms))
         #expect(second.memory.saves.count == 1)
     }
 
@@ -75,9 +79,12 @@ struct DriverTests {
 
         #expect(result.outcome.status == .failed)
         #expect(result.outcome.summary == "owner declined")
+        // On runner text the first question is the row tap (unverified): declined, nothing ran.
         #expect(h.gate.confirms.count == 1)
-        #expect(h.phone.page == .wifiOn, "the switch was not tapped")
-        #expect(h.phone.commands.count == 1)
+        #expect(h.gate.confirms.first?.category == .unverified)
+        #expect(allWarned(h.gate.confirms))
+        #expect(h.phone.page == .settings, "the row was not tapped")
+        #expect(h.phone.commands.count == 0)
         #expect(updates.contains(.effectCompleted(.confirm(request: try #require(h.gate.confirms.first)), event: .userDecision(approved: false))))
         #expect(h.memory.saves.count == 1)
     }

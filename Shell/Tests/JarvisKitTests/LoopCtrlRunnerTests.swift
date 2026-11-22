@@ -369,5 +369,8 @@ struct LoopCtrlRunnerTests {
         #expect(result.outcome.status == .success)
         #expect(phone.page == .wifiOff)
         #expect(try stub.methods().filter { $0 == "tap" }.count == 2)
+        // The text tree is unverified: the owner was asked before both taps, with the warning.
+        #expect(h.gate.confirms.filter { $0.category != .firstUse }.map(\.category) == [.unverified, .systemSetting])
+        #expect(allWarned(h.gate.confirms))
     }
 }

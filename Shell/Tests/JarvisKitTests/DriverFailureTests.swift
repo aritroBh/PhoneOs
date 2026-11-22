@@ -114,7 +114,8 @@ struct DriverFailureTests {
         }
         let (result, updates) = try await h.run()
         #expect(result.outcome.status == .failed)
-        #expect(h.phone.page == .wifiOn)
+        // On runner text the first question is already the row tap: nothing ran.
+        #expect(h.phone.page == .settings)
         #expect(updates.contains(.ioFailed(.confirm, message: "no confirmation UI", willRetry: false)))
         #expect(h.memory.saves.count == 1)
     }

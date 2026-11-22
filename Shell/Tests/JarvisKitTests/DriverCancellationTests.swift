@@ -94,7 +94,9 @@ struct DriverCancellationTests {
         let result = try await value(of: run, "the cancelled run to end")
         latch.release()
         expectCancelled(result, h)
-        #expect(h.phone.page == .wifiOn, "the risky tap never ran")
+        // On runner text the first question is already the row tap: nothing ran.
+        #expect(h.gate.confirms.first?.category == .unverified)
+        #expect(h.phone.page == .settings, "the asked tap never ran")
     }
 
     @Test("cancel() before run() ends the run at once")

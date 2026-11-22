@@ -84,6 +84,17 @@ struct InjectedError: Error, CustomStringConvertible {
 
 enum Page: Sendable, Equatable { case settings, wifiOn, wifiOff }
 
+/// How the core starts every confirmation of an action on a screen read from runner text
+/// (`jarvis_safety::UNVERIFIED_SCREEN_WARNING`): the text format is ambiguous and forgeable,
+/// so the owner is asked before every state-changing action on it (category `unverified`
+/// when nothing riskier was found).
+let unverifiedScreenWarning = "Warning: this screen was read through an unverified text format and may not be what is on the phone. "
+
+/// Whether every confirmation in `confirms` other than first-use ones carries the warning.
+func allWarned(_ confirms: [ConfirmRequest]) -> Bool {
+    confirms.filter { $0.category != .firstUse }.allSatisfy { $0.summary.hasPrefix(unverifiedScreenWarning) }
+}
+
 let settingsBundle = "com.apple.Preferences"
 let screenSize = Size(width: 393, height: 852)
 
