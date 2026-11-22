@@ -410,14 +410,15 @@ struct ScriptedModelRetryTests {
         #expect(reply.contains("still not done after 2 retries"), "\(reply)")
     }
 
-    // Sixth review: the core's new result lines keep the known prefixes. A declined Return
+    // Sixth review: the core's new result lines keep the known prefixes (seventh review: their
+    // wording changed, the prefixes did not). A declined Return
     // after typing ("typed, not submitted") reads as the owner's decline; a covered tap is
     // "not done" (retried while the target is listed, then bounded like any retry).
     @Test("the core's typed-not-submitted, covered and no-focused-field lines")
     func sixthReviewLines() async throws {
-        let notSubmitted = "not done: typed, not submitted: the owner declined pressing Return. The text stays in the field; do not press Return again; find another way or use fail"
+        let notSubmitted = "not done: typed, not submitted: the owner declined pressing Return. The text is still in the field, unsent. Do not press Return again and do not submit it any other way (a send button, a key, tap_point); leave it, ask the owner, or use fail"
         #expect(StepOutcome(result: notSubmitted) == .notDone)
-        #expect(StepOutcome(result: "not done: element 2 (Show tips) is covered by element 3 (Other): a tap there could land on the other control, so nothing was sent; choose another control or scroll first") == .notDone)
+        #expect(StepOutcome(result: "not done: element 2 (Show tips) is covered by element 3 (Other): a tap there could land on it instead, so nothing was sent; choose another control or scroll first") == .notDone)
         #expect(StepOutcome(result: "failed: no field is focused; tap a field first (or give the field's element number)") == .failed)
         let model = ScriptedModel(steps: script)
         _ = try await model.generate(prompt(history: [], tipsOn: false))
