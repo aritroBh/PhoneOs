@@ -263,10 +263,15 @@ fn an_approved_typed_submit_is_rechecked_before_typing() {
 
 /// A screen that keeps changing under every approval cannot keep the session asking: each
 /// stale approval counts as a failed step, and the failure budget ends the session.
+///
+/// Changed in the third review: the two screens used to differ only in where "Buy now"
+/// sat; frames are no longer part of what was approved (a list that scrolled keeps the
+/// approval, see `an_approval_survives_a_scroll_and_is_tapped_where_it_is_now`), so they
+/// now differ in content too.
 #[test]
 fn approvals_on_a_screen_that_keeps_changing_end_by_the_budget() {
     let a = shop(300.0, "Add to wishlist");
-    let b = shop(560.0, "Add to wishlist");
+    let b = shop(560.0, "Save for later");
     let mut d = Driver::new(config(), "Buy the headphones");
     let mut e = d.step(Event::Start);
     let mut flip = false;
@@ -684,7 +689,10 @@ fn an_approval_for_one_buy_does_not_buy_its_twin() {
     let before = shop_list(&[("Socks", "$5.00"), ("TV", "$1,500.00")]);
     let i = nth_index(&before, "Buy", 1);
     let (asked, e) = approve_then_look(config(), &before, i, &shop_list(&[("TV", "$1,500.00")]));
-    assert_eq!(asked, "Tap \"Buy\" next to \"Socks $5.00\" in Shop");
+    assert_eq!(
+        asked,
+        "Tap \"Buy\" next to \"Socks $5.00\" in Shop. Amounts on screen: TV $1,500.00; Socks $5.00"
+    );
     assert!(
         !matches!(e, Effect::Act(_)),
         "approved '{asked}' but tapped: {e:?}"
@@ -712,7 +720,7 @@ fn an_approval_at_one_amount_does_not_pay_another() {
     let before = pay("$5.00");
     let i = index_of(&before, "Pay");
     let (asked, e) = approve_then_look(config(), &before, i, &pay("$500.00"));
-    assert_eq!(asked, "Tap \"Pay\" in Shop (Total $5.00)");
+    assert_eq!(asked, "Tap \"Pay\" in Shop. Amounts on screen: Total $5.00");
     assert!(
         !matches!(e, Effect::Act(_)),
         "approved '{asked}' but paid: {e:?}"
@@ -743,14 +751,19 @@ fn an_approved_switch_that_flipped_meanwhile_is_not_tapped() {
     assert!(matches!(e, Effect::Act(_)), "{e:?}");
 }
 
-/// Not brittle: a status line far from the target (a clock, "Updating…") changing does not
-/// void the approval; a text in the target's own row changing does.
+/// Not brittle: a clock or countdown digit far from the target changing does not void the
+/// approval; a text in the target's own row changing does.
+///
+/// Deliberately changed in the third review: the previous design let *any* unrelated
+/// static text far from the target change ("Updated 9:41" → "Updating…" still ran). Under
+/// the whole-screen record only digits of free-standing texts may change; a changed word
+/// anywhere voids the approval.
 #[test]
 fn an_approval_survives_far_changes_but_not_changes_in_its_row() {
     let items = [("Socks", "$5.00"), ("TV", "$1,500.00")];
     let before = shop_list_with(Some("Updated 9:41"), &items);
     let tv = nth_index(&before, "Buy", 2);
-    for status in ["Updated 9:42", "Updating…"] {
+    for status in ["Updated 9:42", "Updated 10:05"] {
         let after = shop_list_with(Some(status), &items);
         let (asked, e) = approve_then_look(config(), &before, tv, &after);
         assert!(
@@ -758,6 +771,12 @@ fn an_approval_survives_far_changes_but_not_changes_in_its_row() {
             "'{status}' far away voided '{asked}': {e:?}"
         );
     }
+    let after = shop_list_with(Some("Updating…"), &items);
+    let (asked, e) = approve_then_look(config(), &before, tv, &after);
+    assert!(
+        !matches!(e, Effect::Act(_)),
+        "a changed word far away no longer keeps '{asked}': {e:?}"
+    );
     let after = shop_list_with(
         Some("Updated 9:41"),
         &[("Socks", "$5.00"), ("TV (used)", "$1,500.00")],
@@ -824,4 +843,183 @@ fn stale_approvals_are_capped_even_with_successes_in_between() {
         };
     }
     panic!("the session did not end");
+}
+
+// ---------------------------------------------------------------------------------------
+// The approval covers the whole screen (third review): the fresh screen's content record
+// must equal the one the owner approved, digits of free-standing texts excepted.
+// ---------------------------------------------------------------------------------------
+
+fn plans(monthly: bool) -> Screen {
+    screen(
+        "com.example.shop",
+        "Shop",
+        app_root(
+            "Shop",
+            vec![
+                text("Choose a plan", rect(16.0, 80.0, 361.0, 30.0)),
+                node(
+                    Role::Button,
+                    "Monthly, $4.99",
+                    rect(16.0, 150.0, 361.0, 50.0),
+                )
+                .selected(monthly),
+                node(
+                    Role::Button,
+                    "Yearly, $49.99",
+                    rect(16.0, 220.0, 361.0, 50.0),
+                )
+                .selected(!monthly),
+                node(Role::Button, "Subscribe", rect(16.0, 700.0, 361.0, 50.0)),
+            ],
+        ),
+        false,
+    )
+}
+
+/// Probe 3 (end to end): approved with Monthly selected; at the fresh look Yearly is
+/// selected; the approved tap on "Subscribe" is not sent. The question said what was
+/// selected.
+#[test]
+fn a_subscribe_approved_on_one_plan_is_not_sent_on_the_other() {
+    let before = plans(true);
+    let i = index_of(&before, "Subscribe");
+    let (asked, e) = approve_then_look(config(), &before, i, &plans(false));
+    assert!(asked.ends_with("Selected: Monthly, $4.99"), "{asked}");
+    assert!(
+        !matches!(e, Effect::Act(_)),
+        "approved '{asked}'; sent {e:?}"
+    );
+    let (_, e) = approve_then_look(config(), &before, i, &plans(true));
+    assert!(matches!(e, Effect::Act(_)), "{e:?}");
+}
+
+/// The list scrolled between ask and act (the same content, every frame moved): the
+/// approved control is tapped where it is now.
+#[test]
+fn an_approval_survives_a_scroll_and_is_tapped_where_it_is_now() {
+    let before = shop(300.0, "Add to wishlist");
+    let i = index_of(&before, "Buy now");
+    let scrolled = screen(
+        "com.example.shop",
+        "Shop",
+        app_root(
+            "Shop",
+            vec![
+                text("Headphones $199.00", rect(16.0, 20.0, 361.0, 30.0)),
+                node(Role::Button, "Buy now", rect(16.0, 200.0, 361.0, 50.0)),
+                node(
+                    Role::Button,
+                    "Add to wishlist",
+                    rect(16.0, 600.0, 361.0, 50.0),
+                ),
+            ],
+        ),
+        false,
+    );
+    let (_, e) = approve_then_look(config(), &before, i, &scrolled);
+    assert_eq!(e, Effect::Act(RunnerCommand::Tap { x: 196.5, y: 225.0 }));
+}
+
+fn reserved(countdown: &str, stepper: &str, banner: Option<&str>) -> Screen {
+    let mut children = vec![
+        text("Concert tickets", rect(16.0, 80.0, 361.0, 30.0)),
+        text("Total $90.00", rect(16.0, 200.0, 361.0, 30.0)),
+        UiNode::new(
+            Role::Other("Stepper".into()),
+            rect(16.0, 300.0, 200.0, 40.0),
+        )
+        .with_label("Quantity")
+        .with_value(stepper)
+        .hittable(true),
+        text(countdown, rect(16.0, 640.0, 361.0, 30.0)),
+        node(Role::Button, "Pay", rect(16.0, 700.0, 361.0, 50.0)),
+    ];
+    if let Some(b) = banner {
+        children.insert(1, text(b, rect(16.0, 130.0, 361.0, 30.0)));
+    }
+    screen(
+        "com.example.shop",
+        "Shop",
+        app_root("Shop", children),
+        false,
+    )
+}
+
+/// A countdown right above the target ticking ("Reserved for 9:58" → "9:41") keeps the
+/// approval; a stepper's quantity that changed, or a banner that appeared or disappeared,
+/// voids it.
+#[test]
+fn countdowns_tick_but_quantities_and_banners_void_the_approval() {
+    let before = reserved("Reserved for 9:58", "1", None);
+    let pay = index_of(&before, "Pay");
+    let (_, e) = approve_then_look(
+        config(),
+        &before,
+        pay,
+        &reserved("Reserved for 9:41", "1", None),
+    );
+    assert!(matches!(e, Effect::Act(_)), "{e:?}");
+    let (_, e) = approve_then_look(
+        config(),
+        &before,
+        pay,
+        &reserved("Reserved for 9:58", "2", None),
+    );
+    assert!(!matches!(e, Effect::Act(_)), "quantity changed: {e:?}");
+    let with_banner = reserved("Reserved for 9:58", "1", Some("Prices changed"));
+    let (_, e) = approve_then_look(config(), &before, pay, &with_banner);
+    assert!(!matches!(e, Effect::Act(_)), "a banner appeared: {e:?}");
+    let pay_b = index_of(&with_banner, "Pay");
+    let (_, e) = approve_then_look(config(), &with_banner, pay_b, &before);
+    assert!(!matches!(e, Effect::Act(_)), "a banner disappeared: {e:?}");
+}
+
+/// Probe 3 (timing): a 5,000-element screen goes through observe, gate and ask, and the
+/// look after the approval, in well under a few seconds in a debug build (each part was
+/// up to ~0.6 s before; the record is linear).
+#[test]
+fn a_huge_screen_is_gated_and_rechecked_quickly() {
+    use std::time::{Duration, Instant};
+    let mut children = Vec::new();
+    for i in 0..5000u32 {
+        let y = 100.0 + f64::from(i % 15) * 40.0;
+        if i % 3 == 0 {
+            children.push(node(
+                Role::Button,
+                &format!("Option {i}"),
+                rect(16.0, y, 361.0, 36.0),
+            ));
+        } else {
+            children.push(text(
+                &format!("Item {i} costs ${i}.00 total"),
+                rect(16.0, y, 361.0, 36.0),
+            ));
+        }
+    }
+    children.push(node(Role::Button, "Pay", rect(16.0, 760.0, 361.0, 50.0)));
+    let s = screen(
+        "com.example.shop",
+        "Shop",
+        app_root("Shop", children),
+        false,
+    );
+    let i = index_of(&s, "Pay");
+    let mut d = Driver::new(config(), "Pay");
+    d.step(Event::Start);
+    let t = Instant::now();
+    d.observed(&s);
+    let observe = t.elapsed();
+    let t = Instant::now();
+    let asked = d.model(&format!(r#"{{"action":"tap","element":{i}}}"#));
+    let ask = t.elapsed();
+    assert!(matches!(asked, Effect::Confirm(_)), "{asked:?}");
+    d.step(Event::UserDecision { approved: true });
+    let t = Instant::now();
+    let acted = d.observed(&s);
+    let recheck = t.elapsed();
+    assert!(matches!(acted, Effect::Act(_)), "{acted:?}");
+    println!("5,000 elements: observe {observe:?}, gate+ask {ask:?}, recheck+act {recheck:?}");
+    assert!(ask < Duration::from_millis(1500), "{ask:?}");
+    assert!(recheck < Duration::from_millis(3000), "{recheck:?}");
 }

@@ -1,5 +1,8 @@
 //! Risk classification: what could go wrong if an action ran unattended.
 
+use std::cell::OnceCell;
+use std::collections::BTreeSet;
+
 use jarvis_proto::{
     Action, CompactScreen, Direction, Element, Point, RiskCategory, Role, Tier, ToolSpec,
 };
@@ -80,23 +83,24 @@ const MAX_TOOL_STRINGS: usize = 64;
 /// * Everything else is `None`. An element index that does not exist falls back to the
 ///   screen context (and is rejected by `validate_action` anyway).
 pub fn classify(action: &Action, screen: &CompactScreen, tool: Option<&ToolSpec>) -> RiskCategory {
+    let r = Reader::new(screen);
     match action {
         Action::Tap { element } | Action::LongPress { element, .. } => match screen.get(*element) {
-            Some(el) => element_risk(el, screen),
-            None => context_of(screen, None).risk,
+            Some(el) => element_risk(el, &r),
+            None => r.context(None).risk,
         },
         Action::Type {
             element,
             text,
             submit,
-        } => type_risk(*element, text, *submit, screen),
+        } => type_risk(*element, text, *submit, &r),
         Action::Swipe { direction, element } => {
-            gesture_risk(GestureKind::Swipe, *direction, *element, screen)
+            gesture_risk(GestureKind::Swipe, *direction, *element, &r)
         }
         Action::Scroll { direction, element } => {
-            gesture_risk(GestureKind::Scroll, *direction, *element, screen)
+            gesture_risk(GestureKind::Scroll, *direction, *element, &r)
         }
-        Action::TapPoint { x, y } => tap_point(*x, *y, screen).0,
+        Action::TapPoint { x, y } => tap_point_in(*x, *y, &r).0,
         Action::OpenUrl { url } => url_risk(url),
         Action::CallTool { name, args } => tool_risk(name, args, tool),
         Action::Clear { .. }
@@ -236,13 +240,6 @@ pub(crate) struct Signal {
     pub settings_words: bool,
 }
 
-impl Signal {
-    /// Whether the element says anything the classifier acts on.
-    pub(crate) fn is_some(&self) -> bool {
-        *self != Signal::default()
-    }
-}
-
 /// The tables context is read with on `screen`.
 fn context_tables(screen: &CompactScreen) -> Vec<&'static [Phrase]> {
     let mut tables: Vec<&[Phrase]> = action_tables(&screen.app_bundle_id);
@@ -275,36 +272,134 @@ fn signal_of(el: &Element, tables: &[&[Phrase]]) -> Signal {
     }
 }
 
-/// The texts of the elements of `screen` that carry a context signal (see [`Signal`]), in
-/// screen order: what the classifier read to decide a category. Used by the approval
-/// context, so the facts an approval is checked against cannot drift from the facts the
-/// category came from.
-pub(crate) fn signal_texts(screen: &CompactScreen) -> Vec<String> {
-    let tables = context_tables(screen);
-    screen
-        .elements
-        .iter()
-        .filter(|e| signal_of(e, &tables).is_some())
-        .map(element_text)
-        .collect()
+/// Most risk levels (see `severity`): one counter each.
+const RISK_LEVELS: usize = 16;
+
+/// Every element's [`Signal`] on a screen, counted, so the context of a decision "apart
+/// from element N" is the whole count minus that one element's signal: one pass over the
+/// screen per classification, however many controls are evaluated.
+#[derive(Debug, Default)]
+struct Tally {
+    risks: [u32; RISK_LEVELS],
+    money: u32,
+    payment_words: u32,
+    purchase_words: u32,
+    share_sheet: u32,
+    settings_words: u32,
 }
 
-/// Reads the screen apart from element `exclude`. Keyboard keys are ignored. Every element
-/// is read: the context only ever grows (the riskiest signal, flags that are set), so
-/// there is no window a page could push a price or a warning out of with padding.
-pub(crate) fn context_of(screen: &CompactScreen, exclude: Option<u32>) -> Context {
-    let tables = context_tables(screen);
-    let mut ctx = Context::default();
-    for el in screen.elements.iter().filter(|e| Some(e.index) != exclude) {
-        let s = signal_of(el, &tables);
-        ctx.risk = max_risk(ctx.risk, s.risk);
-        ctx.money |= s.money;
-        ctx.payment_words |= s.payment_words;
-        ctx.purchase_words |= s.purchase_words;
-        ctx.share_sheet |= s.share_sheet;
-        ctx.settings_words |= s.settings_words;
+fn level(c: RiskCategory) -> usize {
+    usize::from(severity(c)).min(RISK_LEVELS - 1)
+}
+
+impl Tally {
+    fn add(&mut self, s: Signal) {
+        if let Some(n) = self.risks.get_mut(level(s.risk)) {
+            *n = n.saturating_add(1);
+        }
+        self.money = self.money.saturating_add(u32::from(s.money));
+        self.payment_words = self
+            .payment_words
+            .saturating_add(u32::from(s.payment_words));
+        self.purchase_words = self
+            .purchase_words
+            .saturating_add(u32::from(s.purchase_words));
+        self.share_sheet = self.share_sheet.saturating_add(u32::from(s.share_sheet));
+        self.settings_words = self
+            .settings_words
+            .saturating_add(u32::from(s.settings_words));
     }
-    ctx
+
+    /// The context these counts give once `minus` (one element's signal) is taken out.
+    fn without(&self, minus: Signal) -> Context {
+        let left = |n: u32, flag: bool| n.saturating_sub(u32::from(flag)) > 0;
+        let out_level = level(minus.risk);
+        let risk = (0..RISK_LEVELS)
+            .rev()
+            .find(|&l| {
+                let n = self.risks.get(l).copied().unwrap_or(0);
+                left(n, l == out_level)
+            })
+            .and_then(|l| RiskCategory::ALL.iter().copied().find(|c| level(*c) == l))
+            .unwrap_or(RiskCategory::None);
+        Context {
+            risk,
+            money: left(self.money, minus.money),
+            payment_words: left(self.payment_words, minus.payment_words),
+            purchase_words: left(self.purchase_words, minus.purchase_words),
+            share_sheet: left(self.share_sheet, minus.share_sheet),
+            settings_words: left(self.settings_words, minus.settings_words),
+        }
+    }
+}
+
+/// One classification's view of a screen: the context tables, and what is costly to work
+/// out and needed by many controls (the screen's [`Tally`], the cells and buttons that sit
+/// beside a sibling), computed at most once.
+pub(crate) struct Reader<'a> {
+    pub screen: &'a CompactScreen,
+    tables: Vec<&'static [Phrase]>,
+    tally: OnceCell<Tally>,
+    beside: OnceCell<BTreeSet<u32>>,
+}
+
+impl<'a> Reader<'a> {
+    pub(crate) fn new(screen: &'a CompactScreen) -> Self {
+        Reader {
+            screen,
+            tables: context_tables(screen),
+            tally: OnceCell::new(),
+            beside: OnceCell::new(),
+        }
+    }
+
+    /// Reads the screen apart from element `exclude`. Keyboard keys are ignored. Every
+    /// element is read: the context only ever grows (the riskiest signal, flags that are
+    /// set), so there is no window a page could push a price or a warning out of with
+    /// padding. The whole screen is read once per [`Reader`]; excluding an element takes
+    /// its own signal out of the counts.
+    pub(crate) fn context(&self, exclude: Option<u32>) -> Context {
+        let tally = self.tally.get_or_init(|| {
+            let mut t = Tally::default();
+            for el in &self.screen.elements {
+                t.add(signal_of(el, &self.tables));
+            }
+            t
+        });
+        // Every element with that index (indices are unique on a compacted screen).
+        let mut minus = Signal::default();
+        let mut excluded = 0usize;
+        for el in self
+            .screen
+            .elements
+            .iter()
+            .filter(|e| Some(e.index) == exclude)
+        {
+            minus = signal_of(el, &self.tables);
+            excluded += 1;
+        }
+        if excluded > 1 {
+            // Duplicate indices (a hand-built screen): read it the slow way.
+            let mut t = Tally::default();
+            for el in self
+                .screen
+                .elements
+                .iter()
+                .filter(|e| Some(e.index) != exclude)
+            {
+                t.add(signal_of(el, &self.tables));
+            }
+            return t.without(Signal::default());
+        }
+        tally.without(minus)
+    }
+
+    /// Whether `el` (a cell or button) has a sibling beside it (see [`is_list_row`]).
+    fn is_beside_sibling(&self, el: &Element) -> bool {
+        self.beside
+            .get_or_init(|| beside_siblings(self.screen))
+            .contains(&el.index)
+    }
 }
 
 /// The label risk of `el`'s own text (SF Symbol names read through their table).
@@ -364,7 +459,8 @@ fn is_priced_item_row(el: &Element, toks: &[String], lr: LabelRisk) -> bool {
 }
 
 /// Risk of tapping (or long-pressing) `el`.
-pub(crate) fn element_risk(el: &Element, screen: &CompactScreen) -> RiskCategory {
+pub(crate) fn element_risk(el: &Element, r: &Reader<'_>) -> RiskCategory {
+    let screen = r.screen;
     if el.role.is_text_input() {
         // Tapping a field only focuses it.
         return RiskCategory::None;
@@ -418,7 +514,7 @@ pub(crate) fn element_risk(el: &Element, screen: &CompactScreen) -> RiskCategory
         || matches_any(&toks, SETTINGS_ACTION_PHRASES)
         || matches_any(&toks, PRICE_VERB_PHRASES);
     if needs_context {
-        let ctx = context_of(screen, Some(el.index));
+        let ctx = r.context(Some(el.index));
         if lr.generic || unlabeled {
             risk = max_risk(risk, ctx.risk);
         }
@@ -467,13 +563,8 @@ pub(crate) fn type_target(element: Option<u32>, screen: &CompactScreen) -> Optio
 }
 
 /// Risk of typing `text` (and pressing Return when `submit`).
-fn type_risk(
-    element: Option<u32>,
-    text: &str,
-    submit: bool,
-    screen: &CompactScreen,
-) -> RiskCategory {
-    let target = type_target(element, screen);
+fn type_risk(element: Option<u32>, text: &str, submit: bool, r: &Reader<'_>) -> RiskCategory {
+    let target = type_target(element, r.screen);
     let mut risk = RiskCategory::None;
     if let Some(t) = target {
         let field = format!(
@@ -492,7 +583,7 @@ fn type_risk(
         risk = RiskCategory::Credential;
     }
     if submit {
-        risk = max_risk(risk, submit_risk(target, screen));
+        risk = max_risk(risk, submit_risk(target, r));
         if looks_like_url(text) {
             risk = max_risk(risk, url_risk(text));
         }
@@ -511,7 +602,8 @@ const PLAIN_RETURN_LABELS: &[&str] = &["return", "search", "next", "enter", "rou
 /// confirmation ("go", "done", "join", "continue") means what the screen around it means,
 /// so it takes the screen's context risk (a "done" key on a checkout pays). Plain labels
 /// ("return", "search", "next") and the backspace key add nothing.
-fn return_key_risk(target: Option<&Element>, screen: &CompactScreen) -> RiskCategory {
+fn return_key_risk(target: Option<&Element>, r: &Reader<'_>) -> RiskCategory {
+    let screen = r.screen;
     let cue = screen.cues.return_key.as_deref();
     let keys = screen
         .elements
@@ -532,7 +624,7 @@ fn return_key_risk(target: Option<&Element>, screen: &CompactScreen) -> RiskCate
         generic |= lr.generic && !plain;
     }
     if generic {
-        risk = max_risk(risk, context_of(screen, target.map(|t| t.index)).risk);
+        risk = max_risk(risk, r.context(target.map(|t| t.index)).risk);
     }
     risk
 }
@@ -540,8 +632,8 @@ fn return_key_risk(target: Option<&Element>, screen: &CompactScreen) -> RiskCate
 /// Risk of pressing Return in `target`: the compose field's own meaning, the Return key's
 /// label and the screen's context (a Send button, a price). Search fields only search
 /// (unless the Return key itself says otherwise).
-fn submit_risk(target: Option<&Element>, screen: &CompactScreen) -> RiskCategory {
-    let key = return_key_risk(target, screen);
+fn submit_risk(target: Option<&Element>, r: &Reader<'_>) -> RiskCategory {
+    let key = return_key_risk(target, r);
     let rest = match target {
         Some(t) if t.role == Role::SearchField => RiskCategory::None,
         Some(t) => {
@@ -556,9 +648,9 @@ fn submit_risk(target: Option<&Element>, screen: &CompactScreen) -> RiskCategory
                 // chat composer, so a submit there is presumed to send.
                 compose = max_risk(compose, RiskCategory::SendMessage);
             }
-            max_risk(compose, context_of(screen, Some(t.index)).risk)
+            max_risk(compose, r.context(Some(t.index)).risk)
         }
-        None => context_of(screen, None).risk,
+        None => r.context(None).risk,
     };
     max_risk(key, rest)
 }
@@ -588,41 +680,88 @@ fn is_adjustable(el: &Element) -> bool {
             .any(|t| matches!(t.as_str(), "slide" | "swipe"))
 }
 
-/// Share of the screen width a cell or button must span to count as a list row (with
-/// swipe actions). Narrower cells sit side by side in a horizontal carousel (music, App
-/// Store, news shelves), whose sideways drag only pages the carousel.
-pub(crate) const LIST_ROW_MIN_WIDTH: f64 = 0.8;
+/// Least ratio of the smaller to the larger height (and, for widths,
+/// [`SIBLING_MIN_WIDTH_RATIO`]) for two cells or buttons side by side to count as items
+/// of one carousel or grid.
+pub(crate) const SIBLING_MIN_HEIGHT_RATIO: f64 = 0.75;
+/// See [`SIBLING_MIN_HEIGHT_RATIO`].
+pub(crate) const SIBLING_MIN_WIDTH_RATIO: f64 = 0.5;
+
+/// Cells and buttons are one family here: App Store shelves mix cells and "Get" buttons.
+fn row_family(role: &Role) -> bool {
+    matches!(role, Role::Cell | Role::Button)
+}
+
+/// Whether `a` and `b` sit side by side in one row band: overlapping vertical extent, no
+/// horizontal overlap, similar height and width.
+fn side_by_side(a: &Element, b: &Element) -> bool {
+    let (fa, fb) = (a.frame, b.frame);
+    let ratio = |x: f64, y: f64| {
+        let (lo, hi) = (x.min(y), x.max(y));
+        if hi > 0.0 {
+            lo / hi
+        } else {
+            0.0
+        }
+    };
+    fa.y < fb.max_y()
+        && fb.y < fa.max_y()
+        && (fa.max_x() <= fb.x || fb.max_x() <= fa.x)
+        && ratio(fa.height, fb.height) >= SIBLING_MIN_HEIGHT_RATIO
+        && ratio(fa.width, fb.width) >= SIBLING_MIN_WIDTH_RATIO
+}
+
+/// The indices of the cells and buttons of `screen` that have a sibling of their family
+/// beside them ([`side_by_side`]): items of a carousel or grid. One sweep in vertical order;
+/// each element is compared only with the ones that start inside its own vertical extent.
+fn beside_siblings(screen: &CompactScreen) -> BTreeSet<u32> {
+    let mut items: Vec<&Element> = screen
+        .elements
+        .iter()
+        .filter(|e| row_family(&e.role) && !e.frame.is_empty())
+        .collect();
+    items.sort_by(|a, b| a.frame.y.total_cmp(&b.frame.y));
+    let mut out = BTreeSet::new();
+    for (k, a) in items.iter().enumerate() {
+        for b in items.iter().skip(k.saturating_add(1)) {
+            if b.frame.y >= a.frame.max_y() {
+                break;
+            }
+            if side_by_side(a, b) {
+                out.insert(a.index);
+                out.insert(b.index);
+            }
+        }
+    }
+    out
+}
 
 /// Whether `el` is a list or button row that reveals swipe actions on a sideways drag: a
-/// cell or button spanning at least [`LIST_ROW_MIN_WIDTH`] of the screen's width, outside
-/// the home screen (whose icons have none: a sideways swipe there turns the page). With an
-/// unknown screen width every cell and button counts.
-fn is_list_row(el: &Element, screen: &CompactScreen) -> bool {
-    if !matches!(el.role, Role::Cell | Role::Button)
-        || in_app(&screen.app_bundle_id, SPRINGBOARD_BUNDLE_ID)
-    {
-        return false;
-    }
-    let width = screen.size.width;
-    if !(width.is_finite() && width > 0.0) {
-        return true;
-    }
-    el.frame.width >= width * LIST_ROW_MIN_WIDTH
+/// cell or button, outside the home screen (whose icons have none: a sideways swipe there
+/// turns the page), **unless** a sibling of its family sits beside it in its row band
+/// (overlapping vertical extent, a different horizontal place, similar size): then it is
+/// an item of a carousel or grid (music, App Store and news shelves, photo grids), where a
+/// sideways drag pages. There is no screen-width threshold: a row in a split view's narrow
+/// column or an inset-grouped list is still a row.
+fn is_list_row(el: &Element, r: &Reader<'_>) -> bool {
+    row_family(&el.role)
+        && !in_app(&r.screen.app_bundle_id, SPRINGBOARD_BUNDLE_ID)
+        && !r.is_beside_sibling(el)
 }
 
 /// Whether a drag in finger direction `finger` that crosses `el` acts on it. Sideways:
 /// adjustable controls (sliders, switches, steppers, slide-to-act controls) and list rows
 /// ([`is_list_row`]), whose swipe actions a sideways drag reveals and a long one triggers;
-/// not the narrow cells of a horizontal carousel, nor home-screen icons. Vertically:
-/// pickers, vertical sliders and slide-to-act controls; rows only scroll. Disabled elements
-/// and keyboard keys never react.
-fn reacts_to_drag(el: &Element, finger: Direction, screen: &CompactScreen) -> bool {
+/// not the items of a carousel or grid (a sibling beside them), nor home-screen icons.
+/// Vertically: pickers, vertical sliders and slide-to-act controls; rows only scroll.
+/// Disabled elements and keyboard keys never react.
+fn reacts_to_drag(el: &Element, finger: Direction, r: &Reader<'_>) -> bool {
     if !el.enabled || el.role == Role::Key {
         return false;
     }
     let sideways = matches!(finger, Direction::Left | Direction::Right);
     if sideways {
-        is_adjustable(el) || is_list_row(el, screen)
+        is_adjustable(el) || is_list_row(el, r)
     } else {
         match el.role {
             Role::Picker => true,
@@ -636,22 +775,22 @@ fn reacts_to_drag(el: &Element, finger: Direction, screen: &CompactScreen) -> bo
 /// The controls whose frame the straight path `from` → `to` touches and that react to a
 /// drag in finger direction `finger` ([`reacts_to_drag`]), in screen order. Filtered first,
 /// so any number of texts or inert elements on the path cannot crowd a control out.
-fn crossed_controls(
-    screen: &CompactScreen,
+fn crossed_controls<'a>(
+    r: &Reader<'a>,
     from: Point,
     to: Point,
     finger: Direction,
-) -> Vec<&Element> {
+) -> Vec<&'a Element> {
     let (x0, x1) = (from.x.min(to.x), from.x.max(to.x));
     let (y0, y1) = (from.y.min(to.y), from.y.max(to.y));
-    screen
+    r.screen
         .elements
         .iter()
         .filter(|e| {
             let f = e.frame;
             !f.is_empty() && f.x <= x1 && f.max_x() >= x0 && f.y <= y1 && f.max_y() >= y0
         })
-        .filter(|e| reacts_to_drag(e, finger, screen))
+        .filter(|e| reacts_to_drag(e, finger, r))
         .collect()
 }
 
@@ -664,14 +803,15 @@ fn gesture_risk(
     kind: GestureKind,
     direction: Direction,
     element: Option<u32>,
-    screen: &CompactScreen,
+    r: &Reader<'_>,
 ) -> RiskCategory {
+    let screen = r.screen;
     let finger = finger_direction(kind, direction);
     let sideways = matches!(finger, Direction::Left | Direction::Right);
     let target = match element {
         Some(i) => match screen.get(i) {
             Some(el) => Some(el),
-            None => return context_of(screen, None).risk,
+            None => return r.context(None).risk,
         },
         None => None,
     };
@@ -679,13 +819,13 @@ fn gesture_risk(
     if let Some(el) = target {
         let own = kind == GestureKind::Swipe || sideways || is_adjustable(el);
         if own {
-            risk = swipe_risk(el, finger, screen);
+            risk = swipe_risk(el, finger, r);
         }
     }
     // Without a computable path (unknown screen size, an element in the system-gesture
     // margin) the runner gets no command at all; nothing more to read.
     if let Ok(g) = gesture(kind, direction, target.map(|e| e.frame), screen.size) {
-        let crossed: Vec<&Element> = crossed_controls(screen, g.from, g.to, finger)
+        let crossed: Vec<&Element> = crossed_controls(r, g.from, g.to, finger)
             .into_iter()
             .filter(|el| !target.is_some_and(|t| t.index == el.index))
             .collect();
@@ -693,7 +833,7 @@ fn gesture_risk(
             risk = max_risk(risk, UNREADABLE_RISK);
         }
         for el in crossed.into_iter().take(MAX_SCANNED_CONTROLS) {
-            risk = max_risk(risk, swipe_risk(el, finger, screen));
+            risk = max_risk(risk, swipe_risk(el, finger, r));
         }
     }
     risk
@@ -703,14 +843,14 @@ fn gesture_risk(
 /// ([`is_list_row`]) it is at least `Delete`. Vertical swipes on adjustable controls are
 /// read like taps too; on other elements they only read their label, since they mostly
 /// scroll.
-fn swipe_risk(el: &Element, direction: Direction, screen: &CompactScreen) -> RiskCategory {
+fn swipe_risk(el: &Element, direction: Direction, r: &Reader<'_>) -> RiskCategory {
     let sideways = matches!(direction, Direction::Left | Direction::Right);
-    if sideways && is_list_row(el, screen) {
-        max_risk(RiskCategory::Delete, element_risk(el, screen))
+    if sideways && is_list_row(el, r) {
+        max_risk(RiskCategory::Delete, element_risk(el, r))
     } else if sideways || is_adjustable(el) {
-        element_risk(el, screen)
+        element_risk(el, r)
     } else {
-        match_label(&element_text(el), &action_tables(&screen.app_bundle_id)).category
+        match_label(&element_text(el), &action_tables(&r.screen.app_bundle_id)).category
     }
 }
 
@@ -725,8 +865,13 @@ pub(crate) fn tap_point(
     y: f64,
     screen: &CompactScreen,
 ) -> (RiskCategory, Option<&Element>) {
+    tap_point_in(x, y, &Reader::new(screen))
+}
+
+fn tap_point_in<'a>(x: f64, y: f64, r: &Reader<'a>) -> (RiskCategory, Option<&'a Element>) {
+    let screen = r.screen;
     if !(x.is_finite() && y.is_finite()) {
-        return (context_of(screen, None).risk, None);
+        return (r.context(None).risk, None);
     }
     let p = Point::new(x * screen.size.width, y * screen.size.height);
     let hits: Vec<&Element> = screen
@@ -746,7 +891,7 @@ pub(crate) fn tap_point(
     let best_pressable = pressable
         .into_iter()
         .take(MAX_SCANNED_CONTROLS)
-        .map(|e| (element_risk(e, screen), e))
+        .map(|e| (element_risk(e, r), e))
         .max_by(|(ra, a), (rb, b)| {
             severity(*ra)
                 .cmp(&severity(*rb))
@@ -760,13 +905,13 @@ pub(crate) fn tap_point(
         };
         return (risk, Some(el));
     }
-    let mut risk = context_of(screen, None).risk;
+    let mut risk = r.context(None).risk;
     let others: Vec<&&Element> = hits.iter().filter(|e| !e.role.is_text_input()).collect();
     if others.len() > MAX_SCANNED_CONTROLS {
         risk = max_risk(risk, UNREADABLE_RISK);
     }
     for el in others.into_iter().take(MAX_SCANNED_CONTROLS) {
-        risk = max_risk(risk, element_risk(el, screen));
+        risk = max_risk(risk, element_risk(el, r));
     }
     let largest = hits
         .iter()

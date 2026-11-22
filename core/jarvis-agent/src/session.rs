@@ -23,9 +23,10 @@
 //!
 //! Approvals are not acted on blind: the owner may answer long after the question, so once
 //! the last confirmation of a runner action is approved the session observes again and runs
-//! the action only if its target is still the same control (re-planned on the fresh screen,
-//! see `recheck_approved`); otherwise the model is told it was not done and the action goes
-//! through the full gate again.
+//! the action only if the fresh screen's content record equals the one the owner approved
+//! (the whole screen, digits of free-standing texts excepted; the action re-planned on the
+//! fresh screen, see `recheck_approved`); otherwise the model is told it was not done and
+//! the action goes through the full gate again.
 //!
 //! Skills: with `SessionConfig::skill` the prompt carries the owner's guidance, and a skill
 //! with `confine_to_apps` refuses actions outside its apps (`jarvis_safety::check_confinement`;
@@ -68,7 +69,9 @@
 //! warned about and finally stopped ([`RepeatRun`]), and `done` is not taken as a success
 //! right after the owner declined something or a step failed, with nothing working since.
 //! A tap on the home screen launches what it hits, so the icon gets `open_app`'s checks
-//! before the tap is sent (`crate::commands::home_launch`).
+//! before the tap is sent (`crate::commands::home_launch`); a tap Jarvis cannot name (no
+//! listed element, or the keyboard) is always asked, and no launch-by-Return happens while
+//! a denied app is among Spotlight's results (looked at twice, see `on_settle`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -85,20 +88,21 @@ use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
     approval_context, check_app, check_app_name, check_confinement, evaluate, first_use_app,
     first_use_request, is_springboard, label_names_denied_app, redact, redact_screen,
-    sanitize_screen_text, search_names_denied_app, summarize, Budget, BudgetVerdict, Decision,
-    Verdict,
+    sanitize_screen_text, search_names_denied_app, summarize, widget_names_denied_app, Budget,
+    BudgetVerdict, Decision, Verdict,
 };
 
 use crate::changes::describe_change;
 use crate::commands::{
-    home_launch, plan, resolve_app, should_change, AppTarget, HomeLaunch, MAX_CLEAR_DELETES,
+    home_launch, is_widget, plan, resolve_app, should_change, AppTarget, HomeLaunch,
+    MAX_CLEAR_DELETES,
 };
 use crate::history::{clean, describe, History, MAX_SHOWN};
 use crate::parser::{parse_model_output, ParseError};
 use crate::profile::{mask, sanitize_keys, sensitive_texts, substitute};
 use crate::prompt::{self, PromptParts, ACTION_MAX_TOKENS};
 use crate::schema::{action_gbnf, action_json_schema};
-use crate::state::{Exec, Late, ObservePurpose, Pending, Resume, Source, State, TypeCheck};
+use crate::state::{Exec, Late, ObservePurpose, Pending, Resume, Settle, Source, State, TypeCheck};
 use crate::tools::{check_call, relevant, signature, MAX_TOOLS};
 use crate::typing::{check_typed, correction_deletes, TypedVerdict};
 
@@ -126,6 +130,9 @@ const MAX_APP_DENIALS: u32 = 2;
 /// answering prompts until the step budget runs out (a harmless step between prompts
 /// resets the failure count, so the failure budget alone does not bound it).
 pub const MAX_STALE_APPROVALS: u32 = 3;
+/// Most looks at the home screen's search results before a held-back Return: it is pressed
+/// once two looks in a row show the same results, and not at all if they keep changing.
+pub const MAX_SETTLE_LOOKS: u32 = 3;
 /// Characters of tool output or answers kept in the history.
 const MAX_RESULT_CHARS: usize = 300;
 /// Known app names listed when `open_app` names an unknown app.
@@ -692,6 +699,7 @@ impl Session {
             ObservePurpose::Approved(pending, approved) => {
                 self.act_approved(now, *pending, approved)
             }
+            ObservePurpose::Settle(settle) => self.on_settle(now, *settle),
         }
     }
 
@@ -958,6 +966,12 @@ impl Session {
                     self.unknown_result(&pending, prompt::RESULT_LOCK_UNVERIFIED);
                     (Resume::Decide, None)
                 }
+                // The text was typed; its Return was not pressed and is not pressed after
+                // the unlock.
+                ObservePurpose::Settle(settle) => {
+                    self.record_failure(&settle.pending, prompt::RESULT_RETURN_HELD);
+                    (Resume::Decide, None)
+                }
             },
             State::AwaitingModel { .. } => (Resume::Decide, by_event.then_some(Late::Model)),
             State::AwaitingAct { pending, fresh, .. } => {
@@ -1180,52 +1194,34 @@ impl Session {
     }
 
     /// `pending` re-planned on the current screen, when it is still the action the owner
-    /// approved: the same app (for actions inside it); the same target control (same
-    /// fingerprint, role and label) whose frame still contains the point that was planned;
-    /// the same approval context ([`jarvis_safety::ApprovalContext`]: the target's value
-    /// and on/off state, its row and the texts just before it, every amount on the screen
-    /// and the texts the classifier read), captured from the screen the question was asked
-    /// about (`pending.before`); and a gate decision on the fresh screen that asks for
-    /// nothing new (no denial, and no confirmation other than the one approved, with the
-    /// same category and summary). `None` otherwise.
+    /// approved: the fresh screen's content record **equals** the one of the screen the
+    /// question was asked about (`pending.before`; see [`jarvis_safety::ApprovalContext`]:
+    /// the app, the Return-key cue and every element's role, texts and states in order,
+    /// with digits tolerated only in free-standing texts without an amount), the target
+    /// sits at the same position in it (so a twin cannot take its place) and its fresh
+    /// frame contains the re-planned point; on the home screen a launch that cannot be
+    /// named still finds no denied app among the results; and a gate decision on the
+    /// fresh screen asks for nothing new (no denial, and no confirmation other than the one
+    /// approved, in the same category: the record already pins everything the summary is
+    /// built from). Frames are not compared, so a list that only scrolled keeps the
+    /// approval and the action is re-planned where its target is now. `None` otherwise.
     fn recheck_approved(
         &self,
         pending: &Pending,
         approved: Option<&ConfirmRequest>,
     ) -> Option<Pending> {
         let screen = &self.current.screen;
-        let before = &pending.before;
-        if uses_foreground_app(&pending.action)
-            && !screen
-                .app_bundle_id
-                .trim()
-                .eq_ignore_ascii_case(before.app_bundle_id.trim())
+        let action = pending.action.clone();
+        if !approval_context(&action, &pending.before).holds_on(&action, screen) {
+            return None;
+        }
+        if is_springboard(&screen.app_bundle_id)
+            && matches!(
+                home_launch(&action, screen, &self.apps),
+                Some(HomeLaunch::Unresolved { .. })
+            )
+            && self.denied_search_result().is_some()
         {
-            return None;
-        }
-        let mut action = pending.action.clone();
-        if let Some(old) = action_target(&pending.action, before) {
-            let now = screen
-                .find_by_fingerprint(old.fingerprint)
-                .filter(|e| e.role == old.role && e.label == old.label && e.enabled)?;
-            if let Some(p) = planned_point(&pending.exec) {
-                if !now.frame.contains(p) {
-                    return None;
-                }
-            }
-            if let Some(index) = action.element() {
-                if screen.get(index).map(|e| e.fingerprint) != Some(now.fingerprint) {
-                    action = with_element(&action, now.index);
-                }
-            }
-            if action_target(&action, screen).map(|e| e.fingerprint) != Some(old.fingerprint) {
-                return None;
-            }
-        } else if action.element().is_some() {
-            return None;
-        }
-        let asked = approval_context(&pending.action, before);
-        if !asked.holds_on(&action, screen) {
             return None;
         }
         let executed = match &action {
@@ -1243,19 +1239,22 @@ impl Session {
         match evaluate(&self.config.policy, &executed, screen, None) {
             Decision::Allow => {}
             Decision::Deny(_) => return None,
-            Decision::Confirm(mut request) => {
-                if executed != action {
-                    request.summary = summarize(&action, screen, None);
-                }
-                let same = approved.is_some_and(|a| {
-                    a.category == request.category && a.summary == request.summary
-                });
-                if !same {
+            Decision::Confirm(request) => {
+                if !approved.is_some_and(|a| a.category == request.category) {
                     return None;
                 }
             }
         }
         let queue = plan(&executed, screen).ok()?;
+        let exec = Exec::Runner(queue);
+        if let (Some(target), Some(p)) = (action_target(&action, screen), planned_point(&exec)) {
+            if !target.frame.contains(p) {
+                return None;
+            }
+        }
+        let Exec::Runner(queue) = exec else {
+            return None;
+        };
         let (queue, check) = type_check(&executed, screen, queue);
         Some(Pending {
             expect_change: should_change(&action, screen),
@@ -1780,28 +1779,39 @@ impl Session {
             None
         };
         match &home {
-            Some(HomeLaunch::App { bundle_id, label }) => {
-                if check_app(policy, bundle_id).is_denied()
-                    || check_app_name(policy, &self.apps, label).is_denied()
-                    || label_names_denied_app(policy, &self.apps, label).is_some()
+            Some(HomeLaunch::App {
+                bundle_id,
+                label,
+                widget,
+            }) => {
+                // The known app's bundle id, or the label as an app result, icon or widget
+                // of a denied app (not merely a label that mentions one).
+                if check_app(policy, bundle_id).is_denied() || self.names_denied_app(label, *widget)
                 {
-                    return Err(Reject::AppDenied(format!(
-                        "{} is on the deny list",
-                        clean(label, 80)
-                    )));
+                    return Err(Reject::AppDenied(denied_launch_message(label)));
                 }
                 if self.app_declined(bundle_id) {
                     return Err(Reject::Blocked(self.declined_message(bundle_id)));
                 }
             }
-            Some(HomeLaunch::Unknown { label })
-                if check_app_name(policy, &self.apps, label).is_denied()
-                    || label_names_denied_app(policy, &self.apps, label).is_some() =>
+            Some(HomeLaunch::Unknown { label, widget })
+                if self.names_denied_app(label, *widget) =>
             {
-                return Err(Reject::AppDenied(format!(
-                    "{} is on the deny list",
-                    clean(label, 80)
-                )));
+                return Err(Reject::AppDenied(denied_launch_message(label)));
+            }
+            Some(HomeLaunch::Unresolved { keyboard, .. }) => {
+                // Launch-by-Return (or by a tap Jarvis cannot name): not while a denied app
+                // is among the results. A result on the list is not a deny strike.
+                if let Some(name) = self.denied_search_result() {
+                    let how = if *keyboard {
+                        "a tap on the keyboard (its Return key opens the top search result)"
+                    } else {
+                        "a tap on no listed element"
+                    };
+                    return Err(Reject::Failed(format!(
+                        "not done: {how} could open {name}, which is on the deny list and among the results"
+                    )));
+                }
             }
             Some(HomeLaunch::Unknown { .. } | HomeLaunch::Search { .. }) | None => {}
         }
@@ -1851,15 +1861,18 @@ impl Session {
             other => other.clone(),
         };
         // 2a. Typing on the home screen searches (Spotlight), and Spotlight opens its top
-        //     hit on Return: text that names, contains or starts a denied app's name is
-        //     refused before it is typed (see `search_names_denied_app`).
+        //     hit on Return: text that *is* a denied app's name (or the name and "app") is
+        //     refused before it is typed (see `search_names_denied_app`); anything else is
+        //     typed, and its Return waits for the results check (`on_settle`).
         if let Action::Type { text, .. } = &executed {
             if is_springboard(&screen.app_bundle_id)
                 && search_names_denied_app(policy, &self.apps, text).is_some()
             {
-                return Err(Reject::AppDenied(
-                    "searching the home screen for an app on the deny list".to_owned(),
-                ));
+                return Err(Reject::AppDenied(format!(
+                    "searching the home screen for \"{}\" would open {}, which is on the deny list",
+                    clean(text, 60),
+                    clean(text.trim(), 60)
+                )));
             }
         }
         // 3. Safety: validation, deny list, risk classification, confirmation gate.
@@ -1914,13 +1927,35 @@ impl Session {
         //    home-screen tap that may launch an app Jarvis cannot name asks a one-off
         //    approval naming what was tapped, never silently.
         let unknown_launch = match &home {
-            Some(HomeLaunch::Unknown { label }) => Some(format!("\"{}\"", clean(label, 60))),
-            Some(HomeLaunch::Search { text }) => {
-                Some(format!("the top search result for \"{}\"", clean(text, 60)))
+            Some(HomeLaunch::Unknown { label, .. }) => {
+                Some((format!("\"{}\"", clean(label, 60)), false))
             }
+            Some(HomeLaunch::Search { text }) => Some((
+                format!("the top search result for \"{}\"", clean(text, 60)),
+                false,
+            )),
+            // Never sent unasked, whatever the first-use setting.
+            Some(HomeLaunch::Unresolved { x, y, keyboard }) => Some((
+                if *keyboard {
+                    format!(
+                        "the top search result (a tap on the keyboard at {:.0}%, {:.0}%)",
+                        x * 100.0,
+                        y * 100.0
+                    )
+                } else {
+                    format!(
+                        "whatever is at {:.0}%, {:.0}% of the screen",
+                        x * 100.0,
+                        y * 100.0
+                    )
+                },
+                true,
+            )),
             Some(HomeLaunch::App { .. }) | None => None,
         };
-        if let Some(what) = unknown_launch.filter(|_| policy.first_use_approval) {
+        if let Some((what, _)) =
+            unknown_launch.filter(|(_, always)| *always || policy.first_use_approval)
+        {
             if policy.denies_category(RiskCategory::FirstUse) {
                 return Err(Reject::AppDenied(format!(
                     "{what} on the home screen is not a known app, and new apps are not allowed"
@@ -2076,10 +2111,20 @@ impl Session {
                 if then.is_empty() {
                     return self.verify(now, pending);
                 }
-                if let Some(msg) = self.denied_search_result() {
-                    // Return on the home screen opens Spotlight's top hit: not pressed
-                    // while any result names a denied app.
-                    return self.denied_after_typing(now, &pending, &msg);
+                if is_springboard(&self.current.screen.app_bundle_id) {
+                    // Return on the home screen opens Spotlight's top hit: look once more
+                    // so results that load late are seen, then press it only while no
+                    // denied app is among them.
+                    let labels = self.result_labels();
+                    return self.observe(
+                        ObservePurpose::Settle(Box::new(Settle {
+                            pending: Box::new(pending),
+                            then,
+                            labels,
+                            looks: 1,
+                        })),
+                        false,
+                    );
                 }
                 return self.continue_act(then, pending);
             }
@@ -2134,35 +2179,97 @@ impl Session {
         self.decide(now)
     }
 
-    /// On the home screen (Spotlight, App Library, widgets): why pressing Return or a
-    /// result now could open a denied app (a result or top hit whose label names one, see
-    /// `label_names_denied_app`); `None` elsewhere or when nothing does.
+    /// Whether the home-screen label `label` is a denied app's app result or icon (see
+    /// `label_names_denied_app`), or, for a widget, belongs to one
+    /// (`widget_names_denied_app`).
+    fn names_denied_app(&self, label: &str, widget: bool) -> bool {
+        let policy = &self.config.policy;
+        label_names_denied_app(policy, &self.apps, label).is_some()
+            || (widget && widget_names_denied_app(policy, &self.apps, label).is_some())
+    }
+
+    /// On the home screen (Spotlight, App Library, widgets): the display name of a denied
+    /// app among the app results, icons and widgets on the screen, which Return (opening
+    /// the top hit) or a tap Jarvis cannot name could open; `None` elsewhere or when there
+    /// is none. Web suggestions and other apps' content that merely mention the name do
+    /// not count.
     fn denied_search_result(&self) -> Option<String> {
         let screen = &self.current.screen;
         if !is_springboard(&screen.app_bundle_id) {
             return None;
         }
-        screen.elements.iter().find_map(|e| {
-            label_names_denied_app(&self.config.policy, &self.apps, &e.label).map(|_| {
-                format!(
-                    "the search shows \"{}\", an app on the deny list",
-                    clean(&e.label, 60)
-                )
-            })
-        })
+        screen
+            .elements
+            .iter()
+            .filter(|e| !e.role.is_text_input())
+            .find(|e| self.names_denied_app(&e.label, is_widget(e)))
+            .map(|e| app_display_name(&e.label))
     }
 
-    /// A held-back Return not pressed because the search shows a denied app: counted like
-    /// every deny-list hit (`Blocked` at [`MAX_APP_DENIALS`]); nothing more is sent.
-    fn denied_after_typing(&mut self, now: u64, pending: &Pending, msg: &str) -> Effect {
-        self.app_denials = self.app_denials.saturating_add(1);
-        if self.app_denials >= MAX_APP_DENIALS {
-            self.log_step(&pending.action, false);
-            let summary = format!("Blocked: {msg}.");
-            return self.finish(now, OutcomeStatus::Blocked, &summary);
+    /// The labels of the search results on the home screen (everything but the text
+    /// inputs), to tell whether the results have settled.
+    fn result_labels(&self) -> Vec<String> {
+        self.current
+            .screen
+            .elements
+            .iter()
+            .filter(|e| !e.role.is_text_input())
+            .map(|e| format!("{}|{}", e.role.as_str(), e.label))
+            .collect()
+    }
+
+    /// A held-back Return on the home screen, once the results have settled: pressed
+    /// unless a denied app is among them. That is not a deny strike (the result list is
+    /// not an attempt to open it): the step fails and the model is told which app.
+    fn press_held_return(
+        &mut self,
+        now: u64,
+        pending: Pending,
+        then: VecDeque<RunnerCommand>,
+    ) -> Effect {
+        if let Some(name) = self.denied_search_result() {
+            let msg = format!(
+                "not done: Return was not pressed: it could open {name}, which is on the deny list and among the results"
+            );
+            self.record_failure(&pending, &msg);
+            return self.decide(now);
         }
-        self.record_failure(pending, &format!("not done: Return was not pressed: {msg}"));
-        self.decide(now)
+        self.continue_act(then, pending)
+    }
+
+    /// The look after typing a search on the home screen, before its held-back Return:
+    /// results can load after the first look, so the Return waits until two looks in a row
+    /// show the same result labels (at most [`MAX_SETTLE_LOOKS`] more looks).
+    fn on_settle(&mut self, now: u64, settle: Settle) -> Effect {
+        let Settle {
+            pending,
+            then,
+            labels,
+            looks,
+        } = settle;
+        let fresh = self.result_labels();
+        let still_home = is_springboard(&self.current.screen.app_bundle_id);
+        if still_home && fresh == labels {
+            return self.press_held_return(now, *pending, then);
+        }
+        if !still_home || looks >= MAX_SETTLE_LOOKS {
+            let msg = if still_home {
+                "not done: Return was not pressed: the search results kept changing"
+            } else {
+                prompt::RESULT_RETURN_HELD
+            };
+            self.record_failure(&pending, msg);
+            return self.decide(now);
+        }
+        self.observe(
+            ObservePurpose::Settle(Box::new(Settle {
+                pending,
+                then,
+                labels: fresh,
+                looks: looks.saturating_add(1),
+            })),
+            false,
+        )
     }
 
     /// Compares the screen after an action with the one before it.
@@ -2484,30 +2591,6 @@ fn action_target<'a>(action: &Action, screen: &'a CompactScreen) -> Option<&'a E
     }
 }
 
-/// `action` aimed at element `index` instead (actions without an element are unchanged).
-fn with_element(action: &Action, index: u32) -> Action {
-    let mut a = action.clone();
-    match &mut a {
-        Action::Tap { element } | Action::LongPress { element, .. } | Action::Clear { element } => {
-            *element = index
-        }
-        Action::Type {
-            element: Some(element),
-            ..
-        }
-        | Action::Scroll {
-            element: Some(element),
-            ..
-        }
-        | Action::Swipe {
-            element: Some(element),
-            ..
-        } => *element = index,
-        _ => {}
-    }
-    a
-}
-
 /// The first screen point the planned commands touch (a tap, long press or drag start).
 fn planned_point(exec: &Exec) -> Option<Point> {
     let Exec::Runner(queue) = exec else {
@@ -2555,4 +2638,23 @@ fn type_check(
         retried: false,
     };
     (queue, Some(check))
+}
+
+/// The name a home-screen label shows for its app: the label, or its part before the
+/// first comma ("Wallet, 2 notifications"), cleaned for a message.
+fn app_display_name(label: &str) -> String {
+    let head = label.split(',').next().unwrap_or(label).trim();
+    clean(if head.is_empty() { label } else { head }, 40)
+}
+
+/// The refusal for a home-screen tap on a denied app's icon, result or widget, naming the
+/// app so the model does not try variants.
+fn denied_launch_message(label: &str) -> String {
+    let name = app_display_name(label);
+    let shown = clean(label, 60);
+    if shown == name {
+        format!("{name} is on the deny list")
+    } else {
+        format!("\"{shown}\" would open {name}, which is on the deny list")
+    }
 }

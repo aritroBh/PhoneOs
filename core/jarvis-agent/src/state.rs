@@ -149,6 +149,22 @@ pub(crate) enum ObservePurpose {
     /// the same control (re-planned on the fresh screen). The request is the risk
     /// confirmation that was approved (`None` when only a first-use approval was asked).
     Approved(Box<Pending>, Option<ConfirmRequest>),
+    /// One more look at the home screen's search results after typing, before the held-back
+    /// Return (which opens the top hit) is pressed.
+    Settle(Box<Settle>),
+}
+
+/// A typed home-screen search whose held-back Return waits for the results to settle.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Settle {
+    /// The typing action (its text already typed and checked).
+    pub pending: Box<Pending>,
+    /// The held-back commands (`PressKey Return`).
+    pub then: VecDeque<RunnerCommand>,
+    /// The result labels of the previous look.
+    pub labels: Vec<String>,
+    /// Looks taken so far for this Return.
+    pub looks: u32,
 }
 
 /// The session state machine. Exactly one effect is outstanding in every non-final state.

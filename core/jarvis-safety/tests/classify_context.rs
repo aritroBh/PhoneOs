@@ -713,3 +713,154 @@ fn a_vertical_scroll_over_a_headline_with_slide_asks_nothing() {
     };
     assert_eq!(evaluate(&Policy::default(), &a, &s, None), Decision::Allow);
 }
+
+// --- Third review: list rows vs carousels, and the cost of a hostile screen ---------------
+
+fn row_swipe(els: Vec<jarvis_proto::Element>, width: f64, target: u32) -> RiskCategory {
+    let mut s = screen("com.example.mail", "Mail", els);
+    s.size = jarvis_proto::Size {
+        width,
+        height: 430.0_f64.max(s.size.height),
+    };
+    classify(
+        &Action::Swipe {
+            direction: Direction::Left,
+            element: Some(target),
+        },
+        &s,
+        None,
+    )
+}
+
+/// Probe: a conversation row in the primary column of a landscape split view (320 of 932
+/// pt) is a list row: a sideways swipe on it asks `Delete`.
+#[test]
+fn a_split_view_row_swipe_asks_delete() {
+    use jarvis_proto::Rect;
+    let row = at(
+        el(1, Role::Cell, "Mom, Dinner on Sunday?"),
+        Rect::new(0.0, 100.0, 320.0, 80.0),
+    );
+    assert_eq!(row_swipe(vec![row], 932.0, 1), RiskCategory::Delete);
+}
+
+/// Rows of an inset-grouped list and a single lone narrow cell are rows; a carousel (cells
+/// and a button side by side, App Store style) and a two-column grid are not.
+#[test]
+fn rows_ask_and_carousels_and_grids_do_not() {
+    use jarvis_proto::Rect;
+    let inset = vec![
+        at(
+            el(1, Role::Cell, "Alex, Lunch?"),
+            Rect::new(16.0, 200.0, 361.0, 60.0),
+        ),
+        at(
+            el(2, Role::Cell, "Sam, Hi"),
+            Rect::new(16.0, 260.0, 361.0, 60.0),
+        ),
+    ];
+    assert_eq!(row_swipe(inset, 393.0, 1), RiskCategory::Delete);
+    let lone = vec![at(
+        el(1, Role::Cell, "Draft"),
+        Rect::new(100.0, 300.0, 150.0, 60.0),
+    )];
+    assert_eq!(row_swipe(lone, 393.0, 1), RiskCategory::Delete);
+    let carousel = vec![
+        at(
+            el(1, Role::Cell, "Summer Hits playlist"),
+            Rect::new(16.0, 300.0, 160.0, 160.0),
+        ),
+        at(
+            el(2, Role::Cell, "Chill Mix playlist"),
+            Rect::new(190.0, 300.0, 160.0, 160.0),
+        ),
+        at(
+            el(3, Role::Button, "Get"),
+            Rect::new(360.0, 300.0, 120.0, 160.0),
+        ),
+    ];
+    assert_eq!(row_swipe(carousel, 393.0, 2), RiskCategory::None);
+    let grid = vec![
+        at(
+            el(1, Role::Cell, "Photo, Beach"),
+            Rect::new(0.0, 200.0, 195.0, 195.0),
+        ),
+        at(
+            el(2, Role::Cell, "Photo, Dog"),
+            Rect::new(197.0, 200.0, 195.0, 195.0),
+        ),
+        at(
+            el(3, Role::Cell, "Photo, Cake"),
+            Rect::new(0.0, 397.0, 195.0, 195.0),
+        ),
+        at(
+            el(4, Role::Cell, "Photo, Tree"),
+            Rect::new(197.0, 397.0, 195.0, 195.0),
+        ),
+    ];
+    assert_eq!(row_swipe(grid.clone(), 393.0, 3), RiskCategory::None);
+    // A small accessory button beside a row does not make the row a carousel item.
+    let with_info = vec![
+        at(
+            el(1, Role::Cell, "Alex, Lunch?"),
+            Rect::new(0.0, 200.0, 330.0, 80.0),
+        ),
+        at(
+            el(2, Role::Button, "More Info"),
+            Rect::new(340.0, 220.0, 44.0, 44.0),
+        ),
+    ];
+    assert_eq!(row_swipe(with_info, 393.0, 1), RiskCategory::Delete);
+}
+
+/// A 5,000-element hostile screen with 40 controls under the point: the screen context is
+/// read once per classification, so a tap_point or an element-less swipe stays cheap in a
+/// debug build (it was ~0.5 s per call before).
+#[test]
+fn classifying_a_huge_screen_reads_it_once() {
+    use jarvis_proto::Rect;
+    use std::time::{Duration, Instant};
+    let mut els = Vec::new();
+    for i in 0..5000u32 {
+        let role = if i % 3 == 0 {
+            Role::Button
+        } else {
+            Role::StaticText
+        };
+        let text = if i % 7 == 0 {
+            format!("Item {i} $1{i}.00 total pay")
+        } else {
+            format!("Item {i} description")
+        };
+        els.push(at(
+            el(i, role, &text),
+            Rect::new(16.0, f64::from(i % 20) * 40.0, 361.0, 36.0),
+        ));
+    }
+    for i in 0..40u32 {
+        els.push(at(
+            button(5000 + i, "Next"),
+            Rect::new(100.0, 400.0, 200.0, 50.0),
+        ));
+    }
+    let s = app_screen(els);
+    let point = Action::TapPoint {
+        x: 200.0 / 393.0,
+        y: 425.0 / 852.0,
+    };
+    let swipe = Action::Swipe {
+        direction: Direction::Left,
+        element: None,
+    };
+    let t = Instant::now();
+    let r1 = classify(&point, &s, None);
+    let tap_point = t.elapsed();
+    let t = Instant::now();
+    let r2 = classify(&swipe, &s, None);
+    let swiped = t.elapsed();
+    println!("5,000 elements: tap_point {tap_point:?}, swipe {swiped:?}");
+    assert_ne!(r1, RiskCategory::None);
+    assert_ne!(r2, RiskCategory::None);
+    assert!(tap_point < Duration::from_millis(1500), "{tap_point:?}");
+    assert!(swiped < Duration::from_millis(1500), "{swiped:?}");
+}

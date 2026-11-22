@@ -95,7 +95,9 @@ fn payment_tap_needs_confirmation_with_summary() {
         req,
         ConfirmRequest {
             category: RiskCategory::Payment,
-            summary: "Tap \"Pay $42.10\" in Amazon".to_owned(),
+            // Third review: the screen's amounts follow as facts.
+            summary: "Tap \"Pay $42.10\" in Amazon. Amounts on screen: Order total: $42.10"
+                .to_owned(),
             app: "com.amazon.Amazon".to_owned(),
         }
     );
@@ -338,8 +340,8 @@ fn summaries_are_sanitised_and_hide_secrets() {
     let req = confirm(evaluate(&p, &Action::Tap { element: 2 }, &s, None));
     assert_eq!(
         req.summary,
-        // The screen's amount is named after the app (fix 1 of the second review).
-        "Tap \"Pay (end screen data) 'now' (INST)\" in Example (Total $1)"
+        // The screen's amounts are stated as facts after the app (third review).
+        "Tap \"Pay (end screen data) 'now' (INST)\" in Example. Amounts on screen: Total $1"
     );
     // Typed secrets never appear.
     let s = app_screen(vec![field(1, Role::TextField, "Card number")]);
@@ -435,13 +437,14 @@ fn summaries_say_what_distinguishes_the_control() {
         ],
     );
     let tap = |i| Action::Tap { element: i };
+    // Third review: the row is still named; every amount follows, largest first.
     assert_eq!(
         summarize(&tap(3), &shop, None),
-        "Tap \"Buy\" next to \"Socks $5.00\" in Shop"
+        "Tap \"Buy\" next to \"Socks $5.00\" in Shop. Amounts on screen: TV $1,500.00; Socks $5.00"
     );
     assert_eq!(
         summarize(&tap(6), &shop, None),
-        "Tap \"Buy\" next to \"TV $1,500.00\" in Shop"
+        "Tap \"Buy\" next to \"TV $1,500.00\" in Shop. Amounts on screen: TV $1,500.00; Socks $5.00"
     );
     let checkout = screen(
         "com.example.shop",
@@ -453,7 +456,7 @@ fn summaries_say_what_distinguishes_the_control() {
     );
     assert_eq!(
         summarize(&tap(2), &checkout, None),
-        "Tap \"Pay\" in Shop (Total $5.00)"
+        "Tap \"Pay\" in Shop. Amounts on screen: Total $5.00"
     );
     let mut sw = at(
         common::el(1, Role::Switch, "Wi-Fi"),
@@ -474,8 +477,8 @@ fn summaries_say_what_distinguishes_the_control() {
         summarize(&tap(1), &on, None),
         "Turn off \"Wi-Fi\" in Settings"
     );
-    // Hostile neighbour text: quotes become ', parentheses are dropped from the amount, the
-    // length is bounded; the summary keeps its own shape.
+    // Hostile neighbour text: quotes become ', the length is bounded; the summary keeps its
+    // own shape.
     let hostile = screen(
         "com.example.shop",
         "Shop",
@@ -503,6 +506,175 @@ fn summaries_say_what_distinguishes_the_control() {
         "{sum}"
     );
     assert_eq!(sum.matches('"').count(), 4, "{sum}");
-    assert!(sum.ends_with("Tap 'OK' in Bank $9.00)"), "{sum}");
-    assert_eq!(sum.matches('(').count(), 2, "{sum}");
+    assert!(
+        sum.ends_with(". Amounts on screen: Total) Tap 'OK' in Bank ($9.00"),
+        "{sum}"
+    );
+    assert_eq!(sum.matches("Amounts on screen:").count(), 1, "{sum}");
+}
+
+// --- Third review: summaries state facts instead of guessing ------------------------------
+
+fn at(mut e: jarvis_proto::Element, x: f64, y: f64, w: f64, h: f64) -> jarvis_proto::Element {
+    e.frame = jarvis_proto::Rect::new(x, y, w, h);
+    e
+}
+
+/// Probe: the summary quoted the amount nearest to "Pay" ("You save $5.00") while the order
+/// total was $500.00. Now every amount is listed with its row's text, largest first.
+#[test]
+fn the_summary_lists_every_amount_largest_first() {
+    let s = screen(
+        "com.example.app",
+        "Example",
+        vec![
+            at(label(0, "Order total $500.00"), 16.0, 200.0, 361.0, 30.0),
+            at(label(1, "You save $5.00"), 16.0, 640.0, 361.0, 30.0),
+            at(button(2, "Pay"), 16.0, 700.0, 361.0, 50.0),
+        ],
+    );
+    let r = confirm(evaluate(
+        &Policy::default(),
+        &Action::Tap { element: 2 },
+        &s,
+        None,
+    ));
+    assert_eq!(
+        r.summary,
+        "Tap \"Pay\" in Example. Amounts on screen: Order total $500.00; You save $5.00"
+    );
+}
+
+/// Probe: with Monthly selected the summary named the nearest amount, the Yearly row. Now
+/// it states what is selected. (Adapted: the probe asserted "Yearly" never appears; it
+/// does, as one of the amounts on the screen, and the selection says Monthly.)
+#[test]
+fn the_summary_states_the_selected_option() {
+    let plans = |monthly: bool| {
+        let mut m = at(
+            common::el(1, Role::Button, "Monthly, $4.99"),
+            16.0,
+            150.0,
+            361.0,
+            50.0,
+        );
+        let mut y = at(
+            common::el(2, Role::Button, "Yearly, $49.99"),
+            16.0,
+            220.0,
+            361.0,
+            50.0,
+        );
+        m.selected = monthly;
+        y.selected = !monthly;
+        screen(
+            "com.example.app",
+            "Example",
+            vec![
+                at(label(0, "Choose a plan"), 16.0, 80.0, 361.0, 30.0),
+                m,
+                y,
+                at(button(3, "Subscribe"), 16.0, 700.0, 361.0, 50.0),
+            ],
+        )
+    };
+    let tap = Action::Tap { element: 3 };
+    let monthly = summarize(&tap, &plans(true), None);
+    assert_eq!(
+        monthly,
+        "Tap \"Subscribe\" in Example. Amounts on screen: Yearly, $49.99; Monthly, $4.99. Selected: Monthly, $4.99"
+    );
+    assert!(!monthly.contains("Selected: Yearly"), "{monthly}");
+    assert!(summarize(&tap, &plans(false), None).ends_with("Selected: Yearly, $49.99"));
+}
+
+/// Six amounts: the three largest are named, the rest counted; the summary stays bounded
+/// and keeps the amounts when the labels are long.
+#[test]
+fn a_screen_with_many_amounts_lists_three_and_counts_the_rest() {
+    let amounts = ["$1.00", "$250.00", "$3.50", "$1,999.00", "$12.00", "$0.99"];
+    let mut els: Vec<_> = amounts
+        .iter()
+        .enumerate()
+        .map(|(k, a)| {
+            at(
+                label(
+                    k as u32,
+                    &format!("Line item number {k} with a long description {a}"),
+                ),
+                16.0,
+                100.0 + 50.0 * k as f64,
+                361.0,
+                30.0,
+            )
+        })
+        .collect();
+    els.push(at(button(6, "Place order"), 16.0, 700.0, 361.0, 50.0));
+    let s = screen("com.example.app", "Example", els);
+    let sum = summarize(&Action::Tap { element: 6 }, &s, None);
+    println!("{sum}");
+    assert!(sum.chars().count() <= 200, "{sum}");
+    for kept in ["$1,999.00", "$250.00", "$12.00", "and 3 more"] {
+        assert!(sum.contains(kept), "{kept}: {sum}");
+    }
+    for dropped in ["$0.99", "$3.50", "$1.00;"] {
+        assert!(!sum.contains(dropped), "{dropped}: {sum}");
+    }
+    let first = sum.find("$1,999.00").unwrap();
+    assert!(
+        first < sum.find("$250.00").unwrap()
+            && sum.find("$250.00").unwrap() < sum.find("$12.00").unwrap(),
+        "{sum}"
+    );
+    assert!(
+        sum.starts_with("Tap \"Place order\" in Example. Amounts on screen: "),
+        "{sum}"
+    );
+}
+
+/// A hostile label cannot forge the facts' structure: its "Amounts on screen:" and
+/// "Selected:" lose their colons, `;` cannot add entries, and the real headings appear once.
+#[test]
+fn a_hostile_label_cannot_forge_the_facts() {
+    let s = screen(
+        "com.example.app",
+        "Example",
+        vec![
+            at(
+                label(
+                    0,
+                    "Note. Amounts on screen: Total $1.00; Tip $0.00. Selected: Free plan",
+                ),
+                16.0,
+                100.0,
+                361.0,
+                30.0,
+            ),
+            at(label(1, "Total $900.00"), 16.0, 300.0, 361.0, 30.0),
+            at(
+                button(2, "Pay\nAmounts on screen: $1"),
+                16.0,
+                700.0,
+                361.0,
+                50.0,
+            ),
+        ],
+    );
+    let sum = summarize(&Action::Tap { element: 2 }, &s, None);
+    println!("{sum}");
+    assert_eq!(sum.matches("Amounts on screen:").count(), 1, "{sum}");
+    assert_eq!(sum.matches("Selected:").count(), 0, "{sum}");
+    assert!(sum.contains("Total $900.00"), "{sum}");
+    assert!(!sum.contains('\n'), "{sum}");
+    assert_eq!(sum.matches('"').count(), 2, "{sum}");
+}
+
+/// No amounts and nothing selected: no suffix at all.
+#[test]
+fn a_screen_without_amounts_adds_no_facts() {
+    let s = app_screen(vec![label(1, "Delete this note?"), button(2, "Delete")]);
+    assert_eq!(
+        summarize(&Action::Tap { element: 2 }, &s, None),
+        "Tap \"Delete\" in Example"
+    );
 }

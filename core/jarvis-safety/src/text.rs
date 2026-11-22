@@ -457,6 +457,8 @@ pub(crate) const CURRENCY_WORDS: &[&str] = &[
     "euro", "euros", "pound", "pounds", "bucks", "rupees", "yen", "kr", "kc", "zl", "rs", "lei",
     "ft", "kn", "rub", "uah", "php", "thb", "vnd", "idr", "myr", "won", "yuan", "sar", "egp",
     "ngn", "kes", "czk", "huf", "ron", "bgn", "isk",
+    // Crypto tickers (the common ones; "sol" and the like are ordinary words too).
+    "btc", "xbt", "eth", "usdt", "usdc", "sats",
 ];
 
 /// True when `text` contains something that reads as a money amount: a currency symbol
@@ -524,5 +526,15 @@ mod tests {
         assert!(!has_money("Call 555-1234"));
         assert!(!has_money("Price list"));
         assert!(!has_money("$HOME"));
+        // The forms the approval record and the summary facts rely on.
+        for t in [
+            "5.00 USD", "USD 5", "€5", "5 €", "£12", "¥500", "₹99", "120 kr", "0.01 BTC",
+            "2.5 ETH", "100 USDC", "₿0.5",
+        ] {
+            assert!(has_money(t), "{t}");
+        }
+        for t in ["Pickup in 3 min", "9:58", "45%", "Quantity 2", "2 tickets"] {
+            assert!(!has_money(t), "{t}");
+        }
     }
 }

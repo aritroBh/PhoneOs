@@ -187,7 +187,7 @@ pub(crate) fn plan(
 pub(crate) const SPRINGBOARD: &str = jarvis_proto::SPRINGBOARD_BUNDLE_ID;
 
 /// What a home-screen action may launch.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum HomeLaunch {
     /// An icon, widget or search result named like a known app.
     App {
@@ -195,18 +195,48 @@ pub(crate) enum HomeLaunch {
         bundle_id: String,
         /// The label that was tapped.
         label: String,
+        /// The element is a widget (its own label names the app it belongs to).
+        widget: bool,
     },
     /// Something tappable that is not a known app (no label, or a name Jarvis does not
     /// know): it may launch anything.
     Unknown {
         /// The label that was tapped (empty when unlabeled).
         label: String,
+        /// The element is a widget (its own label names the app it belongs to).
+        widget: bool,
     },
     /// Return in the home screen's search field opens the top result.
     Search {
         /// The text searched for.
         text: String,
     },
+    /// A `tap_point` that hits no listed element, or lands in the keyboard's area while a
+    /// keyboard is up (keys are not listed; its Return key opens Spotlight's top hit): what
+    /// it launches cannot be named, so it is never sent unasked.
+    Unresolved {
+        /// The point, normalised (0..1).
+        x: f64,
+        /// The point, normalised (0..1).
+        y: f64,
+        /// It lands in the keyboard's area.
+        keyboard: bool,
+    },
+}
+
+/// Share of the screen height, from the bottom, treated as the keyboard's area while a
+/// keyboard is up: a tap there may press a key (Return opens Spotlight's top hit) whatever
+/// listed element lies under it. Generous on purpose (the iPhone keyboard takes about 40 %
+/// in portrait and more in landscape).
+pub(crate) const KEYBOARD_AREA_SHARE: f64 = 0.5;
+
+/// Whether `el` is a home-screen or Today-view widget: SpringBoard gives widgets the value
+/// "Widget" ("Widget, Stack"); a label ending in "widget" counts too.
+pub(crate) fn is_widget(el: &jarvis_proto::Element) -> bool {
+    let value = el.value.as_deref().unwrap_or("").trim().to_lowercase();
+    value == "widget"
+        || value.starts_with("widget,")
+        || el.label.trim().to_lowercase().ends_with(" widget")
 }
 
 /// Home-screen labels that open SpringBoard's own UI, never an app: the search pill and
@@ -247,9 +277,10 @@ fn element_at(x: f64, y: f64, screen: &CompactScreen) -> Option<&jarvis_proto::E
 /// is resolved by label: a known app's display name (the label, or its first
 /// comma-separated part) is [`HomeLaunch::App`]; the search pill and folders open
 /// SpringBoard's own UI and launch nothing (`None`); anything else, unlabeled included, is
-/// [`HomeLaunch::Unknown`]. Return in a search field (`type` with `submit`) is
-/// [`HomeLaunch::Search`]. Text inputs only take focus (`None`). Other actions launch
-/// nothing from here (`open_app` has its own checks).
+/// [`HomeLaunch::Unknown`]. A tap_point on no listed element, or in the keyboard's area
+/// while a keyboard is up, is [`HomeLaunch::Unresolved`]. Return in a search field (`type`
+/// with `submit`) is [`HomeLaunch::Search`]. Text inputs only take focus (`None`). Other
+/// actions launch nothing from here (`open_app` has its own checks).
 pub(crate) fn home_launch(
     action: &Action,
     screen: &CompactScreen,
@@ -257,7 +288,20 @@ pub(crate) fn home_launch(
 ) -> Option<HomeLaunch> {
     let target = match action {
         Action::Tap { element } | Action::LongPress { element, .. } => screen.get(*element)?,
-        Action::TapPoint { x, y } => element_at(*x, *y, screen)?,
+        Action::TapPoint { x, y } => {
+            let keyboard =
+                screen.keyboard_visible && y.is_finite() && *y >= 1.0 - KEYBOARD_AREA_SHARE;
+            match element_at(*x, *y, screen) {
+                Some(e) if !keyboard => e,
+                _ => {
+                    return Some(HomeLaunch::Unresolved {
+                        x: *x,
+                        y: *y,
+                        keyboard,
+                    })
+                }
+            }
+        }
         Action::Type {
             text, submit: true, ..
         } => {
@@ -268,13 +312,16 @@ pub(crate) fn home_launch(
     if target.role.is_text_input() || opens_springboard_ui(&target.label) {
         return None;
     }
+    let widget = is_widget(target);
     Some(match known_app_named(&target.label, known_apps) {
         Some(app) => HomeLaunch::App {
             bundle_id: app.bundle_id.clone(),
             label: target.label.clone(),
+            widget,
         },
         None => HomeLaunch::Unknown {
             label: target.label.clone(),
+            widget,
         },
     })
 }

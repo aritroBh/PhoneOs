@@ -148,11 +148,6 @@ pub fn check_app_name(policy: &Policy, known_apps: &[AppInfo], name: &str) -> Ve
     Verdict::Allow
 }
 
-/// Shortest search text (folded, letters and digits only) that is matched as the start of
-/// a denied app's name. "Ex" is too short to mean anything; "Exa" is what Spotlight would
-/// already complete to "ExampleBank".
-pub const MIN_SEARCH_PREFIX: usize = 3;
-
 /// The folded display names of the apps `policy` denies: every `denied_apps` entry (a name
 /// as written, or a bundle id's name part, plus the aliases of denied built-in apps), every
 /// `Denied` app rule (its `name` and its prefix's name part) and the `known_apps` names of
@@ -195,15 +190,14 @@ pub fn denied_app_names(policy: &Policy, known_apps: &[AppInfo]) -> Vec<String> 
 }
 
 /// The denied app (folded name, see [`denied_app_names`]) that searching for `text` on the
-/// home screen (Spotlight) may bring up as its top hit: the folded text equals the name,
-/// contains it (names of at least [`MIN_SEARCH_PREFIX`] characters), or is the start of
-/// it and at least [`MIN_SEARCH_PREFIX`] characters long ("exampleb" for "ExampleBank").
+/// home screen (Spotlight) names outright: the folded text **equals** the name, or the
+/// name followed by the word "app" ("Wallet", "wallet app"). Such text is refused before
+/// it is typed.
 ///
-/// Trade-off: a prefix of a denied name is refused even when it is also a whole other
-/// app's name ("Mail" while "Mailchimp" is denied), because Spotlight's top hit for it may
-/// be the denied app; `open_app` by name, which resolves exactly, still reaches the other
-/// app. Sharing a word is not enough: "Example Mail" is not refused for a denied
-/// "Example Bank".
+/// Nothing shorter or longer is refused here: "wal", "pass", "apple" or "leather wallet"
+/// are ordinary searches. What protects the owner is the results check: Return (which
+/// opens Spotlight's top hit) is not pressed while an app result naming a denied app is
+/// on the screen (see [`label_names_denied_app`]), and such a result is never tapped.
 pub fn search_names_denied_app(
     policy: &Policy,
     known_apps: &[AppInfo],
@@ -213,18 +207,35 @@ pub fn search_names_denied_app(
     if t.is_empty() {
         return None;
     }
-    denied_app_names(policy, known_apps).into_iter().find(|n| {
-        t == *n
-            || (n.chars().count() >= MIN_SEARCH_PREFIX && t.contains(n.as_str()))
-            || (t.chars().count() >= MIN_SEARCH_PREFIX && n.starts_with(t.as_str()))
-    })
+    denied_app_names(policy, known_apps)
+        .into_iter()
+        .find(|n| t == *n || t.strip_suffix("app") == Some(n.as_str()))
 }
 
-/// The denied app (folded name) that `label` names somewhere in it as whole words: a run
-/// of its words that, joined, equals the name ("Example Bank Balance" names "ExampleBank";
-/// "Mail" does not name "Mailchimp"). For labels on the home screen, Spotlight, the App
-/// Library and widgets, where tapping anything that mentions an app may open it.
+/// The denied app (folded name) that the home-screen **app result or app icon** labelled
+/// `label` is: the folded label equals the name ("Wallet"), or the label starts with the
+/// name followed by a comma (the accessibility form "Wallet, 2 notifications"). A web
+/// suggestion ("leather wallet"), a Settings row ("Wi-Fi Passwords, Settings") or another
+/// app's content ("Buy a new wallet, Reminders") that merely contains the word is not one.
 pub fn label_names_denied_app(
+    policy: &Policy,
+    known_apps: &[AppInfo],
+    label: &str,
+) -> Option<String> {
+    let whole = fold_name(label);
+    if whole.is_empty() {
+        return None;
+    }
+    let first = label.split_once(',').map(|(head, _)| fold_name(head));
+    denied_app_names(policy, known_apps)
+        .into_iter()
+        .find(|n| whole == *n || first.as_deref() == Some(n.as_str()))
+}
+
+/// The denied app (folded name) that a home-screen or Today-view **widget** labelled
+/// `label` belongs to: the widget's own label starts with the name as whole words
+/// ("Wallet Cards", "ExampleBank Balance").
+pub fn widget_names_denied_app(
     policy: &Policy,
     known_apps: &[AppInfo],
     label: &str,
@@ -234,16 +245,14 @@ pub fn label_names_denied_app(
         return None;
     }
     denied_app_names(policy, known_apps).into_iter().find(|n| {
-        (0..words.len()).any(|start| {
-            let mut joined = String::new();
-            for w in words.iter().skip(start) {
-                joined.push_str(w);
-                if joined.len() >= n.len() {
-                    break;
-                }
+        let mut joined = String::new();
+        for w in &words {
+            joined.push_str(w);
+            if joined.len() >= n.len() {
+                break;
             }
-            joined == *n
-        })
+        }
+        joined == *n
     })
 }
 

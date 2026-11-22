@@ -1,109 +1,126 @@
-//! The facts an owner's approval was given on, so the agent can tell, on a fresh look,
-//! whether the action is still the one approved.
+//! What an owner's approval was given on: the content of the whole screen, so the agent can
+//! tell, on a fresh look, whether the screen still shows what the owner approved.
+//!
+//! An earlier design compared a heuristic *neighbourhood* of the target (its row, the texts
+//! just above it, the amounts and the classifier's signals). Three reviews in a row found
+//! screens where what mattered sat outside it (a selected plan, a recipient header far
+//! above "Pay", amounts that swapped roles) and screens where a harmless live text inside
+//! it (an ETA) voided every approval. The rule is now the whole screen, compared exactly
+//! but for one normalisation of digits in texts that carry no amount.
 
-use jarvis_proto::{Action, CompactScreen, Element, Role};
+use jarvis_proto::{Action, CompactScreen, Element, Rect, Role};
 
-use crate::classify::{signal_texts, tap_point, type_target};
-use crate::evaluate::{amount_ranges, same_row};
-use crate::text::fold_fullwidth;
+use crate::app::is_springboard;
+use crate::classify::{tap_point, type_target};
+use crate::evaluate::same_row;
+use crate::text::{fold_fullwidth, has_money};
 
-/// Static texts before the target (in screen order, outside its row) that are read as its
-/// neighbourhood.
-pub const NEIGHBOURHOOD_TEXTS_BEFORE: usize = 2;
-/// How far above the target's top (in points) a text before it may sit and still count as
-/// its neighbourhood. Farther texts (a title, a clock, a "last updated" line) are not part
-/// of what distinguishes the control, so their changing does not void an approval.
-pub const NEIGHBOURHOOD_REACH: f64 = 150.0;
-/// Elements taller than this share of the screen height (scroll and web views, side
-/// bars, scroll indicators) overlap every row and are not part of a row's neighbourhood.
-const MAX_ROW_ITEM_HEIGHT: f64 = 0.5;
+/// Elements whose frame ends at or above this many points from the top of the screen are
+/// status-bar-like (a clock, a battery percentage): their digits may change.
+pub const STATUS_BAR_HEIGHT: f64 = 54.0;
 
-/// The state of the control an action acts on.
+/// One element of the screen content record. Frames are not part of it (content may
+/// scroll); secure values are never kept.
 #[derive(Clone, PartialEq)]
-struct TargetFacts {
-    fingerprint: u64,
+struct Fact {
+    index: u32,
     role: Role,
     label: String,
     value: Option<String>,
     selected: bool,
     enabled: bool,
+    secure: bool,
+    /// Whether its texts compare exactly even without an amount (see [`compares_exactly`]).
+    exact: bool,
 }
 
-/// What an approval was given on: captured from the screen the question was asked about
-/// and compared, as a whole, with the same facts read from the fresh screen before the
-/// approved action is sent. Any difference means the screen no longer shows what the
-/// owner approved.
+/// The **screen content record** an approval was given on, captured from the screen the
+/// question was asked about and compared with the same record of the fresh screen before
+/// the approved action is sent.
 ///
-/// * the app;
-/// * the target control: fingerprint, role, label, value, selected (on/off) state and
-///   enabled flag;
-/// * its neighbourhood: the text of every other element in its row band (vertical extent
-///   overlapping the target's; this includes the cells and groups that contain it, but
-///   not screen-high containers), and the nearest [`NEIGHBOURHOOD_TEXTS_BEFORE`] static
-///   texts before it in screen order within [`NEIGHBOURHOOD_REACH`] points above it: what
-///   tells one "Buy" from another;
-/// * every money amount on the screen, as a sorted list of normalised tokens;
-/// * the texts the classifier read to decide the category (every element that carries a
-///   context signal: risky wording, prices, payment or settings words), taken from the
-///   classifier's own context reading so the two cannot drift.
+/// It holds the app, the keyboard's Return-key label (the screen cue the classifier reads)
+/// and, for every element of the compact screen in order: role, label, value (never a
+/// secure field's), selected/checked state, enabled flag and secure flag. Frames are not
+/// part of it, so a list that only scrolled keeps the approval (the agent re-plans the
+/// coordinates on the fresh screen); the target is located on the fresh screen by its
+/// position in the record, so a twin cannot take its place.
 ///
-/// Elements far from the target that carry no signal (a clock, a spinner, a status line)
-/// are not part of it, so their changing does not void an approval.
+/// The fresh record must **equal** this one after a single normalisation: in a text that
+/// contains **no money amount**, every run of digits compares equal to any other ("Pickup
+/// in 3 min" = "Pickup in 2 min", "9:58" = "9:41", "45%" = "46%"). That tolerance applies
+/// only to free-standing static texts and status-bar-like elements (and, on the home
+/// screen, to the badge part after an icon's first comma: "Mail, 3 unread"); everything
+/// else compares exactly, digits included: the target itself, every element in the
+/// target's row band, selected or focused elements, text inputs and adjustable controls
+/// (a stepper's or slider's value), and any text that contains an amount. Element count
+/// and order, roles, states and every non-digit character compare exactly. (On the home
+/// screen a row of icons is not one item: only the target itself compares exactly there.)
+///
+/// Trade-off: a non-money quantity in a free-standing static text away from the target
+/// ("2 tickets" → "9 tickets" in a summary line above the button) may change without
+/// voiding the approval. A quantity shown in the target's row, in a stepper or a text
+/// field, or next to an amount, does void it.
 ///
 /// `Debug` shows counts only: the facts are screen text.
 #[derive(Clone, PartialEq)]
 pub struct ApprovalContext {
     app: String,
-    target: Option<TargetFacts>,
-    neighbourhood: Vec<String>,
-    before: Vec<String>,
-    amounts: Vec<String>,
-    signals: Vec<String>,
+    return_key: Option<String>,
+    springboard: bool,
+    facts: Vec<Fact>,
+    target: Option<u32>,
 }
 
 impl std::fmt::Debug for ApprovalContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ApprovalContext")
+            .field("elements", &self.facts.len())
             .field("has_target", &self.target.is_some())
-            .field("neighbourhood", &self.neighbourhood.len())
-            .field("before", &self.before.len())
-            .field("amounts", &self.amounts.len())
-            .field("signals", &self.signals.len())
             .finish_non_exhaustive()
     }
 }
 
 impl ApprovalContext {
-    /// Names of the facts that differ between `self` (captured when the question was
-    /// asked) and `action` on the fresh `screen` (empty when the approval still holds):
-    /// "app", "target", "neighbourhood", "amounts", "context". The texts before the
-    /// target are compared by position, not distance: the fresh screen must show the same
-    /// texts as the nearest ones before the target (as many as were captured), wherever
-    /// they moved, so a control that only shifted keeps its approval.
-    pub fn differences(&self, action: &Action, screen: &CompactScreen) -> Vec<&'static str> {
-        let now = build(action, screen, Some(self.before.len()));
+    /// What differs between `self` (captured when the question was asked) and `action` on
+    /// the fresh `screen` (empty when the approval still holds): "app", "return key",
+    /// "element count", "element N" (its role, state or text; N is the element number) and
+    /// "target". The descriptions never quote screen text.
+    pub fn differences(&self, action: &Action, screen: &CompactScreen) -> Vec<String> {
+        let now = record(action, screen);
         let mut out = Vec::new();
         if !self.app.trim().eq_ignore_ascii_case(now.app.trim()) {
-            out.push("app");
+            out.push("app".to_owned());
+        }
+        if self.return_key != now.return_key {
+            out.push("return key".to_owned());
+        }
+        if self.facts.len() != now.facts.len() {
+            out.push("element count".to_owned());
+        }
+        for (a, b) in self.facts.iter().zip(&now.facts) {
+            if !same_fact(a, b, self.springboard) {
+                out.push(format!("element {}", a.index));
+            }
         }
         if self.target != now.target {
-            out.push("target");
-        }
-        if self.neighbourhood != now.neighbourhood || self.before != now.before {
-            out.push("neighbourhood");
-        }
-        if self.amounts != now.amounts {
-            out.push("amounts");
-        }
-        if self.signals != now.signals {
-            out.push("context");
+            out.push("target".to_owned());
         }
         out
     }
 
-    /// Whether `action` on the fresh `screen` is still exactly what was approved.
+    /// Whether `action` on the fresh `screen` still acts on exactly what was approved.
+    /// Linear in the number of elements.
     pub fn holds_on(&self, action: &Action, screen: &CompactScreen) -> bool {
-        self.differences(action, screen).is_empty()
+        let now = record(action, screen);
+        self.app.trim().eq_ignore_ascii_case(now.app.trim())
+            && self.return_key == now.return_key
+            && self.target == now.target
+            && self.facts.len() == now.facts.len()
+            && self
+                .facts
+                .iter()
+                .zip(&now.facts)
+                .all(|(a, b)| same_fact(a, b, self.springboard))
     }
 }
 
@@ -118,101 +135,144 @@ fn target_of<'a>(action: &Action, screen: &'a CompactScreen) -> Option<&'a Eleme
     }
 }
 
-/// An element's text for comparison: label and value (text inputs included, since what a
-/// field holds is part of what was approved; secure fields have none).
-fn fact_text(el: &Element) -> String {
-    let value = if el.secure { None } else { el.value.as_deref() };
-    match value {
-        Some(v) if !v.is_empty() => format!("{} = {}", el.label.trim(), v.trim()),
-        _ => el.label.trim().to_owned(),
+/// Whether `role` is a control whose value is set by the owner: text inputs and adjustable
+/// controls (sliders, switches, pickers, steppers).
+fn holds_a_setting(role: &Role) -> bool {
+    match role {
+        Role::Slider | Role::Switch | Role::Picker => true,
+        Role::Other(name) => {
+            let n = name.to_lowercase();
+            [
+                "stepper",
+                "slider",
+                "switch",
+                "toggle",
+                "picker",
+                "segmented",
+            ]
+            .iter()
+            .any(|k| n.contains(k))
+        }
+        r => r.is_text_input(),
     }
 }
 
-/// The row texts of `el` (see [`ApprovalContext`]).
-fn row_band(el: &Element, screen: &CompactScreen) -> Vec<String> {
-    let tall = screen.size.height * MAX_ROW_ITEM_HEIGHT;
-    screen
-        .elements
-        .iter()
-        .filter(|e| e.index != el.index && e.role != Role::Key && !e.frame.is_empty())
-        // Screen-high containers, side bars and scroll indicators overlap every row and
-        // say nothing about this one.
-        .filter(|e| !(tall.is_finite() && tall > 0.0 && e.frame.height > tall))
-        .filter(|e| same_row(&e.frame, &el.frame))
-        .map(fact_text)
-        .collect()
-}
-
-/// The static texts before `el` (screen order, above its row): the nearest `count` of
-/// them, or, when `count` is `None`, the nearest [`NEIGHBOURHOOD_TEXTS_BEFORE`] within
-/// [`NEIGHBOURHOOD_REACH`] points above it.
-fn texts_before(el: &Element, screen: &CompactScreen, count: Option<usize>) -> Vec<String> {
-    let before: Vec<String> = screen
-        .elements
-        .iter()
-        .take_while(|e| e.index != el.index)
-        .filter(|e| e.role == Role::StaticText && !e.frame.is_empty())
-        .filter(|e| e.frame.max_y() <= el.frame.y)
-        .filter(|e| count.is_some() || el.frame.y - e.frame.max_y() <= NEIGHBOURHOOD_REACH)
-        .map(fact_text)
-        .collect();
-    let keep = count.unwrap_or(NEIGHBOURHOOD_TEXTS_BEFORE);
-    let skip = before.len().saturating_sub(keep);
-    before.into_iter().skip(skip).collect()
-}
-
-/// Every money amount on `screen`, normalised (look-alike digits folded, whitespace
-/// dropped, lowercase) and sorted.
-fn amounts(screen: &CompactScreen) -> Vec<String> {
-    let mut out = Vec::new();
-    for e in screen.elements.iter().filter(|e| e.role != Role::Key) {
-        let text = if e.secure {
-            e.label.clone()
-        } else {
-            match e.value.as_deref() {
-                Some(v) if !v.is_empty() => format!("{} {v}", e.label),
-                _ => e.label.clone(),
-            }
-        };
-        let chars: Vec<char> = text.chars().collect();
-        for (a, b) in amount_ranges(&chars) {
-            let token: String = chars
-                .get(a..b)
-                .unwrap_or_default()
-                .iter()
-                .map(|c| fold_fullwidth(*c))
-                .filter(|c| !c.is_whitespace())
-                .flat_map(char::to_lowercase)
-                .collect();
-            out.push(token);
+/// Whether `el`'s texts compare exactly (digits included) even when they show no amount:
+/// it is the target or in the target's row band, selected or focused, a text input or an
+/// adjustable control, or anything but a free-standing static text or a status-bar-like
+/// element.
+fn compares_exactly(el: &Element, target: Option<&Rect>, springboard: bool) -> bool {
+    if el.selected || el.focused || holds_a_setting(&el.role) {
+        return true;
+    }
+    // The target's row band (on the home screen a row of icons is independent apps, so
+    // only the target itself, compared exactly by `record`).
+    if let Some(t) = target.filter(|_| !springboard) {
+        if (*t == el.frame || same_row(t, &el.frame)) && !el.frame.is_empty() {
+            return true;
         }
     }
-    out.sort();
+    let status_bar = !el.frame.is_empty() && el.frame.max_y() <= STATUS_BAR_HEIGHT;
+    // Home-screen icons: the badge after the first comma is status (see `same_text`).
+    !(el.role == Role::StaticText || status_bar || springboard)
+}
+
+/// The screen content record of `screen` for `action`.
+fn record(action: &Action, screen: &CompactScreen) -> ApprovalContext {
+    let target = target_of(action, screen);
+    let target_frame = target.map(|t| t.frame);
+    let springboard = is_springboard(&screen.app_bundle_id);
+    let facts = screen
+        .elements
+        .iter()
+        .map(|e| Fact {
+            index: e.index,
+            role: e.role.clone(),
+            label: e.label.clone(),
+            value: if e.secure { None } else { e.value.clone() },
+            selected: e.selected,
+            enabled: e.enabled,
+            secure: e.secure,
+            exact: target.is_some_and(|t| t.index == e.index)
+                || compares_exactly(e, target_frame.as_ref(), springboard),
+        })
+        .collect();
+    ApprovalContext {
+        app: screen.app_bundle_id.clone(),
+        return_key: screen.cues.return_key.clone(),
+        springboard,
+        facts,
+        target: target.map(|t| t.index),
+    }
+}
+
+/// `text` with every run of digits replaced by one `#`.
+fn digits_folded(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_digits = false;
+    for c in text.chars() {
+        let f = fold_fullwidth(c);
+        if f.is_numeric() {
+            if !in_digits {
+                out.push('#');
+            }
+            in_digits = true;
+        } else {
+            out.push(c);
+            in_digits = false;
+        }
+    }
     out
 }
 
-/// The [`ApprovalContext`] of `action` on `screen`, captured when the owner is asked.
-pub fn approval_context(action: &Action, screen: &CompactScreen) -> ApprovalContext {
-    build(action, screen, None)
+/// Whether two texts are the same under the record's normalisation: exactly, or, when
+/// `tolerant` and neither carries a money amount, with digit runs folded. On the home
+/// screen a tolerant text keeps its part before the first comma (the app's name) exact.
+fn same_text(a: &str, b: &str, tolerant: bool, springboard_icon: bool) -> bool {
+    if a == b {
+        return true;
+    }
+    if !tolerant || has_money(a) || has_money(b) {
+        return false;
+    }
+    if springboard_icon {
+        let (ha, ta) = a.split_once(',').unwrap_or((a, ""));
+        let (hb, tb) = b.split_once(',').unwrap_or((b, ""));
+        return ha == hb && digits_folded(ta) == digits_folded(tb);
+    }
+    digits_folded(a) == digits_folded(b)
 }
 
-fn build(action: &Action, screen: &CompactScreen, before_count: Option<usize>) -> ApprovalContext {
-    let target = target_of(action, screen);
-    let mut signals: Vec<String> = signal_texts(screen);
-    signals.sort();
-    ApprovalContext {
-        app: screen.app_bundle_id.clone(),
-        target: target.map(|t| TargetFacts {
-            fingerprint: t.fingerprint,
-            role: t.role.clone(),
-            label: t.label.clone(),
-            value: if t.secure { None } else { t.value.clone() },
-            selected: t.selected,
-            enabled: t.enabled,
-        }),
-        neighbourhood: target.map_or_else(Vec::new, |t| row_band(t, screen)),
-        before: target.map_or_else(Vec::new, |t| texts_before(t, screen, before_count)),
-        amounts: amounts(screen),
-        signals,
+/// Whether `a` (asked) and `b` (fresh) are the same element of the record.
+fn same_fact(a: &Fact, b: &Fact, springboard: bool) -> bool {
+    if a.role != b.role
+        || a.selected != b.selected
+        || a.enabled != b.enabled
+        || a.secure != b.secure
+        || a.value.is_some() != b.value.is_some()
+    {
+        return false;
     }
+    if a.label == b.label && a.value == b.value {
+        return true;
+    }
+    let tolerant = !a.exact && !b.exact;
+    let icon = springboard && a.role != Role::StaticText;
+    // An amount anywhere in the element (label and value read together) makes both exact.
+    let joined = |f: &Fact| match &f.value {
+        Some(v) => format!("{} {v}", f.label),
+        None => f.label.clone(),
+    };
+    let tolerant = tolerant && !has_money(&joined(a)) && !has_money(&joined(b));
+    same_text(&a.label, &b.label, tolerant, icon)
+        && match (&a.value, &b.value) {
+            (Some(x), Some(y)) => same_text(x, y, tolerant, false),
+            _ => true,
+        }
+}
+
+/// The [`ApprovalContext`] (screen content record) of `action` on `screen`, captured when
+/// the owner is asked.
+pub fn approval_context(action: &Action, screen: &CompactScreen) -> ApprovalContext {
+    record(action, screen)
 }

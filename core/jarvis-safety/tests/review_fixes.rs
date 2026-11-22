@@ -1088,12 +1088,19 @@ fn a_generic_only_bundle_id_does_not_deny_names_with_that_word() {
     assert!(check_app(&p, "ExampleBank").is_denied());
 }
 
-/// The Spotlight and home-screen label rules (see `search_names_denied_app` and
-/// `label_names_denied_app`).
+/// The Spotlight and home-screen rules (third review): typing is refused only for the
+/// denied name itself (or the name plus "app"); an app result or icon names a denied app
+/// only when its label is the name, or the name followed by a comma; a widget when its own
+/// label starts with the name. Prefixes and labels that merely contain the word do not
+/// count. (Changed expectations: "Exa", "my example bank app", "mail", "Fortune V" and
+/// "pass" are no longer refused before typing; "Example Bank Balance", "Open Mailchimp"
+/// and "Fortune Vault widget" are no longer app results; the results check covers them.)
 #[test]
 fn search_text_and_labels_that_name_a_denied_app() {
     use jarvis_proto::{AppInfo, AppRule, TrustLevel};
-    use jarvis_safety::{denied_app_names, label_names_denied_app, search_names_denied_app};
+    use jarvis_safety::{
+        denied_app_names, label_names_denied_app, search_names_denied_app, widget_names_denied_app,
+    };
     let mut p = Policy::default();
     p.app_rules
         .push(AppRule::new("com.examplebank.mobile", TrustLevel::Denied).with_name("Example Bank"));
@@ -1116,20 +1123,26 @@ fn search_text_and_labels_that_name_a_denied_app() {
         "Example Bank",
         "examplebank",
         "EXAMPLE-BANK",
-        "Exa",
-        "my example bank app",
-        "mail",
-        "Fortune V",
-        "pass",
+        "example bank app",
+        "Mailchimp",
+        "Fortune Vault",
+        "Wallet",
+        "wallet app",
+        "Passwords",
     ] {
         assert!(search(t).is_some(), "{t}");
     }
     for t in [
         "weather",
+        "Exa",
         "Ex",
+        "my example bank app",
         "Example Mail",
         "Bank",
         "banking",
+        "mail",
+        "Fortune V",
+        "pass",
         "Notes",
         "",
     ] {
@@ -1137,20 +1150,104 @@ fn search_text_and_labels_that_name_a_denied_app() {
     }
     let label = |t: &str| label_names_denied_app(&p, &apps, t);
     for t in [
-        "Example Bank Balance",
+        "ExampleBank",
+        "Example Bank",
         "ExampleBank, 2 notifications",
-        "Open Mailchimp",
-        "Fortune Vault widget",
+        "Mailchimp",
+        "Fortune Vault, Recently added",
+        "Wallet",
     ] {
         assert!(label(t).is_some(), "{t}");
     }
-    for t in ["Mail", "Bank", "Example", "Examples Banking", "Notes"] {
+    for t in [
+        "Example Bank Balance",
+        "Open Mailchimp",
+        "Mail",
+        "Bank",
+        "Example",
+        "Examples Banking",
+        "Notes",
+        "",
+    ] {
         assert!(label(t).is_none(), "{t}: {:?}", label(t));
+    }
+    let widget = |t: &str| widget_names_denied_app(&p, &apps, t);
+    for t in [
+        "Fortune Vault widget",
+        "Example Bank Balance",
+        "Wallet Cards",
+    ] {
+        assert!(widget(t).is_some(), "{t}");
+    }
+    for t in ["Weather", "My Example Bank", "Mail", "Calendar"] {
+        assert!(widget(t).is_none(), "{t}: {:?}", widget(t));
     }
 }
 
-/// The approval context: unchanged facts hold; a far, signal-free text (a clock) may
-/// change; a text in the target's row, the target's value or any amount may not.
+/// Third review: under the default deny list (Passwords, Wallet) ordinary searches and
+/// labels that merely contain a denied app's name were refused or held Return back.
+/// Table-driven, both ways, including the lists the review printed.
+#[test]
+fn default_deny_list_leaves_ordinary_searches_and_labels_alone() {
+    use jarvis_safety::{label_names_denied_app, search_names_denied_app, widget_names_denied_app};
+    let p = Policy::default();
+    for q in [
+        "app",
+        "apple",
+        "Apple",
+        "pas",
+        "pass",
+        "password",
+        "wal",
+        "wall",
+        "passport",
+        "wallpaper",
+        "apple music",
+        "app store",
+        "walmart",
+        "wifi password",
+        "leather wallet",
+    ] {
+        assert_eq!(search_names_denied_app(&p, &[], q), None, "{q}");
+    }
+    for q in [
+        "Wallet",
+        "wallet",
+        "WALLET APP",
+        "Passwords",
+        "Apple Passwords",
+    ] {
+        assert!(search_names_denied_app(&p, &[], q).is_some(), "{q}");
+    }
+    for l in [
+        "leather wallet",
+        "Wi-Fi Passwords, Settings",
+        "Buy a new wallet, Reminders",
+        "wallet - Search the web",
+        "Passwords and security, Settings",
+        "Wallpaper, Settings",
+        "Wallet & Apple Pay, Settings",
+    ] {
+        assert_eq!(label_names_denied_app(&p, &[], l), None, "{l}");
+    }
+    for l in [
+        "Wallet",
+        "Passwords",
+        "Wallet, 1 notification",
+        "Passwords, App",
+    ] {
+        assert!(label_names_denied_app(&p, &[], l).is_some(), "{l}");
+    }
+    assert!(widget_names_denied_app(&p, &[], "Wallet Cards").is_some());
+    assert_eq!(
+        widget_names_denied_app(&p, &[], "Leather wallet deals"),
+        None
+    );
+}
+
+/// The screen content record (third review): unchanged screens hold; a digit change in a
+/// free-standing text far from the target (a clock) holds; any other change does not, and
+/// `differences` names it without quoting screen text.
 #[test]
 fn approval_context_holds_only_on_the_same_facts() {
     use jarvis_safety::approval_context;
@@ -1175,18 +1272,25 @@ fn approval_context_holds_only_on_the_same_facts() {
     assert!(asked.holds_on(&a, &s), "{:?}", asked.differences(&a, &s));
     let mut s = base();
     s.elements[1].label = "Wool socks".to_owned();
-    assert_eq!(asked.differences(&a, &s), ["neighbourhood"]);
+    assert_eq!(asked.differences(&a, &s), ["element 2"]);
     let mut s = base();
     s.elements[4].label = "Cart total $512.00".to_owned();
-    assert!(asked.differences(&a, &s).contains(&"amounts"));
+    assert_eq!(asked.differences(&a, &s), ["element 5"]);
     let mut s = base();
     s.elements[3].value = Some("2".to_owned());
-    assert!(asked.differences(&a, &s).contains(&"target"));
+    assert_eq!(asked.differences(&a, &s), ["element 4"]);
     let mut s = base();
     s.elements[3].selected = true;
-    assert_eq!(asked.differences(&a, &s), ["target"]);
+    assert_eq!(asked.differences(&a, &s), ["element 4"]);
+    // Frames are not part of the record: the same content scrolled holds.
+    let mut s = base();
+    for e in &mut s.elements {
+        e.frame.y -= 120.0;
+    }
+    assert!(asked.holds_on(&a, &s), "{:?}", asked.differences(&a, &s));
     // Debug shows counts, not screen text.
     assert!(!format!("{asked:?}").contains("Socks"));
+    assert!(!format!("{:?}", asked.differences(&a, &s)).contains("Socks"));
 }
 
 #[test]
@@ -1222,4 +1326,315 @@ fn a_long_label_keeps_both_ends_and_its_amount_in_the_summary() {
     // Short labels are untouched.
     let s = app_screen(vec![button(1, "Pay $5")]);
     assert_eq!(summarize(&tap(1), &s, None), "Tap \"Pay $5\" in Example");
+}
+
+// --- Third review: the approval covers the whole screen ------------------------------------
+
+fn at5(mut e: jarvis_proto::Element, x: f64, y: f64, w: f64, h: f64) -> jarvis_proto::Element {
+    e.frame = Rect::new(x, y, w, h);
+    e
+}
+
+fn holds(
+    before: &jarvis_proto::CompactScreen,
+    a: &Action,
+    after: &jarvis_proto::CompactScreen,
+) -> bool {
+    jarvis_safety::approval_context(a, before).holds_on(a, after)
+}
+
+/// Plans as selectable buttons, "Subscribe" at the bottom.
+fn plans(monthly_selected: bool) -> jarvis_proto::CompactScreen {
+    let mut m = at5(
+        el(1, Role::Button, "Monthly, $4.99"),
+        16.0,
+        150.0,
+        361.0,
+        50.0,
+    );
+    let mut y = at5(
+        el(2, Role::Button, "Yearly, $49.99"),
+        16.0,
+        220.0,
+        361.0,
+        50.0,
+    );
+    m.selected = monthly_selected;
+    y.selected = !monthly_selected;
+    screen(
+        "com.example.app",
+        "Example",
+        vec![
+            at5(label(0, "Choose a plan"), 16.0, 80.0, 361.0, 30.0),
+            m,
+            y,
+            at5(button(3, "Subscribe"), 16.0, 700.0, 361.0, 50.0),
+        ],
+    )
+}
+
+/// Probe 3.1: approved with Monthly selected; Yearly is selected at the fresh look.
+#[test]
+fn a_plan_selection_that_flipped_voids_the_approval() {
+    assert!(holds(&plans(true), &tap(3), &plans(true)));
+    assert!(!holds(&plans(true), &tap(3), &plans(false)));
+}
+
+fn pay_to(who: &str) -> jarvis_proto::CompactScreen {
+    screen(
+        "com.example.app",
+        "Example",
+        vec![
+            at5(label(0, who), 16.0, 100.0, 361.0, 40.0),
+            at5(label(1, "$50.00"), 16.0, 300.0, 361.0, 60.0),
+            at5(
+                el(2, Role::TextField, "What's it for?"),
+                16.0,
+                420.0,
+                361.0,
+                40.0,
+            ),
+            at5(button(3, "Pay"), 16.0, 700.0, 361.0, 50.0),
+        ],
+    )
+}
+
+/// Probe 3.2: a recipient header 600 pt above "Pay" changes from "Mom" to "Unknown Seller".
+#[test]
+fn a_recipient_header_far_above_pay_that_changed_voids_the_approval() {
+    assert!(holds(&pay_to("Mom"), &tap(3), &pay_to("Mom")));
+    assert!(!holds(&pay_to("Mom"), &tap(3), &pay_to("Unknown Seller")));
+}
+
+/// Amounts in bare texts, labelled by their row: total and gift wrap swap values.
+fn swapped(total: &str, item: &str) -> jarvis_proto::CompactScreen {
+    screen(
+        "com.example.app",
+        "Example",
+        vec![
+            at5(label(0, "Total"), 16.0, 150.0, 200.0, 30.0),
+            at5(label(1, total), 250.0, 150.0, 120.0, 30.0),
+            at5(label(2, "Gift wrap"), 16.0, 300.0, 200.0, 30.0),
+            at5(label(3, item), 250.0, 300.0, 120.0, 30.0),
+            at5(label(4, "Shipping $0.00"), 16.0, 640.0, 361.0, 30.0),
+            at5(button(5, "Pay"), 16.0, 700.0, 361.0, 50.0),
+        ],
+    )
+}
+
+/// Probe 3.3: "Total $5.00 / Gift wrap $500.00" swap values. The approval does not hold, and
+/// (changed expectation: the probe asserted the summaries were equal, proving the owner
+/// could not tell) the summaries now differ, because each amount is named with its row.
+#[test]
+fn amounts_that_swap_roles_void_the_approval_and_read_differently() {
+    let before = swapped("$5.00", "$500.00");
+    let after = swapped("$500.00", "$5.00");
+    let s_before = summarize(&tap(5), &before, None);
+    let s_after = summarize(&tap(5), &after, None);
+    assert_eq!(
+        s_before,
+        "Tap \"Pay\" in Example. Amounts on screen: Gift wrap $500.00; Total $5.00; Shipping $0.00"
+    );
+    assert_ne!(s_before, s_after);
+    assert!(!holds(&before, &tap(5), &after));
+}
+
+/// A ride app: the live ETA sits right above "Request" (well within the old 150 pt reach).
+fn ride(eta: &str) -> jarvis_proto::CompactScreen {
+    screen(
+        "com.example.app",
+        "Example",
+        vec![
+            at5(label(0, "Comfort $23.45"), 16.0, 560.0, 361.0, 30.0),
+            at5(label(1, eta), 16.0, 600.0, 361.0, 30.0),
+            at5(button(2, "Request Comfort"), 16.0, 700.0, 361.0, 50.0),
+        ],
+    )
+}
+
+/// Probe 3.4: a live ETA ticking near the target no longer voids every ride approval; a
+/// changed word, or a changed price, still does.
+#[test]
+fn a_live_eta_near_the_target_keeps_the_approval() {
+    let asked = jarvis_safety::approval_context(&tap(2), &ride("Pickup in 3 min"));
+    let after = ride("Pickup in 2 min");
+    assert!(
+        asked.holds_on(&tap(2), &after),
+        "{:?}",
+        asked.differences(&tap(2), &after)
+    );
+    assert!(asked.holds_on(&tap(2), &ride("Pickup in 12 min")));
+    assert!(!asked.holds_on(&tap(2), &ride("Pickup in 3 hours")));
+    let mut pricier = ride("Pickup in 3 min");
+    pricier.elements[0].label = "Comfort $33.45".to_owned();
+    assert!(!asked.holds_on(&tap(2), &pricier));
+}
+
+fn pay_page(extra: Option<jarvis_proto::Element>) -> jarvis_proto::CompactScreen {
+    let mut els = vec![
+        at5(label(1, "9:41"), 16.0, 14.0, 60.0, 20.0),
+        at5(label(2, "Checkout"), 16.0, 70.0, 361.0, 40.0),
+        at5(label(3, "Total $42.10"), 16.0, 200.0, 361.0, 30.0),
+        at5(label(4, "Reserved for 9:58"), 16.0, 640.0, 361.0, 30.0),
+        at5(button(5, "Pay"), 16.0, 700.0, 361.0, 50.0),
+    ];
+    if let Some(e) = extra {
+        els.insert(2, e);
+    }
+    for (k, e) in els.iter_mut().enumerate() {
+        e.index = k as u32 + 1;
+    }
+    screen("com.example.shop", "Shop", els)
+}
+
+fn pay_on(s: &jarvis_proto::CompactScreen) -> Action {
+    tap(s.elements.iter().find(|e| e.label == "Pay").unwrap().index)
+}
+
+/// Digits of free-standing texts may tick (a countdown right above the target, a status-bar
+/// clock); a banner that appears or disappears, or a changed word, voids the approval.
+#[test]
+fn the_record_tolerates_ticking_digits_but_not_new_or_missing_elements() {
+    let before = pay_page(None);
+    let a = pay_on(&before);
+    let mut ticked = pay_page(None);
+    ticked.elements[0].label = "9:42".to_owned();
+    ticked.elements[3].label = "Reserved for 9:41".to_owned();
+    assert!(holds(&before, &a, &ticked));
+    // A banner appears (or, the other way round, disappears).
+    let banner = at5(label(0, "Price updated"), 16.0, 120.0, 361.0, 30.0);
+    let with_banner = pay_page(Some(banner));
+    assert!(!holds(&before, &a, &with_banner));
+    assert!(!holds(&with_banner, &pay_on(&with_banner), &before));
+    // A changed word far from the target (the previous design let it pass).
+    let mut renamed = pay_page(None);
+    renamed.elements[1].label = "Donation".to_owned();
+    assert!(!holds(&before, &a, &renamed));
+    // The list scrolled: the same content in other frames holds.
+    let mut scrolled = pay_page(None);
+    for e in scrolled.elements.iter_mut().skip(1) {
+        e.frame.y -= 60.0;
+    }
+    assert!(holds(&before, &a, &scrolled));
+}
+
+/// Non-money quantities compare exactly where they matter: in a stepper, in the target's
+/// row, in a selected or focused element. A free-standing static text away from the target
+/// keeps the digit tolerance (the documented trade-off).
+#[test]
+fn quantities_compare_exactly_in_steppers_and_the_targets_row() {
+    let base = |stepper: &str, row: &str, far: &str| {
+        let mut st = at5(
+            el(2, Role::Other("Stepper".into()), "Quantity"),
+            16.0,
+            300.0,
+            200.0,
+            40.0,
+        );
+        st.value = Some(stepper.to_owned());
+        screen(
+            "com.example.shop",
+            "Shop",
+            vec![
+                at5(label(1, far), 16.0, 100.0, 361.0, 30.0),
+                st,
+                at5(label(3, row), 16.0, 700.0, 150.0, 50.0),
+                at5(button(4, "Buy tickets"), 200.0, 700.0, 177.0, 50.0),
+            ],
+        )
+    };
+    let before = base("1", "2 tickets", "Quantity 1");
+    assert!(!holds(
+        &before,
+        &tap(4),
+        &base("2", "2 tickets", "Quantity 1")
+    ));
+    assert!(!holds(
+        &before,
+        &tap(4),
+        &base("1", "9 tickets", "Quantity 1")
+    ));
+    // Trade-off: a far, free-standing static text's quantity may change.
+    assert!(holds(
+        &before,
+        &tap(4),
+        &base("1", "2 tickets", "Quantity 9")
+    ));
+    // A selected element compares exactly.
+    let mut sel = base("1", "2 tickets", "Quantity 1");
+    sel.elements[0].selected = true;
+    let mut sel_after = sel.clone();
+    sel_after.elements[0].label = "Quantity 9".to_owned();
+    assert!(!holds(&sel, &tap(4), &sel_after));
+}
+
+/// The record is linear: a 5,000-element screen is captured and compared in well under a
+/// second in a debug build.
+#[test]
+fn the_screen_record_of_a_huge_screen_is_cheap() {
+    let mut els = Vec::new();
+    for i in 0..5000u32 {
+        let role = if i % 3 == 0 {
+            Role::Button
+        } else {
+            Role::StaticText
+        };
+        let text = if i % 7 == 0 {
+            format!("Item {i} $1{i}.00 total pay")
+        } else {
+            format!("Item {i} description")
+        };
+        els.push(at5(
+            el(i, role, &text),
+            16.0,
+            f64::from(i % 20) * 40.0,
+            361.0,
+            36.0,
+        ));
+    }
+    let s = app_screen(els);
+    let t = Instant::now();
+    let ctx = jarvis_safety::approval_context(&tap(3), &s);
+    let record = t.elapsed();
+    let t = Instant::now();
+    assert!(ctx.holds_on(&tap(3), &s));
+    let compare = t.elapsed();
+    println!("5,000 elements: record {record:?}, compare {compare:?}");
+    assert!(
+        record + compare < Duration::from_millis(1500),
+        "{record:?} + {compare:?}"
+    );
+}
+
+/// On the home screen an icon's badge (after its first comma) may tick; its name may not,
+/// and the tapped icon itself compares exactly.
+#[test]
+fn home_screen_badges_may_tick_but_names_may_not() {
+    let home = |mail: &str, weather: &str| {
+        screen(
+            "com.apple.springboard",
+            "Home",
+            vec![
+                at5(button(1, mail), 20.0, 100.0, 70.0, 90.0),
+                at5(button(2, weather), 110.0, 100.0, 70.0, 90.0),
+                at5(button(3, "Settings"), 200.0, 100.0, 70.0, 90.0),
+            ],
+        )
+    };
+    let before = home("Mail, 3 unread", "Weather, 72°");
+    assert!(holds(
+        &before,
+        &tap(3),
+        &home("Mail, 4 unread", "Weather, 71°")
+    ));
+    assert!(!holds(
+        &before,
+        &tap(3),
+        &home("Mall, 3 unread", "Weather, 72°")
+    ));
+    assert!(!holds(
+        &before,
+        &tap(1),
+        &home("Mail, 4 unread", "Weather, 72°")
+    ));
 }

@@ -13,7 +13,8 @@ use common::*;
 use jarvis_memory::MemoryStore;
 use jarvis_proto::fixtures::{keyboard, node, rect, screen, settings_screen, text, IPHONE_SIZE};
 use jarvis_proto::{
-    AppRule, Key, OutcomeStatus, RiskCategory, Role, RunnerCommand, Screen, TrustLevel, UiNode,
+    AppRule, Effect, Event, Key, OutcomeStatus, RiskCategory, Role, RunnerCommand, Screen,
+    TrustLevel, UiNode,
 };
 use jarvis_safety::{SCREEN_BLOCK_END, SCREEN_BLOCK_START};
 
@@ -1009,16 +1010,18 @@ fn typed_anything(acts: &[RunnerCommand]) -> bool {
         .any(|a| matches!(a, RunnerCommand::TypeText { .. }))
 }
 
-/// Typing a denied app's name (or a start of it, or text containing it) into the home
-/// screen's search, with or without Return, is refused before anything is typed.
+/// Typing a denied app's name (or the name and "app") into the home screen's search, with
+/// or without Return, is refused before anything is typed. (Third review: a start of the
+/// name, "Exa", or text containing it, "open ExampleBank now", is no longer refused here;
+/// the results check holds their Return back, see
+/// `spotlight_prefix_searches_are_typed_but_return_waits_for_the_results`.)
 #[test]
 fn spotlight_search_for_a_denied_app_is_refused_before_typing() {
     for (text, submit) in [
         ("ExampleBank", true),
         ("examplebank", false),
         ("Example Bank", true),
-        ("Exa", true),
-        ("open ExampleBank now", true),
+        ("examplebank app", true),
     ] {
         let mut c = config();
         deny_bank(&mut c, "ExampleBank");
@@ -1074,18 +1077,23 @@ fn spotlight_return_is_not_pressed_when_a_result_names_a_denied_app() {
     );
 }
 
-/// A result, widget or suggestion whose label mentions a denied app as whole words is not
-/// tapped, even when the label is more than the name ("Example Bank Balance").
+/// An app result or icon of a denied app ("ExampleBank", "ExampleBank, 2 notifications")
+/// and a widget of it ("Example Bank Balance", value "Widget") are not tapped. (Third
+/// review: a label that merely contains the name, "Open ExampleBank", is no longer refused;
+/// see `ordinary_home_screen_labels_that_mention_a_denied_app_are_tapped`.)
 #[test]
 fn a_home_screen_label_that_names_a_denied_app_is_not_tapped() {
-    for label in [
-        "Example Bank Balance",
-        "ExampleBank, 2 notifications",
-        "Open ExampleBank",
+    for (label, widget) in [
+        ("ExampleBank", false),
+        ("ExampleBank, 2 notifications", false),
+        ("Example Bank Balance", true),
     ] {
         let mut c = config();
         deny_bank(&mut c, "ExampleBank");
-        let home = spotlight(None, &[label]);
+        let mut home = spotlight(None, &[label]);
+        if widget {
+            home.root.children[0].children[1].value = Some("Widget".to_owned());
+        }
         let i = index_of(&home, label);
         let tap = format!(r#"{{"action":"tap","element":{i}}}"#);
         let r = run(
@@ -1102,9 +1110,9 @@ fn a_home_screen_label_that_names_a_denied_app_is_not_tapped() {
 
 /// Unrelated searches still work, and a name that only shares a word with a denied one is
 /// not refused: "weather", and "Example Mail" while "Example Bank" is denied. A label that
-/// only starts like a denied name ("Mail" while "Mailchimp" is denied) is tapped; typing
-/// "Mail" into the search is refused, because its top hit may be Mailchimp (the documented
-/// trade-off of the prefix rule; `open_app "Mail"` resolves exactly).
+/// only starts like a denied name ("Mail" while "Mailchimp" is denied) is tapped, and
+/// (third review: the prefix rule is gone) typing "Mail" with Return works while no
+/// Mailchimp result is on the screen.
 #[test]
 fn spotlight_rules_leave_unrelated_apps_alone() {
     for (deny, text) in [("ExampleBank", "weather"), ("Example Bank", "Example Mail")] {
@@ -1152,7 +1160,8 @@ fn spotlight_rules_leave_unrelated_apps_alone() {
             r#"{"action":"fail","reason":"x"}"#,
         ]),
     );
-    assert!(r.acts.is_empty(), "{:?}", r.acts);
+    assert!(typed_anything(&r.acts), "{:?}", r.acts);
+    assert!(returned(&r.acts), "{:?}", r.acts);
 }
 
 /// End to end: a page that puts 200 texts across the screen's middle before a "Slide to
@@ -1189,4 +1198,321 @@ fn padding_cannot_hide_a_pay_slider_from_an_elementless_swipe() {
     assert!(r.acts.is_empty(), "{:?}", r.acts);
     assert_eq!(r.confirms.len(), 1, "{:?}", r.confirms);
     assert_eq!(r.confirms[0].category, RiskCategory::Payment);
+}
+
+// ---------------------------------------------------------------------------------------
+// Spotlight (third review): every way to launch from the home screen goes through one
+// gate, the results are checked (twice) before Return, and ordinary searches work.
+// ---------------------------------------------------------------------------------------
+
+/// Spotlight with "wa" typed, Wallet as the top hit, and the keyboard with its Return key.
+fn spotlight_with_key(key_label: &str) -> Screen {
+    let field = UiNode::new(Role::SearchField, rect(16.0, 120.0, 361.0, 36.0))
+        .with_label("Search")
+        .with_value("wa")
+        .hittable(true)
+        .focused(true);
+    let keyboard = UiNode::new(Role::Keyboard, rect(0.0, 560.0, 393.0, 292.0)).with_children(vec![
+        node(Role::Key, "w", rect(0.0, 600.0, 39.0, 44.0)),
+        node(Role::Key, key_label, rect(300.0, 800.0, 90.0, 44.0)).with_identifier("Return"),
+    ]);
+    screen(
+        "com.apple.springboard",
+        "Home",
+        spotlight_root(vec![
+            field,
+            node(Role::Button, "Wallet", rect(16.0, 200.0, 361.0, 50.0)),
+            keyboard,
+        ]),
+        true,
+    )
+}
+
+fn tap_point_on_return() -> String {
+    format!(
+        r#"{{"action":"tap_point","x":{},"y":{}}}"#,
+        345.0 / 393.0,
+        822.0 / IPHONE_SIZE.height
+    )
+}
+
+/// Probe: a vision model taps the keyboard's Return key by point while Spotlight's top hit
+/// is Wallet (denied by default). Keys are not listed, so the tap used to resolve to no
+/// element and was sent with no check. It is refused (not a deny strike: the model is told
+/// which app), with the default policy too.
+#[test]
+fn a_tap_point_on_the_return_key_never_opens_a_denied_top_hit() {
+    for key in ["go", "search", "open"] {
+        let r = run(
+            vision_config(),
+            "Show my cards",
+            MemoryStore::new(),
+            Phone::still(spotlight_with_key(key)),
+            Script::model(&[
+                r#"{"action":"look"}"#,
+                &tap_point_on_return(),
+                r#"{"action":"fail","reason":"x"}"#,
+            ]),
+        );
+        assert!(r.acts.is_empty(), "key '{key}': {:?}", r.acts);
+        assert!(
+            r.all_prompt_text()
+                .contains("could open Wallet, which is on the deny list"),
+            "{}",
+            r.last_user()
+        );
+        assert_eq!(
+            r.outcome.status,
+            OutcomeStatus::Failed,
+            "{}",
+            r.outcome.summary
+        );
+    }
+    let mut c = first_use_config();
+    c.model.supports_vision = true;
+    let r = run(
+        c,
+        "Show my cards",
+        MemoryStore::new(),
+        Phone::still(spotlight_with_key("go")),
+        Script::model(&[
+            r#"{"action":"look"}"#,
+            &tap_point_on_return(),
+            r#"{"action":"fail","reason":"x"}"#,
+        ]),
+    );
+    assert!(
+        r.acts.is_empty(),
+        "acts {:?}; confirms {:?}",
+        r.acts,
+        r.confirms
+    );
+}
+
+/// A tap on the home screen that hits no listed element (or the keyboard) is never sent
+/// unasked, even with first-use approval off; declined, nothing is sent.
+#[test]
+fn an_unresolved_home_screen_tap_is_always_asked() {
+    let mut search = spotlight_with_key("go");
+    // No denied result: "Weather" instead of "Wallet".
+    search.root.children[0].children[1].label = Some("Weather".to_owned());
+    for (s, point) in [
+        (search, tap_point_on_return()),
+        (
+            spotlight(None, &[]),
+            r#"{"action":"tap_point","x":0.5,"y":0.05}"#.to_owned(),
+        ),
+    ] {
+        let r = run(
+            vision_config(),
+            "Check the weather",
+            MemoryStore::new(),
+            Phone::still(s),
+            Script::model(&[
+                r#"{"action":"look"}"#,
+                &point,
+                r#"{"action":"fail","reason":"x"}"#,
+            ]),
+        );
+        assert!(r.acts.is_empty(), "{:?}", r.acts);
+        assert_eq!(r.confirms.len(), 1, "{:?}", r.confirms);
+        assert_eq!(r.confirms[0].category, RiskCategory::FirstUse);
+        assert!(
+            r.confirms[0].summary.starts_with("Let Jarvis open ")
+                && r.confirms[0].summary.contains(" from the home screen?"),
+            "{}",
+            r.confirms[0].summary
+        );
+    }
+}
+
+/// Drives a home-screen search for `text` with Return: after `TypeText` each observation
+/// shows the next screen of `looks` (the last one repeats). Returns the runner commands and
+/// the final outcome summary.
+fn search_with_results(text: &str, looks: Vec<Screen>) -> (Vec<RunnerCommand>, String) {
+    let mut s = jarvis_agent::Session::new(
+        config(),
+        jarvis_proto::TaskSpec::new("t", "Search"),
+        MemoryStore::new(),
+    );
+    let mut now = 1_000;
+    let mut typed = false;
+    let mut shown = 0usize;
+    let mut acts = Vec::new();
+    let mut e = s.step(jarvis_proto::TimedEvent::new(now, Event::Start));
+    let mut script = vec![
+        format!(r#"{{"action":"type","text":"{text}","submit":true}}"#),
+        r#"{"action":"fail","reason":"stop"}"#.to_owned(),
+    ]
+    .into_iter();
+    for _ in 0..100 {
+        now += 50;
+        let ev = match e {
+            Effect::Observe { .. } => {
+                let screen = if typed {
+                    let k = shown.min(looks.len() - 1);
+                    shown += 1;
+                    looks[k].clone()
+                } else {
+                    spotlight(None, &[])
+                };
+                Event::Observed(jarvis_proto::Observation::new(screen))
+            }
+            Effect::Infer(_) => Event::ModelOutput(jarvis_proto::ModelOutput {
+                text: script.next().unwrap_or_default(),
+            }),
+            Effect::Act(cmd) => {
+                typed |= matches!(cmd, RunnerCommand::TypeText { .. });
+                acts.push(cmd);
+                Event::ActResult(jarvis_proto::RunnerResult::ok())
+            }
+            Effect::Confirm(_) => Event::UserDecision { approved: true },
+            Effect::Finished(o) => return (acts, o.summary),
+            other => panic!("{other:?}"),
+        };
+        e = s.step(jarvis_proto::TimedEvent::new(now, ev));
+    }
+    panic!("the session did not end");
+}
+
+/// Results can load after the first look: the held-back Return waits for two looks in a
+/// row with the same results. Wallet appearing on the second look is seen, and Return is
+/// not pressed; harmless results that settle are.
+#[test]
+fn spotlight_return_waits_for_results_that_load_late() {
+    let empty = spotlight(Some("wa"), &[]);
+    let wallet = spotlight(Some("wa"), &["Wallet", "Walmart"]);
+    let (acts, _) = search_with_results("wa", vec![empty.clone(), wallet.clone(), wallet]);
+    assert!(typed_anything(&acts), "{acts:?}");
+    assert!(!returned(&acts), "{acts:?}");
+    let weather = spotlight(Some("wea"), &["Weather"]);
+    let (acts, _) = search_with_results("wea", vec![empty.clone(), weather.clone(), weather]);
+    assert!(returned(&acts), "{acts:?}");
+    // Results that never settle: Return is not pressed.
+    let looks: Vec<Screen> = (0..8)
+        .map(|k| {
+            spotlight(
+                Some("we"),
+                &[&format!(
+                    "Result {}",
+                    ["a", "b", "c", "d", "e", "f", "g", "h"][k]
+                )],
+            )
+        })
+        .collect();
+    let (acts, _) = search_with_results("we", looks);
+    assert!(!returned(&acts), "{acts:?}");
+}
+
+/// Third review: under the default deny list (Passwords, Wallet), ordinary searches whose
+/// results merely mention a denied app ("leather wallet", "Wallpaper, Settings", "Wi-Fi
+/// Passwords, Settings") are typed and submitted, and two of them do not end the session.
+#[test]
+fn ordinary_searches_under_the_default_deny_list_still_work() {
+    let p = jarvis_proto::Policy {
+        first_use_approval: false,
+        ..jarvis_proto::Policy::default()
+    };
+    for (text, results) in [
+        ("wallpaper", vec!["Wallpaper, Settings", "leather wallet"]),
+        (
+            "password",
+            vec!["Wi-Fi Passwords, Settings", "password manager"],
+        ),
+        ("wal", vec!["Buy a new wallet, Reminders", "Walmart"]),
+        ("pass", vec!["passport photo", "Passbook tips"]),
+    ] {
+        let mut c = config();
+        c.policy = p.clone();
+        let after = spotlight(Some(text), &results);
+        let phone = Phone::new(spotlight(None, &[]), move |cmd, _s: &Screen| match cmd {
+            RunnerCommand::TypeText { .. } => Transition::Go(after.clone()),
+            _ => Transition::Stay,
+        });
+        let r = run(
+            c,
+            "Search",
+            MemoryStore::new(),
+            phone,
+            Script::model(&[
+                &format!(r#"{{"action":"type","text":"{text}","submit":true}}"#),
+                r#"{"action":"done","summary":"searched"}"#,
+            ]),
+        );
+        assert!(typed_anything(&r.acts), "{text}: {:?}", r.acts);
+        assert!(returned(&r.acts), "{text}: {:?}", r.acts);
+        assert_eq!(
+            r.outcome.status,
+            OutcomeStatus::Success,
+            "{text}: {}",
+            r.outcome.summary
+        );
+    }
+}
+
+/// A start of a denied name is typed now; its Return is held while the denied app is among
+/// the results, the model is told which app, and that is no deny strike (two such searches
+/// do not end the session `Blocked`).
+#[test]
+fn spotlight_prefix_searches_are_typed_but_return_waits_for_the_results() {
+    for text in ["Exa", "open ExampleBank now"] {
+        let mut c = config();
+        deny_bank(&mut c, "ExampleBank");
+        let after = spotlight(Some(text), &["ExampleBank", "Example Mail"]);
+        let phone = Phone::new(spotlight(None, &[]), move |cmd, _s: &Screen| match cmd {
+            RunnerCommand::TypeText { .. } => Transition::Go(after.clone()),
+            _ => Transition::Stay,
+        });
+        let typing = format!(r#"{{"action":"type","text":"{text}","submit":true}}"#);
+        let r = run(
+            c,
+            "Check my bank",
+            MemoryStore::new(),
+            phone,
+            Script::model(&[&typing, &typing, r#"{"action":"fail","reason":"x"}"#]),
+        );
+        assert!(typed_anything(&r.acts), "{text}: {:?}", r.acts);
+        assert!(!returned(&r.acts), "{text}: {:?}", r.acts);
+        assert!(
+            r.all_prompt_text()
+                .contains("could open ExampleBank, which is on the deny list"),
+            "{}",
+            r.last_user()
+        );
+        assert_ne!(
+            r.outcome.status,
+            OutcomeStatus::Blocked,
+            "{}",
+            r.outcome.summary
+        );
+    }
+}
+
+/// Labels that merely mention a denied app (a web suggestion, another app's content) are
+/// tapped like any unknown label.
+#[test]
+fn ordinary_home_screen_labels_that_mention_a_denied_app_are_tapped() {
+    for label in ["Open ExampleBank", "ExampleBank login help, Safari"] {
+        let mut c = config();
+        deny_bank(&mut c, "ExampleBank");
+        let home = spotlight(None, &[label]);
+        let i = index_of(&home, label);
+        let r = run(
+            c,
+            "Find help",
+            MemoryStore::new(),
+            Phone::still(home),
+            Script::model(&[
+                &format!(r#"{{"action":"tap","element":{i}}}"#),
+                r#"{"action":"done","summary":"ok"}"#,
+            ]),
+        );
+        assert_eq!(
+            r.acts.len(),
+            1,
+            "{label}: {:?} {}",
+            r.acts,
+            r.all_prompt_text()
+        );
+    }
 }
