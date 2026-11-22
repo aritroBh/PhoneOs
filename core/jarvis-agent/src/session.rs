@@ -24,7 +24,8 @@
 //! Approvals are not acted on blind: the owner may answer long after the question, so once
 //! the last confirmation of a runner action is approved the session observes again and runs
 //! the action only if the four records of the approval hold on the fresh screen: the raw
-//! tree's exact digest with every node's shown bit (A1, `jarvis_observe::screen_digest`: no
+//! tree's exact digest with every node's frame and shown bit (A1,
+//! `jarvis_observe::screen_digest`: no
 //! tolerance; a screen with live-updating text cannot be confirmed, fail closed), the
 //! compact screen's content (A2), the target's raw node (A3) and the identical summary in
 //! the same category (A4); the action is re-planned on the fresh screen, see
@@ -80,9 +81,10 @@
 //! asked with a summary of that screen, bound to it and looked at again after an approval;
 //! pressed at once when nothing asks), see `Session::gate_return`. A decline leaves the
 //! text typed ("typed, not submitted"). `type` without an element needs a listed focused
-//! field. Every tap lands on the control it names (`jarvis_safety::tap_spot`; full-width
-//! navigation and tab bars of a typed tree are drawn over the content under them); a covered
-//! control is refused ("not done: … is covered by …").
+//! field. Every tap lands on the control it names (`jarvis_safety::tap_spot`: geometry
+//! decides, any drawn node may cover a point; full-width navigation and tab bars of a typed
+//! tree are drawn over the content under them); a covered control is refused ("not done: …
+//! is covered by …"), and so is a `tap_point` on the keyboard.
 //!
 //! Small models need more than "ok": every step that worked says what visibly changed
 //! (`crate::changes`), the same action repeated on the same control on a changing screen is
@@ -101,16 +103,17 @@ use std::collections::VecDeque;
 
 use jarvis_proto::{
     Action, AppInfo, BarNode, CompactScreen, ConfirmRequest, Effect, Element, Event, ImageRef, Key,
-    ModelRequest, Observation, Outcome, OutcomeStatus, Point, Progress, RequestKind, RiskCategory,
-    RunnerCommand, SessionConfig, Size, TaskSpec, TimedEvent, ToolCall, ToolResult, ToolSpec,
+    ModelRequest, Observation, Outcome, OutcomeStatus, Point, Progress, RawNode, RequestKind,
+    RiskCategory, RunnerCommand, SessionConfig, Size, TaskSpec, TimedEvent, ToolCall, ToolResult,
+    ToolSpec,
 };
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
     approval_context, check_app, check_app_name, check_confinement, control_at, evaluate_from,
     first_use_app, first_use_request, is_springboard, label_names_denied_app, redact,
     redact_screen, return_summary, sanitize_screen_text, search_names_denied_app, summary_with,
-    widget_names_denied_app, Budget, BudgetVerdict, Covered, CoveredBy, Decision, ScreenSource,
-    ScreenTree, TypedText, Verdict,
+    widget_names_denied_app, Budget, BudgetVerdict, Covered, CoveredBy, Decision, PointError,
+    ScreenSource, ScreenTree, TypedText, Verdict,
 };
 
 use crate::changes::describe_change;
@@ -196,6 +199,9 @@ struct Current {
     /// The raw navigation and tab bars (`jarvis_observe::CompactView::bars`), for the tap
     /// point's bar precedence; passed on only for a typed tree ([`Self::tree`]).
     bars: Vec<BarNode>,
+    /// Every drawn raw node with its on-screen frame (`jarvis_observe::CompactView::nodes`):
+    /// what could take a touch at a point.
+    nodes: Vec<RawNode>,
     /// Where the tree came from: a typed tree, or runner text (unverified, see
     /// `jarvis_safety::ScreenSource`).
     source: ScreenSource,
@@ -229,6 +235,7 @@ impl Default for Current {
             parents: Vec::new(),
             ends: Vec::new(),
             bars: Vec::new(),
+            nodes: Vec::new(),
             source: ScreenSource::Typed,
             hash: 0,
             digest: ScreenDigest::default(),
@@ -1407,9 +1414,9 @@ impl Session {
     /// gate on the fresh screen asks for nothing new: no denial, and the same category with
     /// the identical summary recomputed for this target ([`Self::risk_summary`]); the
     /// target's fresh frame contains the re-planned point; and on the home screen a launch
-    /// that cannot be named still finds no denied app among the results. Frames are not
-    /// compared, so a scroll that keeps every node's shown bit keeps the approval and the
-    /// action is re-planned where its target is now. `None` otherwise.
+    /// that cannot be named still finds no denied app among the results. The digest hashes
+    /// every node's frame (seventh review), so anything that moved voids the approval; the
+    /// settle retry covers an animation still finishing. `None` otherwise.
     fn recheck_approved(
         &self,
         pending: &Pending,
@@ -1562,6 +1569,7 @@ impl Session {
             parents: view.parents,
             ends: view.ends,
             bars: view.bars,
+            nodes: view.nodes,
             source: self.incoming_source,
             screen,
             screenshot: obs.screenshot,
@@ -1589,6 +1597,8 @@ impl Session {
                 ScreenSource::Typed => &self.current.bars,
                 ScreenSource::RunnerText => &[],
             },
+            // Occluders only ever refuse more, so runner text keeps them.
+            nodes: &self.current.nodes,
         }
     }
 
@@ -2246,6 +2256,7 @@ impl Session {
                 let tree = self.tree();
                 Exec::Runner(plan(ui, screen, Some(&tree)).map_err(|e| match e {
                     PlanError::Covered(c) => Reject::NotDone(self.covered_message(c)),
+                    PlanError::Point(e) => Reject::NotDone(self.point_message(action, e)),
                     other => Reject::Failed(other.to_string()),
                 })?)
             }
@@ -2731,30 +2742,67 @@ impl Session {
         });
     }
 
-    /// The refusal of an action whose every tap point is covered by another control (sixth
-    /// review), naming both from the prompt-safe screen.
+    /// The refusal of an action whose every tap point is covered (sixth and seventh
+    /// reviews), naming the target and what covers it from the prompt-safe screen: another
+    /// listed element, a bar, the keyboard, or an unlisted node by its label.
     fn covered_message(&self, c: Covered) -> String {
-        let name = |i: u32| {
-            self.current.safe.get(i).map_or_else(
-                || format!("element {i}"),
-                |e| {
-                    let label = clean(&e.label, 60);
-                    if label.is_empty() {
-                        format!("element {i} ({})", e.role.as_str())
-                    } else {
-                        format!("element {i} ({label})")
-                    }
-                },
-            )
-        };
         format!(
-            "not done: {} is covered by {}: a tap there could land on the other control, so nothing was sent; choose another control or scroll first",
-            name(c.target),
-            match c.by {
-                CoveredBy::Control(by) => name(by),
-                CoveredBy::Bar(bar) => bar.name().to_owned(),
-            }
+            "not done: {} is covered by {}: a tap there could land on it instead, so nothing was sent; choose another control or scroll first",
+            self.element_name(c.target),
+            self.cover_name(c.by)
         )
+    }
+
+    /// `element 3 (Pay)` from the prompt-safe screen.
+    fn element_name(&self, i: u32) -> String {
+        self.current.safe.get(i).map_or_else(
+            || format!("element {i}"),
+            |e| {
+                let label = clean(&e.label, 60);
+                if label.is_empty() {
+                    format!("element {i} ({})", e.role.as_str())
+                } else {
+                    format!("element {i} ({label})")
+                }
+            },
+        )
+    }
+
+    /// What covers a point, in words.
+    fn cover_name(&self, by: CoveredBy) -> String {
+        match by {
+            CoveredBy::Control(i) => self.element_name(i),
+            CoveredBy::Bar(bar) => bar.name().to_owned(),
+            CoveredBy::Keyboard => "the keyboard".to_owned(),
+            CoveredBy::Node(n) => {
+                let label = self
+                    .current
+                    .nodes
+                    .iter()
+                    .find(|r| r.node == n)
+                    .and_then(|r| r.label.as_deref())
+                    .map(|l| self.safe_text(l, 60))
+                    .filter(|l| !l.trim().is_empty());
+                match label {
+                    Some(l) => format!("an element labelled \"{l}\""),
+                    None => "an unlabelled element".to_owned(),
+                }
+            }
+        }
+    }
+
+    /// The refusal of a `tap_point` that does not resolve to one listed control.
+    fn point_message(&self, action: &Action, e: PointError) -> String {
+        let at = match action {
+            Action::TapPoint { x, y } => format!("({:.0}%, {:.0}%)", x * 100.0, y * 100.0),
+            _ => "the point".to_owned(),
+        };
+        match e {
+            PointError::Keyboard => format!(
+                "not done: {at} is not a listed control: it is on the keyboard; use `type` to enter text; Jarvis does not tap keys"
+            ),
+            PointError::Covered(c) => self.covered_message(c),
+        }
     }
 
     /// The look after typing a search on the home screen, before its held-back Return:

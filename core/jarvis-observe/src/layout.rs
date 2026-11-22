@@ -16,12 +16,19 @@
 //!
 //! Nothing else is excluded: not by identifier (an app can set any identifier), not by
 //! position, and **not the keyboard** (sixth review). An app's input accessory bar lives in
-//! the keyboard's window right above the keys, so a rule that left out "the keyboard's
-//! window" left out a compose bar, its Send button and an amount; the keyboard, its keys,
-//! its prediction bar and everything around it are hashed like any other node. Compaction
-//! still keeps the `Keyboard` node's own subtree (the keys) off the compact screen and reads
-//! its Return key as a cue; that is the one direction allowed: what is hashed need not be
-//! listed, but nothing unhashed is ever listed.
+//! the keyboard's window right above the keys; it is hashed and listed like any content.
+//!
+//! # Keyboard
+//!
+//! Two kinds of subtree have their *text* left out of the digest (seventh review), while
+//! their structure, frames and shown bits are hashed: a node with role `Keyboard`, and a
+//! node whose identifier is `SystemInputAssistantView` that is in a top-level window (a
+//! child of the root) holding a `Keyboard` node and has no web-view ancestor (the
+//! prediction bar). Compaction lists nothing inside them and reads no text from them
+//! (only the Return key's label, which the digest hashes): the one direction allowed is
+//! "hashed need not be listed", never "listed but not hashed". The nodes of those two kinds
+//! of subtree are the keyboard for the tap-point rule (`CompactView::nodes`); the keyboard
+//! window's other nodes (its full-screen containers) are not.
 //!
 //! # Shown
 //!
@@ -31,7 +38,7 @@
 //! unless an alert is up). The digest hashes that bit per node; compaction lists an element
 //! only when its frame passes the same [`Layout::shown_frame`].
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use jarvis_proto::{Rect, Role, Screen, UiNode, SPRINGBOARD_BUNDLE_ID};
 
@@ -80,9 +87,118 @@ fn exclusions(screen: &Screen) -> HashSet<usize> {
     out
 }
 
+/// The identifier iOS gives the input assistant (the prediction bar above the keyboard).
+pub(crate) const INPUT_ASSISTANT_ID: &str = "SystemInputAssistantView";
+
+/// How much of a node's text the digest takes (see the module docs, *Keyboard*).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Quiet {
+    /// All of it.
+    No,
+    /// Inside a `Keyboard`-role node (itself included): role, frame and shown bit only.
+    Keyboard,
+    /// Inside the input assistant next to a keyboard: no labels, values or placeholders.
+    Assistant,
+}
+
+/// What [`Layout::walk`] knows of a node besides the node itself.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Visit {
+    /// Depth from the root.
+    pub depth: u32,
+    /// The node is shown (see the module docs).
+    pub shown: bool,
+    /// The node is drawn: no pruned ancestor (nor itself), within the depth cap, inside the
+    /// alert while one is up. Its frame may still lie off screen.
+    pub live: bool,
+    /// How much of its text is hashed (and so may be listed).
+    pub quiet: Quiet,
+    /// Inside a keyboard or input-assistant subtree: that subtree root's frame, which
+    /// clips where its nodes are drawn (the prediction bar's scroll content reports a
+    /// screen-high frame but is drawn only inside the 44 pt bar).
+    pub quiet_clip: Option<Rect>,
+    /// It has an ancestor that is a web view, scroll view, table or collection view.
+    pub in_content: bool,
+}
+
+/// Whether `role` is a web view, scroll view, table or collection view.
+fn is_content_role(role: &Role) -> bool {
+    match role {
+        Role::WebView | Role::ScrollView | Role::Table | Role::CollectionView => true,
+        Role::Other(name) => {
+            let n: String = name
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .flat_map(char::to_lowercase)
+                .collect();
+            matches!(
+                n.as_str(),
+                "webview" | "scrollview" | "table" | "tableview" | "collectionview"
+            )
+        }
+        _ => false,
+    }
+}
+
+/// The quiet subtree roots (keyboards and qualifying input assistants), by address (see the
+/// module docs, *Keyboard*).
+fn keyboard_parts(screen: &Screen, excluded: &HashSet<usize>) -> HashMap<usize, Quiet> {
+    let mut quiet = HashMap::new();
+    for w in &screen.root.children {
+        if excluded.contains(&addr(w)) || is_pruned(w) {
+            continue;
+        }
+        let mut keyboards = Vec::new();
+        let mut assistants = Vec::new();
+        // (node, depth, a web view above it)
+        let mut stack: Vec<(&UiNode, usize, bool)> = vec![(w, 1, false)];
+        while let Some((n, depth, web)) = stack.pop() {
+            if is_pruned(n) || depth > MAX_DEPTH || excluded.contains(&addr(n)) {
+                continue;
+            }
+            if n.role == Role::Keyboard {
+                keyboards.push(addr(n));
+            }
+            if !web && n.identifier.as_deref() == Some(INPUT_ASSISTANT_ID) {
+                assistants.push(addr(n));
+            }
+            let web = web || is_web(&n.role);
+            stack.extend(n.children.iter().rev().map(|c| (c, depth + 1, web)));
+        }
+        if keyboards.is_empty() {
+            continue;
+        }
+        for a in assistants {
+            quiet.insert(a, Quiet::Assistant);
+        }
+        for k in keyboards {
+            quiet.insert(k, Quiet::Keyboard);
+        }
+    }
+    quiet
+}
+
+/// Whether `role` is a web view.
+fn is_web(role: &Role) -> bool {
+    match role {
+        Role::WebView => true,
+        Role::Other(name) => {
+            let n: String = name
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .flat_map(char::to_lowercase)
+                .collect();
+            n == "webview"
+        }
+        _ => false,
+    }
+}
+
 /// One screen as both the digest and compaction read it (see the module docs).
 pub(crate) struct Layout<'a> {
     excluded: HashSet<usize>,
+    /// Roots of the subtrees whose text is not hashed (keyboards, the input assistant).
+    quiet: HashMap<usize, Quiet>,
     /// The topmost shown Alert/Sheet (last in document order), outside excluded subtrees.
     pub alert: Option<&'a UiNode>,
     /// The first shown keyboard: its frame occludes, its Return key is a cue.
@@ -106,7 +222,7 @@ impl<'a> Layout<'a> {
             let out = out || excluded.contains(&addr(n));
             match n.role {
                 Role::Alert | Role::Sheet if !out && !n.frame.is_empty() => alert = Some(n),
-                Role::Keyboard if keyboard.is_none() && !n.frame.is_empty() => {
+                Role::Keyboard if !out && keyboard.is_none() && !n.frame.is_empty() => {
                     keyboard = Some(n);
                 }
                 _ => {}
@@ -118,8 +234,10 @@ impl<'a> Layout<'a> {
         } else {
             keyboard.map(|k| k.frame)
         };
+        let quiet = keyboard_parts(screen, &excluded);
         Layout {
             excluded,
+            quiet,
             alert,
             keyboard,
             bounds: screen.bounds(),
@@ -130,6 +248,27 @@ impl<'a> Layout<'a> {
     /// Whether `node` (and so its whole subtree) is excluded.
     pub fn is_excluded(&self, node: &UiNode) -> bool {
         !self.excluded.is_empty() && self.excluded.contains(&addr(node))
+    }
+
+    /// Whether `node` is the root of a subtree whose text is not hashed, and how.
+    pub fn quiet_root(&self, node: &UiNode) -> Option<Quiet> {
+        if self.quiet.is_empty() {
+            return None;
+        }
+        self.quiet.get(&addr(node)).copied()
+    }
+
+    /// `frame` clipped to the screen (`None` when nothing of it is on screen): where a
+    /// node is drawn, whether or not it is shown.
+    pub fn on_screen(&self, frame: Rect) -> Option<Rect> {
+        if frame.is_empty() {
+            return None;
+        }
+        if self.bounds.is_empty() {
+            Some(frame)
+        } else {
+            frame.intersection(&self.bounds)
+        }
     }
 
     /// `frame` clipped to the screen and above the keyboard (no keyboard clip while an alert
@@ -156,29 +295,70 @@ impl<'a> Layout<'a> {
         (!vis.is_empty() && (fraction >= MIN_VISIBLE_FRACTION || big_enough)).then_some(vis)
     }
 
-    /// Visits every non-excluded node of `root` in depth-first pre-order with its depth and
-    /// whether it is shown (see the module docs). Iterative: any depth.
-    pub fn walk(&self, root: &'a UiNode, mut f: impl FnMut(&'a UiNode, u32, bool)) {
-        // (node, depth, an ancestor is pruned or past the cap, inside the alert)
-        let mut stack: Vec<(&'a UiNode, u32, bool, bool)> =
-            vec![(root, 0, false, self.alert.is_none())];
-        while let Some((node, depth, hidden_above, in_scope)) = stack.pop() {
+    /// Visits every non-excluded node of `root` in depth-first pre-order with what is known
+    /// of it ([`Visit`]: depth, shown, drawn, quiet, keyboard window). Iterative: any depth.
+    pub fn walk(&self, root: &'a UiNode, mut f: impl FnMut(&'a UiNode, Visit)) {
+        struct Frame<'n> {
+            node: &'n UiNode,
+            depth: u32,
+            /// An ancestor is pruned or past the cap.
+            hidden_above: bool,
+            in_scope: bool,
+            quiet: Quiet,
+            quiet_clip: Option<Rect>,
+            in_content: bool,
+        }
+        let mut stack: Vec<Frame<'a>> = vec![Frame {
+            node: root,
+            depth: 0,
+            hidden_above: false,
+            in_scope: self.alert.is_none(),
+            quiet: Quiet::No,
+            quiet_clip: None,
+            in_content: false,
+        }];
+        while let Some(fr) = stack.pop() {
+            let node = fr.node;
             if self.is_excluded(node) {
                 continue;
             }
-            let cut = hidden_above
+            let cut = fr.hidden_above
                 || is_pruned(node)
-                || usize::try_from(depth).is_ok_and(|d| d > MAX_DEPTH);
-            let in_scope = in_scope || self.alert.is_some_and(|a| std::ptr::eq(a, node));
+                || usize::try_from(fr.depth).is_ok_and(|d| d > MAX_DEPTH);
+            let in_scope = fr.in_scope || self.alert.is_some_and(|a| std::ptr::eq(a, node));
             let shown = !cut && in_scope && self.shown_frame(node.frame).is_some();
-            f(node, depth, shown);
-            let child = depth.saturating_add(1);
-            stack.extend(
-                node.children
-                    .iter()
-                    .rev()
-                    .map(|c| (c, child, cut, in_scope)),
+            // A keyboard inside the assistant is still a keyboard.
+            let quiet = match (fr.quiet, self.quiet_root(node)) {
+                (Quiet::Keyboard, _) => Quiet::Keyboard,
+                (_, Some(q)) => q,
+                (q, None) => q,
+            };
+            // The outermost quiet root clips its subtree.
+            let quiet_clip = fr
+                .quiet_clip
+                .or_else(|| self.quiet_root(node).map(|_| node.frame));
+            f(
+                node,
+                Visit {
+                    depth: fr.depth,
+                    shown,
+                    live: !cut && in_scope,
+                    quiet,
+                    quiet_clip,
+                    in_content: fr.in_content,
+                },
             );
+            let child = fr.depth.saturating_add(1);
+            let in_content = fr.in_content || is_content_role(&node.role);
+            stack.extend(node.children.iter().rev().map(|c| Frame {
+                node: c,
+                depth: child,
+                hidden_above: cut,
+                in_scope,
+                quiet,
+                quiet_clip,
+                in_content,
+            }));
         }
     }
 }

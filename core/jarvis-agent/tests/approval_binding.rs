@@ -127,13 +127,18 @@ fn bills(swapped: bool) -> Screen {
     ])
 }
 
-/// Fifth review probe: twins swapped by layout (only frames moved, so the digest is equal)
-/// change the compact screen's order: void, never Mallory's "Pay".
+/// Fifth review probe: twins swapped by layout (only frames moved) change the compact
+/// screen's order: void, never Mallory's "Pay". Seventh review: frames are hashed, so the
+/// digest differs too (was: equal; deliberate change).
 #[test]
 fn twin_pay_buttons_swapped_by_layout_do_not_pay_the_other_bill() {
     let asked = bills(false);
     let fresh = bills(true);
-    assert_eq!(screen_digest(&asked), screen_digest(&fresh), "frames only");
+    assert_ne!(
+        screen_digest(&asked),
+        screen_digest(&fresh),
+        "frames are hashed"
+    );
     let mut d = D::new();
     let summary = d.ask_approve(&asked, pay_index(&asked));
     let e = d.look(&fresh);
@@ -168,7 +173,8 @@ fn identical_twins_that_swap_frames_void_the_approval() {
     };
     let asked = twins(false);
     let fresh = twins(true);
-    assert_eq!(screen_digest(&asked), screen_digest(&fresh));
+    // Seventh review: frames are hashed, so the digest voids it first (was: equal).
+    assert_ne!(screen_digest(&asked), screen_digest(&fresh));
     let strip = |s: &Screen| {
         let mut c = compact(s);
         for e in &mut c.elements {
@@ -230,22 +236,26 @@ fn a_scroll_that_moves_a_row_out_of_the_shown_set_voids() {
     assert!(!matches!(e, Effect::Act(_)), "{e:?}");
 }
 
-/// A scroll that keeps the shown set and order runs, on the same raw node at its new frame.
+/// A scroll that keeps the shown set and order. Seventh review: the layout is part of the
+/// approval (frames are hashed), so it voids; was: ran on the same raw node at its new frame
+/// (deliberate change). The same screen still runs.
 #[test]
 fn a_scroll_that_keeps_the_shown_set_taps_the_same_node_at_its_new_frame() {
     let asked = bill_list(0.0);
     let fresh = bill_list(20.0);
-    assert_eq!(screen_digest(&asked), screen_digest(&fresh));
+    assert_ne!(screen_digest(&asked), screen_digest(&fresh));
     let mut d = D::new();
     d.ask_approve(&asked, pay_index(&asked));
     let e = d.look(&fresh);
+    assert!(!matches!(e, Effect::Act(_)), "{e:?}");
+    let mut d = D::new();
+    d.ask_approve(&asked, pay_index(&asked));
+    let e = d.look(&asked);
     let Effect::Act(RunnerCommand::Tap { x, y }) = e else {
         panic!("expected the tap, got {e:?}")
     };
-    let first = node_with_id(&fresh.root, "pay-1").unwrap();
+    let first = node_with_id(&asked.root, "pay-1").unwrap();
     assert!(first.frame.contains(Point::new(x, y)), "({x}, {y})");
-    let before = node_with_id(&asked.root, "pay-1").unwrap();
-    assert!(!before.frame.contains(Point::new(x, y)), "re-planned");
 }
 
 /// Rows moved without changing the tree or the compact order: the summary recomputed on
@@ -260,7 +270,8 @@ fn rows_moved_with_the_same_order_but_another_summary_void() {
     };
     let asked = bill(100.0);
     let fresh = bill(140.0);
-    assert_eq!(screen_digest(&asked), screen_digest(&fresh));
+    // Seventh review: frames are hashed, so the digest differs too (was: equal).
+    assert_ne!(screen_digest(&asked), screen_digest(&fresh));
     let labels = |s: &Screen| {
         compact(s)
             .elements
@@ -364,17 +375,31 @@ fn a_status_bar_role_inside_an_app_is_content() {
 }
 
 /// Fifth review probe: the identifier `SystemInputAssistantView` (which any app can set)
-/// excludes nothing, keyboard up or not.
+/// excludes nothing without a keyboard in its window. Seventh review: in the keyboard's
+/// window its text is left out of the digest, and so (the invariant) out of the compact
+/// screen: content an app wraps in it there cannot be tapped, read or summarised, and its
+/// structure and geometry stay hashed (was: hashed and listed as any content; deliberate
+/// change).
 #[test]
 fn an_input_assistant_identifier_hides_nothing() {
     let bar = || {
         UiNode::new(Role::Other("Other".into()), IPHONE_SIZE.to_rect())
             .with_identifier("SystemInputAssistantView")
     };
-    for kb in [false, true] {
-        let (summary, e) = approve_then_change(bar, kb);
-        assert!(!matches!(e, Effect::Act(_)), "kb {kb}: '{summary}' {e:?}");
-    }
+    let (summary, e) = approve_then_change(bar, false);
+    assert!(!matches!(e, Effect::Act(_)), "'{summary}' {e:?}");
+    let asked = wrapped_in(bar(), "$5.00", true);
+    let c = compact(&asked);
+    assert!(
+        c.elements
+            .iter()
+            .all(|e| e.label != "Send money" && !e.label.contains("Mallory")),
+        "{:?}",
+        c.elements
+    );
+    let mut moved = wrapped_in(bar(), "$5.00", true);
+    moved.root.children[0].children[0].children[1].frame.y += 10.0;
+    assert_ne!(screen_digest(&asked), screen_digest(&moved));
 }
 
 /// A screen whose keyboard is in a top-level window of its own (as on iOS 26), or in the
@@ -390,8 +415,12 @@ fn pay_screen(keyboard_up: bool, shared: bool, return_label: &str) -> Screen {
     }
     windows.push(UiNode::new(Role::Window, IPHONE_SIZE.to_rect()).with_children(content));
     if keyboard_up && !shared {
+        // Seventh review: every node of the keyboard's window covers what is under it, so a
+        // full-screen keyboard window would cover "Pay" (see
+        // `a_full_screen_keyboard_window_covers_every_tap`); this window is the keyboard's
+        // area.
         windows.push(
-            UiNode::new(Role::Window, IPHONE_SIZE.to_rect())
+            UiNode::new(Role::Window, rect(0.0, 516.0, 393.0, 336.0))
                 .with_children(vec![keyboard(return_label)]),
         );
     }

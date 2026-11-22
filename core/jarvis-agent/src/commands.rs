@@ -6,15 +6,18 @@
 //! | `type` | `Tap` the element (at its tap point) when it is not focused, `TypeText` (skipped for empty text), `PressKey Return` when `submit` (the session carries a submit out in two gated parts and never plans one whole) |
 //! | `clear` | `Tap` near the field's trailing edge (caret to the end; another uncontested point of the field when that is covered), then `PressKey Delete` once per character of the current value (1..=[`MAX_CLEAR_DELETES`]); runners whose Delete clears the whole field just see a few extra no-op presses |
 //! | `scroll` / `swipe` | one `Swipe` from [`crate::gestures`]; on an element, its start point must be uncontested |
-//! | `tap_point` | `Tap` at the normalized point scaled by the screen size, when it resolves to at most one control |
+//! | `tap_point` | `Tap` at the normalized point scaled by the screen size; never on the keyboard, and on a listed control only when nothing else contests it |
 //!
-//! **Tap points (sixth review).** Every point Jarvis taps or presses lands on the control it
-//! names: it is inside the target's shown frame and inside no other enabled control's frame
-//! unless that control is the target's ancestor or descendant in the raw tree, with full-width
-//! navigation and tab bars of a typed tree drawn over the content under them
-//! ([`jarvis_safety::tap_spot`]: the centre, else the first usable point of a fixed 5 × 5
-//! grid). When every candidate is covered the action is not planned
-//! ([`PlanError::Covered`]): the session refuses it ("not done: … is covered by …").
+//! **Tap points (sixth and seventh reviews).** Every point Jarvis taps or presses lands on
+//! the control it names: it is inside the target's shown frame and inside no drawn raw node
+//! that contests it (another control, enabled or not; the keyboard's keys and prediction
+//! bar; labelled content drawn after the target) unless that node is the target's ancestor
+//! or descendant in the raw tree, with full-width navigation and tab bars of a typed tree
+//! drawn over the content under them ([`jarvis_safety::tap_spot`]: the centre, else the
+//! first usable point of a fixed 5 × 5 grid). When every candidate is covered the action is
+//! not planned ([`PlanError::Covered`]): the session refuses it ("not done: … is covered by
+//! …"). A `tap_point` on the keyboard is refused ([`PlanError::Point`],
+//! [`jarvis_safety::control_at`]); one on a listed control acts as that control.
 //! | `press_home` | `PressKey Home` |
 //! | `open_app` | `LaunchApp` (the bundle id is resolved before safety runs) |
 //! | `open_url` / `wait` | `OpenUrl` / `Wait` |
@@ -24,7 +27,9 @@ use std::collections::VecDeque;
 use jarvis_proto::{Action, AppInfo, CompactScreen, Key, Point, RunnerCommand};
 
 use jarvis_safety::gestures::{denormalize, gesture, GestureError, GestureKind};
-use jarvis_safety::{control_at, point_is_clear, tap_spot, Covered, CoveredBy, ScreenTree};
+use jarvis_safety::{
+    control_at, point_is_clear, tap_spot, Covered, CoveredBy, PointError, ScreenTree,
+};
 
 /// Most Delete presses a `clear` sends.
 pub const MAX_CLEAR_DELETES: usize = 64;
@@ -43,6 +48,9 @@ pub(crate) enum PlanError {
     /// Every point that would press the target is covered by another control (or a raw
     /// point lands on two unrelated controls).
     Covered(Covered),
+    /// A raw point (`tap_point`) on the keyboard, or on a listed control that another node
+    /// contests.
+    Point(PointError),
 }
 
 impl std::fmt::Display for PlanError {
@@ -58,7 +66,15 @@ impl std::fmt::Display for PlanError {
                 CoveredBy::Bar(bar) => {
                     write!(f, "element {} is covered by {}", c.target, bar.name())
                 }
+                CoveredBy::Keyboard => write!(f, "element {} is covered by the keyboard", c.target),
+                CoveredBy::Node(n) => {
+                    write!(f, "element {} is covered by raw node {n}", c.target)
+                }
             },
+            PlanError::Point(PointError::Keyboard) => write!(f, "the point is on the keyboard"),
+            PlanError::Point(PointError::Covered(c)) => {
+                write!(f, "{}", PlanError::Covered(*c))
+            }
         }
     }
 }
@@ -202,7 +218,7 @@ pub(crate) fn plan(
         }
         Action::TapPoint { x, y } => {
             let p = denormalize(*x, *y, screen.size);
-            control_at(p, screen, tree).map_err(PlanError::Covered)?;
+            control_at(p, screen, tree).map_err(PlanError::Point)?;
             q.push_back(tap(p));
         }
         Action::PressHome => q.push_back(RunnerCommand::PressKey { key: Key::Home }),

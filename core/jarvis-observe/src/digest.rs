@@ -11,30 +11,41 @@
 //!
 //! # Input
 //!
-//! The foreground app's bundle id, then every node that is not excluded (see
-//! [`crate::layout`]), in depth-first pre-order: its depth, role, label, value, identifier,
-//! placeholder, the `enabled`, `selected` and `secure` flags, the raw `visible` flag, and
-//! whether it is **shown**:
-//! the exact predicate compaction uses to list a node (no pruned ancestor, within the depth
-//! cap, inside the alert while one is up, and enough of its frame on screen and above the
+//! The foreground app's bundle id and the screen's size, then every node that is not
+//! excluded (see [`crate::layout`]), in depth-first pre-order: its depth, role, **frame**
+//! (clipped to the screen and rounded to whole points; absent when nothing of it is on
+//! screen; seventh review), label, value, identifier, placeholder, the `enabled`,
+//! `selected` and `secure` flags, the raw `visible` flag, and whether it is **shown**: the
+//! exact predicate compaction uses to list a node (no pruned ancestor, within the depth cap,
+//! inside the alert while one is up, and enough of its frame on screen and above the
 //! keyboard; one function, `Layout::shown_frame`, decides it for both). Every field is
 //! length-prefixed, so no two trees share an input.
 //!
-//! So a list that scrolls a row out of (or into) the shown set, a hidden panel that becomes
-//! shown, or a keyboard that now covers a row changes the digest; a scroll or layout shift
-//! that keeps every node's shown bit does not.
+//! So an approved screen must match in layout too: anything that moves, scrolls, appears,
+//! vanishes or changes its shown bit changes the digest (the session's settle retry covers
+//! an animation still finishing).
+//!
+//! **Keyboard text (seventh review).** Inside a node with role `Keyboard` (itself included)
+//! only the role, frame, `visible` flag and shown bit are hashed, plus, at the `Keyboard`
+//! node, its Return key's label (the cue compaction reads). Inside a node whose identifier
+//! is `SystemInputAssistantView` that is in the same top-level window as a `Keyboard` node
+//! and has no web-view ancestor (the prediction bar) the role, frame, identifier, flags and
+//! shown bit are hashed, not the label, value or placeholder. Nowhere else does that
+//! identifier matter. Prediction candidates, the shift key's state and the dictation and
+//! autofill labels change on their own; their structure and geometry are still hashed, so
+//! nothing can appear, vanish or move there unnoticed. Compaction never lists anything in
+//! those subtrees, and never reads their text for cues, summaries or classifier context
+//! (*not fully hashed ⇒ not in the compact screen*). An app's own accessory bar next to the
+//! keyboard is ordinary content: hashed whole and listed.
 //!
 //! Not part of it:
 //!
-//! * **frames** themselves (the agent re-plans the point on the fresh screen), `focused`
-//!   and the raw `hittable` flag;
+//! * `focused` and the raw `hittable` flag;
 //! * the **value of a secure field** (its presence, role and label are hashed; the value is
 //!   never even read into the input); compaction never lists a secure node's value either;
 //! * **excluded** subtrees (see [`crate::layout`]): on SpringBoard only, the status bar under
-//!   a top-level window. Nothing is excluded by identifier, and nothing in or near the
-//!   keyboard is excluded: its keys (so its Return-key label), its prediction bar and an
-//!   app's input accessory bar are hashed like any other node, so a keyboard that appears,
-//!   hides or changes its Return key changes the digest;
+//!   a top-level window;
+//! * the keyboard's and the input assistant's text, above;
 //! * on SpringBoard only, the badge part after the first comma of an app **icon**'s label
 //!   (role `Icon`: `Mail, 3 unread` → `Mail`); other nodes keep their whole label;
 //! * the position (`12%`) of iOS's scroll indicators (`Vertical scroll bar, N pages` /
@@ -52,10 +63,11 @@
 
 use std::fmt;
 
-use jarvis_proto::{Role, Screen, UiNode, SPRINGBOARD_BUNDLE_ID};
+use jarvis_proto::{Rect, Role, Screen, UiNode, SPRINGBOARD_BUNDLE_ID};
 use sha2::{Digest, Sha256};
 
-use crate::layout::Layout;
+use crate::compact::return_key_label;
+use crate::layout::{Layout, Quiet};
 
 /// The exact digest of a raw screen (see the module docs). `Debug` shows a short hex prefix.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -145,17 +157,60 @@ fn is_scroll_indicator(node: &UiNode) -> bool {
         && percent
 }
 
+/// A frame rounded to whole points (saturating; frames are small screen coordinates).
+fn put_frame(sink: &mut impl Sink, frame: Option<Rect>) {
+    match frame {
+        None => sink.put(&[0]),
+        Some(f) => {
+            sink.put(&[1]);
+            for v in [f.x, f.y, f.width, f.height] {
+                // Float to int saturates; NaN becomes 0.
+                sink.put(&(v.round() as i64).to_le_bytes());
+            }
+        }
+    }
+}
+
 /// Writes the digest input of `screen` (see the module docs) to `sink`.
 fn feed(screen: &Screen, sink: &mut impl Sink) {
-    sink.put(b"jarvis-screen-digest-v3");
+    sink.put(b"jarvis-screen-digest-v4");
     put_str(sink, screen.app_bundle_id.trim());
+    put_frame(sink, Some(screen.bounds()));
     let springboard = screen
         .app_bundle_id
         .trim()
         .eq_ignore_ascii_case(SPRINGBOARD_BUNDLE_ID);
     let layout = Layout::of(screen);
-    layout.walk(&screen.root, |node, depth, shown| {
+    layout.walk(&screen.root, |node, v| {
         let secure = node.secure || node.role == Role::SecureTextField;
+        sink.put(b"N");
+        sink.put(&v.depth.to_le_bytes());
+        put_str(sink, node.role.as_str());
+        put_frame(sink, layout.on_screen(node.frame));
+        match v.quiet {
+            Quiet::Keyboard => {
+                // Structure and geometry only, plus the Return key's label (a cue).
+                sink.put(b"K");
+                if node.role == Role::Keyboard {
+                    put_opt(sink, return_key_label(node).as_deref());
+                }
+                sink.put(&[u8::from(node.visible), u8::from(v.shown)]);
+                return;
+            }
+            Quiet::Assistant => {
+                sink.put(b"A");
+                put_opt(sink, node.identifier.as_deref());
+                sink.put(&[
+                    u8::from(node.enabled),
+                    u8::from(node.selected),
+                    u8::from(secure),
+                    u8::from(node.visible),
+                    u8::from(v.shown),
+                ]);
+                return;
+            }
+            Quiet::No => sink.put(b"T"),
+        }
         let label = node.label.as_deref().map(|l| {
             if springboard && is_icon(&node.role) {
                 l.split_once(',').map_or(l, |(name, _badge)| name)
@@ -168,9 +223,6 @@ fn feed(screen: &Screen, sink: &mut impl Sink) {
         } else {
             node.value.as_deref()
         };
-        sink.put(b"N");
-        sink.put(&depth.to_le_bytes());
-        put_str(sink, node.role.as_str());
         put_opt(sink, label);
         put_opt(sink, value);
         put_opt(sink, node.identifier.as_deref());
@@ -180,7 +232,7 @@ fn feed(screen: &Screen, sink: &mut impl Sink) {
             u8::from(node.selected),
             u8::from(secure),
             u8::from(node.visible),
-            u8::from(shown),
+            u8::from(v.shown),
         ]);
     });
 }

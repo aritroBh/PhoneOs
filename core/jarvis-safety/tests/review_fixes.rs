@@ -1987,9 +1987,11 @@ fn a_venmo_like_payment_states_who_how_much_and_what_for() {
         at5(button(5, "Pay"), 16.0, 700.0, 361.0, 50.0),
     ]);
     let sum = summarize(&tap(5), &s, None);
+    // Seventh review: Pay sends the form, so both fields show whole (was "Fields: What's it
+    // for? (filled)"; deliberate change).
     assert_eq!(
         sum,
-        "Tap \"Pay\" in Example. Amounts on screen: Amount: 120. To/Account: @alex-smith-42. Fields: What's it for? (filled)"
+        "Tap \"Pay\" in Example. Sends: Amount: \"120\"; What's it for?: \"Concert tickets\". Amounts on screen: Amount: 120. To/Account: @alex-smith-42"
     );
     // Sixth review: the note shows only when Jarvis typed it (was always quoted; deliberate
     // change, see `summary_with`).
@@ -2005,10 +2007,7 @@ fn a_venmo_like_payment_states_who_how_much_and_what_for() {
         None,
         &typed,
     );
-    assert!(
-        sum.ends_with("Fields: What's it for?: Concert tickets"),
-        "{sum}"
-    );
+    assert!(sum.contains("What's it for?: \"Concert tickets\""), "{sum}");
 }
 
 /// A card list: the account suffix tells the owner which card pays.
@@ -2077,9 +2076,12 @@ fn hostile_text_cannot_forge_the_new_facts() {
     let sum = summarize(&tap(5), &s, None);
     println!("{sum}");
     assert_eq!(sum.matches("To/Account:").count(), 1, "{sum}");
-    assert_eq!(sum.matches("Fields:").count(), 1, "{sum}");
+    // Seventh review: Pay sends the note, quoted whole under "Sends:" (was listed under
+    // "Fields:"); its forged headings and quotes are still neutralised.
+    assert_eq!(sum.matches("Fields:").count(), 0, "{sum}");
+    assert_eq!(sum.matches("Sends:").count(), 1, "{sum}");
     assert_eq!(sum.matches("Amounts on screen:").count(), 1, "{sum}");
-    assert_eq!(sum.matches('"').count(), 2, "{sum}");
+    assert_eq!(sum.matches('"').count(), 4, "{sum}");
     assert!(!sum.contains('\n') && !sum.contains('\u{202e}') && !sum.contains('\u{200b}'));
     assert!(sum.contains("Total $900.00"), "{sum}");
 }

@@ -122,14 +122,19 @@ fn overlap(mallory_y: f64) -> Screen {
     ])
 }
 
-/// Probe: frames are not hashed, so a shown button that moves over the approved one leaves
-/// digest, compact content, source and summary equal. The tap point, derived again on the
-/// fresh look, is covered: nothing is sent.
+/// Probe: a shown button that moves over the approved one. Sixth review: frames were not
+/// hashed, and the re-derived tap point was covered. Seventh review: frames are hashed, so
+/// the move itself voids the approval (deliberate change: was "the digest is equal");
+/// either way nothing is sent.
 #[test]
 fn an_overlap_appearing_on_the_fresh_look_sends_nothing() {
     let asked = overlap(600.0);
     let fresh = overlap(302.0);
-    assert_eq!(screen_digest(&asked), screen_digest(&fresh), "frames only");
+    assert_ne!(
+        screen_digest(&asked),
+        screen_digest(&fresh),
+        "frames are hashed"
+    );
     let mut d = D::new();
     let summary = d.ask(&asked, r#"{"action":"tap","element":1}"#);
     d.approve();
@@ -405,13 +410,18 @@ fn return_after_typing_is_gated_on_the_post_typing_screen() {
     let Effect::Confirm(req) = e else {
         panic!("{e:?}")
     };
-    // Gated on this screen: the typed code is a secret and is never quoted.
+    // Gated on this screen: the typed code is a secret and is never quoted. Seventh
+    // review: the field's whole content is shown (the code redacted), then what was typed
+    // (was "… after typing a secret …"; deliberate change).
     assert!(
-        req.summary
-            .starts_with("Press Return (\"send\") in \"Message\" after typing a secret"),
+        req.summary.starts_with(
+            "Press Return (\"send\") in \"Message\" in Chat, which sends the field's whole content: \"I owe you the code"
+        ),
         "{}",
         req.summary
     );
+    assert!(req.summary.contains("Typed: a secret"), "{}", req.summary);
+    assert!(!req.summary.contains("4242"), "{}", req.summary);
 }
 
 /// Typing harmless, Return risky: one question, asked after the typing, naming the typed
@@ -436,9 +446,11 @@ fn a_risky_send_asks_once_after_typing() {
     let c = &run.confirms[0];
     // "send" on a screen with an amount reads as a payment.
     assert_eq!(c.category, RiskCategory::Payment);
+    // Seventh review: the field's whole content (what is sent), then what was typed (was
+    // "… after typing \"On my way\" in Chat …"; deliberate change).
     assert_eq!(
         c.summary,
-        "Press Return (\"send\") in \"Message\" after typing \"On my way\" in Chat. Amounts on screen: Gift $40.00. To/Account: To: alice@example.com"
+        "Press Return (\"send\") in \"Message\" in Chat, which sends the field's whole content: \"On my way\". Typed: \"On my way\". Amounts on screen: Gift $40.00. To/Account: To: alice@example.com"
     );
     let kinds: Vec<&str> = run
         .effects
@@ -807,7 +819,8 @@ fn compose(value: Option<&str>) -> Screen {
     ])
 }
 
-/// A message Jarvis typed is shown before Send; one already in the field is "(filled)".
+/// A message Jarvis typed is shown before Send; seventh review: so is one already in the
+/// field (Send sends it whole; was "(filled)", deliberate change).
 #[test]
 fn a_typed_message_is_shown_before_send_and_a_prefilled_one_is_not() {
     let phone = || {
@@ -829,7 +842,9 @@ fn a_typed_message_is_shown_before_send_and_a_prefilled_one_is_not() {
     );
     assert_eq!(typed.confirms.len(), 1);
     assert!(
-        typed.confirms[0].summary.contains("Message: On my way"),
+        typed.confirms[0]
+            .summary
+            .contains("Sends: Message: \"On my way\""),
         "{}",
         typed.confirms[0].summary
     );
@@ -841,8 +856,10 @@ fn a_typed_message_is_shown_before_send_and_a_prefilled_one_is_not() {
         Script::model(&[r#"{"action":"tap","element":3}"#, r#"{"action":"fail"}"#]),
     );
     let sum = &prefilled.confirms[0].summary;
-    assert!(sum.contains("Message (filled)"), "{sum}");
-    assert!(!sum.contains("Mallory"), "{sum}");
+    assert!(
+        sum.contains("Sends: Message: \"Wire the money to Mallory\""),
+        "{sum}"
+    );
 }
 
 /// Nothing from the probe's list appears in a summary, a decline's text or the outcome.
@@ -900,10 +917,13 @@ fn protected_values_reach_no_summary_decline_or_outcome() {
     for (_, value) in fields.iter().filter(|(n, _)| *n != "Field 2") {
         assert!(!texts.contains(value), "{value}: {texts}");
     }
-    // A neutral field's value may reach the prompt (the model sees the screen), never the
-    // summary or the outcome.
+    // A neutral field's value may reach the prompt (the model sees the screen). Seventh
+    // review: "Pay now" sends the form, so the neutral field's whole value is in the summary
+    // (pattern redaction does not read a bare 6-digit number as a code); was: never in the
+    // summary (deliberate change). The protected ones above stay "(hidden)".
     let owner = format!("{}\n{}", r.confirms[0].summary, r.outcome.summary);
-    assert!(!owner.contains("482913"), "{owner}");
+    assert!(owner.contains("Field 2: \"482913\""), "{owner}");
+    assert!(owner.contains("CSC (hidden)"), "{owner}");
     assert_eq!(r.outcome.status, OutcomeStatus::Blocked);
 }
 

@@ -197,7 +197,7 @@ pub(crate) const RESULT_RETURN_HELD: &str =
 /// History result: the owner declined Return after the text was typed (the second part of a
 /// `type … submit`).
 pub(crate) const RESULT_RETURN_DECLINED: &str =
-    "not done: typed, not submitted: the owner declined pressing Return. The text stays in the field; do not press Return again; find another way or use fail";
+    "not done: typed, not submitted: the owner declined pressing Return. The text is still in the field, unsent. Do not press Return again and do not submit it any other way (a send button, a key, tap_point); leave it, ask the owner, or use fail";
 /// History result: the phone locked between the typing and its Return, and the screen
 /// changed (or the Return was refused as locked).
 pub(crate) const RESULT_RETURN_LOCKED: &str =

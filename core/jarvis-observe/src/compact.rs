@@ -36,10 +36,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ptr;
 use std::rc::Rc;
 
-use jarvis_proto::{BarNode, CompactScreen, Element, Rect, Role, Screen, ScreenCues, UiNode};
+use jarvis_proto::{
+    BarNode, CompactScreen, Element, RawNode, Rect, Role, Screen, ScreenCues, UiNode,
+};
 
 use crate::fingerprint::{identity_key, FingerprintAssigner};
-use crate::layout::{addr, Layout, RawIndex};
+use crate::layout::{addr, Layout, Quiet, RawIndex};
 
 /// Trees deeper than this are cut (real iOS trees stay far below).
 pub(crate) const MAX_DEPTH: usize = 160;
@@ -228,7 +230,11 @@ impl<'a> Summaries<'a> {
                 }
                 continue;
             }
-            if !is_live(node) || depth > MAX_DEPTH || layout.is_excluded(node) {
+            if !is_live(node)
+                || depth > MAX_DEPTH
+                || layout.is_excluded(node)
+                || layout.quiet_root(node).is_some()
+            {
                 continue;
             }
             let label = non_empty(&node.label).or_else(|| shown_value(node));
@@ -339,7 +345,11 @@ fn single_nested<'a>(node: &'a UiNode, layout: &Layout<'_>) -> Option<&'a UiNode
     let mut found: Option<&'a UiNode> = None;
     let mut stack: Vec<(&'a UiNode, usize)> = node.children.iter().rev().map(|c| (c, 1)).collect();
     while let Some((n, depth)) = stack.pop() {
-        if is_pruned(n) || depth > MAX_DEPTH || layout.is_excluded(n) {
+        if is_pruned(n)
+            || depth > MAX_DEPTH
+            || layout.is_excluded(n)
+            || layout.quiet_root(n).is_some()
+        {
             continue;
         }
         if n.role == node.role && !n.frame.is_empty() {
@@ -421,7 +431,11 @@ struct Walker<'a> {
 
 impl<'a> Walker<'a> {
     fn walk(&mut self, node: &'a UiNode, st: &State) {
-        if is_pruned(node) || st.depth > MAX_DEPTH || self.layout.is_excluded(node) {
+        if is_pruned(node)
+            || st.depth > MAX_DEPTH
+            || self.layout.is_excluded(node)
+            || self.layout.quiet_root(node).is_some()
+        {
             return;
         }
         let id = self.next_id;
@@ -654,10 +668,18 @@ pub struct CompactView {
     /// For each raw node, one past the index of its last descendant: node `j` is inside
     /// node `i`'s subtree when `i < j < ends[i]`.
     pub ends: Vec<u32>,
-    /// Every shown `NavigationBar`/`TabBar` raw node with its shown frame, in node order;
-    /// none while an alert or sheet is up (only its subtree is listed then). Which of them
-    /// take precedence over the content under them is `jarvis_safety::tap_spot`'s call.
+    /// Every shown `NavigationBar`/`TabBar` raw node with its shown frame, in node order,
+    /// that has no web-view, scroll-view, table or collection ancestor (seventh review:
+    /// WebKit reports an ARIA `tablist` as a tab bar); none while an alert or sheet is up
+    /// (only its subtree is listed then). Which of them take precedence over the content
+    /// under them is `jarvis_safety::tap_spot`'s call.
     pub bars: Vec<BarNode>,
+    /// Every drawn raw node (no pruned ancestor, within the depth cap, inside the alert
+    /// while one is up) with any part of its frame on screen, in node order, with that
+    /// on-screen part: what a touch at a point could land on, whatever its role
+    /// (`jarvis_safety::tap_spot`'s candidate covers). The `Keyboard` subtree and the input
+    /// assistant's are flagged `keyboard`; a node whose text is not hashed carries no label.
+    pub nodes: Vec<RawNode>,
 }
 
 /// Flattens a screen to its indexed, ordered, deduplicated actionable/informative elements.
@@ -707,24 +729,52 @@ pub fn compact_view(screen: &Screen) -> CompactView {
     walker.walk(&screen.root, &start);
 
     let mut bars = Vec::new();
-    if alert.is_none() {
-        layout.walk(&screen.root, |node, _, shown| {
-            if !shown || !matches!(node.role, Role::NavigationBar | Role::TabBar) {
-                return;
+    let mut nodes = Vec::new();
+    layout.walk(&screen.root, |node, v| {
+        let Some(&i) = index.by_addr.get(&addr(node)) else {
+            return;
+        };
+        if v.live {
+            let drawn = layout
+                .on_screen(node.frame)
+                .and_then(|f| v.quiet_clip.map_or(Some(f), |c| f.intersection(&c)));
+            if let Some(frame) = drawn {
+                let label = if v.quiet == Quiet::No {
+                    non_empty(&node.label)
+                } else {
+                    None
+                };
+                // Text the node shows (never read inside the keyboard or the assistant, whose
+                // nodes count as the keyboard instead).
+                let text = v.quiet == Quiet::No
+                    && (non_empty(&node.label).is_some() || shown_value(node).is_some());
+                nodes.push(RawNode {
+                    node: i,
+                    role: node.role.clone(),
+                    frame,
+                    label,
+                    text,
+                    keyboard: v.quiet != Quiet::No,
+                });
             }
-            let (Some(frame), Some(&i)) = (
-                layout.shown_frame(node.frame),
-                index.by_addr.get(&addr(node)),
-            ) else {
-                return;
-            };
+        }
+        // A bar inside a web, scroll, table or collection view is page content (WebKit
+        // reports an ARIA `tablist` as a tab bar): never listed as a bar.
+        if alert.is_some()
+            || !v.shown
+            || v.in_content
+            || !matches!(node.role, Role::NavigationBar | Role::TabBar)
+        {
+            return;
+        }
+        if let Some(frame) = layout.shown_frame(node.frame) {
             bars.push(BarNode {
                 node: i,
                 role: node.role.clone(),
                 frame,
             });
-        });
-    }
+        }
+    });
 
     let bounds = screen.bounds();
     let return_key = layout.keyboard.and_then(return_key_label);
@@ -794,6 +844,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         parents: index.parents,
         ends: index.ends,
         bars,
+        nodes,
     }
 }
 /// `(pages, percent)` of an iOS scroll indicator: label `Vertical scroll bar, N pages`
@@ -842,7 +893,11 @@ fn cues(root: &UiNode, bounds: Rect, layout: &Layout<'_>) -> ScreenCues {
     let mut out = ScreenCues::default();
     let mut stack: Vec<(&UiNode, usize)> = vec![(root, 0)];
     while let Some((n, depth)) = stack.pop() {
-        if is_pruned(n) || depth > MAX_DEPTH || layout.is_excluded(n) {
+        if is_pruned(n)
+            || depth > MAX_DEPTH
+            || layout.is_excluded(n)
+            || layout.quiet_root(n).is_some()
+        {
             continue;
         }
         let on_screen = !n.frame.is_empty() && (bounds.is_empty() || n.frame.intersects(&bounds));

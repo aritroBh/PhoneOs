@@ -5,9 +5,11 @@
     clippy::indexing_slicing
 )]
 //! The exact digest of the raw tree (fourth review): what an approval is checked against.
-//! Everything the runner reports counts (also what compaction drops), but for the documented
-//! exclusions: frames, focus, `hittable`, secure values, SpringBoard's status bar,
-//! SpringBoard badges and scroll-indicator positions (the keyboard is hashed: sixth review).
+//! Everything the runner reports counts (also what compaction drops), frames included
+//! (seventh review, rounded to whole points), but for the documented exclusions: focus,
+//! `hittable`, secure values, SpringBoard's status bar, SpringBoard badges, scroll-indicator
+//! positions, and the text inside the keyboard and its input assistant (seventh review: their
+//! structure and geometry are hashed, and the Return key's label).
 
 mod common;
 
@@ -51,19 +53,35 @@ fn row(parts: usize, last: &str) -> Screen {
     ])
 }
 
-/// Frames, `hittable` and `focus` are not hashed; what is shown is (fifth review: the
-/// digest covers the effective visibility compaction uses, so a scroll that moves a row out
-/// of the shown set, or a hidden panel that becomes shown, changes it).
+/// `hittable` and `focus` are not hashed; what is shown is (fifth review: the digest covers
+/// the effective visibility compaction uses, so a scroll that moves a row out of the shown
+/// set, or a hidden panel that becomes shown, changes it), and so are frames, rounded to
+/// whole points (seventh review: was "equal trees with different frames are equal"; a frame
+/// that moves now changes the digest, deliberately).
 #[test]
-fn equal_trees_with_different_frames_are_equal() {
+fn frames_are_hashed_to_whole_points_hittable_and_focus_are_not() {
     let a = fixture("long_list_scrolled");
     let mut b = a.clone();
     edit(&mut b, |n| {
-        n.frame.x += 0.5;
         n.hittable = !n.hittable;
         n.focused = !n.focused;
     });
     assert!(same(&a, &b));
+    // Less than the rounding moves nothing; a point moves the digest.
+    let nudge = |dx: f64| {
+        let mut s = a.clone();
+        edit(&mut s, |n| {
+            if n.label.as_deref() == Some("Item 9") {
+                n.frame.x += dx;
+            }
+        });
+        s
+    };
+    assert!(same(&a, &nudge(0.2)));
+    assert!(!same(&a, &nudge(1.0)));
+    let mut f = a.clone();
+    edit(&mut f, |n| n.frame.x += 1.0);
+    assert!(!same(&a, &f));
     // A big scroll moves rows out of (and into) the shown set.
     let mut c = a.clone();
     edit(&mut c, |n| n.frame.y -= 137.0);
@@ -232,12 +250,13 @@ fn springboard_badges_are_left_out_but_names_are_not() {
     assert!(!same(&app("Mail, 3 unread"), &app("Mail, 4 unread")));
 }
 
-/// Sixth review: nothing in or near the keyboard is excluded. The keys (and so the Return
-/// key's label), the prediction / autofill bar and anything else in the keyboard's window
-/// are hashed like any other node (an app's input accessory bar lives there); the Return
-/// key is still read as a cue. Was: keys and predictions left out (deliberate change).
+/// Seventh review: inside the keyboard and inside the input assistant next to it only
+/// structure, shown bits and frames are hashed (and the Return key's label), so a changing
+/// prediction or shift label keeps an approval; nothing can appear, vanish or move there
+/// unnoticed. Was (sixth review): their text hashed too (deliberate change). Anywhere else
+/// the identifier changes nothing.
 #[test]
-fn the_keyboard_its_keys_and_its_prediction_bar_are_hashed() {
+fn keyboard_text_is_left_out_but_its_return_key_and_geometry_are_not() {
     let a = fixture("login_keyboard");
     let mut b = a.clone();
     edit(&mut b, |n| {
@@ -245,14 +264,21 @@ fn the_keyboard_its_keys_and_its_prediction_bar_are_hashed() {
             n.label = Some("Hello".to_owned());
         }
     });
-    assert!(!same(&a, &b), "the prediction bar is hashed");
+    assert!(same(&a, &b), "the prediction bar's text is left out");
     let mut k = a.clone();
     edit(&mut k, |n| {
         if n.label.as_deref() == Some("q") {
             n.label = Some("Q".to_owned());
         }
     });
-    assert!(!same(&a, &k), "the keys are hashed");
+    assert!(same(&a, &k), "the keys' labels are left out");
+    let mut m = a.clone();
+    edit(&mut m, |n| {
+        if n.label.as_deref() == Some("q") {
+            n.frame.y += 4.0;
+        }
+    });
+    assert!(!same(&a, &m), "a key that moves is not");
     let mut c = a.clone();
     edit(&mut c, |n| {
         if n.identifier.as_deref() == Some("Return") {
@@ -406,11 +432,12 @@ fn a_status_bar_role_inside_an_app_is_hashed_and_listed() {
 }
 
 /// The iOS 26 keyboard lives in a top-level window of its own, with the prediction /
-/// autofill bar above it and the emoji and dictation buttons below it. Sixth review: the
-/// whole window is hashed (every node indexed); the prediction bar and its "Passwords"
-/// button are listed like any content, the keys are not, the emoji and dictation buttons
-/// (below the keyboard's top) are not shown, and the Return key is still a cue. Was: the
-/// whole window excluded (deliberate change).
+/// autofill bar (`SystemInputAssistantView`) above it and the emoji and dictation buttons
+/// below it. The whole window is indexed and its structure hashed; seventh review: the
+/// assistant's text is not hashed, so its "Passwords" button is no longer listed (was:
+/// listed, sixth review; deliberate change), the keys are not listed, the emoji and
+/// dictation buttons (below the keyboard's top) are not shown, and the Return key is
+/// still a cue.
 #[test]
 fn the_ios26_keyboard_window_is_hashed_and_its_bar_listed() {
     let s = fixture("login_keyboard");
@@ -418,7 +445,19 @@ fn the_ios26_keyboard_window_is_hashed_and_its_bar_listed() {
     let keyboard_window = s.root.children.last().unwrap();
     assert!(keyboard_window.iter().any(|n| n.role == Role::Keyboard));
     assert_eq!(view.parents.len(), s.root.count(), "every node is indexed");
-    assert!(labels(&view.screen).contains(&"Passwords"));
+    assert!(!labels(&view.screen).contains(&"Passwords"));
+    assert_eq!(
+        labels(&view.screen),
+        [
+            "Playground",
+            "Login form",
+            "Username",
+            "Password",
+            "Sign In",
+            "Signed out"
+        ],
+        "the tab bar is under the keyboard; the assistant's button is not listed"
+    );
     for gone in [
         "Emoji", "Dictate", "q", "shift", "delete", "return", "numbers",
     ] {
@@ -435,8 +474,8 @@ fn the_ios26_keyboard_window_is_hashed_and_its_bar_listed() {
         .all(|i| (*i as usize) < view.parents.len()));
 }
 
-/// A `Keyboard` node beside app content: its keys are hashed (sixth review; was: its own
-/// subtree excluded, deliberate change), and so is the content next to it.
+/// A `Keyboard` node beside app content: its keys' geometry is hashed, their labels are not
+/// (seventh review; sixth review: hashed whole), and the content next to it is hashed whole.
 #[test]
 fn a_keyboard_beside_app_content_is_hashed_with_its_keys() {
     let s = |amount: &str, key: &str| {
@@ -449,7 +488,7 @@ fn a_keyboard_beside_app_content_is_hashed_with_its_keys() {
             true,
         )
     };
-    assert!(!same(&s("$5", "q"), &s("$5", "Q")));
+    assert!(same(&s("$5", "q"), &s("$5", "Q")));
     assert!(!same(&s("$5", "q"), &s("$500", "q")));
     assert!(compact(&s("$5", "q"))
         .elements

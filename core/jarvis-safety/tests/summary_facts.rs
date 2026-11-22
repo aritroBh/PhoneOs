@@ -87,9 +87,14 @@ fn protected_fields_are_listed_by_name_only() {
         let sum = summarize(&tap(3), &s, None);
         assert!(!sum.contains(value), "{name}: {sum}");
         assert!(sum.contains(&format!("{name} (hidden)")), "{name}: {sum}");
-        // Sixth review: an ordinary field Jarvis did not type is named, not quoted (was
-        // "Note: dinner"; deliberate change).
-        assert!(sum.contains("Note (filled)"), "{sum}");
+        // Seventh review: where "Continue" sends the form (its category is a sending one
+        // here), the ordinary field shows whole (sixth review: "Note (filled)"; deliberate
+        // change); where it does not, it is still only named.
+        if sum.contains("Sends:") {
+            assert!(sum.contains("Note: \"dinner\""), "{sum}");
+        } else {
+            assert!(sum.contains("Note (filled)"), "{sum}");
+        }
     }
     let s = app_screen(vec![by_placeholder, button(10, "Send")]);
     let sum = summarize(&tap(10), &s, None);
@@ -220,7 +225,34 @@ fn a_fact_list_without_room_counts_its_entries() {
     els.push(tf(6, &format!("Note {long}"), &format!("first {long}")));
     els.push(tf(7, &format!("Memo {long}"), &format!("second {long}")));
     els.push(label(8, "To account ••••4521"));
-    els.push(button(9, &format!("Pay {long}")));
+    // Seventh review: with the bound at 480, selected options take the room the fields had.
+    for i in 10..=12 {
+        let mut o = button(i, &format!("Option {long} {i}"));
+        o.selected = true;
+        els.push(o);
+    }
+    // Seventh review: a tap that sends nothing ("Pay" would send the fields, shown whole).
+    els.push(at(
+        label(14, &format!("Item {long}")),
+        16.0,
+        640.0,
+        180.0,
+        40.0,
+    ));
+    els.push(at(
+        button(9, &format!("Remove {long}")),
+        16.0,
+        700.0,
+        180.0,
+        50.0,
+    ));
+    els.push(at(
+        label(13, &format!("Beside {long}")),
+        200.0,
+        700.0,
+        180.0,
+        50.0,
+    ));
     // Sixth review: field values show only when Jarvis typed them, so the long values are
     // typed here (was: shown unconditionally).
     let typed = [
@@ -235,14 +267,19 @@ fn a_fact_list_without_room_counts_its_entries() {
     ];
     let sum = jarvis_safety::summary_with(
         &tap(9),
-        &app_screen(els),
-        RiskCategory::Payment,
-        ScreenSource::Typed,
+        &{
+            let mut s = app_screen(els);
+            s.app_name = Some(format!("App {long}"));
+            s
+        },
+        RiskCategory::Delete,
+        // Seventh review: the bound is 480 now; the warning's room makes the list run out.
+        ScreenSource::RunnerText,
         None,
         &typed,
     );
     assert!(sum.contains("Fields: 2 not shown"), "{sum}");
-    assert!(sum.chars().count() <= 320, "{sum}");
+    assert!(sum.chars().count() <= 480, "{sum}");
 }
 
 // --- Under "…" ----------------------------------------------------------------------------
@@ -265,6 +302,7 @@ fn under_prefers_the_targets_own_container() {
         parents: &parents,
         ends: &ends,
         bars: &[],
+        nodes: &[],
     };
     let plain = summary_for(&tap(3), &s, RiskCategory::Delete, ScreenSource::Typed, None);
     assert!(

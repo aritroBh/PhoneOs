@@ -481,6 +481,7 @@ fn every_listed_control_has_an_uncontested_tap_point() {
             parents: &view.parents,
             ends: &view.ends,
             bars: &view.bars,
+            nodes: &view.nodes,
         };
         for e in view
             .screen
@@ -514,7 +515,10 @@ fn every_listed_control_has_an_uncontested_tap_point() {
     }
     assert!(checked > 100, "{checked}");
     assert!(bar_points >= 6, "{bar_points}");
-    let known = ["long_list_scrolled: [26] Button \"Item 24\" covered by Bar(Tab)"];
+    let known: Vec<String> = KNOWN_REFUSALS
+        .iter()
+        .map(|(entry, _reason)| (*entry).to_owned())
+        .collect();
     assert_eq!(refused, known, "{}", refused.join("\n"));
 }
 
@@ -531,6 +535,7 @@ fn long_list_scrolled_bar_controls_are_tapped_at_their_centres() {
         parents: &view.parents,
         ends: &view.ends,
         bars: &view.bars,
+        nodes: &view.nodes,
     };
     let roles: Vec<&Role> = view.bars.iter().map(|b| &b.role).collect();
     assert_eq!(roles, [&Role::NavigationBar, &Role::TabBar]);
@@ -562,4 +567,96 @@ fn long_list_scrolled_bar_controls_are_tapped_at_their_centres() {
             by: jarvis_safety::CoveredBy::Bar(jarvis_safety::Bar::Tab),
         })
     );
+}
+
+/// Every refusal of the tap-point rule in force on the ten fixtures, with why it is a genuine
+/// cover (read from the fixture). Seventh review follow-up: rule v2 (controls, the keyboard,
+/// labelled content drawn later) refuses nothing v0 did not.
+const KNOWN_REFUSALS: &[(&str, &str)] = &[(
+    "long_list_scrolled: [26] Button \"Item 24\" covered by Bar(Tab)",
+    "row scrolled wholly under the tab bar ({20, 907.7} 400 x 48.3 shown, tab bar {0, 873} 440 x 83)",
+)];
+
+/// The rules measured side by side on the ten fixtures (seventh review follow-up), per
+/// fixture and in total: v0 (the sixth review's rule, listed enabled controls), v2 without
+/// labelled content (controls, enabled or not, and the keyboard), v2 (the rule in force),
+/// and the two narrowings of v2's labelled-content clause the follow-up named. Each gives
+/// exactly the one genuine refusal. Before the keyboard's nodes were clipped to their
+/// subtree's root (the prediction bar's scroll content reports `{0, 11} 440 x 1244` but is
+/// drawn inside the 44 pt bar, `login_keyboard` fixture line `Other(Other) {{0, 11}, {440,
+/// 1244}}`), v2 without labelled content refused all 5 controls of `login_keyboard` too.
+#[test]
+fn the_tap_rules_measured_side_by_side() {
+    use jarvis_safety::OccluderRule as R;
+    let rules = [
+        R::V0,
+        R::Controls,
+        R::Labelled,
+        R::LabelledNotOwnLabel,
+        R::LabelledOtherSubtree,
+    ];
+    let mut totals = Vec::new();
+    for rule in rules {
+        let mut per = Vec::new();
+        for name in FIXTURES {
+            let s = fixture(name);
+            let view = jarvis_observe::compact_view(&s);
+            let tree = jarvis_safety::ScreenTree {
+                sources: &view.sources,
+                parents: &view.parents,
+                ends: &view.ends,
+                bars: &view.bars,
+                nodes: &view.nodes,
+            };
+            let n = view
+                .screen
+                .elements
+                .iter()
+                .filter(|e| e.enabled && jarvis_safety::takes_taps(&e.role))
+                .filter(|e| {
+                    jarvis_safety::tap_spot_under(rule, e, &view.screen, Some(&tree), None).is_err()
+                })
+                .count();
+            per.push((name, n));
+        }
+        let total: usize = per.iter().map(|(_, n)| n).sum();
+        println!("{rule:?}: total {total}; {per:?}");
+        totals.push(total);
+        for (name, n) in per {
+            let want = usize::from(name == "long_list_scrolled");
+            assert_eq!(n, want, "{rule:?} {name}");
+        }
+    }
+    assert_eq!(totals, [1, 1, 1, 1, 1]);
+    assert_eq!(jarvis_safety::OCCLUDER_RULE, R::Labelled);
+}
+
+/// With the keyboard up every listed control that is not under the `Keyboard` node's own
+/// frame gets a tap point (the keyboard's window and its full-screen containers cover
+/// nothing; the prediction bar covers only its 44 pt).
+#[test]
+fn with_the_keyboard_up_every_control_above_it_is_tappable() {
+    let s = fixture("login_keyboard");
+    let view = jarvis_observe::compact_view(&s);
+    let tree = jarvis_safety::ScreenTree {
+        sources: &view.sources,
+        parents: &view.parents,
+        ends: &view.ends,
+        bars: &view.bars,
+        nodes: &view.nodes,
+    };
+    let controls: Vec<_> = view
+        .screen
+        .elements
+        .iter()
+        .filter(|e| jarvis_safety::takes_taps(&e.role))
+        .collect();
+    assert_eq!(controls.len(), 5);
+    for e in controls {
+        assert!(
+            jarvis_safety::tap_spot(e, &view.screen, Some(&tree), None).is_ok(),
+            "{}",
+            e.label
+        );
+    }
 }

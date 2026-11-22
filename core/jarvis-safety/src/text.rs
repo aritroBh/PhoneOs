@@ -416,7 +416,7 @@ pub(crate) fn tokens(text: &str) -> Vec<String> {
 }
 
 /// True for currency symbols that mark a price.
-fn is_currency_symbol(c: char) -> bool {
+pub(crate) fn is_currency_symbol(c: char) -> bool {
     matches!(
         fold_fullwidth(c),
         '$' | '€'

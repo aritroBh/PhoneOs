@@ -16,8 +16,8 @@ use jarvis_proto::{
     TrustLevel,
 };
 use jarvis_safety::{
-    control_at, evaluate_from, summarize, summary_with, tap_spot, Bar, Covered, CoveredBy,
-    Decision, ScreenSource, ScreenTree, TypedText,
+    control_at, evaluate_from, summarize, summary_for, summary_with, tap_spot, Bar, Covered,
+    CoveredBy, Decision, ScreenSource, ScreenTree, TypedText,
 };
 
 fn tf(index: u32, name: &str, value: &str) -> Element {
@@ -117,17 +117,24 @@ fn field_values_are_not_quoted_in_summaries() {
         ("CSC", "123"),
     ];
     let mut leaks = Vec::new();
-    for (name, value) in fields {
-        let s = app_screen(vec![
-            tf(1, name, value),
-            label(2, "Fee $25.00"),
-            button(3, "Pay now"),
-        ]);
-        let sum = summarize(&tap(3), &s, None);
-        if sum.contains(value) {
-            leaks.push(format!("{name}={value}: {sum}"));
+    // Seventh review: "Pay now" sends the field, and a sent field's whole value is shown
+    // after the pattern redaction (cards, labelled codes) and the credential-name rule. The
+    // one value those let through is a bare 6-digit number in a neutrally named field
+    // (deliberate; see `summary_with`). A tap that sends nothing still quotes none.
+    let sent_ok = ["482913"];
+    for target in ["Pay now", "Remove card"] {
+        for (name, value) in fields {
+            let s = app_screen(vec![
+                tf(1, name, value),
+                label(2, "Fee $25.00"),
+                button(3, target),
+            ]);
+            let sum = summarize(&tap(3), &s, None);
+            if sum.contains(value) && !(target == "Pay now" && sent_ok.contains(&value)) {
+                leaks.push(format!("{target}: {name}={value}: {sum}"));
+            }
+            assert!(sum.contains(name.trim_end_matches('.')), "{sum}");
         }
-        assert!(sum.contains(name.trim_end_matches('.')), "{sum}");
     }
     // A static text (not a field) with a code / full card number.
     let s = app_screen(vec![
@@ -192,20 +199,13 @@ fn typed_text_amounts_and_other_fields() {
         field: 1,
         text: "On my way".to_owned(),
     }];
+    // Seventh review: Send sends the form, so the message shows whole whoever typed it
+    // (was "Message (filled)" unless Jarvis typed it; deliberate change).
     assert_eq!(
         send(&typed),
-        "Tap \"Send\" in Example. Fields: Message: On my way; Subject (empty)"
+        "Tap \"Send\" in Example. Sends: Message: \"On my way\"; Subject (empty)"
     );
-    assert_eq!(
-        send(&[]),
-        "Tap \"Send\" in Example. Fields: Message (filled); Subject (empty)"
-    );
-    // Typed into another field, or other text: not shown.
-    let elsewhere = [TypedText {
-        field: 2,
-        text: "On my way".to_owned(),
-    }];
-    assert!(send(&elsewhere).contains("Message (filled)"));
+    assert_eq!(send(&[]), send(&typed));
     let amounts = app_screen(vec![
         at(tf(1, "Amount", "$4,000.00"), 16.0, 200.0, 361.0, 44.0),
         at(tf(2, "Tip", "15"), 16.0, 260.0, 361.0, 44.0),
@@ -213,6 +213,9 @@ fn typed_text_amounts_and_other_fields() {
         at(tf(4, "Quantity", "two"), 16.0, 380.0, 361.0, 44.0),
         at(button(5, "Pay"), 16.0, 700.0, 361.0, 50.0),
     ]);
+    // A tap that sends nothing (seventh review: Pay would send the form and show it all).
+    let mut amounts = amounts;
+    amounts.elements[4].label = "Remove card".to_owned();
     let sum = summarize(&tap(5), &amounts, None);
     assert!(sum.contains("Amount: $4,000.00"), "{sum}");
     assert!(sum.contains("Tip: 15"), "{sum}");
@@ -229,7 +232,18 @@ fn recipient_facts_never_quote_a_field_value() {
         at(label(2, "Total $5.00"), 16.0, 260.0, 361.0, 22.0),
         at(button(3, "Pay"), 16.0, 700.0, 361.0, 50.0),
     ]);
+    // Seventh review: Pay sends the field, so its whole value is shown under "Sends:" (was
+    // "To (filled)"; deliberate change); the recipient facts still never quote it.
     let sum = summarize(&tap(3), &s, None);
+    assert!(sum.contains("Sends: To: \"mallory@example.com\""), "{sum}");
+    assert!(!sum.contains("To/Account"), "{sum}");
+    // A tap that sends nothing still names the field only.
+    let s = app_screen(vec![
+        at(tf(1, "To", "mallory@example.com"), 16.0, 200.0, 361.0, 44.0),
+        at(label(2, "Total $5.00"), 16.0, 260.0, 361.0, 22.0),
+        at(button(3, "Remove card"), 16.0, 700.0, 361.0, 50.0),
+    ]);
+    let sum = summary_for(&tap(3), &s, RiskCategory::Delete, ScreenSource::Typed, None);
     assert!(!sum.contains("mallory"), "{sum}");
     assert!(sum.contains("To (filled)"), "{sum}");
 }
@@ -285,11 +299,18 @@ fn a_partial_overlap_moves_the_point_inside_the_target() {
     let text = at(label(4, "Pay now"), 16.0, 300.0, 361.0, 50.0);
     let s = screen_of(vec![overlay, text, pay.clone()]);
     assert_eq!(tap_spot(&pay, &s, None, None), Ok(pay.frame.center()));
-    // A disabled control does not take the touch away.
+    // Seventh review: a disabled control takes the touch too (a web button marked
+    // `aria-disabled` still runs its handler). Was: it did not; deliberate change.
     let mut off = at(button(5, "Other"), 16.0, 300.0, 361.0, 50.0);
     off.enabled = false;
     let s = screen_of(vec![pay.clone(), off]);
-    assert_eq!(tap_spot(&pay, &s, None, None), Ok(pay.frame.center()));
+    assert_eq!(
+        tap_spot(&pay, &s, None, None),
+        Err(Covered {
+            target: 1,
+            by: CoveredBy::Control(5)
+        })
+    );
 }
 
 /// A switch inside a full-width cell (related in the raw tree): the switch's own point when
@@ -309,6 +330,7 @@ fn a_switch_inside_a_cell_and_the_cell() {
         parents: &parents,
         ends: &ends,
         bars: &[],
+        nodes: &[],
     };
     let p = tap_spot(&switch, &s, Some(&tree), None).unwrap();
     assert!(switch.frame.contains(p));
@@ -349,6 +371,7 @@ fn bar_tree(bars: &[BarNode]) -> ScreenTree<'_> {
         parents: &BAR_PARENTS,
         ends: &BAR_ENDS,
         bars,
+        nodes: &[],
     }
 }
 

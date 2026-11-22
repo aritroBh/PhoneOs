@@ -151,8 +151,10 @@ fn an_approval_looks_at_the_screen_again_before_acting() {
     );
 }
 
-/// The control is still there but shifted a little (its frame still holds the planned
-/// point): it is tapped where it is now, at the re-planned centre.
+/// The control is still there but shifted a little. Seventh review: the layout is part of
+/// the approval (frames are hashed), so nothing is tapped and the model is told; was: tapped
+/// where it is now, at the re-planned centre (deliberate change). After the settle retry an
+/// unchanged look still taps.
 #[test]
 fn an_approved_control_that_shifted_is_tapped_where_it_is_now() {
     let mut d = Driver::new(config(), "Buy the headphones");
@@ -165,9 +167,30 @@ fn an_approved_control_that_shifted_is_tapped_where_it_is_now() {
         Effect::Observe { .. }
     ));
     let shifted = shop(310.0, "Add to wishlist");
+    // The settle wait, then the same shifted look: void.
     assert_eq!(
         d.observed(&shifted),
-        Effect::Act(RunnerCommand::Tap { x: 196.5, y: 335.0 })
+        Effect::Act(RunnerCommand::Wait { ms: 500 })
+    );
+    assert!(matches!(
+        d.step(Event::ActResult(RunnerResult::ok())),
+        Effect::Observe { .. }
+    ));
+    assert!(matches!(d.observed(&shifted), Effect::Infer(_)));
+    // An animation still finishing: the settle retry sees the asked layout again and taps.
+    let mut d = Driver::new(config(), "Buy the headphones");
+    d.step(Event::Start);
+    d.observed(&before);
+    assert!(matches!(d.model(&tap_buy(&before)), Effect::Confirm(_)));
+    d.step(Event::UserDecision { approved: true });
+    assert_eq!(
+        d.observed(&shifted),
+        Effect::Act(RunnerCommand::Wait { ms: 500 })
+    );
+    d.step(Event::ActResult(RunnerResult::ok()));
+    assert_eq!(
+        d.observed(&before),
+        Effect::Act(RunnerCommand::Tap { x: 196.5, y: 325.0 })
     );
 }
 
@@ -320,9 +343,12 @@ fn an_approved_typed_submit_is_rechecked_before_its_return() {
         panic!()
     };
     assert_eq!(c.category, RiskCategory::SendMessage);
+    // Seventh review: the field's whole content, then what was typed (was "… after
+    // typing \"late\""; deliberate change).
     assert!(
-        c.summary
-            .starts_with("Press Return in \"Message\" after typing \"late\""),
+        c.summary.starts_with(
+            "Press Return in \"Message\" in Chat, which sends the field's whole content: \"late\". Typed: \"late\""
+        ),
         "{}",
         c.summary
     );
@@ -998,8 +1024,9 @@ fn a_subscribe_approved_on_one_plan_is_not_sent_on_the_other() {
     assert!(matches!(e, Effect::Act(_)), "{e:?}");
 }
 
-/// The list scrolled between ask and act (the same content, every frame moved): the
-/// approved control is tapped where it is now.
+/// The list scrolled between ask and act (the same content, every frame moved). Seventh
+/// review: the layout is part of the approval, so it voids and the model is told; was:
+/// tapped where it is now (deliberate change).
 #[test]
 fn an_approval_survives_a_scroll_and_is_tapped_where_it_is_now() {
     let before = shop(300.0, "Add to wishlist");
@@ -1022,7 +1049,7 @@ fn an_approval_survives_a_scroll_and_is_tapped_where_it_is_now() {
         false,
     );
     let (_, e) = approve_then_look(config(), &before, i, &scrolled);
-    assert_eq!(e, Effect::Act(RunnerCommand::Tap { x: 196.5, y: 225.0 }));
+    assert!(matches!(e, Effect::Infer(_)), "{e:?}");
 }
 
 fn reserved(countdown: &str, stepper: &str, banner: Option<&str>) -> Screen {
@@ -1269,21 +1296,25 @@ fn checkout_with_chrome(clock: &str, password: &str, prediction: &str) -> Screen
             UiNode::new(Role::Other("Other".into()), rect(330.0, 18.0, 30.0, 14.0))
                 .with_label("100% battery power"),
         ]);
-    let keyboard_window = UiNode::new(Role::Window, IPHONE_SIZE.to_rect()).with_children(vec![
-        UiNode::new(Role::Other("Other".into()), rect(0.0, 470.0, 393.0, 44.0))
-            .with_identifier("SystemInputAssistantView")
-            .with_children(vec![node(
-                Role::Button,
-                prediction,
-                rect(0.0, 470.0, 393.0, 44.0),
-            )]),
-        UiNode::new(Role::Keyboard, rect(0.0, 516.0, 393.0, 336.0)).with_children(vec![
-            UiNode::new(Role::Key, rect(3.0, 527.0, 37.0, 46.0)).with_label(prediction),
-            UiNode::new(Role::Button, rect(300.0, 800.0, 90.0, 46.0))
-                .with_label("go")
-                .with_identifier("Return"),
-        ]),
-    ]);
+    // Seventh review: every node of the keyboard's window covers what is under it, and a
+    // later window covers the app; these windows take their content's area (they were
+    // full-screen; the test is about the digest, not where taps land).
+    let keyboard_window =
+        UiNode::new(Role::Window, rect(0.0, 470.0, 393.0, 382.0)).with_children(vec![
+            UiNode::new(Role::Other("Other".into()), rect(0.0, 470.0, 393.0, 44.0))
+                .with_identifier("SystemInputAssistantView")
+                .with_children(vec![node(
+                    Role::Button,
+                    prediction,
+                    rect(0.0, 470.0, 393.0, 44.0),
+                )]),
+            UiNode::new(Role::Keyboard, rect(0.0, 516.0, 393.0, 336.0)).with_children(vec![
+                UiNode::new(Role::Key, rect(3.0, 527.0, 37.0, 46.0)).with_label(prediction),
+                UiNode::new(Role::Button, rect(300.0, 800.0, 90.0, 46.0))
+                    .with_label("go")
+                    .with_identifier("Return"),
+            ]),
+        ]);
     let root = UiNode::new(Role::Application, IPHONE_SIZE.to_rect())
         .with_label("Shop")
         .with_children(vec![
@@ -1296,7 +1327,7 @@ fn checkout_with_chrome(clock: &str, password: &str, prediction: &str) -> Screen
                 node(Role::Button, "Pay", rect(16.0, 400.0, 361.0, 50.0)),
             ]),
             keyboard_window,
-            UiNode::new(Role::Window, IPHONE_SIZE.to_rect()).with_children(vec![status_bar]),
+            UiNode::new(Role::Window, rect(0.0, 0.0, 393.0, 54.0)).with_children(vec![status_bar]),
         ]);
     screen("com.example.shop", "Shop", root, true)
 }
@@ -1324,9 +1355,14 @@ fn a_status_bar_clock_that_ticks_keeps_the_approval() {
         matches!(e, Effect::Act(RunnerCommand::Tap { .. })),
         "'{asked}': {e:?}"
     );
+    // Seventh review: the prediction's text is not hashed (its geometry is), so a changed
+    // prediction keeps the approval (sixth review: voided; deliberate change).
     let after = checkout_with_chrome("9:41", "••••", "Thanks");
     let (asked, e) = approve_then_look(config(), &before, i, &after);
-    assert!(!matches!(e, Effect::Act(_)), "'{asked}': {e:?}");
+    assert!(
+        matches!(e, Effect::Act(RunnerCommand::Tap { .. })),
+        "'{asked}': {e:?}"
+    );
     // The same clock text in the app's own window (no status-bar role) voids it.
     let in_app = |clock: &str| {
         screen(

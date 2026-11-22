@@ -583,13 +583,29 @@ fn type_risk(element: Option<u32>, text: &str, submit: bool, r: &Reader<'_>) -> 
         risk = RiskCategory::Credential;
     }
     if submit {
-        risk = max_risk(risk, submit_risk(target, r));
+        risk = max_risk(risk, submit_risk(target, text, r));
         if looks_like_url(text) {
             risk = max_risk(risk, url_risk(text));
         }
     }
     risk
 }
+
+/// Return-key labels (`UIReturnKeyType`, English) that submit something rather than insert
+/// a line break.
+const SUBMIT_RETURN_LABELS: &[&str] = &[
+    "go",
+    "google",
+    "join",
+    "next",
+    "route",
+    "search",
+    "send",
+    "yahoo",
+    "done",
+    "emergency call",
+    "continue",
+];
 
 /// Return-key labels that only move the caret, search or go to the next field: they add
 /// nothing to a submit.
@@ -629,11 +645,38 @@ fn return_key_risk(target: Option<&Element>, r: &Reader<'_>) -> RiskCategory {
     risk
 }
 
-/// Risk of pressing Return in `target`: the compose field's own meaning, the Return key's
-/// label and the screen's context (a Send button, a price). Search fields only search
-/// (unless the Return key itself says otherwise).
-fn submit_risk(target: Option<&Element>, r: &Reader<'_>) -> RiskCategory {
+/// Risk of pressing Return in `target` after typing `text`, the highest of (seventh
+/// review): the field's label and placeholder read through the action tables ("Type
+/// DELETE to confirm" is `Delete`), the typed text read the same way (a confirmation word
+/// typed into such a field), the compose field's own meaning, the Return key's label and the
+/// screen's context (a Send button, a price). A search field keeps its leniency for the
+/// typed text and the screen (Return there searches for the words, whatever they say),
+/// not for its own label; so does a multi-line text view whose Return key is not a submit
+/// label (Return inserts a line break: the text is content).
+fn submit_risk(target: Option<&Element>, text: &str, r: &Reader<'_>) -> RiskCategory {
     let key = return_key_risk(target, r);
+    let tables = action_tables(&r.screen.app_bundle_id);
+    // Generic words ("OK", "confirm") mean what the screen means; definite ones count.
+    let words = |t: &str| match_label(t, &tables).category;
+    let named = target.map_or(RiskCategory::None, |t| {
+        max_risk(
+            words(&bounded(&t.label)),
+            words(&bounded(t.placeholder.as_deref().unwrap_or(""))),
+        )
+    });
+    // In a multi-line text view a Return key that is not a submit label inserts a line
+    // break: the typed text is content there, not a command (a note "buy milk").
+    let line_break = target.is_some_and(|t| t.role == Role::TextView)
+        && r.screen
+            .cues
+            .return_key
+            .as_deref()
+            .is_none_or(|k| !SUBMIT_RETURN_LABELS.contains(&tokens(k).join(" ").as_str()));
+    let typed = if target.is_some_and(|t| t.role == Role::SearchField) || line_break {
+        RiskCategory::None
+    } else {
+        words(&bounded(text))
+    };
     let rest = match target {
         Some(t) if t.role == Role::SearchField => RiskCategory::None,
         Some(t) => {
@@ -652,7 +695,7 @@ fn submit_risk(target: Option<&Element>, r: &Reader<'_>) -> RiskCategory {
         }
         None => r.context(None).risk,
     };
-    max_risk(key, rest)
+    max_risk(max_risk(key, rest), max_risk(named, typed))
 }
 
 /// Whether `role`/`el` is a control whose value or state a drag changes: a slider, switch,

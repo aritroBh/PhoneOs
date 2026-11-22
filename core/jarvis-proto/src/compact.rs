@@ -106,6 +106,30 @@ pub struct BarNode {
     pub frame: Rect,
 }
 
+/// A drawn raw node of the tree a compact screen was built from, for the tap-point rule
+/// (`jarvis_safety::tap_spot`): any node whose frame contains a point may take a touch
+/// there, whatever its role. `jarvis-observe` lists every drawn node with any part of its
+/// frame on screen. Kept out of the FFI, beside the screen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RawNode {
+    /// The node, in the digest's node order (`jarvis_observe::CompactView`).
+    pub node: u32,
+    /// Its role.
+    pub role: Role,
+    /// The part of its frame on screen.
+    pub frame: Rect,
+    /// Its label, when it has one and its text is hashed (never inside the keyboard or the
+    /// input assistant): how a refusal names it.
+    pub label: Option<String>,
+    /// It shows text: a non-empty label, or a value that is not a secure field's (always
+    /// false inside the keyboard and the input assistant).
+    pub text: bool,
+    /// It is part of the keyboard: the `Keyboard` node or inside it, or inside the input
+    /// assistant (prediction bar) next to it (see `jarvis_observe`'s layout docs). The
+    /// keyboard window's other nodes are not.
+    pub keyboard: bool,
+}
+
 impl CompactScreen {
     /// The element with this index, if present.
     pub fn get(&self, index: u32) -> Option<&Element> {

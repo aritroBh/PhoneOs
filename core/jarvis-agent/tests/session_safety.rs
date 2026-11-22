@@ -1315,6 +1315,18 @@ fn an_unresolved_home_screen_tap_is_always_asked() {
             ]),
         );
         assert!(r.acts.is_empty(), "{:?}", r.acts);
+        // Seventh review: a tap_point on the keyboard (here its Return key, the first case)
+        // is refused in every app before any launch question; was: asked like any
+        // unresolved tap (deliberate change). A point on no listed element is still asked.
+        if point == tap_point_on_return() {
+            assert!(r.confirms.is_empty(), "{:?}", r.confirms);
+            assert!(
+                r.all_prompt_text().contains("it is on the keyboard"),
+                "{}",
+                r.all_prompt_text()
+            );
+            continue;
+        }
         assert_eq!(r.confirms.len(), 1, "{:?}", r.confirms);
         assert_eq!(r.confirms[0].category, RiskCategory::FirstUse);
         assert!(
