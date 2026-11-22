@@ -321,12 +321,16 @@ struct Harness {
     var screenshots = ScreenshotStore()
     var configuration = DriverConfiguration(observeRetryDelay: .milliseconds(10))
     var task = TaskSpec(id: "t1", text: "Turn off Wi-Fi")
+    /// The core asks once per app before first use. Off here so each test sees only the
+    /// confirmation it is about; `firstUseApprovalIsAsked` turns it on.
+    var firstUseApproval = false
 
     func makeDriver(memoryJSON: String = "") async throws -> SessionDriver {
         let config = try SessionConfigBuilder.make(
             capabilities: model.capabilities,
             tools: await tools.toolSpecs(),
-            knownApps: [AppInfo(bundleId: settingsBundle, name: "Settings")]
+            knownApps: [AppInfo(bundleId: settingsBundle, name: "Settings")],
+            adjustPolicy: { [firstUseApproval] in $0.firstUseApproval = firstUseApproval }
         )
         let deps = DriverDependencies(
             runner: phone, model: model, tools: tools, human: gate, memory: memory,

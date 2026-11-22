@@ -28,6 +28,22 @@ struct DriverTests {
         #expect(memory["flows"]?["flows"]?.arrayValue?.count == 1)
     }
 
+    @Test("first use of an app asks once, and the approval is remembered in memory")
+    func firstUseApprovalIsAsked() async throws {
+        var first = Harness()
+        first.firstUseApproval = true
+        let (result, _) = try await first.run()
+        #expect(result.outcome.status == .success)
+        #expect(first.gate.confirms.map(\.category) == [.firstUse, .systemSetting])
+        #expect(first.gate.confirms.first?.app == settingsBundle)
+
+        var second = Harness()
+        second.firstUseApproval = true
+        let (again, _) = try await second.run(memoryJSON: try #require(first.memory.saves.first))
+        #expect(again.outcome.status == .success)
+        #expect(second.gate.confirms.map(\.category) == [.systemSetting])
+    }
+
     @Test("a second run from the saved memory replays with zero model calls")
     func replayFromMemory() async throws {
         let first = Harness()
