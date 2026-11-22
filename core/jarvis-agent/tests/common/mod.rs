@@ -1,7 +1,15 @@
 //! Test-only driver: a scripted phone (screens plus a transition function) and a scripted
 //! model (a queue of output strings), looping `Session::step` until `Finished`.
 
-#![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+#![allow(
+    dead_code,
+    clippy::large_enum_variant,
+    clippy::type_complexity,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 
 use std::collections::VecDeque;
 
@@ -11,8 +19,8 @@ use jarvis_observe::compact;
 use jarvis_proto::fixtures::{node, rect, screen, text, IPHONE_SIZE};
 use jarvis_proto::{
     AppInfo, ConfirmRequest, Effect, Event, ImageRef, ModelOutput, ModelProfile, ModelRequest,
-    Observation, Outcome, Point, Policy, Role, RunnerCommand, RunnerResult, Screen,
-    SessionConfig, TaskSpec, TimedEvent, ToolCall, ToolResult, UiNode,
+    Observation, Outcome, Point, Policy, Role, RunnerCommand, RunnerResult, Screen, SessionConfig,
+    TaskSpec, TimedEvent, ToolCall, ToolResult, UiNode,
 };
 
 /// Hard cap on driver iterations; a session that needs more is a bug.
@@ -366,7 +374,12 @@ pub fn search_screen(focused: bool, query: Option<&str>) -> Screen {
             rect(16.0, 220.0, 361.0, 44.0),
         ));
     }
-    screen("com.example.shop", "Shop", app_root("Shop", children), focused)
+    screen(
+        "com.example.shop",
+        "Shop",
+        app_root("Shop", children),
+        focused,
+    )
 }
 
 /// A product page with a price and a Buy button.
@@ -380,7 +393,11 @@ pub fn product_screen() -> Screen {
                 text("Wireless Headphones", rect(16.0, 120.0, 361.0, 30.0)),
                 text("$129.00", rect(16.0, 160.0, 200.0, 24.0)),
                 node(Role::Button, "Buy now", rect(16.0, 600.0, 361.0, 50.0)),
-                node(Role::Button, "Add to wishlist", rect(16.0, 660.0, 361.0, 44.0)),
+                node(
+                    Role::Button,
+                    "Add to wishlist",
+                    rect(16.0, 660.0, 361.0, 44.0),
+                ),
             ],
         ),
         false,
@@ -396,7 +413,11 @@ pub fn bought_screen() -> Screen {
             "Shop",
             vec![
                 text("Thank you for your order", rect(16.0, 300.0, 361.0, 30.0)),
-                node(Role::Button, "Continue shopping", rect(16.0, 600.0, 361.0, 50.0)),
+                node(
+                    Role::Button,
+                    "Continue shopping",
+                    rect(16.0, 600.0, 361.0, 50.0),
+                ),
             ],
         ),
         false,
@@ -443,8 +464,11 @@ pub fn canvas_screen() -> Screen {
         "Game",
         app_root(
             "Game",
-            vec![UiNode::new(Role::WebView, rect(0.0, 0.0, 393.0, 852.0))
-                .with_children(vec![UiNode::new(Role::Image, rect(0.0, 100.0, 393.0, 600.0))])],
+            vec![
+                UiNode::new(Role::WebView, rect(0.0, 0.0, 393.0, 852.0)).with_children(vec![
+                    UiNode::new(Role::Image, rect(0.0, 100.0, 393.0, 600.0)),
+                ]),
+            ],
         ),
         false,
     )
@@ -460,7 +484,7 @@ pub fn long_list_screen(n: usize) -> Screen {
                 &format!("Item number {i} with a fairly long descriptive label"),
                 rect(16.0, y, 361.0, 2.5),
             )
-            .with_identifier(&format!("item-{i}"))
+            .with_identifier(format!("item-{i}"))
         })
         .collect();
     screen("com.example.list", "List", app_root("List", cells), false)

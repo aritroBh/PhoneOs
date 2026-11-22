@@ -290,7 +290,7 @@ fn field_schema(kind: FieldKind) -> Value {
         FieldKind::Bool => json!({"type": "boolean"}),
         FieldKind::Direction => json!({"type": "string", "enum": ["up", "down", "left", "right"]}),
         FieldKind::Fraction => json!({"type": "number", "minimum": 0, "maximum": 1}),
-        FieldKind::Millis => json!({"type": "integer", "minimum": 0}),
+        FieldKind::Millis => json!({"type": "integer", "minimum": 0, "maximum": 99_999}),
         FieldKind::Object => json!({"type": "object"}),
     }
 }
@@ -381,7 +381,7 @@ pub fn action_gbnf() -> String {
     out.push_str(concat!(
         "element ::= [1-9] [0-9]{0,4}\n",
         "millis ::= [0-9]{1,5}\n",
-        "fraction ::= (\"0\" | \"1\") (\".\" [0-9]{1,4})?\n",
+        "fraction ::= \"0\" (\".\" [0-9]{1,4})? | \"1\" (\".\" \"0\"{1,4})?\n",
         "boolean ::= \"true\" | \"false\"\n",
         "direction ::= \"\\\"up\\\"\" | \"\\\"down\\\"\" | \"\\\"left\\\"\" | \"\\\"right\\\"\"\n",
         "string ::= \"\\\"\" char* \"\\\"\"\n",

@@ -386,7 +386,7 @@ impl Session {
             return self.protocol_error(now, &event, state);
         };
         if result.ok {
-            let out = clean(&result.output, MAX_RESULT_CHARS);
+            let out = self.safe_text(&result.output, MAX_RESULT_CHARS);
             let line = if out.is_empty() {
                 prompt::RESULT_OK.to_owned()
             } else {
@@ -399,7 +399,7 @@ impl Session {
                 .as_deref()
                 .filter(|e| !e.trim().is_empty())
                 .unwrap_or(&result.output);
-            let msg = format!("failed: {}", clean(error, MAX_RESULT_CHARS));
+            let msg = format!("failed: {}", self.safe_text(error, MAX_RESULT_CHARS));
             self.record_failure(&pending, &msg);
         }
         self.observe(ObservePurpose::Decide, false)
@@ -528,10 +528,8 @@ impl Session {
     fn diverge(&mut self, reason: &str) {
         if self.replay.take().is_some() {
             self.replay_diverged = true;
-            self.notes.push(clean(
-                &prompt::divergence_note(reason),
-                prompt::MAX_NOTE_CHARS,
-            ));
+            let note = self.safe_text(&prompt::divergence_note(reason), prompt::MAX_NOTE_CHARS);
+            self.notes.push(note);
         }
     }
 
@@ -962,6 +960,12 @@ impl Session {
             app: self.current.screen.app_bundle_id.clone(),
             ok,
         });
+    }
+
+    /// Text safe for a prompt from a source the screen sanitiser did not see (tool output,
+    /// flow labels): profile values masked, secrets redacted, sanitised.
+    fn safe_text(&self, text: &str, max_chars: usize) -> String {
+        clean(&mask(text, &self.memory.profile), max_chars)
     }
 
     /// Text safe for the persistent log: profile values masked, secrets redacted.
