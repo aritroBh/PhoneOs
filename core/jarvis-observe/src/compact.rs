@@ -36,7 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ptr;
 use std::rc::Rc;
 
-use jarvis_proto::{CompactScreen, Element, Rect, Role, Screen, ScreenCues, UiNode};
+use jarvis_proto::{BarNode, CompactScreen, Element, Rect, Role, Screen, ScreenCues, UiNode};
 
 use crate::fingerprint::{identity_key, FingerprintAssigner};
 use crate::layout::{addr, Layout, RawIndex};
@@ -654,6 +654,10 @@ pub struct CompactView {
     /// For each raw node, one past the index of its last descendant: node `j` is inside
     /// node `i`'s subtree when `i < j < ends[i]`.
     pub ends: Vec<u32>,
+    /// Every shown `NavigationBar`/`TabBar` raw node with its shown frame, in node order;
+    /// none while an alert or sheet is up (only its subtree is listed then). Which of them
+    /// take precedence over the content under them is `jarvis_safety::tap_spot`'s call.
+    pub bars: Vec<BarNode>,
 }
 
 /// Flattens a screen to its indexed, ordered, deduplicated actionable/informative elements.
@@ -701,6 +705,26 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         context: Rc::from(""),
     };
     walker.walk(&screen.root, &start);
+
+    let mut bars = Vec::new();
+    if alert.is_none() {
+        layout.walk(&screen.root, |node, _, shown| {
+            if !shown || !matches!(node.role, Role::NavigationBar | Role::TabBar) {
+                return;
+            }
+            let (Some(frame), Some(&i)) = (
+                layout.shown_frame(node.frame),
+                index.by_addr.get(&addr(node)),
+            ) else {
+                return;
+            };
+            bars.push(BarNode {
+                node: i,
+                role: node.role.clone(),
+                frame,
+            });
+        });
+    }
 
     let bounds = screen.bounds();
     let return_key = layout.keyboard.and_then(return_key_label);
@@ -769,6 +793,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         sources,
         parents: index.parents,
         ends: index.ends,
+        bars,
     }
 }
 /// `(pages, percent)` of an iOS scroll indicator: label `Vertical scroll bar, N pages`

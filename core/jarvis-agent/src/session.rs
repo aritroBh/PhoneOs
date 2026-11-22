@@ -80,7 +80,8 @@
 //! asked with a summary of that screen, bound to it and looked at again after an approval;
 //! pressed at once when nothing asks), see `Session::gate_return`. A decline leaves the
 //! text typed ("typed, not submitted"). `type` without an element needs a listed focused
-//! field. Every tap lands on the control it names (`jarvis_safety::tap_spot`); a covered
+//! field. Every tap lands on the control it names (`jarvis_safety::tap_spot`; full-width
+//! navigation and tab bars of a typed tree are drawn over the content under them); a covered
 //! control is refused ("not done: … is covered by …").
 //!
 //! Small models need more than "ok": every step that worked says what visibly changed
@@ -99,7 +100,7 @@ use jarvis_observe::{compact_view, diff, marks, screen_digest, screen_hash, Scre
 use std::collections::VecDeque;
 
 use jarvis_proto::{
-    Action, AppInfo, CompactScreen, ConfirmRequest, Effect, Element, Event, ImageRef, Key,
+    Action, AppInfo, BarNode, CompactScreen, ConfirmRequest, Effect, Element, Event, ImageRef, Key,
     ModelRequest, Observation, Outcome, OutcomeStatus, Point, Progress, RequestKind, RiskCategory,
     RunnerCommand, SessionConfig, Size, TaskSpec, TimedEvent, ToolCall, ToolResult, ToolSpec,
 };
@@ -108,8 +109,8 @@ use jarvis_safety::{
     approval_context, check_app, check_app_name, check_confinement, control_at, evaluate_from,
     first_use_app, first_use_request, is_springboard, label_names_denied_app, redact,
     redact_screen, return_summary, sanitize_screen_text, search_names_denied_app, summary_with,
-    widget_names_denied_app, Budget, BudgetVerdict, Covered, Decision, ScreenSource, ScreenTree,
-    TypedText, Verdict,
+    widget_names_denied_app, Budget, BudgetVerdict, Covered, CoveredBy, Decision, ScreenSource,
+    ScreenTree, TypedText, Verdict,
 };
 
 use crate::changes::describe_change;
@@ -192,6 +193,9 @@ struct Current {
     sources: Vec<u32>,
     parents: Vec<u32>,
     ends: Vec<u32>,
+    /// The raw navigation and tab bars (`jarvis_observe::CompactView::bars`), for the tap
+    /// point's bar precedence; passed on only for a typed tree ([`Self::tree`]).
+    bars: Vec<BarNode>,
     /// Where the tree came from: a typed tree, or runner text (unverified, see
     /// `jarvis_safety::ScreenSource`).
     source: ScreenSource,
@@ -224,6 +228,7 @@ impl Default for Current {
             sources: Vec::new(),
             parents: Vec::new(),
             ends: Vec::new(),
+            bars: Vec::new(),
             source: ScreenSource::Typed,
             hash: 0,
             digest: ScreenDigest::default(),
@@ -1556,6 +1561,7 @@ impl Session {
             sources: view.sources,
             parents: view.parents,
             ends: view.ends,
+            bars: view.bars,
             source: self.incoming_source,
             screen,
             screenshot: obs.screenshot,
@@ -1571,12 +1577,18 @@ impl Session {
         self.current.sources.get(pos).copied()
     }
 
-    /// The raw tree's shape of the current screen (see `jarvis_observe::CompactView`).
+    /// The raw tree's shape of the current screen (see `jarvis_observe::CompactView`). Its
+    /// bars only on a typed tree: runner text's roles are forgeable, so no bar takes
+    /// precedence there (`jarvis_safety::tap_spot`).
     fn tree(&self) -> ScreenTree<'_> {
         ScreenTree {
             sources: &self.current.sources,
             parents: &self.current.parents,
             ends: &self.current.ends,
+            bars: match self.current.source {
+                ScreenSource::Typed => &self.current.bars,
+                ScreenSource::RunnerText => &[],
+            },
         }
     }
 
@@ -2738,7 +2750,10 @@ impl Session {
         format!(
             "not done: {} is covered by {}: a tap there could land on the other control, so nothing was sent; choose another control or scroll first",
             name(c.target),
-            name(c.by)
+            match c.by {
+                CoveredBy::Control(by) => name(by),
+                CoveredBy::Bar(bar) => bar.name().to_owned(),
+            }
         )
     }
 

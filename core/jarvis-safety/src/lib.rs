@@ -66,7 +66,10 @@ pub use evaluate::{
     UNVERIFIED_SCREEN_WARNING,
 };
 pub use gate::{changes_state, gate, gate_in, gate_on, Gate, TRUSTED_ALLOWED};
-pub use hit::{control_at, point_is_clear, takes_taps, tap_spot, Covered, GRID as TAP_GRID};
+pub use hit::{
+    control_at, point_is_clear, takes_taps, tap_spot, Bar, Covered, CoveredBy, GRID as TAP_GRID,
+    SYSTEM_BAR_MIN_WIDTH,
+};
 pub use phrases::{
     label_risk, AppRule, Phrase, RuleTarget, ACTION_PHRASES, APP_PHRASES, APP_RULES,
     APP_STORE_BUNDLE_ID, COMPOSE_FIELD_PHRASES, CONTEXT_PHRASES, CREDENTIAL_FIELD_PHRASES,

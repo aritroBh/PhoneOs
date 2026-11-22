@@ -457,18 +457,22 @@ fn switches_render_as_on_or_off_and_keep_the_raw_value() {
 /// (full-screen `Other` overlays, tab bars whose buttons overlap a little, nested cells) do
 /// not make ordinary taps refused. Text inputs included (they are tapped to focus).
 ///
-/// **Known exception, kept visible:** on `long_list_scrolled` the list has scrolled under
-/// the translucent navigation and tab bars, so list rows (`Item 7`/`Item 8`, `Item 23`/
-/// `Item 24`, buttons themselves) lie under the back button and under all five tab-bar
-/// buttons. UIKit draws the bars on top, but the tree's order is not trusted (an overlap is
-/// a conflict whichever is on top), so those six taps are refused ("… is covered by …")
-/// until the list is scrolled so that no row lies under them; the rows themselves get
-/// another point. The list below is exact: any other refusal, or any of these starting to
-/// pass, fails the test.
+/// On `long_list_scrolled` the list has scrolled under the translucent navigation and tab
+/// bars, so list rows (`Item 7`/`Item 8`, `Item 23`/`Item 24`, buttons themselves) lie
+/// under the back button and under all five tab-bar buttons. Bar precedence (iOS draws the
+/// bars on top) makes those six taps usable: rows outside the bars do not contest a bar's
+/// controls, and the rows are tapped in their part outside the bars. Until bar precedence
+/// those six were refused.
+///
+/// One refusal remains, deliberately: `Item 24` ({20, 907.7} 400 × 52, shown to the
+/// screen's bottom at 956) lies wholly under the tab bar ({0, 873} 440 × 83), so every
+/// point of it would go to the tab bar: "covered by the tab bar" is the true answer (the
+/// model scrolls first). The list is exact: any other refusal, or this one passing, fails.
 #[test]
 fn every_listed_control_has_an_uncontested_tap_point() {
-    let mut refused = Vec::new();
+    let mut refused: Vec<String> = Vec::new();
     let mut checked = 0usize;
+    let mut bar_points = 0usize;
     for name in FIXTURES {
         let s = fixture(name);
         let view = jarvis_observe::compact_view(&s);
@@ -476,6 +480,7 @@ fn every_listed_control_has_an_uncontested_tap_point() {
             sources: &view.sources,
             parents: &view.parents,
             ends: &view.ends,
+            bars: &view.bars,
         };
         for e in view
             .screen
@@ -485,22 +490,76 @@ fn every_listed_control_has_an_uncontested_tap_point() {
         {
             checked += 1;
             match jarvis_safety::tap_spot(e, &view.screen, Some(&tree), None) {
-                Ok(p) => assert!(e.frame.contains(p), "{name}: {}", e.label),
+                Ok(p) => {
+                    assert!(e.frame.contains(p), "{name}: {}", e.label);
+                    // A point inside a bar's frame is only ever a control of that bar's.
+                    for b in &view.bars {
+                        if b.frame.contains(p) {
+                            bar_points += 1;
+                            let src = view.sources[(e.index - 1) as usize];
+                            assert!(
+                                b.node < src && src < view.ends[b.node as usize],
+                                "{name}: {} tapped inside a bar it is not in",
+                                e.label
+                            );
+                        }
+                    }
+                }
                 Err(c) => refused.push(format!(
-                    "{name}: [{}] {:?} {:?} covered by [{}]",
+                    "{name}: [{}] {:?} {:?} covered by {:?}",
                     e.index, e.role, e.label, c.by
                 )),
             }
         }
     }
     assert!(checked > 100, "{checked}");
-    let known = [
-        "long_list_scrolled: [3] Button \"Playground\" covered by [5]",
-        "long_list_scrolled: [21] Button \"Playground\" covered by [20]",
-        "long_list_scrolled: [22] Button \"Ask\" covered by [20]",
-        "long_list_scrolled: [23] Button \"Activity\" covered by [20]",
-        "long_list_scrolled: [24] Button \"Apps\" covered by [20]",
-        "long_list_scrolled: [25] Button \"Rules\" covered by [20]",
-    ];
+    assert!(bar_points >= 6, "{bar_points}");
+    let known = ["long_list_scrolled: [26] Button \"Item 24\" covered by Bar(Tab)"];
     assert_eq!(refused, known, "{}", refused.join("\n"));
+}
+
+/// The six controls the sweep used to refuse on `long_list_scrolled`, by name: the back
+/// button and the five tab-bar buttons are tapped at their own centres, a list row lying
+/// partly under the tab bar is tapped outside the bar, and the row wholly under it is
+/// refused, naming the tab bar.
+#[test]
+fn long_list_scrolled_bar_controls_are_tapped_at_their_centres() {
+    let s = fixture("long_list_scrolled");
+    let view = jarvis_observe::compact_view(&s);
+    let tree = jarvis_safety::ScreenTree {
+        sources: &view.sources,
+        parents: &view.parents,
+        ends: &view.ends,
+        bars: &view.bars,
+    };
+    let roles: Vec<&Role> = view.bars.iter().map(|b| &b.role).collect();
+    assert_eq!(roles, [&Role::NavigationBar, &Role::TabBar]);
+    for label in ["Playground", "Ask", "Activity", "Apps", "Rules"] {
+        for e in view.screen.elements.iter().filter(|e| e.label == label) {
+            let p = jarvis_safety::tap_spot(e, &view.screen, Some(&tree), None).unwrap();
+            assert_eq!(p, e.frame.center(), "{label}");
+        }
+    }
+    let tab = view.bars[1].frame;
+    let under: Vec<_> = view
+        .screen
+        .elements
+        .iter()
+        .filter(|e| jarvis_safety::takes_taps(&e.role) && e.frame.intersects(&tab))
+        .filter(|e| {
+            let src = view.sources[(e.index - 1) as usize];
+            !(view.bars[1].node < src && src < view.ends[view.bars[1].node as usize])
+        })
+        .collect();
+    let labels: Vec<&str> = under.iter().map(|e| e.label.as_str()).collect();
+    assert_eq!(labels, ["Item 23", "Item 24"]);
+    let p = jarvis_safety::tap_spot(under[0], &view.screen, Some(&tree), None).unwrap();
+    assert!(!tab.contains(p) && under[0].frame.contains(p), "{p:?}");
+    assert_eq!(
+        jarvis_safety::tap_spot(under[1], &view.screen, Some(&tree), None),
+        Err(jarvis_safety::Covered {
+            target: under[1].index,
+            by: jarvis_safety::CoveredBy::Bar(jarvis_safety::Bar::Tab),
+        })
+    );
 }

@@ -1,7 +1,7 @@
 //! The single entry point the agent calls before executing an action.
 
 use jarvis_proto::{
-    Action, CompactScreen, ConfirmRequest, Element, Policy, RiskCategory, Role, ToolSpec,
+    Action, BarNode, CompactScreen, ConfirmRequest, Element, Policy, RiskCategory, Role, ToolSpec,
     TrustLevel,
 };
 
@@ -52,6 +52,11 @@ pub struct ScreenTree<'a> {
     pub parents: &'a [u32],
     /// Per raw node, one past its last descendant's index.
     pub ends: &'a [u32],
+    /// The raw navigation and tab bars with their shown frames
+    /// (`jarvis_observe::CompactView::bars`), for the tap-point rule's bar precedence
+    /// ([`crate::tap_spot`]). Only from a typed tree: the session passes none for a screen
+    /// read from runner text, whose roles anyone can write (`&[]` disables precedence).
+    pub bars: &'a [BarNode],
 }
 
 impl ScreenTree<'_> {

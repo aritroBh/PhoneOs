@@ -10,8 +10,9 @@
 //!
 //! **Tap points (sixth review).** Every point Jarvis taps or presses lands on the control it
 //! names: it is inside the target's shown frame and inside no other enabled control's frame
-//! unless that control is the target's ancestor or descendant in the raw tree
-//! ([`jarvis_safety::tap_spot`]: the centre, else the first uncontested point of a fixed 3 × 3
+//! unless that control is the target's ancestor or descendant in the raw tree, with full-width
+//! navigation and tab bars of a typed tree drawn over the content under them
+//! ([`jarvis_safety::tap_spot`]: the centre, else the first usable point of a fixed 5 × 5
 //! grid). When every candidate is covered the action is not planned
 //! ([`PlanError::Covered`]): the session refuses it ("not done: … is covered by …").
 //! | `press_home` | `PressKey Home` |
@@ -23,7 +24,7 @@ use std::collections::VecDeque;
 use jarvis_proto::{Action, AppInfo, CompactScreen, Key, Point, RunnerCommand};
 
 use jarvis_safety::gestures::{denormalize, gesture, GestureError, GestureKind};
-use jarvis_safety::{control_at, point_is_clear, tap_spot, Covered, ScreenTree};
+use jarvis_safety::{control_at, point_is_clear, tap_spot, Covered, CoveredBy, ScreenTree};
 
 /// Most Delete presses a `clear` sends.
 pub const MAX_CLEAR_DELETES: usize = 64;
@@ -50,9 +51,14 @@ impl std::fmt::Display for PlanError {
             PlanError::NoElement(i) => write!(f, "element {i} is not on this screen"),
             PlanError::Gesture(g) => write!(f, "{g}"),
             PlanError::NotUi => write!(f, "this action does not use the screen"),
-            PlanError::Covered(c) => {
-                write!(f, "element {} is covered by element {}", c.target, c.by)
-            }
+            PlanError::Covered(c) => match c.by {
+                CoveredBy::Control(by) => {
+                    write!(f, "element {} is covered by element {by}", c.target)
+                }
+                CoveredBy::Bar(bar) => {
+                    write!(f, "element {} is covered by {}", c.target, bar.name())
+                }
+            },
         }
     }
 }

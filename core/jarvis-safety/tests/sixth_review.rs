@@ -12,11 +12,12 @@ mod common;
 
 use common::{app_screen, button, el, label};
 use jarvis_proto::{
-    Action, AppRule, CompactScreen, Element, Point, Policy, Rect, RiskCategory, Role, TrustLevel,
+    Action, AppRule, BarNode, CompactScreen, Element, Point, Policy, Rect, RiskCategory, Role,
+    TrustLevel,
 };
 use jarvis_safety::{
-    control_at, evaluate_from, summarize, summary_with, tap_spot, Covered, Decision, ScreenSource,
-    ScreenTree, TypedText,
+    control_at, evaluate_from, summarize, summary_with, tap_spot, Bar, Covered, CoveredBy,
+    Decision, ScreenSource, ScreenTree, TypedText,
 };
 
 fn tf(index: u32, name: &str, value: &str) -> Element {
@@ -248,11 +249,17 @@ fn a_fully_covered_button_has_no_point() {
     let s = screen_of(vec![pay.clone(), mallory.clone()]);
     assert_eq!(
         tap_spot(&pay, &s, None, None),
-        Err(Covered { target: 1, by: 2 })
+        Err(Covered {
+            target: 1,
+            by: CoveredBy::Control(2)
+        })
     );
     assert_eq!(
         tap_spot(&mallory, &s, None, None),
-        Err(Covered { target: 2, by: 1 })
+        Err(Covered {
+            target: 2,
+            by: CoveredBy::Control(1)
+        })
     );
 }
 
@@ -301,6 +308,7 @@ fn a_switch_inside_a_cell_and_the_cell() {
         sources: &sources,
         parents: &parents,
         ends: &ends,
+        bars: &[],
     };
     let p = tap_spot(&switch, &s, Some(&tree), None).unwrap();
     assert!(switch.frame.contains(p));
@@ -323,4 +331,271 @@ fn a_raw_point_resolves_to_one_control_or_is_ambiguous() {
     assert!(control_at(Point::new(100.0, 600.0), &s, None)
         .unwrap()
         .is_none());
+}
+
+// --- 1b. Bar precedence and the 5 × 5 grid ------------------------------------------------
+//
+// One raw tree for the bar tests (393 pt wide screen):
+//   0 root; 1 navigation bar { 2 back }; 3 tab bar { 4 Home, 5 Search }; 6, 7, 8 rows.
+// Compact elements: [1] back, [2] Home, [3] Search, [4] [5] [6] rows (or other content).
+
+const BAR_SOURCES: [u32; 6] = [2, 4, 5, 6, 7, 8];
+const BAR_PARENTS: [u32; 9] = [u32::MAX, 0, 1, 0, 3, 3, 0, 0, 0];
+const BAR_ENDS: [u32; 9] = [9, 3, 3, 6, 5, 6, 7, 8, 9];
+
+fn bar_tree(bars: &[BarNode]) -> ScreenTree<'_> {
+    ScreenTree {
+        sources: &BAR_SOURCES,
+        parents: &BAR_PARENTS,
+        ends: &BAR_ENDS,
+        bars,
+    }
+}
+
+fn nav_bar(role: Role, width: f64) -> BarNode {
+    BarNode {
+        node: 1,
+        role,
+        frame: Rect::new(0.0, 59.0, width, 44.0),
+    }
+}
+
+fn tab_bar() -> BarNode {
+    BarNode {
+        node: 3,
+        role: Role::TabBar,
+        frame: Rect::new(0.0, 770.0, 393.0, 82.0),
+    }
+}
+
+fn back() -> Element {
+    at(button(1, "Back"), 16.0, 59.0, 44.0, 44.0)
+}
+
+fn home() -> Element {
+    at(button(2, "Home"), 20.0, 775.0, 100.0, 54.0)
+}
+
+fn search() -> Element {
+    at(button(3, "Search"), 130.0, 775.0, 100.0, 54.0)
+}
+
+/// Rows scrolled under both bars: the back button and the tab-bar buttons are tapped at
+/// their centres (the bars are drawn on top); the rows are tapped in their part outside
+/// the bars. Without the bars (the same frames) the bar controls are contested, as before.
+#[test]
+fn bar_controls_win_over_rows_scrolled_under_them() {
+    let row_top = at(button(4, "Item 1"), 0.0, 40.0, 393.0, 80.0);
+    let row_bottom = at(button(5, "Item 9"), 0.0, 740.0, 393.0, 112.0);
+    let s = screen_of(vec![
+        back(),
+        home(),
+        search(),
+        row_top.clone(),
+        row_bottom.clone(),
+    ]);
+    let bars = [nav_bar(Role::NavigationBar, 393.0), tab_bar()];
+    let tree = bar_tree(&bars);
+    for e in [back(), home(), search()] {
+        assert_eq!(
+            tap_spot(&e, &s, Some(&tree), None),
+            Ok(e.frame.center()),
+            "{}",
+            e.label
+        );
+    }
+    for (row, bar) in [(&row_top, &bars[0]), (&row_bottom, &bars[1])] {
+        let p = tap_spot(row, &s, Some(&tree), None).unwrap();
+        assert!(row.frame.contains(p) && !bar.frame.contains(p), "{p:?}");
+        assert_eq!(tap_spot(row, &s, Some(&tree), None), Ok(p), "deterministic");
+    }
+    // A raw point on the back button resolves to it; one in the bar beside it lands on the
+    // bar (no control), not on the row under it.
+    assert_eq!(
+        control_at(back().frame.center(), &s, Some(&tree))
+            .unwrap()
+            .unwrap()
+            .index,
+        1
+    );
+    assert!(control_at(Point::new(200.0, 80.0), &s, Some(&tree))
+        .unwrap()
+        .is_none());
+    // No bars: the old rule, unchanged.
+    let none = bar_tree(&[]);
+    assert_eq!(
+        tap_spot(&back(), &s, Some(&none), None),
+        Err(Covered {
+            target: 1,
+            by: CoveredBy::Control(4)
+        })
+    );
+    assert!(control_at(back().frame.center(), &s, Some(&none)).is_err());
+}
+
+/// A control the tree places inside a bar gets the bar's precedence only where the bar is
+/// drawn. Outside the bar's frame it is contested like any other control.
+#[test]
+fn a_bar_control_drawn_outside_its_bar_takes_no_precedence_there() {
+    // "Back" belongs to the navigation bar in the tree but is drawn at y 300, far below it,
+    // and a content button lies over it.
+    let stray = at(button(1, "Back"), 16.0, 300.0, 44.0, 44.0);
+    let over = at(button(4, "Delete all"), 0.0, 290.0, 393.0, 64.0);
+    let s = screen_of(vec![stray.clone(), home(), search(), over]);
+    let bars = [nav_bar(Role::NavigationBar, 393.0), tab_bar()];
+    let tree = bar_tree(&bars);
+    assert_eq!(
+        tap_spot(&stray, &s, Some(&tree), None),
+        Err(Covered {
+            target: 1,
+            by: CoveredBy::Control(4)
+        })
+    );
+    // Drawn inside its bar, the same control wins as before.
+    assert_eq!(
+        tap_spot(&back(), &s, Some(&tree), None),
+        Ok(back().frame.center())
+    );
+}
+
+/// A row wholly under a bar has no usable point: refused, naming the bar.
+#[test]
+fn a_row_wholly_under_a_bar_is_refused_naming_it() {
+    let under_nav = at(button(4, "Item 0"), 0.0, 62.0, 393.0, 38.0);
+    let under_tab = at(button(5, "Item 24"), 0.0, 800.0, 393.0, 52.0);
+    let s = screen_of(vec![back(), home(), under_nav.clone(), under_tab.clone()]);
+    let bars = [nav_bar(Role::NavigationBar, 393.0), tab_bar()];
+    let tree = bar_tree(&bars);
+    assert_eq!(
+        tap_spot(&under_nav, &s, Some(&tree), None),
+        Err(Covered {
+            target: 4,
+            by: CoveredBy::Bar(Bar::Navigation)
+        })
+    );
+    assert_eq!(
+        tap_spot(&under_tab, &s, Some(&tree), None),
+        Err(Covered {
+            target: 5,
+            by: CoveredBy::Bar(Bar::Tab)
+        })
+    );
+    assert_eq!(Bar::Navigation.name(), "the navigation bar");
+    assert_eq!(Bar::Tab.name(), "the tab bar");
+}
+
+/// No precedence for a `Toolbar` (web content makes those through ARIA), nor for a
+/// navigation or tab bar narrower than 90 % of the screen: the contest rule applies
+/// unchanged, and a row under such a "bar" is not refused for it.
+#[test]
+fn toolbars_and_narrow_bars_take_no_precedence() {
+    let row = at(button(4, "Item 1"), 0.0, 40.0, 393.0, 80.0);
+    let under = at(button(5, "Item 0"), 100.0, 62.0, 200.0, 38.0);
+    let s = screen_of(vec![back(), row.clone()]);
+    let s_under = screen_of(vec![back(), under.clone()]);
+    // 0.9 × 393 = 353.7: 354 counts, 353 does not.
+    for (role, width, precedence) in [
+        (Role::NavigationBar, 354.0, true),
+        (Role::NavigationBar, 353.0, false),
+        (Role::TabBar, 353.0, false),
+        (Role::Toolbar, 393.0, false),
+        (Role::Other("Toolbar".into()), 393.0, false),
+    ] {
+        let bars = [nav_bar(role.clone(), width)];
+        let tree = bar_tree(&bars);
+        let got = tap_spot(&back(), &s, Some(&tree), None);
+        let got_under = tap_spot(&under, &s_under, Some(&tree), None);
+        if precedence {
+            assert_eq!(got, Ok(back().frame.center()), "{role:?} {width}");
+            assert!(got_under.is_err(), "{role:?} {width}");
+        } else {
+            assert_eq!(
+                got,
+                Err(Covered {
+                    target: 1,
+                    by: CoveredBy::Control(4)
+                }),
+                "{role:?} {width}"
+            );
+            assert_eq!(got_under, Ok(under.frame.center()), "{role:?} {width}");
+        }
+    }
+}
+
+/// Two controls inside the same bar overlapping each other are still contested; so is the
+/// overlap attack between two buttons of the content, bars or no bars.
+#[test]
+fn overlaps_inside_one_bar_and_in_the_content_are_still_contested() {
+    let mut twin = search();
+    twin.frame = home().frame;
+    let s = screen_of(vec![back(), home(), twin]);
+    let bars = [nav_bar(Role::NavigationBar, 393.0), tab_bar()];
+    let tree = bar_tree(&bars);
+    assert_eq!(
+        tap_spot(&home(), &s, Some(&tree), None),
+        Err(Covered {
+            target: 2,
+            by: CoveredBy::Control(3)
+        })
+    );
+    let pay = at(
+        button(4, "Pay $40.00 to Electricity Co"),
+        16.0,
+        300.0,
+        361.0,
+        50.0,
+    );
+    let mallory = at(
+        button(5, "Pay $4,000.00 to Mallory Ltd"),
+        16.0,
+        302.0,
+        361.0,
+        50.0,
+    );
+    let s = screen_of(vec![back(), home(), pay.clone(), mallory.clone()]);
+    assert_eq!(
+        tap_spot(&pay, &s, Some(&tree), None),
+        Err(Covered {
+            target: 4,
+            by: CoveredBy::Control(5)
+        })
+    );
+    assert_eq!(
+        tap_spot(&mallory, &s, Some(&tree), None),
+        Err(Covered {
+            target: 5,
+            by: CoveredBy::Control(4)
+        })
+    );
+}
+
+/// The 5 × 5 grid: a 44 pt button whose only free area is a 10 pt strip at the top is
+/// tapped in the strip (the grid's top row is at 44 / 6 = 7.3 pt; the old 3 × 3 grid's at
+/// 11 pt missed it). The smallest strip found reliably is just over a sixth of the side
+/// (7.3 pt of a 44 pt button, 8.3 pt of a 50 pt one); a 7 pt strip of a 44 pt button is
+/// refused.
+#[test]
+fn a_ten_point_strip_is_found_by_the_grid() {
+    let pay = at(button(1, "Pay"), 16.0, 300.0, 361.0, 44.0);
+    let cover = at(button(2, "Other"), 0.0, 310.0, 393.0, 60.0);
+    let s = screen_of(vec![pay.clone(), cover.clone()]);
+    let p = tap_spot(&pay, &s, None, None).unwrap();
+    assert!(p.y >= 300.0 && p.y < 310.0, "{p:?}");
+    assert!(!cover.frame.contains(p));
+    assert_eq!(p, Point::new(16.0 + 361.0 / 2.0, 300.0 + 44.0 / 6.0));
+    // Strips at the other edges are found the same way (the bottom one here).
+    let cover_top = at(button(2, "Other"), 0.0, 250.0, 393.0, 84.0);
+    let s = screen_of(vec![pay.clone(), cover_top.clone()]);
+    let p = tap_spot(&pay, &s, None, None).unwrap();
+    assert!(p.y >= 334.0 && !cover_top.frame.contains(p), "{p:?}");
+    // 7 pt: below a sixth of 44 pt, refused.
+    let thin = at(button(2, "Other"), 0.0, 307.0, 393.0, 60.0);
+    let s = screen_of(vec![pay.clone(), thin]);
+    assert_eq!(
+        tap_spot(&pay, &s, None, None),
+        Err(Covered {
+            target: 1,
+            by: CoveredBy::Control(2)
+        })
+    );
 }

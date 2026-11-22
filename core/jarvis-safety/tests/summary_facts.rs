@@ -264,6 +264,7 @@ fn under_prefers_the_targets_own_container() {
         sources: &sources,
         parents: &parents,
         ends: &ends,
+        bars: &[],
     };
     let plain = summary_for(&tap(3), &s, RiskCategory::Delete, ScreenSource::Typed, None);
     assert!(

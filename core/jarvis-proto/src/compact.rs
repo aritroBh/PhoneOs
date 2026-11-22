@@ -91,6 +91,21 @@ impl ScreenCues {
     }
 }
 
+/// A raw navigation or tab bar node of the tree a compact screen was built from: bars are
+/// containers, never listed, but they are drawn above scrolling content, which decides
+/// where a tap lands (`jarvis_safety::tap_spot`). `jarvis-observe` lists every shown
+/// `NavigationBar`/`TabBar` node outside an alert; `jarvis-safety` decides which of them
+/// count (full width, typed tree only). Kept out of the FFI, beside the screen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BarNode {
+    /// The bar's raw node, in the digest's node order (`jarvis_observe::CompactView`).
+    pub node: u32,
+    /// Its role (`NavigationBar` or `TabBar`).
+    pub role: Role,
+    /// Its shown frame (clipped to the screen, as an element's frame is).
+    pub frame: Rect,
+}
+
 impl CompactScreen {
     /// The element with this index, if present.
     pub fn get(&self, index: u32) -> Option<&Element> {

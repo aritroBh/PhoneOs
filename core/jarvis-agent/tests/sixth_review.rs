@@ -231,6 +231,94 @@ fn nested_controls_are_tapped_normally() {
     assert!(taps(&run.acts[1], &s, "Details"));
 }
 
+/// A list scrolled under the navigation bar: `Item 1` lies under the back button, `Item 0`
+/// wholly under the bar.
+fn scrolled_under_bar() -> Screen {
+    scr(vec![
+        node(Role::Button, "Item 1", rect(0.0, 40.0, 393.0, 80.0)),
+        node(Role::Button, "Item 0", rect(100.0, 62.0, 200.0, 38.0)),
+        UiNode::new(Role::NavigationBar, rect(0.0, 59.0, 393.0, 44.0))
+            .with_identifier("Inbox")
+            .with_children(vec![node(
+                Role::Button,
+                "Back",
+                rect(16.0, 59.0, 44.0, 44.0),
+            )
+            .with_identifier("BackButton")]),
+    ])
+}
+
+/// Bar precedence on a typed tree: the back button is tapped at its centre although a row
+/// has scrolled under it; the row is tapped outside the bar; a row wholly under the bar is
+/// refused, naming the bar.
+#[test]
+fn a_typed_tree_bar_control_is_tapped_over_rows_under_it() {
+    let s = scrolled_under_bar();
+    let c = compact(&s);
+    let back = c.elements.iter().find(|e| e.label == "Back").unwrap();
+    let back_tap = format!(r#"{{"action":"tap","element":{}}}"#, back.index);
+    let row_tap = format!(r#"{{"action":"tap","element":{}}}"#, index_of(&s, "Item 1"));
+    let run = run(
+        config(),
+        "Back",
+        MemoryStore::new(),
+        Phone::still(s.clone()),
+        Script::model(&[&back_tap, &row_tap, r#"{"action":"fail"}"#]),
+    );
+    assert_eq!(point_of(&run.acts[0]), Some(back.frame.center()));
+    let p = point_of(&run.acts[1]).unwrap();
+    assert!(taps(&run.acts[1], &s, "Item 1"), "{p:?}");
+    assert!(!(59.0..103.0).contains(&p.y), "outside the bar: {p:?}");
+
+    let mut d = D::new();
+    let e = d.start(
+        &s,
+        &format!(r#"{{"action":"tap","element":{}}}"#, index_of(&s, "Item 0")),
+    );
+    let Effect::Infer(req) = e else {
+        panic!("refused and decided again, got {e:?}")
+    };
+    assert!(
+        req.user
+            .contains("not done: element 3 (Item 0) is covered by the navigation bar"),
+        "{}",
+        req.user
+    );
+}
+
+/// The same screen read from runner text (roles forgeable): no bar precedence, the back
+/// button is contested by the row under it as before, and nothing is tapped.
+#[test]
+fn a_runner_text_bar_takes_no_precedence() {
+    let s = scrolled_under_bar();
+    let c = compact(&s);
+    let back = c.elements.iter().find(|e| e.label == "Back").unwrap();
+    let mut d = D::new();
+    d.step(Event::Start);
+    let e = d.step(Event::ObservedRunnerText(Observation::new(s.clone())));
+    assert!(matches!(e, Effect::Infer(_)), "{e:?}");
+    let mut e = d.model(&format!(r#"{{"action":"tap","element":{}}}"#, back.index));
+    if let Effect::Confirm(_) = e {
+        d.approve();
+        e = d.step(Event::ObservedRunnerText(Observation::new(s.clone())));
+    }
+    assert!(
+        !matches!(e, Effect::Act(RunnerCommand::Tap { .. })),
+        "tapped a contested point on runner text: {e:?}"
+    );
+    let Effect::Infer(req) = e else {
+        panic!("refused and decided again, got {e:?}")
+    };
+    assert!(
+        req.user.contains(&format!(
+            "not done: element {} (Back) is covered by element",
+            back.index
+        )),
+        "{}",
+        req.user
+    );
+}
+
 // ---------------------------------------------------------------------------------------
 // 2. Return after typing is its own gated action.
 // ---------------------------------------------------------------------------------------

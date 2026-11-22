@@ -11,49 +11,121 @@
 //!   of the target in the raw tree. Document order excuses nothing: an overlap is a
 //!   conflict whichever of the two is drawn on top. Containers (`Other` overlays, scroll
 //!   views, bars), static texts and images never count.
+//! * **Bar precedence.** The one drawing order the rule relies on: iOS draws navigation and
+//!   tab bars above scrolling content (rows scroll under the translucent bars). A *system
+//!   bar* is a raw `NavigationBar` or `TabBar` node whose shown frame spans at least
+//!   [`SYSTEM_BAR_MIN_WIDTH`] of the screen's width, on a typed tree (the session passes no
+//!   bars for runner text, whose roles are forgeable; see [`ScreenTree::bars`]). `Toolbar`
+//!   is not one (web content makes toolbars through ARIA), nor is a narrower bar. For a
+//!   target inside a system bar, only other controls inside that same bar contest its
+//!   points (everything else is under the bar). For any other target, every point inside
+//!   any system bar is unusable (the bar would take the touch), on top of the rule above: a
+//!   row partly under the tab bar is tapped in its part outside the bar, a row wholly under
+//!   one is refused as covered by the bar. Nothing is assumed about alerts and sheets (no
+//!   bars are listed while one is up).
 //! * The default point (the centre, or the action's own preferred point) is tried first,
-//!   then a fixed 3 × 3 grid of inset points of the target's frame ([`GRID`]), in a fixed
-//!   order; the first uncontested one is used. Deterministic: the same screen always gives
+//!   then a fixed 5 × 5 grid of inset points of the target's frame ([`GRID`]: fractions
+//!   1/6 … 5/6 in each axis, nearest the centre first), in a fixed order; the first usable
+//!   one is used. A free strip of a control is found when it is deeper than a sixth of the
+//!   control's side (7.3 pt of a 44 pt button). Deterministic: the same screen always gives
 //!   the same point, so the look after an approval re-derives it exactly.
-//! * When every candidate is contested the action is not sent ([`Covered`]): the agent
+//! * When every candidate is unusable the action is not sent ([`Covered`]): the agent
 //!   refuses it ("not done: "X" is covered by "Y"") and the model chooses something else.
-//! * A raw point (`tap_point`) resolves to the smallest control containing it; a second
-//!   control containing it that is neither its ancestor nor its descendant makes it
-//!   ambiguous, handled the same way.
+//! * A raw point (`tap_point`) resolves to the smallest control containing it (only the
+//!   controls of the system bar it is in, when it is in one); a second control containing
+//!   it that is neither its ancestor nor its descendant makes it ambiguous, handled the
+//!   same way.
 //!
 //! Ancestry comes from the raw tree ([`ScreenTree`]); without one (hand-built screens) no
-//! two elements are related. Compaction never lists a control together with a control
-//! inside it (a row holding controls lists the controls), so in practice related pairs are
-//! rare; the rule keeps them allowed.
+//! two elements are related and there are no bars. Compaction never lists a control
+//! together with a control inside it (a row holding controls lists the controls), so in
+//! practice related pairs are rare; the rule keeps them allowed.
 
-use jarvis_proto::{CompactScreen, Element, Point, Role};
+use jarvis_proto::{BarNode, CompactScreen, Element, Point, Role};
 
 use crate::classify::is_pressable;
 use crate::evaluate::ScreenTree;
 
 /// The fallback candidates, as fractions of the target's frame (x, y), after the default
-/// point: the centre, then the middles of the four edges' inset lines, then the corners'.
-pub const GRID: [(f64, f64); 9] = [
-    (0.5, 0.5),
-    (0.5, 0.25),
-    (0.5, 0.75),
-    (0.25, 0.5),
-    (0.75, 0.5),
-    (0.25, 0.25),
-    (0.75, 0.25),
-    (0.25, 0.75),
-    (0.75, 0.75),
-];
+/// point: a 5 × 5 grid at sixths (1/6 … 5/6) in each axis, nearest the centre first: the
+/// centre, the inner ring (edge middles, then corners), then the outer ring (edge middles,
+/// the points beside them, then corners).
+pub const GRID: [(f64, f64); 25] = {
+    const A: f64 = 1.0 / 6.0;
+    const B: f64 = 2.0 / 6.0;
+    const C: f64 = 0.5;
+    const D: f64 = 4.0 / 6.0;
+    const E: f64 = 5.0 / 6.0;
+    [
+        (C, C),
+        // Inner ring.
+        (C, B),
+        (C, D),
+        (B, C),
+        (D, C),
+        (B, B),
+        (D, B),
+        (B, D),
+        (D, D),
+        // Outer ring.
+        (C, A),
+        (C, E),
+        (A, C),
+        (E, C),
+        (B, A),
+        (D, A),
+        (B, E),
+        (D, E),
+        (A, B),
+        (E, B),
+        (A, D),
+        (E, D),
+        (A, A),
+        (E, A),
+        (A, E),
+        (E, E),
+    ]
+};
 
-/// A tap that would not land on its control alone: the target (compact index) and the
-/// first other control covering the point (or, for a raw point, the other control
-/// containing it).
+/// Least share of the screen's width a `NavigationBar`/`TabBar` spans to be a system bar.
+pub const SYSTEM_BAR_MIN_WIDTH: f64 = 0.9;
+
+/// A system bar (see the module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bar {
+    /// A full-width `NavigationBar`.
+    Navigation,
+    /// A full-width `TabBar`.
+    Tab,
+}
+
+impl Bar {
+    /// How a refusal names it: "the navigation bar", "the tab bar".
+    pub fn name(self) -> &'static str {
+        match self {
+            Bar::Navigation => "the navigation bar",
+            Bar::Tab => "the tab bar",
+        }
+    }
+}
+
+/// What would take a touch meant for the target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoveredBy {
+    /// Another control (compact index).
+    Control(u32),
+    /// A system bar drawn over the target (the target is not inside it).
+    Bar(Bar),
+}
+
+/// A tap that would not land on its control alone: the target (compact index) and what
+/// takes the first candidate point (or, for a raw point, the other control containing it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Covered {
     /// The control the action names (or the one a raw point resolves to).
     pub target: u32,
-    /// Another control that could receive the touch.
-    pub by: u32,
+    /// Another control, or a system bar, that could receive the touch.
+    pub by: CoveredBy,
 }
 
 /// `Other` role names that are controls (lower-case, without separators).
@@ -121,27 +193,75 @@ fn related(a: &Element, b: &Element, tree: Option<&ScreenTree<'_>>) -> bool {
     }
 }
 
-/// The first other control (screen order) that takes taps, is enabled, contains `p` and is
-/// not related to `target`.
-pub fn covering<'a>(
+/// The system bar `b` is, if it is one on a screen `width` points wide.
+fn system_bar(b: &BarNode, width: f64) -> Option<Bar> {
+    let kind = match b.role {
+        Role::NavigationBar => Bar::Navigation,
+        Role::TabBar => Bar::Tab,
+        _ => return None,
+    };
+    (width > 0.0 && b.frame.width >= SYSTEM_BAR_MIN_WIDTH * width).then_some(kind)
+}
+
+/// The system bars of `screen` (none without a tree), with their kinds.
+fn system_bars<'t>(
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'t>>,
+) -> impl Iterator<Item = (&'t BarNode, Bar)> {
+    let width = screen.size.width;
+    tree.map_or(&[][..], |t| t.bars)
+        .iter()
+        .filter_map(move |b| system_bar(b, width).map(|k| (b, k)))
+}
+
+/// The system bar `el` is inside, if any.
+fn bar_of<'t>(
+    el: &Element,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'t>>,
+) -> Option<&'t BarNode> {
+    let t = tree?;
+    system_bars(screen, tree)
+        .map(|(b, _)| b)
+        .find(|b| t.inside(el, b.node))
+}
+
+/// What would take a touch at `p` meant for `target` (see the module docs), if anything: a
+/// system bar over a target outside it, else the first other control (screen order) that
+/// takes taps, is enabled, contains `p`, is not related to `target`, and (for a target
+/// inside a system bar) is inside that same bar.
+fn blocker(
     p: Point,
     target: &Element,
-    screen: &'a CompactScreen,
+    screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
-) -> Option<&'a Element> {
-    screen.elements.iter().find(|e| {
-        e.index != target.index
-            && e.enabled
-            && takes_taps(&e.role)
-            && e.frame.contains(p)
-            && !related(target, e, tree)
-    })
+) -> Option<CoveredBy> {
+    // Precedence holds only where the bar is drawn: a control the tree puts inside a bar but
+    // that lies outside the bar's frame at `p` is ordinary content there.
+    let home = bar_of(target, screen, tree).filter(|h| h.frame.contains(p));
+    if home.is_none() {
+        if let Some((_, kind)) = system_bars(screen, tree).find(|(b, _)| b.frame.contains(p)) {
+            return Some(CoveredBy::Bar(kind));
+        }
+    }
+    screen
+        .elements
+        .iter()
+        .find(|e| {
+            e.index != target.index
+                && e.enabled
+                && takes_taps(&e.role)
+                && e.frame.contains(p)
+                && !related(target, e, tree)
+                && home.is_none_or(|h| tree.is_some_and(|t| t.inside(e, h.node)))
+        })
+        .map(|e| CoveredBy::Control(e.index))
 }
 
 /// The point to tap or press `target` at (see the module docs): `preferred` (the action's
 /// own default, e.g. the trailing edge a `clear` taps; the centre when `None`) when it is
-/// inside the target's frame and uncontested, else the first uncontested point of [`GRID`].
-/// `Err(Covered)` when every candidate is contested.
+/// inside the target's frame and usable, else the first usable point of [`GRID`].
+/// `Err(Covered)` when every candidate is taken, naming what takes the first one.
 pub fn tap_spot(
     target: &Element,
     screen: &CompactScreen,
@@ -155,62 +275,68 @@ pub fn tap_spot(
     let grid = GRID
         .iter()
         .map(|(fx, fy)| Point::new(f.x + f.width * fx, f.y + f.height * fy));
-    let mut blocker: Option<u32> = None;
+    let mut first_blocker: Option<CoveredBy> = None;
     for p in std::iter::once(first).chain(grid) {
         if !f.contains(p) {
             continue;
         }
-        match covering(p, target, screen, tree) {
+        match blocker(p, target, screen, tree) {
             None => return Ok(p),
-            Some(e) => {
-                blocker.get_or_insert(e.index);
+            Some(b) => {
+                first_blocker.get_or_insert(b);
             }
         }
     }
     Err(Covered {
         target: target.index,
-        by: blocker.unwrap_or(target.index),
+        by: first_blocker.unwrap_or(CoveredBy::Control(target.index)),
     })
 }
 
 /// Whether the drag or press starting at `p` on `target` is uncontested (no point is
-/// moved: a gesture's path is what the classifier read).
+/// moved: a gesture's path is what the classifier read). Bar precedence applies as for
+/// [`tap_spot`].
 pub fn point_is_clear(
     p: Point,
     target: &Element,
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
 ) -> Result<(), Covered> {
-    match covering(p, target, screen, tree) {
+    match blocker(p, target, screen, tree) {
         None => Ok(()),
-        Some(e) => Err(Covered {
+        Some(by) => Err(Covered {
             target: target.index,
-            by: e.index,
+            by,
         }),
     }
 }
 
 /// The control a raw screen point (in points) lands on: the smallest control that takes
-/// taps and contains it (`Ok(None)` when there is none). Another control containing the
+/// taps and contains it (`Ok(None)` when there is none); inside a system bar, only that
+/// bar's controls count (the bar is on top of the rest). Another control containing the
 /// point that is neither its ancestor nor its descendant makes it ambiguous: `Err`.
 pub fn control_at<'a>(
     p: Point,
     screen: &'a CompactScreen,
     tree: Option<&ScreenTree<'_>>,
 ) -> Result<Option<&'a Element>, Covered> {
+    let over = system_bars(screen, tree)
+        .map(|(b, _)| b)
+        .find(|b| b.frame.contains(p));
     let Some(smallest) = screen
         .elements
         .iter()
         .filter(|e| takes_taps(&e.role) && e.enabled && e.frame.contains(p))
+        .filter(|e| over.is_none_or(|b| tree.is_some_and(|t| t.inside(e, b.node))))
         .min_by(|a, b| a.frame.area().total_cmp(&b.frame.area()))
     else {
         return Ok(None);
     };
-    match covering(p, smallest, screen, tree) {
+    match blocker(p, smallest, screen, tree) {
         None => Ok(Some(smallest)),
-        Some(other) => Err(Covered {
+        Some(by) => Err(Covered {
             target: smallest.index,
-            by: other.index,
+            by,
         }),
     }
 }
