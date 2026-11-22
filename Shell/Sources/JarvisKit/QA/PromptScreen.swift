@@ -268,6 +268,9 @@ public enum StepOutcome: Sendable, Equatable {
     case interrupted
     /// `not answered: …`.
     case notAnswered
+    /// `owner answered: …`: the core handed the step to the owner (a question, or text it
+    /// never types itself such as a password) and the owner replied. The step is over.
+    case ownerAnswered
     /// Anything else (`screenshot taken`, `not available: …`, text of another shape).
     case unknown
 
@@ -280,6 +283,7 @@ public enum StepOutcome: Sendable, Equatable {
         else if starts("not done") { self = .notDone }
         else if starts("interrupted") { self = .interrupted }
         else if starts("not answered") { self = .notAnswered }
+        else if starts("owner answered") { self = .ownerAnswered }
         else { self = .unknown }
     }
 }

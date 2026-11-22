@@ -610,6 +610,9 @@ struct WorkflowEditorView: View {
                 .padding(.horizontal, Theme.gutter)
                 .padding(.vertical, 20)
             }
+            // A step added while the keyboard is up can appear under it: dragging the form
+            // down puts the keyboard away.
+            .scrollDismissesKeyboard(.interactively)
             .screenBackground()
             .navigationTitle(draft.id == nil ? "New workflow" : "Edit workflow")
             .navigationBarTitleDisplayMode(.inline)

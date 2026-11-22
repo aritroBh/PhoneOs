@@ -446,6 +446,58 @@ struct ScriptedModelRetryTests {
         #expect(StepOutcome(result: "not done: repeated action") == .notDone)
         #expect(StepOutcome(result: "interrupted: the phone locked while this ran") == .interrupted)
         #expect(StepOutcome(result: "not answered: the phone locked before the owner replied") == .notAnswered)
+        #expect(StepOutcome(result: "owner answered: I entered it. Continue.") == .ownerAnswered)
         #expect(StepOutcome(result: "screenshot taken") == .unknown)
+    }
+
+    // Simulator run 9: the script typed into the password field again after the owner had
+    // entered it, until the core stopped the run as stuck.
+    @Test("a password step the core hands to the owner is done once the owner answers (real core)")
+    func ownerTypedPassword() async throws {
+        let phone = LoginPhone()
+        let gate = FakeGate(answer: "I entered it. Continue.")
+        let model = ScriptedModel(steps: [
+            .type("(the owner types it)", into: "Password", role: "SecureTextField"),
+            .tap("Sign In", role: "Button"),
+            .done("Signed in", when: ["Welcome"]),
+        ])
+        let result = try await run(phone, model, task: "Sign in", gate: gate, knownApps: [])
+        #expect(result.outcome.status == .success, "\(result.outcome.summary)\n\(model.decisions.map(\.reason))")
+        #expect(gate.questions.count == 1, "\(gate.questions)")
+        #expect(phone.typedIntoPassword == 0, "the core typed into a secure field")
+        #expect(model.callCount == 3, "\(model.decisions.map(\.reply))")
+    }
+}
+
+/// A sign-in screen: a secure password field and a Sign In button that leads to "Welcome".
+final class LoginPhone: PhoneRunner {
+    private let state = Mutex<(signedIn: Bool, typed: Int)>((false, 0))
+
+    var typedIntoPassword: Int { state.withLock { $0.typed } }
+
+    func snapshot(includeScreenshot: Bool) async throws -> RunnerObservation {
+        let signedIn = state.withLock { $0.signedIn }
+        let content: [UiNode]
+        if signedIn {
+            content = [node(.staticText, "Welcome", Rect(x: 16, y: 200, width: 361, height: 30))]
+        } else {
+            let password = UiNode(role: .secureTextField, label: "Password", value: nil, identifier: nil, placeholder: nil,
+                                  frame: Rect(x: 16, y: 200, width: 361, height: 44), enabled: true, visible: true,
+                                  hittable: true, focused: false, selected: false, secure: true, children: [])
+            content = [password, node(.button, "Sign In", Rect(x: 16, y: 300, width: 361, height: 50))]
+        }
+        let root = node(.application, "Login", fullScreen, [node(.window, nil, fullScreen, content)])
+        return RunnerObservation(root: root, appBundleId: "dev.jarvis.test.login", appName: "Login", screenSize: Size(width: 393, height: 852))
+    }
+
+    func perform(_ command: RunnerCommand) async throws -> RunnerResult {
+        state.withLock { s in
+            switch command {
+            case .typeText: s.typed += 1
+            case .tap(_, let y) where y >= 300 && y < 350: s.signedIn = true
+            default: break
+            }
+        }
+        return RunnerResult(ok: true, error: nil)
     }
 }

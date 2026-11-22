@@ -41,8 +41,26 @@ final class WorkflowRemoteUITests: QATestCase {
     private func type(_ text: String, into identifier: String, in app: XCUIApplication) {
         let field = app.textFields[identifier]
         require(field, "the field \(identifier)", in: app)
+        bringAboveKeyboard(field, in: app)
         field.tap()
         field.typeText(text)
+    }
+
+    /// Scrolls the editor until `field` is clear of the keyboard. A field that appears while
+    /// the keyboard is up can lie under it; a tap there lands on the keyboard and the field
+    /// never gets the focus (simulator run 9: "Neither element nor any descendant has
+    /// keyboard focus").
+    @MainActor
+    private func bringAboveKeyboard(_ field: XCUIElement, in app: XCUIApplication) {
+        let keyboard = app.keyboards.firstMatch
+        for _ in 0..<4 {
+            guard keyboard.exists, keyboard.frame.height > 0,
+                  field.frame.maxY > keyboard.frame.minY - 12 else { return }
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+                .withOffset(CGVector(dx: app.frame.midX, dy: max(140, keyboard.frame.minY - 60)))
+            let to = from.withOffset(CGVector(dx: 0, dy: -180))
+            from.press(forDuration: 0.05, thenDragTo: to)
+        }
     }
 
     /// Makes a workflow in the editor: `steps` are (kind, text) for each step.

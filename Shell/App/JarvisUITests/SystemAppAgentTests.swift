@@ -16,6 +16,9 @@ final class SystemAppAgentTests: QATestCase {
                     when: [ElementQuery("What's New", match: .contains, roles: ["StaticText"])]),
         DismissRule(tap: ElementQuery("Not Now", match: .exact, roles: ["Button"]),
                     when: [ElementQuery("What's New", match: .contains, roles: ["StaticText"])]),
+        // Safari's first-launch tip about its menu (simulator run 9): it covers the page.
+        DismissRule(tap: ElementQuery("Close", match: .exact, roles: ["Button"]),
+                    when: [ElementQuery("You can now view these items in the menu", match: .contains, roles: ["StaticText"])]),
     ]
 
     private let settingsId = "com.apple.Preferences"

@@ -415,6 +415,8 @@ public final class ScriptedModel: ModelProvider {
     /// - `ok` (with or without a change summary): done.
     /// - `done, but …` (ran, the lock came before the check): done unless the stated
     ///   precondition (`value=` / on / off) still holds.
+    /// - `owner answered: …` (the core gave the step to the owner, who replied): done. What
+    ///   the owner did is theirs; typing into a password field again would only ask again.
     /// - anything else (`failed: …`, `not done: …`, `interrupted: …`, `not answered: …`):
     ///   retried while the target is still there and its precondition, if any, still holds.
     ///   A plain failure without a precondition is not retried once the next step's target
@@ -423,7 +425,7 @@ public final class ScriptedModel: ModelProvider {
         if result.trimmingCharacters(in: .whitespaces).isEmpty { return false }
         let targetThere = query.find(in: screen) != nil
         switch StepOutcome(result: result) {
-        case .ok: return false
+        case .ok, .ownerAnswered: return false
         case .ranUnchecked: return query.hasStateCondition && targetThere
         case .failed:
             if query.hasStateCondition { return targetThere }
