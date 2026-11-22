@@ -19,7 +19,7 @@ private func isDenied(_ m: ServerMessage) -> Bool {
     return false
 }
 
-@Suite("Remote control through the real hub and client")
+@Suite("Remote control through the real hub and client", .timeLimit(.minutes(1)))
 @MainActor
 struct RemoteControlTests {
     @Test("pair, reconnect, start a task, watch it, a never-remote approval is refused, decline stops it, revoke ends it")
@@ -181,10 +181,18 @@ struct RemoteControlTests {
             return
         }
         try await eventually("the delete confirmation") { r.base.center.broker.pendingConfirmation?.request.category == .delete }
-        try await eventually("the hub to know it") { (try? r.probe?.pendingRequestId()) != nil }
-        let id = try #require(try r.probe?.pendingRequestId())
+        // Wait for the hub's request for THIS confirmation. "The hub has a pending request"
+        // is not enough: the first-use question (approved by the scripted owner just
+        // before) can still be the hub's pending request while the phone already shows the
+        // delete; every decision below would then name the wrong request, all of them
+        // would be ignored (rightly), and the run would wait for the owner until
+        // `humanTimeout` (600 s). That was the intermittent hang of the whole test run.
+        try await eventually("the hub to know the delete confirmation") {
+            guard let id = r.probe?.requestId(for: .delete) else { return false }
+            return (try? r.probe?.pendingRequestId()) == id
+        }
+        let id = try #require(r.probe?.requestId(for: .delete))
         let device = String(repeating: "0", count: 32)
-        FileHandle.standardError.write(Data("DIAG test took hub id=\(id) seen=\(r.base.owner.confirmCategories)\n".utf8))
 
         // An approval of a never-remote category, even if the hub asked for it: refused.
         r.probe?.injectOnTick.withLock { $0 = [.decide(requestId: id, approved: true, category: .delete, deviceId: device)] }
@@ -200,7 +208,7 @@ struct RemoteControlTests {
         // The matching decline is applied.
         r.probe?.injectOnTick.withLock { $0 = [.decide(requestId: id, approved: false, category: .delete, deviceId: device)] }
         r.service.tick()
-        let outcome = await task.value
+        let outcome = try await value(of: task, "the declined run to end")
         #expect(outcome.outcome.status != .success)
     }
 
@@ -220,7 +228,7 @@ struct RemoteControlTests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(r.base.center.session?.origin == .owner, "revoking a device stopped the owner's task")
         r.base.center.cancelSession()
-        _ = await task.value
+        _ = try await value(of: task, "the cancelled run to end")
     }
 
     @Test("a poisoned hub is rebuilt from the secret store; devices come back and can reconnect")

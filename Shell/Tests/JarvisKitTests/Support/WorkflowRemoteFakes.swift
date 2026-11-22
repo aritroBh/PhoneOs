@@ -88,7 +88,11 @@ final class AppHarness {
         runner = WorkflowRunner(library: library, center: center, notifier: notifier, limits: limits)
     }
 
+    /// Stops whatever a test left running (a failed test must not leave a session waiting
+    /// in the background for the rest of the run), then removes the files.
     func cleanUp() {
+        runner.cancel()
+        center.cancelSession()
         try? FileManager.default.removeItem(at: dir)
     }
 
@@ -179,6 +183,24 @@ final class HubProbe: JarvisRemoteHubProtocol, @unchecked Sendable {
     /// Every effect list the hub returned, in order.
     let returned = Mutex<[[HubEffect]]>([])
 
+    /// A confirmation the phone reported to the hub, with the request id the hub gave it.
+    struct ConfirmAnnounced: Sendable {
+        let category: RiskCategory
+        let requestId: UInt64?
+    }
+
+    /// Every `confirmRequested` the hub was told about, in order. The hub's
+    /// `pendingRequestId()` alone does not say WHICH confirmation is pending: right after the
+    /// owner answered one prompt, the phone can already show the next one while the hub
+    /// still holds the previous request (the run's events reach remote control through a
+    /// stream, a moment later).
+    let confirmations = Mutex<[ConfirmAnnounced]>([])
+
+    /// The hub's request id for the latest confirmation of `category` the phone reported.
+    func requestId(for category: RiskCategory) -> UInt64? {
+        confirmations.withLock { $0.last { $0.category == category }?.requestId }
+    }
+
     private func keep(_ effects: [HubEffect]) -> [HubEffect] {
         returned.withLock { $0.append(effects) }
         return effects
@@ -204,7 +226,15 @@ final class HubProbe: JarvisRemoteHubProtocol, @unchecked Sendable {
     func isAuthenticated(connId: UInt64) throws -> Bool { try hub.isAuthenticated(connId: connId) }
     func isBusy() throws -> Bool { try hub.isBusy() }
     func isPairingOpen() throws -> Bool { try hub.isPairingOpen() }
-    func localEvent(nowMs: UInt64, event: LocalEvent) throws -> [HubEffect] { try check(); return keep(try hub.localEvent(nowMs: nowMs, event: event)) }
+    func localEvent(nowMs: UInt64, event: LocalEvent) throws -> [HubEffect] {
+        try check()
+        let effects = keep(try hub.localEvent(nowMs: nowMs, event: event))
+        if case .confirmRequested(let request) = event {
+            let id = try hub.pendingRequestId()
+            confirmations.withLock { $0.append(ConfirmAnnounced(category: request.category, requestId: id)) }
+        }
+        return effects
+    }
     func openPairing(nowMs: UInt64, entropy: Data) throws -> PairingOffer { try check(); return try hub.openPairing(nowMs: nowMs, entropy: entropy) }
     func pairingLockedUntilMs() throws -> UInt64 { try hub.pairingLockedUntilMs() }
     func pendingRequestId() throws -> UInt64? { try hub.pendingRequestId() }

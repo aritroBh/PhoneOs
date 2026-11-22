@@ -4,7 +4,7 @@ import JarvisCore
 import Synchronization
 @testable import JarvisKit
 
-@Suite("LockSignals decision rule")
+@Suite("LockSignals decision rule", .timeLimit(.minutes(1)))
 struct LockSignalsTests {
     private let app = LockSignals.Front.app("dev.jarvis.app")
 
@@ -62,7 +62,7 @@ private final class FlippingRunner: PhoneRunner {
     }
 }
 
-@Suite("Lock check after a command")
+@Suite("Lock check after a command", .timeLimit(.minutes(1)))
 struct PostCommandLockTests {
     @Test("a command that ran while the phone locked is reported as locked, not ok")
     func lockedAfter() async throws {

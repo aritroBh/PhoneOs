@@ -502,7 +502,6 @@ public final class RemoteControlService {
         guard let pending = hubConfirm, pending.id == requestId, pending.request.category == category,
               let onScreen = desk.pendingConfirmation, onScreen.request == pending.request else {
             note("Ignored a decision from \(who): the question on the phone had changed", device: deviceId, warning: true)
-            FileHandle.standardError.write(Data("DIAG decide ignored: asked id=\(requestId) cat=\(category) hubConfirm=\(String(describing: hubConfirm.map { ($0.id, $0.request.category) })) onScreen=\(String(describing: desk.pendingConfirmation.map { ($0.id, $0.request.category) }))\n".utf8))
             return
         }
         if approved, (try? remotelyApprovable(category: category)) != true {

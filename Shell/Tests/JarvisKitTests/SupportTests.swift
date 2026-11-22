@@ -3,7 +3,7 @@ import JarvisCore
 import Testing
 @testable import JarvisKit
 
-@Suite("Support types")
+@Suite("Support types", .timeLimit(.minutes(1)))
 struct SupportTests {
     @Test("JSONValue encodes integral numbers without a fraction and round-trips")
     func jsonValue() throws {

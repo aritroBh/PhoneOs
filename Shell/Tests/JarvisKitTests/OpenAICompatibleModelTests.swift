@@ -36,7 +36,7 @@ private func model(
     )
 }
 
-@Suite("OpenAICompatibleModel against a stub server")
+@Suite("OpenAICompatibleModel against a stub server", .timeLimit(.minutes(1)))
 struct OpenAICompatibleModelTests {
     @Test("text request shape with the core's JSON schema")
     func textRequest() async throws {

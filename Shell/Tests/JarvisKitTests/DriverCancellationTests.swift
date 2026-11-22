@@ -5,7 +5,7 @@ import Testing
 
 /// Cancellation reaches the core promptly, also while IO that ignores cancellation is in
 /// flight, and memory is saved exactly once.
-@Suite("SessionDriver cancellation")
+@Suite("SessionDriver cancellation", .timeLimit(.minutes(1)))
 struct DriverCancellationTests {
     private func expectCancelled(_ result: RunResult, _ h: Harness) {
         #expect(result.outcome.status == .cancelled)
@@ -27,7 +27,7 @@ struct DriverCancellationTests {
         try await waitUntil { latch.entered == 1 }
         let started = ContinuousClock.now
         await driver.cancel()
-        let result = await run.value
+        let result = try await value(of: run, "the cancelled run to end")
         #expect(ContinuousClock.now - started < .seconds(2))
         latch.release()
         expectCancelled(result, h)
@@ -46,7 +46,7 @@ struct DriverCancellationTests {
         try await waitUntil { latch.entered == 1 }
         let started = ContinuousClock.now
         run.cancel()
-        let result = await run.value
+        let result = try await value(of: run, "the cancelled run to end")
         #expect(ContinuousClock.now - started < .seconds(2))
         latch.release()
         expectCancelled(result, h)
@@ -61,7 +61,7 @@ struct DriverCancellationTests {
         let run = Task { await driver.run() }
         try await waitUntil { latch.entered == 1 }
         await driver.cancel()
-        let result = await run.value
+        let result = try await value(of: run, "the cancelled run to end")
         latch.release()
         expectCancelled(result, h)
         #expect(h.model.callCount == 1)
@@ -76,7 +76,7 @@ struct DriverCancellationTests {
         let run = Task { await driver.run() }
         try await waitUntil { latch.entered == 1 }
         run.cancel()
-        let result = await run.value
+        let result = try await value(of: run, "the cancelled run to end")
         latch.release()
         expectCancelled(result, h)
         #expect(h.model.callCount == 0)
@@ -91,7 +91,7 @@ struct DriverCancellationTests {
         let run = Task { await driver.run() }
         try await waitUntil { latch.entered == 1 }
         await driver.cancel()
-        let result = await run.value
+        let result = try await value(of: run, "the cancelled run to end")
         latch.release()
         expectCancelled(result, h)
         #expect(h.phone.page == .wifiOn, "the risky tap never ran")

@@ -3,7 +3,7 @@ import JarvisCore
 import Testing
 @testable import JarvisKit
 
-@Suite("ToolRegistry")
+@Suite("ToolRegistry", .timeLimit(.minutes(1)))
 struct ToolRegistryTests {
     private func registry() -> ToolRegistry {
         let r = ToolRegistry()

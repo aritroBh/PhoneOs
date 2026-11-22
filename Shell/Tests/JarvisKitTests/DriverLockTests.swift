@@ -164,7 +164,7 @@ private extension [DriverUpdate] {
     func count(_ match: (DriverUpdate) -> Bool) -> Int { filter(match).count }
 }
 
-@Suite("SessionDriver with a locked phone (real core)")
+@Suite("SessionDriver with a locked phone (real core)", .timeLimit(.minutes(1)))
 struct DriverLockTests {
     @Test("locked before the first observation: wait, tick, unlock, then the task finishes")
     func lockedAtStart() async throws {

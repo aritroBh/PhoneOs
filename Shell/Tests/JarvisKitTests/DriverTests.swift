@@ -4,7 +4,7 @@ import Testing
 @testable import JarvisKit
 
 /// `SessionDriver` against the real Rust core: the paths where IO works.
-@Suite("SessionDriver with the real core")
+@Suite("SessionDriver with the real core", .timeLimit(.minutes(1)))
 struct DriverTests {
     @Test("full success path with runner-text observations")
     func successPath() async throws {

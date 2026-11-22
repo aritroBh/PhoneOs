@@ -14,7 +14,7 @@ private final class FakeDisplay: AwayDisplay {
     }
 }
 
-@Suite("Away mode")
+@Suite("Away mode", .timeLimit(.minutes(1)))
 @MainActor
 struct AwayModeTests {
     @Test("first use explains; acknowledging dims; exit restores everything")
@@ -114,7 +114,7 @@ struct AwayModeTests {
     }
 }
 
-@Suite("Apps: ways in")
+@Suite("Apps: ways in", .timeLimit(.minutes(1)))
 struct AppAccessTests {
     @Test("screen only unless a tool for the app is registered; denied closes every way")
     func derive() throws {

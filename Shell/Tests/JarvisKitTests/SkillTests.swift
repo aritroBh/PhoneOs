@@ -22,7 +22,7 @@ private func coreRefusal(_ skill: Skill) -> String? {
     }
 }
 
-@Suite("SkillLibrary")
+@Suite("SkillLibrary", .timeLimit(.minutes(1)))
 struct SkillLibraryTests {
     @Test("create, update, enable, remove; every change is on disk")
     func crud() throws {
@@ -182,7 +182,7 @@ struct SkillLibraryTests {
     }
 }
 
-@Suite("Skill routing and runs through the core")
+@Suite("Skill routing and runs through the core", .timeLimit(.minutes(1)))
 struct SkillRoutingTests {
     private func library(in dir: URL) -> SkillLibrary {
         SkillLibrary(fileURL: dir.appendingPathComponent("skills.json"))

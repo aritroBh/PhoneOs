@@ -72,7 +72,7 @@ struct CommandCase: Sendable, CustomTestStringConvertible {
     var testDescription: String { "\(command) -> \(method)" }
 }
 
-@Suite("LoopCtrlRunner against a stub JSON-RPC server")
+@Suite("LoopCtrlRunner against a stub JSON-RPC server", .timeLimit(.minutes(1)))
 struct LoopCtrlRunnerTests {
     @Test("snapshot: page_source + device_info, screen size learned once from a screenshot")
     func snapshotShape() async throws {
@@ -289,15 +289,18 @@ struct LoopCtrlRunnerTests {
 
     @Test("an unreachable runner is a transport error")
     func unreachable() async throws {
-        let stub = try LoopCtrlStub([:])
-        let runner = stub.runner()
-        stub.server.stop()
+        // A port held bound but never listening: refused at once, and no server of a
+        // parallel test can take it over (a stopped stub's port could be reused).
+        let refusing = try RefusingPort()
+        let runner = LoopCtrlRunner(configuration: LoopCtrlRunner.Configuration(baseURL: refusing.baseURL, requestTimeout: 5),
+                                    sealer: PlaintextSealer())
         await #expect {
             _ = try await runner.perform(.tap(x: 1, y: 2))
         } throws: { error in
             if case LoopCtrlError.transport = error { return true }
             return false
         }
+        withExtendedLifetime(refusing) {}
     }
 
     @Test("a runner that does not answer times out")

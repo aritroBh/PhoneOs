@@ -1,6 +1,7 @@
 import Foundation
 import JarvisCore
 import Synchronization
+import Testing
 @testable import JarvisKit
 
 // MARK: - Waiting helpers
@@ -50,6 +51,28 @@ func waitUntil(seconds: Double = 5, _ condition: @Sendable () async -> Bool) asy
         try await Task.sleep(for: .milliseconds(10))
     }
     throw WaitTimeout()
+}
+
+/// The value of `task`, waited for at most `seconds` (and abandoned at once when the test
+/// itself is cancelled, e.g. by its time limit). `await task.value` alone never ends when
+/// the run waits for something that will not come (an unanswered confirmation), and since
+/// cancelling the test does not cancel an unstructured task, one such wait stalls the whole
+/// `swift test` run. Here the test fails with `what` instead, and `task` is cancelled so
+/// nothing keeps running after the test has failed.
+func value<T: Sendable>(
+    of task: Task<T, Never>,
+    _ what: String,
+    seconds: Double = 30,
+    sourceLocation: SourceLocation = #_sourceLocation
+) async throws -> T {
+    do {
+        return try await IORace<T>().run(kind: .act, timeout: .milliseconds(Int(seconds * 1_000))) { await task.value }
+    } catch {
+        task.cancel()
+        let why = error is CancellationError ? "the test was cancelled" : "timed out after \(seconds) s"
+        Issue.record("\(why) waiting for \(what)", sourceLocation: sourceLocation)
+        throw WaitTimeout()
+    }
 }
 
 // MARK: - A fake Settings app driven through runner text

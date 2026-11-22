@@ -9,7 +9,7 @@ private func draft(_ name: String, _ steps: [StepDraft], trigger: TriggerDraft =
     WorkflowDraft(name: name, trigger: trigger, steps: steps, onFailure: onFailure)
 }
 
-@Suite("WorkflowLibrary")
+@Suite("WorkflowLibrary", .timeLimit(.minutes(1)))
 struct WorkflowLibraryTests {
     @Test("create, update, enable, record, remove; every change is on disk")
     func crud() throws {
@@ -175,7 +175,7 @@ struct WorkflowLibraryTests {
     }
 }
 
-@Suite("WorkflowRunner through the core (demo backend)")
+@Suite("WorkflowRunner through the core (demo backend)", .timeLimit(.minutes(1)))
 @MainActor
 struct WorkflowRunnerTests {
     @Test("a multi-step run: task, conditions, a question, a notification and a wait; recorded and grouped")
@@ -195,7 +195,7 @@ struct WorkflowRunnerTests {
             Issue.record("refused: \(started)")
             return
         }
-        let outcome = await task.value
+        let outcome = try await value(of: task, "the workflow run to end")
         #expect(outcome.status == .succeeded, "\(outcome)")
         #expect(outcome.stepsRun == 6)
         #expect(h.notifier.posted.withLock { $0 } == ["Wi-Fi is off"])
@@ -227,7 +227,7 @@ struct WorkflowRunnerTests {
             Issue.record("refused")
             return
         }
-        let outcome = await task.value
+        let outcome = try await value(of: task, "the workflow run to end")
         #expect(h.owner.confirmCategories.contains(.delete), "the delete confirmation was not asked: \(h.owner.confirmCategories)")
         #expect(outcome.status != .succeeded && outcome.status != .completedWithFailures, "\(outcome)")
         #expect(outcome.stepsRun == 1, "\(outcome)")
@@ -248,7 +248,7 @@ struct WorkflowRunnerTests {
             Issue.record("refused")
             return
         }
-        let outcome = await task.value
+        let outcome = try await value(of: task, "the workflow run to end")
         #expect(outcome.status == .stopped, "\(outcome)")
         #expect(h.runner.progress?.states == [.done, .stoppedHere, .pending])
         #expect(h.notifier.posted.withLock { $0 }.isEmpty)
@@ -280,7 +280,7 @@ struct WorkflowRunnerTests {
         }
         let before = ContinuousClock.now
         h.runner.cancel()
-        let outcome = await task.value
+        let outcome = try await value(of: task, "the workflow run to end")
         #expect(outcome.status == .cancelled, "\(outcome)")
         #expect(ContinuousClock.now - before < .seconds(5))
         #expect(h.notifier.posted.withLock { $0 }.isEmpty)
@@ -300,7 +300,7 @@ struct WorkflowRunnerTests {
         try await eventually("the delete confirmation") { h.owner.confirmCategories.contains(.delete) }
         #expect(h.center.session?.origin.workflow?.workflowId == w.id)
         h.runner.cancel()
-        let outcome = await task.value
+        let outcome = try await value(of: task, "the workflow run to end")
         #expect(outcome.status == .cancelled, "\(outcome)")
         #expect(h.center.session == nil && h.center.workflow == nil)
         #expect(h.center.broker.pending == nil, "the confirmation stayed on screen")
@@ -308,7 +308,7 @@ struct WorkflowRunnerTests {
     }
 }
 
-@Suite("WorkflowScheduler")
+@Suite("WorkflowScheduler", .timeLimit(.minutes(1)))
 @MainActor
 struct WorkflowSchedulerTests {
     /// Monday 2026-11-23, `hour:minute` UTC.
@@ -384,7 +384,7 @@ struct WorkflowSchedulerTests {
         let scheduler = WorkflowScheduler(library: h.library, catchUpMinutes: 15)
         #expect(scheduler.tick(at: at(7, 30), runner: h.runner) == nil, "started while another workflow ran")
         h.runner.cancel()
-        _ = await blocking.value
+        _ = try await value(of: blocking, "the cancelled workflow to end")
         #expect(scheduler.tick(at: at(7, 36), runner: h.runner) == w.id, "did not fire once the phone was free")
         try await eventually("the run") { !h.runner.isRunning }
         #expect(h.notifier.posted.withLock { $0 } == ["m"])

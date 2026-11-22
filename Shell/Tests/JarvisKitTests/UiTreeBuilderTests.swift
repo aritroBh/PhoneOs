@@ -40,7 +40,7 @@ private let loginSnapshot = raw(T.application, "Jarvis", full, [
     ]),
 ])
 
-@Suite("UiTreeBuilder: XCUITest snapshot copies to the core's UiNode")
+@Suite("UiTreeBuilder: XCUITest snapshot copies to the core's UiNode", .timeLimit(.minutes(1)))
 struct UiTreeBuilderTests {
     @Test("roles, values, flags and visibility")
     func conversion() throws {

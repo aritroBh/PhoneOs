@@ -14,7 +14,7 @@ private func contents(of directory: URL) throws -> [String] {
     try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
 }
 
-@Suite("FileMemoryStore")
+@Suite("FileMemoryStore", .timeLimit(.minutes(1)))
 struct FileMemoryStoreTests {
     @Test("missing file loads as fresh memory")
     func missing() async throws {
@@ -102,7 +102,7 @@ struct FileMemoryStoreTests {
     }
 }
 
-@Suite("ScreenshotStore")
+@Suite("ScreenshotStore", .timeLimit(.minutes(1)))
 struct ScreenshotStoreTests {
     private func shot(_ byte: UInt8) -> CapturedScreenshot {
         CapturedScreenshot(data: Data([byte]), mimeType: "image/png", pixelWidth: 3, pixelHeight: 4)

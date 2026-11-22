@@ -11,7 +11,7 @@ private func tempDirectory() -> URL {
     FileManager.default.temporaryDirectory.appendingPathComponent("jarvis-tests-\(UUID().uuidString)")
 }
 
-@Suite("JarvisSettings")
+@Suite("JarvisSettings", .timeLimit(.minutes(1)))
 struct SettingsTests {
     @Test("round trip, and missing or unknown fields fall back to defaults")
     func codable() throws {
@@ -97,7 +97,7 @@ struct SettingsTests {
     }
 }
 
-@Suite("Task history and memory snapshot")
+@Suite("Task history and memory snapshot", .timeLimit(.minutes(1)))
 struct HistoryTests {
     @Test("records are kept newest first and bounded")
     func history() throws {
@@ -135,7 +135,7 @@ struct HistoryTests {
     }
 }
 
-@Suite("HumanPromptBroker")
+@Suite("HumanPromptBroker", .timeLimit(.minutes(1)))
 struct BrokerTests {
     @Test("confirm and answer resolve through the pending prompt")
     func resolve() async throws {
@@ -176,7 +176,7 @@ struct BrokerTests {
     }
 }
 
-@Suite("Coordinator, live run state and connection probes")
+@Suite("Coordinator, live run state and connection probes", .timeLimit(.minutes(1)))
 struct CoordinatorTests {
     /// Approves every confirmation through the broker, as the sheet's Approve button does.
     private func autoApprovingBroker() -> HumanPromptBroker {
@@ -263,7 +263,7 @@ struct CoordinatorTests {
         try await waitUntil { broker.pending != nil }
         #expect(live.withLock { $0.status } == .needsYou)
         run.cancel()
-        guard case .finished(_, let result) = await run.value else {
+        guard case .finished(_, let result) = try await value(of: run, "the cancelled run to end") else {
             Issue.record("not started")
             return
         }
@@ -346,7 +346,7 @@ struct CoordinatorTests {
     }
 }
 
-@Suite("FormCaptureServer")
+@Suite("FormCaptureServer", .timeLimit(.minutes(1)))
 struct FormCaptureServerTests {
     @Test("serves the form and records a submission")
     func roundTrip() async throws {

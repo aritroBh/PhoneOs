@@ -4,7 +4,7 @@ import Testing
 @testable import JarvisKit
 
 /// `SessionDriver` against the real core: each IO failure maps to the right event.
-@Suite("SessionDriver failure mapping")
+@Suite("SessionDriver failure mapping", .timeLimit(.minutes(1)))
 struct DriverFailureTests {
     @Test("a runner command error becomes a failed ActResult and the run recovers")
     func runnerCommandError() async throws {

@@ -4,7 +4,7 @@ import Testing
 @testable import JarvisKit
 
 /// The order of `SessionDriver.updates` documented on `DriverUpdate`.
-@Suite("SessionDriver update stream")
+@Suite("SessionDriver update stream", .timeLimit(.minutes(1)))
 struct DriverUpdateStreamTests {
     @Test("updates come in the documented order")
     func ordering() async throws {

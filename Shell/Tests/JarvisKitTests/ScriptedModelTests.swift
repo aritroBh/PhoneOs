@@ -27,7 +27,7 @@ private func run(
     return result
 }
 
-@Suite("PromptScreen reads the rendered screen")
+@Suite("PromptScreen reads the rendered screen", .timeLimit(.minutes(1)))
 struct PromptScreenTests {
     @Test("element lines with escapes, values, placeholders and flags")
     func parse() {
@@ -81,7 +81,7 @@ struct PromptScreenTests {
     }
 }
 
-@Suite("ScriptedModel answers by reading the screen (real core, typed trees)")
+@Suite("ScriptedModel answers by reading the screen (real core, typed trees)", .timeLimit(.minutes(1)))
 struct ScriptedModelTests {
     @Test("Wi-Fi off on the demo phone: three model calls, then a replay with none")
     func wifiAndReplay() async throws {
@@ -315,7 +315,7 @@ final class PromptThenListPhone: PhoneRunner {
 
 /// The script decides from the prompt's history whether a tap took effect (the lock-mid-task
 /// simulator failure: the script had moved on after a tap the core then dropped).
-@Suite("ScriptedModel retries what the history says did not happen")
+@Suite("ScriptedModel retries what the history says did not happen", .timeLimit(.minutes(1)))
 struct ScriptedModelRetryTests {
     private func prompt(history: [String], tipsOn: Bool) -> ModelRequest {
         let lines = history.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
