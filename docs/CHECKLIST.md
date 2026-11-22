@@ -79,7 +79,7 @@ Verified on a macOS runner (Xcode 26.6, iPhone 17 Pro Max simulator, iOS 26.5):
 
 - [x] Local-model eval on the simulated phone (`docs/MODEL-EVAL.md`)
 - [x] Model-readiness fixes from that eval (state deltas, loop detection, switches `(on)/(off)`, scroll cue, icon taps checked like `open_app`)
-- [x] Re-run after the fixes (Qwen3.5-4B: 5/9 → 6/9 on the re-run set)
+- [x] Partial re-run after the fixes (Qwen3-4B-Instruct, its 9 failed tasks: 5 pass, 6 with one corrected expectation)
 - [ ] Eval with a model of 2B or less and with constrained decoding
 - [x] `jarvis-remote`: corrupt-store errors never quote the file (keys)
 - [ ] First-use approval for `OpenUrl` and tools with no declared app
