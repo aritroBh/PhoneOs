@@ -680,20 +680,28 @@ fn is_adjustable(el: &Element) -> bool {
             .any(|t| matches!(t.as_str(), "slide" | "swipe"))
 }
 
-/// Least ratio of the smaller to the larger height (and, for widths,
-/// [`SIBLING_MIN_WIDTH_RATIO`]) for two cells or buttons side by side to count as items
-/// of one carousel or grid.
-pub(crate) const SIBLING_MIN_HEIGHT_RATIO: f64 = 0.75;
-/// See [`SIBLING_MIN_HEIGHT_RATIO`].
-pub(crate) const SIBLING_MIN_WIDTH_RATIO: f64 = 0.5;
+/// Least ratio of the smaller to the larger width, and of the smaller to the larger height,
+/// for two cells or buttons side by side to count as items of one carousel or grid: nearly
+/// the same size. Two list columns of a split view (a 320 pt row next to a 600 pt row) are
+/// not.
+pub(crate) const SIBLING_MIN_SIZE_RATIO: f64 = 0.9;
+/// Most distance, in points, between the top edges of two carousel or grid items: their
+/// tops are aligned. Rows of two lists side by side whose tops do not line up are rows.
+pub(crate) const SIBLING_MAX_TOP_OFFSET: f64 = 2.0;
 
 /// Cells and buttons are one family here: App Store shelves mix cells and "Get" buttons.
 fn row_family(role: &Role) -> bool {
     matches!(role, Role::Cell | Role::Button)
 }
 
-/// Whether `a` and `b` sit side by side in one row band: overlapping vertical extent, no
-/// horizontal overlap, similar height and width.
+/// Whether `a` and `b` sit side by side as items of one carousel or grid: no horizontal
+/// overlap, top edges aligned (within [`SIBLING_MAX_TOP_OFFSET`]) and nearly the same size
+/// (width and height ratios at least [`SIBLING_MIN_SIZE_RATIO`]).
+///
+/// Residual case: two equally wide list columns whose rows have the same height and line up
+/// (a split view with both columns the same width, each a list of equal rows) read as a
+/// grid, so a sideways drag on such a row is not taken for Delete. Nothing in the
+/// accessibility tree tells those apart from a two-column grid of tiles.
 fn side_by_side(a: &Element, b: &Element) -> bool {
     let (fa, fb) = (a.frame, b.frame);
     let ratio = |x: f64, y: f64| {
@@ -704,16 +712,16 @@ fn side_by_side(a: &Element, b: &Element) -> bool {
             0.0
         }
     };
-    fa.y < fb.max_y()
-        && fb.y < fa.max_y()
-        && (fa.max_x() <= fb.x || fb.max_x() <= fa.x)
-        && ratio(fa.height, fb.height) >= SIBLING_MIN_HEIGHT_RATIO
-        && ratio(fa.width, fb.width) >= SIBLING_MIN_WIDTH_RATIO
+    (fa.max_x() <= fb.x || fb.max_x() <= fa.x)
+        && (fa.y - fb.y).abs() <= SIBLING_MAX_TOP_OFFSET
+        && ratio(fa.height, fb.height) >= SIBLING_MIN_SIZE_RATIO
+        && ratio(fa.width, fb.width) >= SIBLING_MIN_SIZE_RATIO
 }
 
 /// The indices of the cells and buttons of `screen` that have a sibling of their family
 /// beside them ([`side_by_side`]): items of a carousel or grid. One sweep in vertical order;
-/// each element is compared only with the ones that start inside its own vertical extent.
+/// each element is compared only with the ones whose top is within
+/// [`SIBLING_MAX_TOP_OFFSET`] of its own.
 fn beside_siblings(screen: &CompactScreen) -> BTreeSet<u32> {
     let mut items: Vec<&Element> = screen
         .elements
@@ -724,7 +732,7 @@ fn beside_siblings(screen: &CompactScreen) -> BTreeSet<u32> {
     let mut out = BTreeSet::new();
     for (k, a) in items.iter().enumerate() {
         for b in items.iter().skip(k.saturating_add(1)) {
-            if b.frame.y >= a.frame.max_y() {
+            if b.frame.y - a.frame.y > SIBLING_MAX_TOP_OFFSET {
                 break;
             }
             if side_by_side(a, b) {
@@ -738,11 +746,11 @@ fn beside_siblings(screen: &CompactScreen) -> BTreeSet<u32> {
 
 /// Whether `el` is a list or button row that reveals swipe actions on a sideways drag: a
 /// cell or button, outside the home screen (whose icons have none: a sideways swipe there
-/// turns the page), **unless** a sibling of its family sits beside it in its row band
-/// (overlapping vertical extent, a different horizontal place, similar size): then it is
-/// an item of a carousel or grid (music, App Store and news shelves, photo grids), where a
-/// sideways drag pages. There is no screen-width threshold: a row in a split view's narrow
-/// column or an inset-grouped list is still a row.
+/// turns the page), **unless** a sibling of its family sits beside it ([`side_by_side`]:
+/// another horizontal place, top edges aligned, nearly the same size): then it is an item of
+/// a carousel or grid (music, App Store and news shelves, photo grids), where a sideways
+/// drag pages. There is no screen-width threshold: a row in a split view's narrow column
+/// (beside the wider detail column's rows) or an inset-grouped list is still a row.
 fn is_list_row(el: &Element, r: &Reader<'_>) -> bool {
     row_family(&el.role)
         && !in_app(&r.screen.app_bundle_id, SPRINGBOARD_BUNDLE_ID)

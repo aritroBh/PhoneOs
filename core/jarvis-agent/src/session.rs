@@ -26,7 +26,10 @@
 //! the action only if the fresh screen's content record equals the one the owner approved
 //! (the whole screen, digits of free-standing texts excepted; the action re-planned on the
 //! fresh screen, see `recheck_approved`); otherwise the model is told it was not done and
-//! the action goes through the full gate again.
+//! the action goes through the full gate again. Within one approval, and never as a step,
+//! the look may bring the asked app back once (when the agent's own app or the home screen
+//! is in front) and wait [`APPROVAL_SETTLE_MS`] once for a settling screen before a last
+//! look: `Observe`, (`LaunchApp`, `Observe`), (`Wait`, `Observe`) (see `act_approved`).
 //!
 //! Skills: with `SessionConfig::skill` the prompt carries the owner's guidance, and a skill
 //! with `confine_to_apps` refuses actions outside its apps (`jarvis_safety::check_confinement`;
@@ -50,7 +53,7 @@
 //! | the runner, nothing of the action done yet | the action is dropped unexecuted (its step refunded) and decided again |
 //! | the runner, part of the action done | as for verification: result unknown, told, not learned |
 //! | a tool | a result that still arrives while locked is recorded; otherwise its result is unknown |
-//! | a confirmation (or the look after an approval) | kept: asked again after the unlock when the screen is unchanged, else dropped; a decline sent while locked is honoured, an approval is not (the owner approves a screen they can see) |
+//! | a confirmation (or the look after an approval, its activation or settle wait) | kept: asked again after the unlock when the screen is unchanged, else dropped; a decline sent while locked is honoured, an approval is not (the owner approves a screen they can see) |
 //! | an answer | an answer sent while locked is recorded; otherwise the question is dropped and decided again |
 //!
 //! A learned-flow step is never carried across a lock: it is derived again from the fresh
@@ -102,7 +105,9 @@ use crate::parser::{parse_model_output, ParseError};
 use crate::profile::{mask, sanitize_keys, sensitive_texts, substitute};
 use crate::prompt::{self, PromptParts, ACTION_MAX_TOKENS};
 use crate::schema::{action_gbnf, action_json_schema};
-use crate::state::{Exec, Late, ObservePurpose, Pending, Resume, Settle, Source, State, TypeCheck};
+use crate::state::{
+    ApprovalLook, Exec, Late, ObservePurpose, Pending, Resume, Settle, Source, State, TypeCheck,
+};
 use crate::tools::{check_call, relevant, signature, MAX_TOOLS};
 use crate::typing::{check_typed, correction_deletes, TypedVerdict};
 
@@ -130,6 +135,10 @@ const MAX_APP_DENIALS: u32 = 2;
 /// answering prompts until the step budget runs out (a harmless step between prompts
 /// resets the failure count, so the failure budget alone does not bound it).
 pub const MAX_STALE_APPROVALS: u32 = 3;
+/// The settle wait before the last look after an approval, when a look showed a screen
+/// other than the approved one (a sheet still animating away, a keyboard dismissing, an app
+/// switch finishing).
+pub const APPROVAL_SETTLE_MS: u64 = 500;
 /// Most looks at the home screen's search results before a held-back Return: it is pressed
 /// once two looks in a row show the same results, and not at all if they keep changing.
 pub const MAX_SETTLE_LOOKS: u32 = 3;
@@ -591,6 +600,7 @@ impl Session {
                 pending,
                 fresh,
             } => self.on_act(now, queue, pending, fresh, event, state_name),
+            State::AwaitingRelook { look } => self.on_relook(now, look, event, state_name),
             State::AwaitingTool { pending } => self.on_tool(now, pending, event, state_name),
             State::AwaitingConfirm {
                 pending,
@@ -696,9 +706,7 @@ impl Session {
             ObservePurpose::Vision => self.infer(RequestKind::Vision),
             ObservePurpose::Verify(pending) => self.verify(now, *pending),
             ObservePurpose::Reconsider(pending) => self.reconsider(now, *pending),
-            ObservePurpose::Approved(pending, approved) => {
-                self.act_approved(now, *pending, approved)
-            }
+            ObservePurpose::Approved(look) => self.act_approved(now, *look),
             ObservePurpose::Settle(settle) => self.on_settle(now, *settle),
         }
     }
@@ -955,13 +963,7 @@ impl Session {
             State::AwaitingObservation { purpose } => match purpose {
                 ObservePurpose::Decide | ObservePurpose::Vision => (Resume::Decide, None),
                 ObservePurpose::Reconsider(pending) => (Resume::Reconsider(pending), None),
-                // An approval is never carried across a lock: asked again on the same
-                // screen, else decided again (a flow step is derived again).
-                ObservePurpose::Approved(pending, _) if pending.source == Source::Replay => {
-                    self.set_aside(&pending, prompt::RESULT_LOCK_NOT_DONE);
-                    (Resume::Decide, None)
-                }
-                ObservePurpose::Approved(pending, _) => (Resume::Reconsider(pending), None),
+                ObservePurpose::Approved(look) => (self.approval_interrupted(look.pending), None),
                 ObservePurpose::Verify(pending) => {
                     self.unknown_result(&pending, prompt::RESULT_LOCK_UNVERIFIED);
                     (Resume::Decide, None)
@@ -984,6 +986,12 @@ impl Session {
                     (Resume::Decide, by_event.then_some(Late::Act))
                 }
             }
+            // The activation or settle wait before a look after an approval: as a lock
+            // during that look (neither is part of the action; its late result is dropped).
+            State::AwaitingRelook { look } => (
+                self.approval_interrupted(look.pending),
+                by_event.then_some(Late::Act),
+            ),
             State::AwaitingTool { pending } => (Resume::Decide, Some(Late::Tool(pending))),
             State::AwaitingConfirm {
                 pending,
@@ -1153,6 +1161,18 @@ impl Session {
         self.decide(now)
     }
 
+    /// A lock during the look after an approval (or the activation or wait before it). An
+    /// approval is never carried across a lock: asked again on the same screen, else
+    /// decided again (a flow step is derived again).
+    fn approval_interrupted(&mut self, pending: Box<Pending>) -> Resume {
+        if pending.source == Source::Replay {
+            self.set_aside(&pending, prompt::RESULT_LOCK_NOT_DONE);
+            Resume::Decide
+        } else {
+            Resume::Reconsider(pending)
+        }
+    }
+
     /// The owner approved `pending` (the last of its confirmations). The answer may come
     /// long after the question, so nothing planned on the screen it was asked about is sent
     /// blind: tools (which do not use the screen) run now, runner actions look at the screen
@@ -1162,35 +1182,104 @@ impl Session {
             return self.execute(pending);
         }
         let approved = (request.category != RiskCategory::FirstUse).then_some(request);
-        self.observe(ObservePurpose::Approved(Box::new(pending), approved), false)
+        let look = ApprovalLook {
+            pending: Box::new(pending),
+            approved,
+            activated: false,
+            settled: false,
+        };
+        self.observe(ObservePurpose::Approved(Box::new(look)), false)
     }
 
-    /// The fresh screen after an approval: run the approved action when its target is still
-    /// the same control, re-planned on this screen; otherwise do not act, tell the model and
-    /// decide again (through the full gate, which asks again if the action is proposed
-    /// again). The step is not refunded and counts as a failure, so a screen that keeps
-    /// changing cannot keep the session asking forever.
-    fn act_approved(
+    /// A fresh look after an approval: run the approved action when the screen's record
+    /// equals the approved one, re-planned on this screen ([`Self::recheck_approved`]).
+    /// Otherwise, within one approval and never as a step of the task:
+    ///
+    /// - the agent's own app or the home screen in front while the question was asked in
+    ///   another app (the owner answered in Jarvis, or came back via the home screen):
+    ///   bring the asked app back once (`LaunchApp`, as `open_app` sends it for an approved
+    ///   app; no gate, no first use) and look again;
+    /// - the asked app (or, before the activation, the agent's own app or the home screen)
+    ///   in front: wait [`APPROVAL_SETTLE_MS`] once (the screen may still be settling) and
+    ///   look again;
+    /// - else (another app in front, or both retries used): stale.
+    ///
+    /// So at most: look, [activate, look], wait, look. Nothing is acted on unless a look
+    /// equals the record.
+    fn act_approved(&mut self, now: u64, mut look: ApprovalLook) -> Effect {
+        if let Some(fresh) = self.recheck_approved(&look.pending, look.approved.as_ref()) {
+            return self.execute(fresh);
+        }
+        let asked = look.pending.before.app_bundle_id.trim().to_owned();
+        let front = self.current.screen.app_bundle_id.trim().to_owned();
+        let same_app = front.eq_ignore_ascii_case(&asked);
+        let between = is_springboard(&front) || self.is_agent_app(&front);
+        if !same_app && !between {
+            return self.approval_stale(now, &look.pending);
+        }
+        if !same_app && !look.activated && !is_springboard(&asked) && !self.is_agent_app(&asked) {
+            // The asked app passed the deny list when the question was asked (a denied app
+            // in front ends the session); checked again before it is brought forward.
+            if asked.is_empty()
+                || check_app(&self.config.policy, &asked).is_denied()
+                || self.app_declined(&asked)
+            {
+                return self.approval_stale(now, &look.pending);
+            }
+            look.activated = true;
+            self.state = State::AwaitingRelook {
+                look: Box::new(look),
+            };
+            return Effect::Act(RunnerCommand::LaunchApp { bundle_id: asked });
+        }
+        if !look.settled {
+            look.settled = true;
+            self.state = State::AwaitingRelook {
+                look: Box::new(look),
+            };
+            return Effect::Act(RunnerCommand::Wait {
+                ms: APPROVAL_SETTLE_MS,
+            });
+        }
+        self.approval_stale(now, &look.pending)
+    }
+
+    /// The runner's reply to the activation or settle wait before a look after an approval:
+    /// look (a failed command changes nothing: the look decides). A refusal because the
+    /// phone is locked is a lock during that look.
+    fn on_relook(
         &mut self,
         now: u64,
-        pending: Pending,
-        approved: Option<ConfirmRequest>,
+        look: Box<ApprovalLook>,
+        event: Event,
+        state: &str,
     ) -> Effect {
-        match self.recheck_approved(&pending, approved.as_ref()) {
-            Some(fresh) => self.execute(fresh),
-            None => {
-                self.record_failure(&pending, prompt::RESULT_APPROVAL_STALE);
-                self.stale_approvals = self.stale_approvals.saturating_add(1);
-                if self.stale_approvals >= MAX_STALE_APPROVALS {
-                    let summary = format!(
-                        "Stopped: the screen changed after the owner approved an action {} times, so nothing approved was done. Try again when the screen is settled.",
-                        self.stale_approvals
-                    );
-                    return self.finish(now, OutcomeStatus::Failed, &summary);
-                }
-                self.decide(now)
-            }
+        let Event::ActResult(result) = event else {
+            return self.protocol_error(now, &event, state);
+        };
+        if result.is_device_locked() {
+            let state = State::AwaitingRelook { look };
+            return self.interrupt(now, state, LockSignal::Reply, false);
         }
+        self.observe(ObservePurpose::Approved(look), false)
+    }
+
+    /// An approved action not carried out because the screen changed after the approval:
+    /// the model is told and it counts as a failed step (not refunded), so a screen that
+    /// keeps changing cannot keep the session asking forever; after
+    /// [`MAX_STALE_APPROVALS`] the session ends `Failed`. Otherwise decide again (through
+    /// the full gate, which asks again if the action is proposed again).
+    fn approval_stale(&mut self, now: u64, pending: &Pending) -> Effect {
+        self.record_failure(pending, prompt::RESULT_APPROVAL_STALE);
+        self.stale_approvals = self.stale_approvals.saturating_add(1);
+        if self.stale_approvals >= MAX_STALE_APPROVALS {
+            let summary = format!(
+                "Stopped: the screen changed after the owner approved an action {} times, so nothing approved was done. Try again when the screen is settled.",
+                self.stale_approvals
+            );
+            return self.finish(now, OutcomeStatus::Failed, &summary);
+        }
+        self.decide(now)
     }
 
     /// `pending` re-planned on the current screen, when it is still the action the owner
@@ -1633,11 +1722,14 @@ impl Session {
     fn app_approved(&self, app: &str) -> bool {
         self.memory.is_app_approved(app)
             || self.approved_apps.contains(app)
-            || self
-                .config
-                .agent_bundle_id
-                .as_deref()
-                .is_some_and(|own| own.trim().eq_ignore_ascii_case(app.trim()))
+            || self.is_agent_app(app)
+    }
+
+    /// Whether `app` is the agent's own app (`SessionConfig::agent_bundle_id`).
+    fn is_agent_app(&self, app: &str) -> bool {
+        self.config.agent_bundle_id.as_deref().is_some_and(|own| {
+            !own.trim().is_empty() && own.trim().eq_ignore_ascii_case(app.trim())
+        })
     }
 
     /// Whether the owner declined first-use approval for `app` in this session (bundle ids

@@ -145,13 +145,28 @@ pub(crate) enum ObservePurpose {
     /// The first screen after an unlock, with a confirmation that was pending when the
     /// phone locked (see [`Resume::Reconsider`]).
     Reconsider(Box<Pending>),
-    /// A fresh look after the owner approved `Pending`: it runs only if its target is still
-    /// the same control (re-planned on the fresh screen). The request is the risk
-    /// confirmation that was approved (`None` when only a first-use approval was asked).
-    Approved(Box<Pending>, Option<ConfirmRequest>),
+    /// A fresh look after the owner approved an action: it runs only if the fresh screen's
+    /// content record equals the approved one (see [`ApprovalLook`]).
+    Approved(Box<ApprovalLook>),
     /// One more look at the home screen's search results after typing, before the held-back
     /// Return (which opens the top hit) is pressed.
     Settle(Box<Settle>),
+}
+
+/// The look after an approval, with what it has used of its two retries: one activation
+/// of the app the question was asked in (when the agent's own app or the home screen is in
+/// front) and one settle wait before a last look. Neither is a step of the task.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ApprovalLook {
+    /// The approved action, as planned on the screen it was asked about.
+    pub pending: Box<Pending>,
+    /// The risk confirmation that was approved (`None` when only a first-use approval was
+    /// asked).
+    pub approved: Option<ConfirmRequest>,
+    /// The asked app was brought back to the front once.
+    pub activated: bool,
+    /// The one settle wait was taken.
+    pub settled: bool,
 }
 
 /// A typed home-screen search whose held-back Return waits for the results to settle.
@@ -191,6 +206,12 @@ pub(crate) enum State {
         /// The outstanding command is the action's first: if the runner refuses it, nothing
         /// of the action has happened.
         fresh: bool,
+    },
+    /// `Effect::Act` is outstanding for the look after an approval: the activation of the
+    /// app the question was asked in, or the settle wait. An observation follows either way.
+    AwaitingRelook {
+        /// The look it prepares.
+        look: Box<ApprovalLook>,
     },
     /// `Effect::CallTool` is outstanding.
     AwaitingTool {
@@ -232,7 +253,7 @@ impl State {
             State::Idle => "not started",
             State::AwaitingObservation { .. } => "waiting for an observation",
             State::AwaitingModel { .. } => "waiting for the model",
-            State::AwaitingAct { .. } => "waiting for the runner",
+            State::AwaitingAct { .. } | State::AwaitingRelook { .. } => "waiting for the runner",
             State::AwaitingTool { .. } => "waiting for a tool result",
             State::AwaitingConfirm { .. } => "waiting for a confirmation",
             State::AwaitingAnswer { .. } => "waiting for an answer",
@@ -248,7 +269,7 @@ impl State {
             State::AwaitingObservation {
                 purpose: ObservePurpose::Verify(_),
             } => Phase::Verifying,
-            State::AwaitingObservation { .. } => Phase::Observing,
+            State::AwaitingObservation { .. } | State::AwaitingRelook { .. } => Phase::Observing,
             State::AwaitingModel { .. } => Phase::Thinking,
             State::AwaitingAct { .. } => Phase::Acting,
             State::AwaitingTool { .. } => Phase::CallingTool,

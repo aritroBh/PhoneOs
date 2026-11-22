@@ -864,3 +864,107 @@ fn classifying_a_huge_screen_reads_it_once() {
     assert!(tap_point < Duration::from_millis(1500), "{tap_point:?}");
     assert!(swiped < Duration::from_millis(1500), "{swiped:?}");
 }
+
+// --- Split views: two list columns side by side are rows, not a grid ---------------------
+
+/// Mail or Settings on a wide screen: a 320 pt row of the primary column next to a 600 pt
+/// row of the detail column (same height, tops aligned). The columns are lists, so a
+/// sideways swipe on either row asks `Delete`.
+#[test]
+fn a_split_view_row_beside_a_wider_row_is_still_a_list_row() {
+    use jarvis_proto::Rect;
+    let split = vec![
+        at(
+            el(1, Role::Cell, "Mom, Dinner on Sunday?"),
+            Rect::new(0.0, 100.0, 320.0, 80.0),
+        ),
+        at(
+            el(2, Role::Cell, "Attachment, invoice.pdf"),
+            Rect::new(332.0, 100.0, 600.0, 80.0),
+        ),
+    ];
+    assert_eq!(row_swipe(split.clone(), 932.0, 1), RiskCategory::Delete);
+    assert_eq!(row_swipe(split, 932.0, 2), RiskCategory::Delete);
+}
+
+/// Two equally wide list columns whose rows do not line up (different row heights, or
+/// rows offset by a header): rows, not a grid.
+#[test]
+fn equal_columns_of_rows_with_unaligned_tops_are_list_rows() {
+    use jarvis_proto::Rect;
+    let mut els = Vec::new();
+    for k in 0..4u32 {
+        let y = 100.0 + 60.0 * f64::from(k);
+        els.push(at(
+            el(k + 1, Role::Cell, &format!("Left {k}")),
+            Rect::new(0.0, y, 460.0, 60.0),
+        ));
+        // The right column starts 30 pt lower (a section header above it).
+        els.push(at(
+            el(k + 11, Role::Cell, &format!("Right {k}")),
+            Rect::new(472.0, y + 30.0, 460.0, 60.0),
+        ));
+    }
+    assert_eq!(row_swipe(els.clone(), 932.0, 2), RiskCategory::Delete);
+    assert_eq!(row_swipe(els, 932.0, 12), RiskCategory::Delete);
+    // Tops 1 pt apart (rounding) still read as aligned: a grid of equal tiles.
+    let tiles = vec![
+        at(
+            el(1, Role::Cell, "Photo, Beach"),
+            Rect::new(0.0, 200.0, 195.0, 195.0),
+        ),
+        at(
+            el(2, Role::Cell, "Photo, Dog"),
+            Rect::new(197.0, 201.0, 195.0, 195.0),
+        ),
+    ];
+    assert_eq!(row_swipe(tiles, 393.0, 1), RiskCategory::None);
+}
+
+/// A cell next to a button of nearly but not quite the same size (85 %) is no longer a
+/// carousel item: only nearly equal siblings (90 %) make one.
+#[test]
+fn a_sibling_must_be_nearly_the_same_size() {
+    use jarvis_proto::Rect;
+    let els = vec![
+        at(
+            el(1, Role::Cell, "Alex, Lunch?"),
+            Rect::new(0.0, 200.0, 200.0, 80.0),
+        ),
+        at(
+            el(2, Role::Button, "Archive"),
+            Rect::new(210.0, 200.0, 170.0, 80.0),
+        ),
+    ];
+    assert_eq!(row_swipe(els, 393.0, 1), RiskCategory::Delete);
+    let els = vec![
+        at(
+            el(1, Role::Cell, "Summer Hits playlist"),
+            Rect::new(16.0, 300.0, 160.0, 160.0),
+        ),
+        at(
+            el(2, Role::Button, "Chill Mix playlist"),
+            Rect::new(190.0, 300.0, 150.0, 160.0),
+        ),
+    ];
+    assert_eq!(row_swipe(els, 393.0, 1), RiskCategory::None);
+}
+
+/// The documented residual case: two equally wide list columns with equal, aligned rows
+/// cannot be told from a two-column grid, and read as one (a sideways drag is not taken
+/// for `Delete`). Pinned so a change to it is deliberate.
+#[test]
+fn residual_equal_aligned_list_columns_read_as_a_grid() {
+    use jarvis_proto::Rect;
+    let els = vec![
+        at(
+            el(1, Role::Cell, "Left row"),
+            Rect::new(0.0, 100.0, 460.0, 60.0),
+        ),
+        at(
+            el(2, Role::Cell, "Right row"),
+            Rect::new(472.0, 100.0, 460.0, 60.0),
+        ),
+    ];
+    assert_eq!(row_swipe(els, 932.0, 1), RiskCategory::None);
+}

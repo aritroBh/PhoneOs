@@ -78,6 +78,43 @@ impl Driver {
             text: text.to_owned(),
         }))
     }
+
+    /// The look after an approval, with `screen` shown at every look it takes: the
+    /// activation of the asked app and the settle wait it may send first (see
+    /// `relook_commands`) are acknowledged, and the first other effect is returned with
+    /// the commands taken for them.
+    fn look(&mut self, screen: &Screen) -> (Effect, Vec<RunnerCommand>) {
+        let mut relooks = Vec::new();
+        let mut e = self.observed(screen);
+        while let Effect::Act(cmd) = &e {
+            if !is_relook(cmd) || relooks.len() >= 2 {
+                break;
+            }
+            relooks.push(cmd.clone());
+            let next = self.step(Event::ActResult(RunnerResult::ok()));
+            assert!(matches!(next, Effect::Observe { .. }), "{next:?}");
+            e = self.observed(screen);
+        }
+        (e, relooks)
+    }
+}
+
+/// The commands the look after an approval may send before looking again: the activation
+/// of the asked app and the settle wait.
+fn is_relook(cmd: &RunnerCommand) -> bool {
+    matches!(
+        cmd,
+        RunnerCommand::LaunchApp { .. }
+            | RunnerCommand::Wait {
+                ms: jarvis_agent::APPROVAL_SETTLE_MS
+            }
+    )
+}
+
+fn settle_wait() -> RunnerCommand {
+    RunnerCommand::Wait {
+        ms: jarvis_agent::APPROVAL_SETTLE_MS,
+    }
 }
 
 fn tap_buy(screen: &Screen) -> String {
@@ -160,7 +197,10 @@ fn an_approved_control_that_moved_away_is_not_tapped_and_is_asked_again() {
         ),
         false,
     );
-    let Effect::Infer(r) = d.observed(&moved) else {
+    // Changed with the settle retry: one wait and a second look, then stale.
+    let (e, relooks) = d.look(&moved);
+    assert_eq!(relooks, vec![settle_wait()]);
+    let Effect::Infer(r) = e else {
         panic!("the approved tap must not run on a changed screen")
     };
     assert!(
@@ -199,8 +239,21 @@ fn an_approved_control_that_is_gone_or_in_another_app_is_not_tapped() {
             // Same layout, but the button now reads differently: not the approved control.
             after.root.children[0].children[1].label = Some("Buy now for $999".to_owned());
         }
-        let e = d.observed(&after);
+        // Changed with the activation and settle retry: the home screen in front brings
+        // Shop back first, then waits once; every look still shows `after`.
+        let (e, relooks) = d.look(&after);
         assert!(matches!(e, Effect::Infer(_)), "{e:?}");
+        let expected = if after.app_bundle_id == "com.example.shop" {
+            vec![settle_wait()]
+        } else {
+            vec![
+                RunnerCommand::LaunchApp {
+                    bundle_id: "com.example.shop".to_owned(),
+                },
+                settle_wait(),
+            ]
+        };
+        assert_eq!(relooks, expected);
     }
 }
 
@@ -256,9 +309,20 @@ fn an_approved_typed_submit_is_rechecked_before_typing() {
         d.step(Event::UserDecision { approved: true }),
         Effect::Observe { .. }
     ));
-    // The conversation was closed meanwhile: no field to type into.
-    let e = d.observed(&home_screen());
+    // The conversation was closed meanwhile: no field to type into. Changed with the
+    // activation and settle retry: the home screen in front brings Chat back once and waits
+    // once; every look still shows the home screen.
+    let (e, relooks) = d.look(&home_screen());
     assert!(matches!(e, Effect::Infer(_)), "{e:?}");
+    assert_eq!(
+        relooks,
+        vec![
+            RunnerCommand::LaunchApp {
+                bundle_id: "com.example.chat".to_owned()
+            },
+            settle_wait()
+        ]
+    );
 }
 
 /// A screen that keeps changing under every approval cannot keep the session asking: each
@@ -268,21 +332,28 @@ fn an_approved_typed_submit_is_rechecked_before_typing() {
 /// sat; frames are no longer part of what was approved (a list that scrolled keeps the
 /// approval, see `an_approval_survives_a_scroll_and_is_tapped_where_it_is_now`), so they
 /// now differ in content too.
+///
+/// Changed with the settle retry: a screen flipping between two contents would show the
+/// approved one again at the second look (and rightly be acted on), so the screen now
+/// cycles through three contents, and the settle waits are not counted as acts.
 #[test]
 fn approvals_on_a_screen_that_keeps_changing_end_by_the_budget() {
-    let a = shop(300.0, "Add to wishlist");
-    let b = shop(560.0, "Save for later");
+    let screens = [
+        shop(300.0, "Add to wishlist"),
+        shop(560.0, "Save for later"),
+        shop(430.0, "Compare"),
+    ];
     let mut d = Driver::new(config(), "Buy the headphones");
     let mut e = d.step(Event::Start);
-    let mut flip = false;
-    let mut current = a.clone();
+    let mut looks = 0;
+    let mut current = screens[0].clone();
     let mut acts = 0;
     let mut confirms = 0;
     for _ in 0..200 {
         e = match e {
             Effect::Observe { .. } => {
-                current = if flip { b.clone() } else { a.clone() };
-                flip = !flip;
+                current = screens[looks % 3].clone();
+                looks += 1;
                 d.observed(&current)
             }
             Effect::Infer(_) => d.model(&tap_buy(&current)),
@@ -290,8 +361,10 @@ fn approvals_on_a_screen_that_keeps_changing_end_by_the_budget() {
                 confirms += 1;
                 d.step(Event::UserDecision { approved: true })
             }
-            Effect::Act(_) => {
-                acts += 1;
+            Effect::Act(cmd) => {
+                if cmd != settle_wait() {
+                    acts += 1;
+                }
                 d.step(Event::ActResult(RunnerResult::ok()))
             }
             Effect::Finished(o) => {
@@ -678,7 +751,8 @@ fn approve_then_look(
         d.step(Event::UserDecision { approved: true }),
         Effect::Observe { .. }
     ));
-    (asked.summary, d.observed(after))
+    // Changed with the settle retry: `after` is shown at every look the approval takes.
+    (asked.summary, d.look(after).0)
 }
 
 /// Socks approved; the socks row disappears and the TV's "Buy" slides into the same slot
@@ -800,7 +874,7 @@ fn stale_approvals_are_capped_even_with_successes_in_between() {
     let mut e = d.step(Event::Start);
     let mut looks = 0;
     let mut current = shop(300.0, "Details 0");
-    let (mut infers, mut harmless, mut confirms) = (0, 0, 0);
+    let (mut infers, mut harmless, mut confirms, mut waits) = (0, 0, 0, 0);
     for _ in 0..200 {
         e = match e {
             Effect::Observe { .. } => {
@@ -823,8 +897,13 @@ fn stale_approvals_are_capped_even_with_successes_in_between() {
                 confirms += 1;
                 d.step(Event::UserDecision { approved: true })
             }
-            Effect::Act(_) => {
-                harmless += 1;
+            Effect::Act(cmd) => {
+                // Changed with the settle retry: one wait per approval, not a tap.
+                if cmd == settle_wait() {
+                    waits += 1;
+                } else {
+                    harmless += 1;
+                }
                 d.step(Event::ActResult(RunnerResult::ok()))
             }
             Effect::Finished(o) => {
@@ -837,6 +916,7 @@ fn stale_approvals_are_capped_even_with_successes_in_between() {
                 );
                 assert_eq!(confirms, jarvis_agent::MAX_STALE_APPROVALS as usize);
                 assert_eq!(harmless, confirms - 1, "only the harmless taps ran");
+                assert_eq!(waits, confirms, "one settle retry per approval");
                 return;
             }
             other => panic!("{other:?}"),
