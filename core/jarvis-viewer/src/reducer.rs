@@ -32,8 +32,10 @@
 //!   Otherwise the caption is `Type into “<field>”` (the field's redacted label) or
 //!   `Type text`. Only the length and a hash of the runner's text are held, until the
 //!   next progress.
-//! - On runner-text screens labels come only from the prompt the core rendered (redacted
-//!   again).
+//! - On runner-text screens typing captions and the approval picture's label come only from
+//!   the prompt the core rendered (redacted again). The wireframe of a runner-text screen is
+//!   built from the session's parse of the text like a typed tree's (same cap, same
+//!   redaction, never a value) and flagged by its `runner_text` source.
 //! - `open_url` keeps the host of an `http`/`https` URL, only `<scheme>:` otherwise.
 //! - A locked observation keeps nothing of the screen.
 //! - Runner error texts are not kept (they may quote what was typed).
@@ -42,7 +44,8 @@
 //!
 //! At most [`MAX_STEPS`] steps; screens no step refers to (other than the current one) are
 //! dropped as soon as that happens; one tree (the current screen's: typed, or parsed
-//! runner text, which is used only for the approval picture) is held for target lookups.
+//! runner text, which is used for its wireframe and the approval picture, not for step
+//! targets) is held for target lookups.
 //!
 //! # Approval picture
 //!
@@ -56,7 +59,7 @@ use std::hash::{Hash, Hasher};
 
 use jarvis_proto as p;
 
-use crate::approval::{self, ApprovalTarget, Evaluated};
+use crate::approval::{self, ApprovalTarget, Evaluated, TypeStage};
 use crate::geometry::{ViewerPoint, ViewerRect, ViewerSize};
 use crate::privacy::{self, LabelCache};
 use crate::prompt::{prompt_elements, PromptElement};
@@ -211,7 +214,8 @@ pub struct Reducer {
     /// observed it, and whether it is a typed tree: what a pending confirmation was
     /// evaluated on. Its tree is `tree` (typed) or `text_root` (parsed runner text).
     evaluated: Option<(p::Screen, u64, bool)>,
-    /// The current runner-text screen's parsed tree: approval lookups only, never drawn.
+    /// The current runner-text screen's parsed tree: approval lookups only (its wireframe was
+    /// made when it was observed).
     text_root: Option<p::UiNode>,
     /// The action the core proposed last (`Progress::last_action`).
     last_action: Option<p::Action>,
@@ -270,22 +274,16 @@ impl Reducer {
             return None;
         };
         screen.root = root;
-        // The Return part of a `type … submit`: the typing of this core step already ran.
-        let return_pending = matches!(self.last_action, Some(p::Action::Type { submit: true, .. }))
-            && self.core_step.is_some()
-            && self
-                .timeline
-                .steps
-                .iter()
-                .rev()
-                .take_while(|s| s.core_step == self.core_step)
-                .any(|s| matches!(s.gesture, Gesture::Type(_)));
+        // Which part of a `type … submit` is asked: from the core's own question only, never
+        // from the step history (a typing refused by a lock refunds its step number, so the
+        // next proposal's typing question would pass for the Return part; preview review).
+        let stage = TypeStage::of(self.last_action.as_ref(), &request);
         let (mark, caption, accessibility_label) = approval::mark_for(
             &Evaluated {
                 screen: &screen,
                 typed,
                 sight: &self.sight,
-                return_pending,
+                stage,
             },
             self.last_action.as_ref(),
             &mut self.labels,
@@ -570,9 +568,16 @@ impl Reducer {
             return;
         }
         let frame_key = self.frame_key();
+        // The tree the session's own parser yields (the FFI parses with
+        // `snapshot_to_observation`), drawn exactly like a typed tree's: the same element
+        // cap, the same redaction of every label and placeholder, never a value, a lock
+        // screen keeps nothing (above). Lines without a frame are not nodes, and a frame with
+        // no area on the screen is not drawn. `source: runner_text` says the layout came
+        // from the runner's text (preview review). What the text cannot vouch for stays off:
+        // no focused-field evidence for typing captions, no `focused_input_secure`.
+        let (elements, truncated) = wireframe(&screen.root, size, &mut self.labels);
         let app_name = self.labels.label(screen.app_name.as_deref());
         let bundle_id = privacy::capped(&screen.app_bundle_id, MAX_BUNDLE_ID_CHARACTERS);
-        // The parsed tree is held for approval lookups only: no wireframe of runner text.
         self.remember_screen(screen, false);
         self.add_screen(ViewerScreen {
             id,
@@ -580,8 +585,8 @@ impl Reducer {
             app_name,
             bundle_id,
             source: ScreenSource::RunnerText,
-            elements: Vec::new(),
-            elements_truncated: false,
+            elements,
+            elements_truncated: truncated,
             frame_key,
             focused_input_secure: None,
         });

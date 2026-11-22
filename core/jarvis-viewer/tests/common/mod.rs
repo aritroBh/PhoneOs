@@ -229,6 +229,7 @@ pub fn config(max_steps: usize, frames: bool) -> ReducerConfig {
 }
 
 /// The update stream a run produces, effect by effect.
+#[derive(Clone)]
 pub struct Run {
     pub updates: Vec<Update>,
     pub number: u64,

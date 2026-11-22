@@ -153,7 +153,9 @@ pub struct ViewerElement {
 pub enum ScreenSource {
     /// A typed tree: the wireframe is available.
     Tree,
-    /// The runner's text format: no frames, so no wireframe (cursor and caption only).
+    /// The runner's text format, parsed as the session parses it. Its wireframe (built like a
+    /// typed tree's, from frames the text gives) is "Layout from the runner's text": the
+    /// format is forgeable by on-screen text. Older senders sent no elements for it.
     RunnerText,
     /// The phone was locked: nothing of the screen is kept.
     Locked,
@@ -220,8 +222,8 @@ pub struct ViewerScreen {
     pub bundle_id: String,
     /// Where it came from.
     pub source: ScreenSource,
-    /// The wireframe, parents before children (draw in order). Empty for runner text and
-    /// locked screens.
+    /// The wireframe, parents before children (draw in order). Empty for locked screens;
+    /// for `runner_text` it comes from the runner's text (empty from older senders).
     pub elements: Vec<ViewerElement>,
     /// More elements were shown than [`MAX_ELEMENTS`].
     pub elements_truncated: bool,

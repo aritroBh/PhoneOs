@@ -179,7 +179,15 @@ fn a_session_forwarded_one_call_per_update() {
         .find(|s| Some(s.id) == t.steps[1].screen_id)
         .unwrap();
     assert_eq!(second.source, CoreViewerSource::RunnerText);
-    assert_eq!(v.screen(second.id).unwrap().unwrap().elements.len(), 0);
+    // Preview review: a runner-text screen now has a wireframe from the session's parse
+    // (was: none), flagged `from_text`; labels only, never values or ids.
+    assert!(second.from_text && !first.from_text);
+    let text_wire = v.screen(second.id).unwrap().unwrap();
+    assert_eq!(text_wire.elements.len() as u32, second.element_count);
+    assert!(text_wire
+        .elements
+        .iter()
+        .any(|e| e.role == "Switch" && e.label.as_deref() == Some("Wi-Fi")));
     assert!(v.screen(9_999).unwrap().is_none());
     // The bytes: versioned, no raw runner text, decodable into another viewer.
     let bytes = v.encode().unwrap();

@@ -75,8 +75,8 @@ pub enum CoreViewerUpdate {
     QuestionPending,
     /// `.awaitingUnlock`.
     AwaitingUnlock,
-    /// `.effectCompleted(effect, event)`. A runner-text event's raw text is not parsed here
-    /// (the viewer only reads its size, app and lock flag).
+    /// `.effectCompleted(effect, event)`. A runner-text event is parsed with the session's
+    /// parser (see `event_for_viewer`); its raw text goes no further.
     EffectCompleted { effect: Effect, event: Event },
     /// `.finished(result)`: the outcome's status.
     Finished { status: OutcomeStatus },
@@ -197,6 +197,10 @@ pub struct CoreViewerScreenInfo {
     pub elements_truncated: bool,
     pub frame_key: Option<CoreViewerFrameKey>,
     pub focused_input_secure: Option<bool>,
+    /// The wireframe came from the runner's text (`source` is `RunnerText`), not from a typed
+    /// tree: say "Layout from the runner's text". Additive (preview review).
+    #[uniffi(default = false)]
+    pub from_text: bool,
 }
 
 /// A screen with its wireframe (`screen(id:)`).
@@ -502,9 +506,9 @@ fn effect_for_viewer(e: Effect) -> p::Effect {
 
 /// An event for the viewer. A runner-text snapshot is parsed exactly as for the session
 /// (`snapshot_to_observation`), so a pending confirmation's target is found on the same
-/// tree the core indexed; the viewer holds that tree for approval lookups only (no
-/// wireframe of runner text) and the raw text goes no further. A locked snapshot is not
-/// parsed.
+/// tree the core indexed; the viewer draws its wireframe like a typed tree's (labels
+/// redacted, never values; `CoreViewerScreenInfo.from_text`) and holds it for approval
+/// lookups; the raw text goes no further. A locked snapshot is not parsed.
 fn event_for_viewer(e: Event) -> p::Event {
     match e {
         Event::ObservedRunnerText { snapshot } if !snapshot.device_locked => {
@@ -640,6 +644,7 @@ fn screen_info(s: &v::ViewerScreen) -> CoreViewerScreenInfo {
             observation: k.observation,
         }),
         focused_input_secure: s.focused_input_secure,
+        from_text: s.source == v::ScreenSource::RunnerText,
     }
 }
 

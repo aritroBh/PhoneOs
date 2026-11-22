@@ -182,6 +182,54 @@ fn cursor_continuity_and_monotone_progress_over_random_steps() {
     }
 }
 
+/// `root` written in the runner's text format (`Type, label: '…', value: '…', id: '…',
+/// {{x, y}, {w, h}}`, two spaces per depth).
+fn runner_text(root: &p::UiNode) -> String {
+    fn line(n: &p::UiNode, depth: usize, out: &mut String) {
+        let role = jarvis_viewer::reducer::role_name(&n.role);
+        let mut s = format!("{}{role}", "  ".repeat(depth));
+        for (key, v) in [
+            ("label", n.label.as_deref()),
+            ("value", n.value.as_deref()),
+            ("id", n.identifier.as_deref()),
+        ] {
+            if let Some(v) = v.filter(|v| !v.is_empty()) {
+                s.push_str(&format!(", {key}: '{v}'"));
+            }
+        }
+        let f = n.frame;
+        s.push_str(&format!(
+            ", {{{{{}, {}}}, {{{}, {}}}}}\n",
+            f.x, f.y, f.width, f.height
+        ));
+        out.push_str(&s);
+        for c in &n.children {
+            line(c, depth + 1, out);
+        }
+    }
+    let mut out = String::new();
+    line(root, 0, &mut out);
+    out
+}
+
+/// An observation of `root` as runner text, parsed exactly as the session parses it.
+fn observed_parsed_text(root: &p::UiNode, app: &str, locked: bool) -> p::Event {
+    let text = runner_text(root);
+    let parsed = jarvis_observe::parse_runner_text(&text).expect("parses");
+    p::Event::ObservedRunnerText(p::Observation {
+        screen: p::Screen {
+            app_bundle_id: "com.example".to_owned(),
+            app_name: Some(app.to_owned()),
+            size: PHONE,
+            root: parsed.root,
+            keyboard_visible: false,
+            orientation: p::Orientation::Portrait,
+        },
+        screenshot: None,
+        device_locked: locked,
+    })
+}
+
 /// A random run's updates, in the driver's order.
 fn random_run(rng: &mut Rng, secrets: &[&str]) -> Run {
     let mut run = Run::new(&format!("task-{}", rng.below(1_000)));
@@ -244,8 +292,13 @@ fn random_run(rng: &mut Rng, secrets: &[&str]) -> Run {
             .children(children)
             .build();
             let locked = rng.below(8) == 0;
-            if rng.below(4) == 0 {
+            if rng.below(8) == 0 {
                 run.observe(observed_text("com.example", &app, locked));
+            } else if rng.below(4) == 0 {
+                // Preview review: runner text now gets a wireframe; the same tree written as
+                // the runner's text and parsed with the session's parser (labels, values and
+                // ids carry the secrets too).
+                run.observe(observed_parsed_text(&root, &app, locked));
             } else {
                 run.observe(observed_full(
                     root,

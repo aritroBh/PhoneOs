@@ -45,7 +45,7 @@ pub mod replay;
 pub mod scene;
 pub mod wire;
 
-pub use approval::{ApprovalMark, ApprovalTarget};
+pub use approval::{ApprovalMark, ApprovalTarget, UNMARKED_CAPTION};
 pub use cursor::{Phase, Pose, Timing};
 pub use delta::{
     Applied, DeltaDecoder, DeltaEncoder, DeltaError, DeltaHeader, ResyncReason, StreamCursor,

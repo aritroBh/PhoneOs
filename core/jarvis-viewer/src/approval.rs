@@ -2,17 +2,21 @@
 //! (named by its [`FrameKey`], so the shell can bind a real-screen frame to exactly that
 //! observation), and where the control the action names is on it.
 //!
-//! Ground truth beats heuristics: the sheet shows the owner the screen Jarvis looked at with
-//! the exact control it will act on outlined, beside the core's text question. Like the rest
-//! of this crate it is a **display aid only**; the core alone decides what needs the owner's
-//! OK and re-checks the screen after an approval.
+//! The sheet shows the owner a picture of the screen from when Jarvis asked, with the control
+//! the proposed action names outlined, beside the core's text question. The outline is
+//! computed from the same tree and indices the core used; the picture may have changed since,
+//! and content outside the accessibility tree (images, canvas, video) is not checked at all.
+//! Like the rest of this crate it is a **display aid only**; the core alone decides what needs
+//! the owner's OK and re-checks the tree digest (never pixels) before it acts.
 //!
 //! The target comes from the action the core proposed (`Progress::last_action`) and the
 //! evaluated screen, indexed exactly as the core indexed it (`jarvis_observe::compact`): the
 //! element's on-screen frame for `tap`, `long_press`, `type`, `clear` and an element
 //! `scroll`/`swipe`; a point for `tap_point`; nothing (with a caption saying why) for
 //! Return, keyboard and app-level actions, an element that cannot be found, or a frame that
-//! is not on the screen. Never a box that might be wrong.
+//! is not on the screen. Never a box that might be wrong: where the part of a `type … submit`
+//! that is asked cannot be told for certain (`TypeStage::Unknown`), nothing is marked and
+//! the caption is the neutral [`UNMARKED_CAPTION`].
 //!
 //! Privacy: labels go through the core's redaction ([`LabelCache`]); on runner-text screens
 //! the label comes only from the prompt the core rendered, as in the Live view. Nothing of
@@ -23,7 +27,7 @@ use jarvis_proto as p;
 use crate::geometry::{ViewerPoint, ViewerRect, ViewerSize};
 use crate::privacy::{self, LabelCache};
 use crate::prompt::PromptElement;
-use crate::reducer::{role_name, target_node};
+use crate::reducer::role_name;
 use crate::wire::FrameKey;
 
 /// What the approval sheet marks on the evaluated screen.
@@ -68,6 +72,54 @@ pub struct ApprovalTarget {
     pub accessibility_label: String,
 }
 
+/// The caption when the target cannot be marked with certainty (preview review).
+pub const UNMARKED_CAPTION: &str = "Jarvis could not mark the target; read the question.";
+
+/// The tail of every caption of a mark: the picture is not live.
+const PICTURE_AGE: &str = "The picture is from when Jarvis asked and may have changed.";
+
+/// Which part of a `type … submit` a confirmation asks about. The core gates such an action
+/// in two parts (the typing, then Return). Until the core sends the gated stage with the
+/// confirmation, the viewer tells them apart from the core's own summary only (preview
+/// review; the step history is not used: a typing refused by a lock refunds its step number,
+/// so "a typing in the same core step" does not mean the typing ran): `Type …` is the
+/// typing, `Press Return …` the Return part, anything else (a first-use question, …) is
+/// `Unknown` and nothing is marked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TypeStage {
+    /// Not a `type … submit` (the action is asked as a whole).
+    Whole,
+    /// The typing part: the field is outlined.
+    Typing,
+    /// The Return part (the typing already ran): nothing to outline.
+    Return,
+    /// Cannot be told for certain: nothing is marked, the caption is neutral.
+    Unknown,
+}
+
+impl TypeStage {
+    /// The stage of `action` that `request` asks about (see [`TypeStage`]).
+    pub(crate) fn of(action: Option<&p::Action>, request: &p::ConfirmRequest) -> TypeStage {
+        if !matches!(action, Some(p::Action::Type { submit: true, .. })) {
+            return TypeStage::Whole;
+        }
+        // The summary's head is written by the core (`jarvis_safety::summary_with`: "Type …
+        // into …"; `return_summary`: "Press Return … in …"), behind the fixed warning on a
+        // runner-text screen; on-screen text only ever follows the head.
+        let summary = request.summary.as_str();
+        let head = summary
+            .strip_prefix(jarvis_safety::UNVERIFIED_SCREEN_WARNING)
+            .unwrap_or(summary);
+        if head.starts_with("Press Return") {
+            TypeStage::Return
+        } else if head.starts_with("Type ") {
+            TypeStage::Typing
+        } else {
+            TypeStage::Unknown
+        }
+    }
+}
+
 /// The evaluated screen, as the reducer holds it.
 pub(crate) struct Evaluated<'a> {
     pub screen: &'a p::Screen,
@@ -75,8 +127,8 @@ pub(crate) struct Evaluated<'a> {
     pub typed: bool,
     /// The prompt's element list for this screen.
     pub sight: &'a [PromptElement],
-    /// The Return part of a `type … submit` is what is asked (the typing already ran).
-    pub return_pending: bool,
+    /// Which part of a `type … submit` is asked.
+    pub stage: TypeStage,
 }
 
 /// The mark, caption and accessibility label for `action` on `evaluated`.
@@ -88,10 +140,14 @@ pub(crate) fn mark_for(
     let Some(action) = action else {
         return nothing("Jarvis named no control on this screen, so nothing is outlined.");
     };
-    if evaluated.return_pending {
-        return nothing(
-            "Jarvis will press Return on the keyboard; there is no control to outline.",
-        );
+    match evaluated.stage {
+        TypeStage::Whole | TypeStage::Typing => {}
+        TypeStage::Return => {
+            return nothing(
+                "Jarvis will press Return on the keyboard; there is no control to outline.",
+            )
+        }
+        TypeStage::Unknown => return nothing(UNMARKED_CAPTION),
     }
     let size = ViewerSize::from(evaluated.screen.size);
     match action {
@@ -101,7 +157,7 @@ pub(crate) fn mark_for(
         }
         p::Action::Clear { element } => element_mark(evaluated, *element, "clear", size, labels),
         p::Action::Type { element, .. } => match element.or_else(|| focused_index(evaluated)) {
-            Some(index) => element_mark(evaluated, index, "type into", size, labels),
+            Some(index) => element_mark(evaluated, index, "type", size, labels),
             None => nothing(
                 "Jarvis will type into the focused field, which this screen does not show; nothing is outlined.",
             ),
@@ -109,15 +165,15 @@ pub(crate) fn mark_for(
         p::Action::Scroll {
             element: Some(index),
             ..
-        } => element_mark(evaluated, *index, "scroll in", size, labels),
+        } => element_mark(evaluated, *index, "scroll", size, labels),
         p::Action::Swipe {
             element: Some(index),
             ..
-        } => element_mark(evaluated, *index, "swipe on", size, labels),
+        } => element_mark(evaluated, *index, "swipe", size, labels),
         p::Action::Scroll { element: None, .. } | p::Action::Swipe { element: None, .. } => {
             nothing("Jarvis will swipe across the whole screen; nothing is outlined.")
         }
-        p::Action::TapPoint { x, y } => point_mark(evaluated, *x, *y, size, labels),
+        p::Action::TapPoint { x, y } => point_mark(*x, *y, size),
         p::Action::PressHome => {
             nothing("Jarvis will go to the home screen; nothing on this screen is tapped.")
         }
@@ -156,12 +212,16 @@ fn usable(size: ViewerSize) -> Option<ViewerSize> {
     size.is_usable().then_some(size)
 }
 
-/// The focused entry field of the compact screen (what `type` without an element types into).
+/// The focused text input of the compact screen: what `type` without an element types into.
+/// The same rule as the session's (`jarvis-agent` `session.rs`, `prepare` / `type_check` /
+/// `action_target`: the first listed element that is `focused && role.is_text_input()`), so a
+/// focused button never takes the outline from the field the text goes into (preview review).
+/// No such field: nothing is outlined.
 fn focused_index(evaluated: &Evaluated<'_>) -> Option<u32> {
     jarvis_observe::compact(evaluated.screen)
         .elements
         .iter()
-        .find(|e| e.focused)
+        .find(|e| e.focused && e.role.is_text_input())
         .map(|e| e.index)
 }
 
@@ -216,27 +276,19 @@ fn element_mark(
         shown.width / size.width,
         shown.height / size.height,
     );
-    let what = if verb == "type into" || verb == "clear" {
-        "field"
-    } else if verb == "scroll in" || verb == "swipe on" {
-        "area"
-    } else {
-        "control"
-    };
     (
         ApprovalMark::Outline { frame: shown, unit },
-        format!("Jarvis will {verb} the outlined {what}."),
+        format!("The outline is where Jarvis will {verb}. {PICTURE_AGE}"),
         format!("Outlined: {described}"),
     )
 }
 
-fn point_mark(
-    evaluated: &Evaluated<'_>,
-    x: f64,
-    y: f64,
-    size: ViewerSize,
-    labels: &mut LabelCache,
-) -> (ApprovalMark, String, String) {
+/// A `tap_point`: the point only. The core resolves a point to a control in more than one
+/// way (the gate's classifier takes the riskiest pressable element under it, the approval's
+/// pin the smallest listed control, `jarvis_safety::control_at`, on the session's own raw
+/// tree), so no element is named here: never one the core might not resolve to (preview
+/// review).
+fn point_mark(x: f64, y: f64, size: ViewerSize) -> (ApprovalMark, String, String) {
     let on_screen =
         x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y);
     if !on_screen {
@@ -250,14 +302,6 @@ fn point_mark(
         );
     };
     let point = ViewerPoint::new(x * size.width, y * size.height);
-    let under = if evaluated.typed {
-        target_node(point, &evaluated.screen.root, size, labels).map(|(e, _)| match e.label {
-            Some(l) => format!(" on {} '{l}'", e.role),
-            None => format!(" on {}", e.role),
-        })
-    } else {
-        None
-    };
     let across = (x * 100.0).round();
     let down = (y * 100.0).round();
     (
@@ -265,11 +309,8 @@ fn point_mark(
             point,
             unit: ViewerPoint::new(x, y),
         },
-        "Jarvis will tap the marked point.".to_owned(),
-        format!(
-            "Marked: a point {across:.0}% across and {down:.0}% down{}",
-            under.unwrap_or_default()
-        ),
+        format!("The mark is where Jarvis will tap. {PICTURE_AGE}"),
+        format!("Marked: a point {across:.0}% across and {down:.0}% down. Jarvis will tap at the marked point."),
     )
 }
 
@@ -314,7 +355,7 @@ mod tests {
             screen: s,
             typed: true,
             sight: &[],
-            return_pending: false,
+            stage: TypeStage::Whole,
         }
     }
 
@@ -335,7 +376,11 @@ mod tests {
                 unit: ViewerRect::new(0.25, 0.75, 0.5, 0.0625),
             }
         );
-        assert_eq!(caption, "Jarvis will tap the outlined control.");
+        // Preview review: the caption says where, and that the picture is not live.
+        assert_eq!(
+            caption,
+            "The outline is where Jarvis will tap. The picture is from when Jarvis asked and may have changed."
+        );
         assert_eq!(a11y, "Outlined: Button 'Pay $512.40'");
     }
 
@@ -344,7 +389,7 @@ mod tests {
         let s = screen(vec![]);
         let mut labels = LabelCache::new();
         let mut e = eval(&s);
-        e.return_pending = true;
+        e.stage = TypeStage::Return;
         let typed = p::Action::Type {
             element: None,
             text: "x".to_owned(),
