@@ -13,8 +13,10 @@ on:
       - ".github/workflows/ios.yml"
   workflow_dispatch:
 
+# The group name includes whether this run will actually do anything. A push that the job's
+# `if` skips lands in its own group, so it can no longer cancel a simulator run in flight.
 concurrency:
-  group: ios-${{ github.ref }}
+  group: ios-${{ github.ref }}-${{ github.event.repository.private == false || contains(github.event.head_commit.message, '[ios-qa]') || github.event_name == 'workflow_dispatch' }}
   cancel-in-progress: true
 
 permissions:

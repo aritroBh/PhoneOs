@@ -263,11 +263,16 @@ if [ "$build_rc" -ne 0 ]; then
   exit "$build_rc"
 fi
 
+# Per-test time limits: a test that waits on something that never happens (a lock that is
+# never seen to clear) must fail with its diagnostics in minutes, not eat the job timeout.
 group "xcodebuild test-without-building"
 test_rc=0
 run_xcodebuild "$qa/xcodebuild-test.log" test-without-building "${common[@]}" \
   -resultBundlePath "$result" \
   -parallel-testing-enabled NO \
+  -test-timeouts-enabled YES \
+  -default-test-execution-time-allowance 180 \
+  -maximum-test-execution-time-allowance 300 \
   ${only_testing[@]+"${only_testing[@]}"} || test_rc=$?
 endgroup
 log "test-without-building exit code: $test_rc"
