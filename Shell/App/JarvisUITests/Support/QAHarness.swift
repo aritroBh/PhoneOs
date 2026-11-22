@@ -338,11 +338,22 @@ enum SimulatorLock {
     /// Wakes and unlocks a simulator without a passcode the way the probe found works (one
     /// home press), then brings `app` back to the front, as unlocking a phone returns to the
     /// app that was in front.
+    ///
+    /// Repeated up to four times: in simulator run 83 the lock took 7 s to show (the lock
+    /// screen appeared 2.6 s after the lock notification), the one home press landed while
+    /// the simulator was still locking, and the app stayed in the background. A home press
+    /// on an unlocked simulator is harmless, so a repeat costs nothing.
     @MainActor
     static func unlock(returningTo app: XCUIApplication) -> String {
-        XCUIDevice.shared.press(.home)
-        app.activate()
-        let front = app.wait(for: .runningForeground, timeout: 10)
-        return front ? "home pressed; app back in front" : "home pressed; app not in front (state \(app.state.rawValue))"
+        var states: [String] = []
+        for attempt in 1...4 {
+            XCUIDevice.shared.press(.home)
+            app.activate()
+            if app.wait(for: .runningForeground, timeout: 5) {
+                return "home pressed \(attempt)x; app back in front"
+            }
+            states.append("\(app.state.rawValue)")
+        }
+        return "home pressed 4x; app not in front (states \(states.joined(separator: ", ")))"
     }
 }
