@@ -10,3 +10,7 @@ Sources/JarvisCore/
 
 # Produced by scripts/sim-qa.sh
 build/
+
+# XcodeGen output (generate with `xcodegen generate`).
+Jarvis.xcodeproj/
+App/Generated/

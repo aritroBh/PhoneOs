@@ -1,0 +1,108 @@
+# XcodeGen spec for the Jarvis iOS app and its simulator QA harness.
+#
+#   cd Shell && xcodegen generate      # writes Jarvis.xcodeproj (gitignored)
+#
+# Fixed names (CI depends on them): project Jarvis, app target Jarvis (dev.jarvis.app),
+# UI-test target JarvisUITests (dev.jarvis.app.uitests), shared scheme Jarvis.
+#
+# The local package is this directory (Package.swift): products JarvisKit and JarvisCore.
+# Its JarvisCoreFFI.xcframework must exist first (scripts/bootstrap.sh on a Mac).
+#
+# Language mode: the app and the UI tests use Swift 5 mode with complete concurrency
+# checking as warnings (JarvisKit itself is Swift 6). XCTest's UI APIs are main-actor
+# bound and this code has never been compiled before CI, so strict-mode errors would make
+# untestable code risky; the code is still written main-actor-correct.
+
+name: Jarvis
+options:
+  bundleIdPrefix: dev.jarvis
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    CODE_SIGN_STYLE: Automatic
+    # >>> FILL IN for a real device: your Apple ID team (Xcode > Settings > Accounts).
+    # A free Apple ID works (7-day profiles). Simulator builds need nothing here, and
+    # CI passes CODE_SIGNING_ALLOWED=NO.
+    DEVELOPMENT_TEAM: ""
+    # <<<
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEAD_CODE_STRIPPING: YES
+
+packages:
+  JarvisKit:
+    path: .
+
+targets:
+  Jarvis:
+    type: application
+    platform: iOS
+    sources:
+      - path: App/Jarvis
+    info:
+      path: App/Generated/Jarvis-Info.plist
+      properties:
+        CFBundleDisplayName: Jarvis
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIUserInterfaceStyle: Dark
+        # Plain http to the runner (127.0.0.1:8300) and a model server on the local
+        # network. Loopback needs no local-network permission prompt.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.jarvis.app
+        PRODUCT_NAME: Jarvis
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
+    dependencies:
+      - package: JarvisKit
+        product: JarvisKit
+      - package: JarvisKit
+        product: JarvisCore
+
+  JarvisUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: App/JarvisUITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.jarvis.app.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Jarvis
+    dependencies:
+      - target: Jarvis
+      - package: JarvisKit
+        product: JarvisKit
+      - package: JarvisKit
+        product: JarvisCore
+
+schemes:
+  Jarvis:
+    build:
+      targets:
+        Jarvis: all
+        JarvisUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - name: JarvisUITests
+    archive:
+      config: Release

@@ -52,6 +52,16 @@ public struct RunResult: Sendable, Equatable {
     public var effectCount: Int
     /// `Effect.infer` effects carried out (model calls).
     public var modelCalls: Int
+
+    /// Creates a result (the driver builds these; apps use it to report a run that could
+    /// not start in the same shape).
+    public init(outcome: Outcome, endReason: EndReason, memory: MemorySaveStatus, effectCount: Int, modelCalls: Int) {
+        self.outcome = outcome
+        self.endReason = endReason
+        self.memory = memory
+        self.effectCount = effectCount
+        self.modelCalls = modelCalls
+    }
 }
 
 /// Why a run ended. Every case except `.sessionFinished` means the driver delivered
