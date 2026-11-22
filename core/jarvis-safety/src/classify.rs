@@ -5,9 +5,9 @@ use jarvis_proto::{
 };
 
 use crate::phrases::{
-    action_tables, match_label, match_tokens, max_risk, Phrase, COMPOSE_FIELD_PHRASES,
-    CONTEXT_PHRASES, CREDENTIAL_FIELD_PHRASES, SETTINGS_ACTION_PHRASES, SETTINGS_BUNDLE_ID,
-    SETTINGS_CONTEXT_PHRASES,
+    action_tables, match_label, match_tokens, max_risk, Phrase, ACTION_PHRASES,
+    COMPOSE_FIELD_PHRASES, CONTEXT_PHRASES, CREDENTIAL_FIELD_PHRASES, NAVIGATION_PHRASES,
+    SETTINGS_ACTION_PHRASES, SETTINGS_BUNDLE_ID, SETTINGS_CONTEXT_PHRASES,
 };
 use crate::redact::contains_secret;
 use crate::text::{has_money, tokens};
@@ -21,7 +21,11 @@ use crate::validate::url_scheme;
 /// * Taps and long presses read the target's label (and value, for non-inputs) through the
 ///   phrase tables. Generic confirmations ("OK", "Continue") and unlabeled buttons take on
 ///   the riskiest signal elsewhere on the screen (prices, "Delete 3 photos?", a Send
-///   button). A price in a button label is at least a `Purchase`.
+///   button). A price in a button label is at least a `Purchase`. On a checkout screen
+///   (a price plus payment wording such as "Total" or "Card ending"), every pressable
+///   element that is not plainly navigation ("Cancel", "Back", "Edit") is a `Payment`.
+///   Switches in Settings are `SystemSetting`; "Save"/"Update" on an account or settings
+///   screen is `AccountChange`.
 /// * `Type` is `Credential` for secure fields, credential-labelled fields or secret-looking
 ///   text; with `submit` it also takes the compose field's and the screen's risk, so Return
 ///   in a message field next to a Send button is `SendMessage`.
@@ -54,7 +58,7 @@ pub fn classify(action: &Action, screen: &CompactScreen, tool: Option<&ToolSpec>
             _ => RiskCategory::None,
         },
         Action::CallTool { name, .. } => {
-            let by_name = match_label(name, &[crate::phrases::ACTION_PHRASES]).category;
+            let by_name = match_label(name, &[ACTION_PHRASES]).category;
             match tool {
                 Some(spec) => max_risk(spec.risk, by_name),
                 None => by_name,
@@ -123,7 +127,36 @@ fn element_risk(el: &Element, screen: &CompactScreen) -> RiskCategory {
     if lr.generic || unlabeled {
         risk = max_risk(risk, context_risk(screen, Some(el.index)));
     }
+    // On a checkout screen, any button that is not plainly navigation may be the one that
+    // pays ("Order", "Let's go", "Swipe up"), whatever its wording.
+    if is_pressable(&el.role)
+        && !matches!(el.role, Role::Tab | Role::Key)
+        && risk != RiskCategory::Payment
+        && !matches_any(&toks, NAVIGATION_PHRASES)
+        && is_checkout_screen(screen, el.index)
+    {
+        risk = RiskCategory::Payment;
+    }
     risk
+}
+
+/// Whether any phrase of `table` matches `toks` (even an exemption-style `None` row).
+fn matches_any(toks: &[String], table: &[Phrase]) -> bool {
+    table.iter().any(|p| {
+        let words = tokens(p.text);
+        !words.is_empty() && toks.windows(words.len()).any(|w| w == words.as_slice())
+    })
+}
+
+/// Whether the screen, apart from element `exclude`, shows a price together with payment
+/// wording ("Total", "Card ending", a "Pay" button).
+fn is_checkout_screen(screen: &CompactScreen, exclude: u32) -> bool {
+    let others = || screen.elements.iter().filter(|e| e.index != exclude);
+    others().any(|e| has_money(&element_text(e)))
+        && others().any(|e| {
+            match_label(&element_text(e), &[CONTEXT_PHRASES, ACTION_PHRASES]).category
+                == RiskCategory::Payment
+        })
 }
 
 /// The riskiest signal among the screen's elements other than `exclude`: risky labels,
@@ -201,7 +234,12 @@ fn submit_risk(target: Option<&Element>, screen: &CompactScreen) -> RiskCategory
         Some(t) if t.role == Role::SearchField => RiskCategory::None,
         Some(t) => {
             let field = format!("{} {}", t.label, t.placeholder.as_deref().unwrap_or(""));
-            let compose = match_label(&field, &[COMPOSE_FIELD_PHRASES]).category;
+            let mut compose = match_label(&field, &[COMPOSE_FIELD_PHRASES]).category;
+            if t.role == Role::TextView {
+                // Return in a multi-line view only inserts a newline unless the view is a
+                // chat composer, so a submit there is presumed to send.
+                compose = max_risk(compose, RiskCategory::SendMessage);
+            }
             max_risk(compose, context_risk(screen, Some(t.index)))
         }
         None => context_risk(screen, None),

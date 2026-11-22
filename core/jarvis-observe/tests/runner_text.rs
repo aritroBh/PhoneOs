@@ -238,3 +238,54 @@ fn big_tree_parses_in_linear_time() {
     assert!(started.elapsed().as_secs() < 2);
     assert_eq!(parsed.root.children.len(), 2000);
 }
+
+#[test]
+fn wrapped_label_whose_continuation_looks_like_a_node_start_is_kept() {
+    let text = "\
+Application, {{0, 0}, {393, 852}}
+  StaticText, label: 'Dinner plans:
+Okay, i will bring wine', {{10, 10}, {300, 40}}
+  Button, label: 'Reply', {{10, 60}, {80, 44}}
+";
+    let parsed = parse_runner_text(text).unwrap();
+    assert_eq!(parsed.warnings, 0);
+    let kids = &parsed.root.children;
+    assert_eq!(kids.len(), 2);
+    assert_eq!(
+        kids[0].label.as_deref(),
+        Some("Dinner plans:\nOkay, i will bring wine")
+    );
+    assert_eq!(kids[1].label.as_deref(), Some("Reply"));
+}
+
+#[test]
+fn ten_thousand_deep_input_is_capped_and_survives_a_small_stack() {
+    let mut text = String::new();
+    for d in 0..10_000 {
+        text.push_str(&" ".repeat(d));
+        text.push_str("Other, {{0, 0}, {100, 100}}\n");
+    }
+    text.push_str(&" ".repeat(10_000));
+    text.push_str("Button, label: 'Bottom', {{10, 10}, {80, 44}}\n");
+    let handle = std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(move || {
+            let parsed = parse_runner_text(&text).unwrap();
+            let mut depth = 0;
+            let mut n = &parsed.root;
+            while let Some(c) = n.children.first() {
+                depth += 1;
+                n = c;
+            }
+            let s = screen("com.example.deep", "Deep", parsed.root.clone(), false);
+            let _ = render(&compact(&s), 500);
+            depth
+        })
+        .unwrap();
+    let depth = handle.join().expect("no stack overflow");
+    assert!(depth <= 200, "depth {depth}");
+    assert!(
+        depth >= 100,
+        "nodes were dropped instead of reparented: {depth}"
+    );
+}

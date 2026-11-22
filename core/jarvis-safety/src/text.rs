@@ -109,8 +109,37 @@ fn fold_confusable(c: char) -> char {
 /// to ASCII, lowercase, then Cyrillic/Greek/accented look-alikes to ASCII letters.
 pub(crate) fn fold_char(c: char) -> char {
     let c = fold_styled(fold_fullwidth(c));
+    if let Some(a) = fold_upper_confusable(c) {
+        return a;
+    }
     let lower = c.to_lowercase().next().unwrap_or(c);
     fold_confusable(lower)
+}
+
+/// Folds an uppercase Greek or Cyrillic letter that looks like an ASCII capital to that
+/// letter, lowercased. Checked before lowercasing, because some capitals look like a
+/// different Latin letter than their lowercase forms do (Greek `Ν` is `N`, `ν` is `v`).
+fn fold_upper_confusable(c: char) -> Option<char> {
+    Some(match c {
+        'Α' | 'А' => 'a',
+        'Β' | 'В' => 'b',
+        'С' | 'Ϲ' => 'c',
+        'Ε' | 'Е' | 'Ё' => 'e',
+        'Η' | 'Н' => 'h',
+        'Ι' | 'І' | 'Ї' | 'Ӏ' => 'i',
+        'Ј' => 'j',
+        'Κ' | 'К' => 'k',
+        'Μ' | 'М' => 'm',
+        'Ν' => 'n',
+        'Ο' | 'О' => 'o',
+        'Ρ' | 'Р' => 'p',
+        'Ѕ' => 's',
+        'Τ' | 'Т' => 't',
+        'Υ' | 'Ү' => 'y',
+        'Χ' | 'Х' => 'x',
+        'Ζ' => 'z',
+        _ => return None,
+    })
 }
 
 /// True for apostrophe-like characters, which are deleted inside words (`don't` → `dont`).
@@ -118,11 +147,22 @@ fn is_apostrophe(c: char) -> bool {
     matches!(c, '\'' | '’' | '‘' | 'ʼ' | '`' | '´')
 }
 
+/// Icon characters used as button labels, read as the word they stand for.
+fn emoji_word(c: char) -> Option<&'static str> {
+    match c {
+        '\u{1F5D1}' => Some("trash"),
+        '\u{1F4B8}' => Some("pay"),
+        '\u{1F4E4}' => Some("send"),
+        _ => None,
+    }
+}
+
 /// Splits `text` into lowercase, look-alike-folded word tokens.
 ///
 /// Boundaries: any non-alphanumeric character, a lowercase→uppercase transition
 /// (`PlaceOrder` → `place order`) and a letter↔digit transition (`Pay42` → `pay 42`).
-/// Invisible characters, combining marks and apostrophes are removed without splitting.
+/// Invisible characters, combining marks and apostrophes are removed without splitting;
+/// a few icon emoji (wastebasket, money, outbox) read as words.
 pub(crate) fn tokens(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -130,6 +170,14 @@ pub(crate) fn tokens(text: &str) -> Vec<String> {
     let mut prev_class = 0u8;
     for raw in text.chars() {
         if is_invisible(raw) || is_combining(raw) || is_apostrophe(raw) {
+            continue;
+        }
+        if let Some(word) = emoji_word(raw) {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            out.push(word.to_owned());
+            prev_class = 0;
             continue;
         }
         let c = fold_styled(fold_fullwidth(raw));
@@ -154,8 +202,9 @@ pub(crate) fn tokens(text: &str) -> Vec<String> {
         if split {
             out.push(std::mem::take(&mut cur));
         }
-        for l in c.to_lowercase() {
-            cur.push(fold_confusable(l));
+        match fold_upper_confusable(c) {
+            Some(a) => cur.push(a),
+            None => cur.extend(c.to_lowercase().map(fold_confusable)),
         }
         prev_class = class;
     }

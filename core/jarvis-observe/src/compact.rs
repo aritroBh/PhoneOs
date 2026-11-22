@@ -1,14 +1,15 @@
 //! Flattening the accessibility tree into the indexed element list.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ptr;
+use std::rc::Rc;
 
 use jarvis_proto::{CompactScreen, Element, Rect, Role, Screen, UiNode};
 
 use crate::fingerprint::{identity_key, FingerprintAssigner};
 
 /// Trees deeper than this are cut (real iOS trees stay far below).
-const MAX_DEPTH: usize = 160;
+pub(crate) const MAX_DEPTH: usize = 160;
 /// Vertical jitter (points) tolerated between elements of the same visual row.
 const ROW_TOLERANCE: f64 = 6.0;
 /// An element must keep this share of its area visible...
@@ -16,7 +17,7 @@ const MIN_VISIBLE_FRACTION: f64 = 0.3;
 /// ...or at least this many points in both directions.
 const MIN_VISIBLE_SIDE: f64 = 24.0;
 /// At most this many child texts are merged into one label.
-const MAX_MERGED_PARTS: usize = 8;
+const MAX_MERGED_PARTS: usize = 12;
 
 /// An element before filtering by geometry.
 struct Cand {
@@ -57,7 +58,6 @@ fn kind(node: &UiNode) -> Kind {
         Role::Image => Kind::Image,
         Role::Cell => Kind::Mergeable,
         Role::Other(_) if node.children.is_empty() => Kind::Leaf,
-        Role::Other(_) if node.hittable => Kind::Mergeable,
         _ => Kind::Container,
     }
 }
@@ -118,54 +118,123 @@ fn is_interactive_kind(node: &UiNode) -> bool {
     matches!(kind(node), Kind::Control | Kind::Input)
 }
 
-/// Counts visible interactive descendants (not self) and returns the first one.
-fn interactive_descendants(node: &UiNode) -> (usize, Option<&UiNode>) {
-    let mut count = 0;
-    let mut first = None;
-    let mut stack: Vec<&UiNode> = node.children.iter().rev().collect();
-    while let Some(n) = stack.pop() {
-        if !is_live(n) {
-            continue;
-        }
-        if is_interactive_kind(n) {
-            count += 1;
-            first.get_or_insert(n);
-        } else {
-            stack.extend(n.children.iter().rev());
-        }
-    }
-    (count, first)
+/// Where a node's subtree lies in the flat pre-order lists of [`Summaries`].
+#[derive(Clone, Copy, Default)]
+struct Span {
+    t0: usize,
+    t1: usize,
+    g0: usize,
+    g1: usize,
+    i0: usize,
+    i1: usize,
 }
 
-/// Child texts of `node` in reading order, joined; falls back to labelled images.
-fn merged_text(node: &UiNode) -> String {
-    let mut texts: Vec<(Rect, String)> = Vec::new();
-    let mut images: Vec<(Rect, String)> = Vec::new();
-    let mut stack: Vec<&UiNode> = node.children.iter().rev().collect();
-    while let Some(n) = stack.pop() {
-        if !is_live(n) {
-            continue;
-        }
-        let label = non_empty(&n.label).or_else(|| non_empty(&n.value));
-        match (&n.role, label) {
-            (Role::StaticText, Some(l)) => texts.push((n.frame, l)),
-            (Role::Image, Some(l)) => images.push((n.frame, l)),
-            _ => {}
-        }
-        stack.extend(n.children.iter().rev());
-    }
-    let parts = if texts.is_empty() { images } else { texts };
-    let frames: Vec<Rect> = parts.iter().map(|(f, _)| *f).collect();
-    let mut ordered: Vec<&str> = Vec::new();
-    for i in reading_order(&frames) {
-        if let Some((_, t)) = parts.get(i) {
-            if ordered.last() != Some(&t.as_str()) {
-                ordered.push(t);
+/// Per-subtree summaries computed in one pass: texts, labelled images and top-level
+/// interactive nodes, in document order, plus each cell/control's range into them.
+struct Summaries<'a> {
+    texts: Vec<(Rect, String)>,
+    images: Vec<(Rect, String)>,
+    interactive: Vec<&'a UiNode>,
+    spans: BTreeMap<usize, Span>,
+}
+
+fn addr(node: &UiNode) -> usize {
+    node as *const UiNode as usize
+}
+
+impl<'a> Summaries<'a> {
+    fn build(root: &'a UiNode) -> Self {
+        let mut s = Summaries {
+            texts: Vec::new(),
+            images: Vec::new(),
+            interactive: Vec::new(),
+            spans: BTreeMap::new(),
+        };
+        // (node, depth, inside an interactive node, span start, is exit marker)
+        let mut stack: Vec<(&'a UiNode, usize, bool, Span, bool)> =
+            vec![(root, 0, false, Span::default(), false)];
+        while let Some((node, depth, in_inter, start, exit)) = stack.pop() {
+            if exit {
+                let k = kind(node);
+                if matches!(k, Kind::Control | Kind::Mergeable) {
+                    s.spans.insert(
+                        addr(node),
+                        Span {
+                            t1: s.texts.len(),
+                            g1: s.images.len(),
+                            i1: s.interactive.len(),
+                            ..start
+                        },
+                    );
+                }
+                continue;
+            }
+            if !is_live(node) || depth > MAX_DEPTH {
+                continue;
+            }
+            let label = non_empty(&node.label).or_else(|| non_empty(&node.value));
+            match (&node.role, label) {
+                (Role::StaticText, Some(l)) => s.texts.push((node.frame, l)),
+                (Role::Image, Some(l)) => s.images.push((node.frame, l)),
+                _ => {}
+            }
+            let inter = is_interactive_kind(node);
+            if inter && !in_inter {
+                s.interactive.push(node);
+            }
+            let start = Span {
+                t0: s.texts.len(),
+                g0: s.images.len(),
+                i0: s.interactive.len(),
+                ..Span::default()
+            };
+            stack.push((node, depth, in_inter, start, true));
+            for c in node.children.iter().rev() {
+                stack.push((c, depth + 1, in_inter || inter, Span::default(), false));
             }
         }
+        s
     }
-    ordered.truncate(MAX_MERGED_PARTS);
-    ordered.join(", ")
+
+    fn span(&self, node: &UiNode) -> Span {
+        self.spans.get(&addr(node)).copied().unwrap_or_default()
+    }
+
+    /// Count of top-level interactive descendants and the first one.
+    fn interactive_in(&self, sp: Span) -> (usize, Option<&'a UiNode>) {
+        let count = sp.i1.saturating_sub(sp.i0);
+        (
+            count,
+            self.interactive.get(sp.i0).copied().filter(|_| count > 0),
+        )
+    }
+
+    /// Texts in the span in reading order, joined; falls back to labelled images. At most
+    /// [`MAX_MERGED_PARTS`] parts, then a trailing `…` marks that more text exists.
+    fn merged_text(&self, sp: Span) -> String {
+        let texts = self.texts.get(sp.t0..sp.t1).unwrap_or_default();
+        let parts = if texts.is_empty() {
+            self.images.get(sp.g0..sp.g1).unwrap_or_default()
+        } else {
+            texts
+        };
+        let frames: Vec<Rect> = parts.iter().map(|(f, _)| *f).collect();
+        let mut ordered: Vec<&str> = Vec::new();
+        for i in reading_order(&frames) {
+            if let Some((_, t)) = parts.get(i) {
+                if ordered.last() != Some(&t.as_str()) {
+                    ordered.push(t);
+                }
+            }
+        }
+        let more = ordered.len() > MAX_MERGED_PARTS;
+        ordered.truncate(MAX_MERGED_PARTS);
+        let mut out = ordered.join(", ");
+        if more {
+            out.push_str(", …");
+        }
+        out
+    }
 }
 
 #[derive(Clone)]
@@ -178,9 +247,12 @@ struct State {
     /// Static texts below were folded into an unlabeled control's label.
     skip_text: bool,
     inherit: Option<String>,
+    /// Nearest enclosing row/container label, folded into fingerprints.
+    context: Rc<str>,
 }
 
 struct Walker<'a> {
+    sums: Summaries<'a>,
     scope: Option<&'a UiNode>,
     cands: Vec<Cand>,
     ordinals: FingerprintAssigner,
@@ -199,7 +271,15 @@ impl<'a> Walker<'a> {
         let st = State { emit, ..st.clone() };
         match kind(node) {
             Kind::Skip => {}
-            Kind::Container => self.descend(node, id, &st),
+            Kind::Container => {
+                let mut inner = st.clone();
+                if !matches!(node.role, Role::Application | Role::Window) {
+                    if let Some(l) = non_empty(&node.label) {
+                        inner.context = Rc::from(l.as_str());
+                    }
+                }
+                self.descend(node, id, &inner);
+            }
             Kind::Input => {
                 let label = non_empty(&node.label)
                     .or_else(|| non_empty(&node.placeholder))
@@ -210,7 +290,9 @@ impl<'a> Walker<'a> {
             }
             Kind::Control => {
                 let label = non_empty(&node.label)
-                    .or_else(|| Some(merged_text(node)).filter(|t| !t.is_empty()))
+                    .or_else(|| {
+                        Some(self.sums.merged_text(self.sums.span(node))).filter(|t| !t.is_empty())
+                    })
                     .or_else(|| st.inherit.clone())
                     .or_else(|| non_empty(&node.identifier))
                     .unwrap_or_default();
@@ -233,10 +315,11 @@ impl<'a> Walker<'a> {
     }
 
     fn mergeable(&mut self, node: &'a UiNode, id: usize, st: &State) {
-        let (count, first) = interactive_descendants(node);
+        let sp = self.sums.span(node);
+        let (count, first) = self.sums.interactive_in(sp);
         let is_cell = node.role == Role::Cell;
         if count == 0 {
-            let label = non_empty(&node.label).unwrap_or_else(|| merged_text(node));
+            let label = non_empty(&node.label).unwrap_or_else(|| self.sums.merged_text(sp));
             let label = if label.is_empty() {
                 non_empty(&node.identifier).unwrap_or_default()
             } else {
@@ -251,7 +334,7 @@ impl<'a> Walker<'a> {
         }
         // A row holding controls is not itself the target: list the controls, and lend the
         // row's text to a single unlabeled control.
-        let merged = merged_text(node);
+        let merged = self.sums.merged_text(sp);
         let unlabeled = first.is_some_and(|f| {
             non_empty(&f.label).is_none()
                 && (!f.role.is_text_input() || non_empty(&f.placeholder).is_none())
@@ -260,6 +343,13 @@ impl<'a> Walker<'a> {
         let inner = State {
             sticky: true,
             group: id,
+            context: if let Some(l) = non_empty(&node.label) {
+                Rc::from(l.as_str())
+            } else if merged.is_empty() {
+                st.context.clone()
+            } else {
+                Rc::from(merged.as_str())
+            },
             skip_text: st.skip_text || lend,
             inherit: if lend {
                 Some(merged)
@@ -288,7 +378,11 @@ impl<'a> Walker<'a> {
         if !st.emit {
             return;
         }
-        let key = identity_key(node.identifier.as_deref().filter(|s| !s.is_empty()), &label);
+        let mut key = identity_key(node.identifier.as_deref().filter(|s| !s.is_empty()), &label);
+        if !st.context.is_empty() {
+            key.push_str("\u{1}c:");
+            key.push_str(&st.context);
+        }
         let fingerprint = self.ordinals.assign(&node.role, &key, &self.path);
         let secure = node.secure || node.role == Role::SecureTextField;
         let placeholder = non_empty(&node.placeholder);
@@ -378,6 +472,7 @@ fn round(f: &Rect) -> [i64; 4] {
 pub fn compact(screen: &Screen) -> CompactScreen {
     let (alert, keyboard) = find_overlays(&screen.root);
     let mut walker = Walker {
+        sums: Summaries::build(&screen.root),
         scope: alert,
         cands: Vec::new(),
         ordinals: FingerprintAssigner::default(),
@@ -391,6 +486,7 @@ pub fn compact(screen: &Screen) -> CompactScreen {
         sticky: false,
         skip_text: false,
         inherit: None,
+        context: Rc::from(""),
     };
     walker.walk(&screen.root, &start);
 

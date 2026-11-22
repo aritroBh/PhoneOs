@@ -38,6 +38,7 @@ pub struct Recorder {
     handed_back: bool,
     sensitive_values: Vec<String>,
     target_app: Option<String>,
+    last_target_secure: bool,
 }
 
 impl Recorder {
@@ -50,6 +51,7 @@ impl Recorder {
             handed_back: false,
             sensitive_values: Vec::new(),
             target_app: None,
+            last_target_secure: false,
         }
     }
 
@@ -76,6 +78,21 @@ impl Recorder {
     /// True when nothing has been recorded.
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
+    }
+
+    fn is_sensitive(&self, typed: &str) -> bool {
+        let t = alnum(typed);
+        if t.is_empty() {
+            return false;
+        }
+        self.sensitive_values.iter().any(|v| {
+            let v = alnum(v);
+            if v.len() >= 6 {
+                t.contains(&v) || (t.len() >= 6 && v.contains(&t))
+            } else {
+                !v.is_empty() && v == t
+            }
+        })
     }
 
     /// Records one successful step.
@@ -118,6 +135,13 @@ impl Recorder {
         if target.is_none() && matches!(action, Action::Type { .. }) {
             target = screen.elements.iter().find(|e| e.focused);
         }
+        // No resolvable target: the field is unknown. Treat as secure when the last control
+        // used was a secure field, or the screen has a secure field and nothing is focused.
+        let unknown_secure = target.is_none()
+            && matches!(action, Action::Type { .. })
+            && (self.last_target_secure
+                || (screen.elements.iter().any(|e| e.secure)
+                    && !screen.elements.iter().any(|e| e.focused)));
         let flow_action = match action {
             Action::Tap { .. } => FlowAction::Tap,
             Action::LongPress { duration_ms, .. } => FlowAction::LongPress { duration_ms },
@@ -129,8 +153,8 @@ impl Recorder {
             Action::OpenUrl { url } => FlowAction::OpenUrl { url },
             Action::Wait { ms } => FlowAction::Wait { ms },
             Action::Type { text, submit, .. } => {
-                let secure = target.is_some_and(|e| e.secure);
-                let sensitive = self.sensitive_values.iter().any(|v| *v == text.trim());
+                let secure = unknown_secure || target.is_some_and(|e| e.secure);
+                let sensitive = self.is_sensitive(&text);
                 if secure || sensitive {
                     self.handed_back = true;
                     FlowAction::HandBack {
@@ -154,6 +178,9 @@ impl Recorder {
             | Action::Done { .. }
             | Action::Fail { .. } => return,
         };
+        if let Some(e) = target {
+            self.last_target_secure = e.secure;
+        }
         if target.is_some() {
             self.target_app = Some(screen.app_bundle_id.clone());
         }
@@ -269,4 +296,12 @@ fn extract_slots(task_text: &str, steps: &[FlowStep]) -> Option<(String, Vec<(u3
         return None;
     }
     Some((key, slots))
+}
+
+/// Lowercase alphanumerics only, for comparing sensitive values.
+fn alnum(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }

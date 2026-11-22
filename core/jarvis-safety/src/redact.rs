@@ -2,8 +2,8 @@
 //!
 //! Detectors, all hand-written:
 //!
-//! * **Card numbers**: 13–19 digits, optionally grouped by single spaces or dashes, that pass
-//!   the Luhn check. Inside a longer grouped run, any run of whole groups that qualifies.
+//! * **Card numbers**: 13–19 digits, optionally grouped by one or two spaces, dashes or dots,
+//!   that pass the Luhn check. Inside a longer grouped run, any run of whole groups that qualifies.
 //! * **One-time codes**: a standalone 4–8 digit number (or `123 456` / `123-456`) within five
 //!   words of `code`, `OTP`, `verification`, `passcode`, `PIN`... `zip code`, `area code`,
 //!   `promo code` and similar do not count as keywords.
@@ -11,12 +11,13 @@
 //!   JWTs...) and long high-entropy strings mixing letters and digits.
 //! * **Labelled secrets**: the value after `password:`, `token=`, `Bearer `...
 //!
-//! Phone numbers, dates, times, prices and ordinary numbers are left alone.
+//! Phone numbers, dates, times, prices and ordinary numbers are left alone. Invisible
+//! characters are dropped first so they cannot split a secret.
 
 use jarvis_proto::{CompactScreen, Element, RiskCategory};
 
 use crate::phrases::{match_label, CREDENTIAL_FIELD_PHRASES};
-use crate::text::fold_fullwidth;
+use crate::text::{fold_fullwidth, is_invisible};
 
 /// Replacement for a card number.
 pub const CARD_MASK: &str = "[redacted card]";
@@ -32,10 +33,10 @@ pub const SECRET_MASK: &str = "[redacted secret]";
 /// The masks contain no digits or trigger words, so re-redacting never alters an existing
 /// mask (it can, rarely, mask a code that has moved closer to its keyword).
 pub fn redact(text: &str) -> String {
-    let chars: Vec<char> = text.chars().collect();
+    let chars = visible_chars(text);
     let spans = find_spans(&chars);
     if spans.is_empty() {
-        return text.to_owned();
+        return chars.iter().collect();
     }
     let mut out = String::with_capacity(text.len());
     let mut pos = 0usize;
@@ -56,7 +57,7 @@ pub fn redact(text: &str) -> String {
 /// True when `text` contains anything [`redact`] would mask, or is a single password-like
 /// word (8+ characters mixing lowercase, uppercase, digits and symbols).
 pub fn contains_secret(text: &str) -> bool {
-    let chars: Vec<char> = text.chars().collect();
+    let chars = visible_chars(text);
     !find_spans(&chars).is_empty() || is_password_like(text)
 }
 
@@ -90,6 +91,12 @@ pub fn redact_screen(screen: &CompactScreen) -> CompactScreen {
     let mut out = screen.clone();
     out.elements = screen.elements.iter().map(redact_element).collect();
     out
+}
+
+/// The characters of `text` without invisible ones, so `4111\u{200B}1111…` cannot dodge a
+/// detector. [`redact`] output therefore never contains invisible characters either.
+fn visible_chars(text: &str) -> Vec<char> {
+    text.chars().filter(|c| !is_invisible(*c)).collect()
 }
 
 /// A decimal digit's value, accepting fullwidth digits.
@@ -152,9 +159,17 @@ fn card_spans(chars: &[char], spans: &mut Vec<(usize, usize, &'static str)>) {
                 j += 1;
             }
             groups.push((gs, j, ds));
-            let sep = matches!(at(chars, j), Some(' ' | '-' | '\u{a0}'));
-            if sep && at(chars, j + 1).and_then(digit).is_some() {
-                j += 1;
+            // One or two separators between groups.
+            let is_sep = |c: Option<char>| matches!(c, Some(' ' | '-' | '.' | '\u{a0}'));
+            let width = if is_sep(at(chars, j)) && is_sep(at(chars, j + 1)) {
+                2
+            } else if is_sep(at(chars, j)) {
+                1
+            } else {
+                0
+            };
+            if width > 0 && at(chars, j + width).and_then(digit).is_some() {
+                j += width;
             } else {
                 break;
             }
@@ -497,8 +512,8 @@ fn code_spans(chars: &[char], spans: &mut Vec<(usize, usize, &'static str)>) {
     }
 }
 
-/// A single word of 8–128 characters with lowercase, uppercase, digit and symbol, that is
-/// not an email address or URL.
+/// A single word of 8–128 characters with lowercase, uppercase, digit and a symbol such as
+/// `!#$%&*`, that is not an email address or URL.
 fn is_password_like(text: &str) -> bool {
     let t = text.trim();
     let n = t.chars().count();
@@ -511,6 +526,9 @@ fn is_password_like(text: &str) -> bool {
     let lower = t.chars().any(|c| c.is_lowercase());
     let upper = t.chars().any(|c| c.is_uppercase());
     let num = t.chars().any(|c| c.is_ascii_digit());
-    let sym = t.chars().any(|c| !c.is_alphanumeric());
+    // Punctuation common in ordinary words and ids (`iPhone15,2`, `Wi-Fi_2`) does not count.
+    let sym = t
+        .chars()
+        .any(|c| !c.is_alphanumeric() && !matches!(c, ',' | '.' | '-' | '_' | '\'' | '/' | ':'));
     lower && upper && num && sym
 }

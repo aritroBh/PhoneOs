@@ -15,8 +15,8 @@ use jarvis_proto::{Role, UiNode};
 
 fn clock_screen(time: &str, battery: &str) -> jarvis_proto::Screen {
     app_screen(vec![
-        text(time, r(300.0, 60.0, 80.0, 20.0)),
-        text(&format!("Battery {battery}"), r(20.0, 60.0, 120.0, 20.0)),
+        text(time, r(300.0, 14.0, 80.0, 20.0)),
+        text(&format!("Battery {battery}"), r(20.0, 14.0, 120.0, 20.0)),
         button("Sync", 20.0, 200.0, 100.0, 44.0),
     ])
 }
@@ -36,12 +36,44 @@ fn hash_is_stable_for_identical_screens_and_ignores_layout_and_focus() {
 }
 
 #[test]
-fn hash_ignores_clock_and_percentages_but_not_real_text() {
-    let h = |t: &str, b: &str| screen_hash(&compact(&clock_screen(t, b)));
-    assert_eq!(h("9:41", "85%"), h("9:42", "84%"));
-    assert_eq!(h("9:41 AM", "85%"), h("12:05 PM", "3%"));
-    assert_eq!(h("9:41:07", "85%"), h("10:00:59", "85%"));
-    assert_ne!(h("9:41", "85%"), h("Tomorrow", "85%"));
+fn status_bar_chrome_is_ignored_by_hash_and_diff() {
+    let a = compact(&clock_screen("9:41", "85%"));
+    let b = compact(&clock_screen("9:42", "84%"));
+    assert_eq!(screen_hash(&a), screen_hash(&b));
+    let d = diff(&a, &b);
+    assert!(!d.changed, "{d:?}");
+    assert!(d.appeared.is_empty() && d.disappeared.is_empty());
+    // A real change next to the ticking clock is still seen.
+    let mut c = clock_screen("9:43", "84%");
+    c.root.children[0].children[2].label = Some("Retry".into());
+    assert!(diff(&b, &compact(&c)).changed);
+}
+
+#[test]
+fn percentages_and_times_in_real_content_still_count() {
+    let slider = |v: &str| {
+        compacted(vec![jarvis_proto::UiNode::new(
+            Role::Slider,
+            r(20.0, 200.0, 300.0, 40.0),
+        )
+        .with_label("Volume")
+        .with_value(v)])
+    };
+    assert!(diff(&slider("20%"), &slider("80%")).changed);
+    assert_ne!(screen_hash(&slider("20%")), screen_hash(&slider("80%")));
+
+    let alarm = |l: &str| compacted(vec![label(l, 20.0, 200.0)]);
+    assert!(diff(&alarm("Alarm, 7:00 AM"), &alarm("Alarm, 8:30 AM")).changed);
+
+    let field = |v: &str| {
+        compacted(vec![jarvis_proto::UiNode::new(
+            Role::TextField,
+            r(20.0, 300.0, 300.0, 40.0),
+        )
+        .with_label("Tip")
+        .with_value(v)])
+    };
+    assert!(diff(&field("15%"), &field("20%")).changed);
 }
 
 #[test]

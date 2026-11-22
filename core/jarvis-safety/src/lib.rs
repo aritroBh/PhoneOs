@@ -7,6 +7,7 @@
 //! [`Budget`] per task.
 
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 mod app;
 mod budget;

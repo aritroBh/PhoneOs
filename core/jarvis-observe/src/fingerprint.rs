@@ -41,10 +41,11 @@ pub fn fnv1a64(bytes: &[u8]) -> u64 {
     h.finish()
 }
 
-/// The identity key of an element: `i:<identifier>` when an identifier exists, else `l:<label>`.
+/// The identity key of an element: the label, preceded by `i:<identifier>` when one exists
+/// (so controls sharing an identifier but not a label stay distinct).
 pub fn identity_key(identifier: Option<&str>, label: &str) -> String {
     match identifier {
-        Some(id) if !id.is_empty() => format!("i:{id}"),
+        Some(id) if !id.is_empty() => format!("i:{id}\u{1}l:{label}"),
         _ => format!("l:{label}"),
     }
 }

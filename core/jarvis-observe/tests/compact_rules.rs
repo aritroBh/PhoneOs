@@ -429,3 +429,58 @@ fn pathologically_deep_tree_does_not_overflow() {
     let c = compacted(vec![n]);
     assert!(c.elements.is_empty());
 }
+
+#[test]
+fn hittable_other_wrapper_never_merges_its_children() {
+    // The runner-text parser marks every node hittable; that must not turn a plain
+    // wrapper into a cell.
+    let mut texts: Vec<UiNode> = (0..10)
+        .map(|i| label(&format!("P{i}"), 16.0, 100.0 + f64::from(i) * 30.0))
+        .collect();
+    texts.insert(0, label("Headline", 16.0, 60.0));
+    texts.push(UiNode::new(Role::Button, r(300.0, 60.0, 44.0, 44.0)).hittable(true));
+    let wrapper = other(texts).hittable(true);
+    let c = compacted(vec![wrapper]);
+    assert_eq!(c.elements.len(), 12, "{:?}", labels(&c));
+    for i in 0..10 {
+        assert_eq!(count_label(&c, &format!("P{i}")), 1);
+    }
+    assert_eq!(count_label(&c, "Headline"), 1);
+    let icon = c.elements.iter().find(|e| e.role == Role::Button).unwrap();
+    assert_eq!(icon.label, "", "icon button must not borrow sibling texts");
+}
+
+#[test]
+fn cell_with_many_texts_marks_truncation_instead_of_dropping_silently() {
+    let kids: Vec<UiNode> = (0..20)
+        .map(|i| label(&format!("T{i}"), 4.0 + f64::from(i) * 18.0, 110.0))
+        .collect();
+    let c = compacted(vec![
+        UiNode::new(Role::Cell, r(0.0, 100.0, 393.0, 44.0)).with_children(kids)
+    ]);
+    assert_eq!(c.elements.len(), 1);
+    assert!(
+        c.elements[0].label.ends_with(", …"),
+        "{}",
+        c.elements[0].label
+    );
+    assert!(c.elements[0].label.starts_with("T0, T1"));
+}
+
+#[test]
+fn fifty_thousand_nodes_nested_deeply_compact_in_linear_time() {
+    // 150 nested wrappers (hittable, like parsed runner text) around 50k texts.
+    let leaves: Vec<UiNode> = (0..50_000)
+        .map(|i| label(&format!("T{i}"), 4.0, f64::from(i % 800)))
+        .collect();
+    let mut n = other(leaves).hittable(true);
+    for _ in 0..150 {
+        n = other(vec![n]).hittable(true);
+    }
+    let started = std::time::Instant::now();
+    let c = compacted(vec![n]);
+    let took = started.elapsed();
+    assert!(took.as_secs() < 10, "took {took:?}");
+    assert!(c.elements.len() > 10_000, "got {}", c.elements.len());
+    assert_eq!(c.elements.first().map(|e| e.index), Some(1));
+}

@@ -1,6 +1,8 @@
 //! Parser for the indented text tree the LoopCtrl-style runners return in `page_source`.
 
 use jarvis_proto::{Rect, Role, UiNode};
+
+use crate::compact::MAX_DEPTH;
 use thiserror::Error;
 
 /// How many physical lines one node (a label with embedded newlines) may span.
@@ -140,7 +142,8 @@ fn to_node(f: Fields) -> UiNode {
 /// Robustness: labels may contain commas, quotes and braces; blank lines and trailing
 /// whitespace are ignored; a label with embedded newlines is rejoined; unparseable lines are
 /// skipped and counted in [`ParsedTree::warnings`]; a jump of more than one level attaches to
-/// the nearest open parent; several top-level lines are wrapped in a synthetic `Application`.
+/// the nearest open parent; nesting deeper than the compaction depth cap is flattened to
+/// siblings at the cap; several top-level lines are wrapped in a synthetic `Application`.
 ///
 /// The format comes from reading the runner's source (see `docs/RUNNER.md` section 2.1) and
 /// has not been verified against a real device.
@@ -165,13 +168,14 @@ pub fn parse_runner_text(source: &str) -> Result<ParsedTree, ParseError> {
                 .take(MAX_CONTINUATION_LINES)
                 .enumerate()
             {
-                if looks_like_node_start(extra.trim()) {
-                    // The next real node starts here: this line was truncated, not wrapped.
+                let extra = extra.trim_end();
+                if parse_node(extra.trim()).is_some() {
+                    // A complete node of its own: the first line was truncated, not wrapped.
                     break;
                 }
                 joined.push('\n');
-                joined.push_str(extra.trim_end());
-                if extra.trim_end().ends_with("}}") {
+                joined.push_str(extra);
+                if extra.ends_with("}}") {
                     if let Some(f) = parse_node(&joined) {
                         parsed = Some(f);
                         i += n + 1;
@@ -208,7 +212,7 @@ pub fn parse_runner_text(source: &str) -> Result<ParsedTree, ParseError> {
         }
     };
     for (indent, fields) in entries {
-        let depth = ((indent - base) / unit).min(stack.len());
+        let depth = ((indent - base) / unit).min(stack.len()).min(MAX_DEPTH);
         while stack.len() > depth {
             close(&mut stack, &mut roots);
         }

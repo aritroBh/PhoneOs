@@ -194,3 +194,64 @@ fn replay_refuses_to_type_into_secure_field_even_if_recorded_plain() {
         }
     ));
 }
+
+#[test]
+fn swapped_same_fingerprint_buttons_never_tap_the_wrong_one() {
+    let a = screen(
+        "app",
+        vec![
+            el(1, Role::Button, "Cancel", 77),
+            el(2, Role::Button, "Delete account", 77),
+        ],
+    );
+    let mut rec = Recorder::new("cancel it");
+    rec.record(RecordedStep {
+        action: Action::Tap { element: 1 },
+        element: a.get(1),
+        screen: &a,
+    });
+    let flow = rec.finish(true, 1).unwrap();
+    let rp = Replayer::new(flow.clone(), Bindings::new());
+    let swapped = screen(
+        "app",
+        vec![
+            el(1, Role::Button, "Delete account", 77),
+            el(2, Role::Button, "Cancel", 77),
+        ],
+    );
+    assert!(matches!(
+        rp.next(&swapped),
+        Next::Diverged {
+            reason: Divergence::Ambiguous { .. }
+        }
+    ));
+    // A single element with the fingerprint but another label also diverges.
+    let relabelled = screen("app", vec![el(1, Role::Button, "Delete account", 77)]);
+    assert!(matches!(rp.next(&relabelled), Next::Diverged { .. }));
+    // Label case/whitespace differences are fine.
+    let ok = screen("app", vec![el(4, Role::Button, " cancel ", 77)]);
+    assert_eq!(rp.next(&ok), Next::Action(Action::Tap { element: 4 }));
+}
+
+#[test]
+fn fallback_refuses_generic_or_tiny_labels() {
+    for label in ["OK", "Delete", "Send", "x"] {
+        let a = screen("app", vec![el(1, Role::Button, label, 1)]);
+        let mut rec = Recorder::new("do thing");
+        rec.record(RecordedStep {
+            action: Action::Tap { element: 1 },
+            element: a.get(1),
+            screen: &a,
+        });
+        let rp = Replayer::new(rec.finish(true, 1).unwrap(), Bindings::new());
+        let changed = screen("app", vec![el(1, Role::Button, label, 2)]);
+        assert!(
+            matches!(rp.next(&changed), Next::Diverged { .. }),
+            "{label}"
+        );
+        assert!(
+            matches!(rp.next(&a), Next::Action(_)),
+            "fingerprint still works: {label}"
+        );
+    }
+}

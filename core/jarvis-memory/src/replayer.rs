@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use jarvis_proto::{Action, CompactScreen, Element, Role};
+use jarvis_proto::{Action, CompactScreen, Element};
 
 use crate::flow::{Bindings, Flow, FlowAction, FlowStep, FlowText};
 
@@ -232,24 +232,49 @@ impl Replayer {
     }
 }
 
-fn role_matches(step_role: &Option<Role>, e: &Element) -> bool {
-    step_role.as_ref().is_none_or(|r| *r == e.role)
+/// Normalised label for comparison: trimmed, lowercase, single spaces.
+fn norm_label(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
-/// Finds the step's control: unique fingerprint (and role) first, else unique role + label.
+/// Labels too generic to identify a control without its fingerprint.
+const GENERIC_LABELS: &[&str] = &[
+    "ok", "done", "continue", "yes", "no", "allow", "delete", "send", "pay", "buy", "confirm",
+    "cancel", "next", "back", "close", "save", "submit", "remove", "accept", "agree",
+];
+
+/// Finds the step's control, preferring divergence over any guess.
+///
+/// A fingerprint hit must be unique on screen AND agree on role and normalised label. Without
+/// any fingerprint hit, a unique role + label match is used, but only for a specific label
+/// (at least 2 characters, not a generic word such as "OK" or "Delete").
 fn resolve_target<'s>(
     step: &FlowStep,
     screen: &'s CompactScreen,
 ) -> Result<&'s Element, Divergence> {
+    let want_label = norm_label(&step.label);
     if let Some(fp) = step.fingerprint {
         let hits: Vec<&Element> = screen
             .elements
             .iter()
-            .filter(|e| e.fingerprint == fp && role_matches(&step.role, e))
+            .filter(|e| e.fingerprint == fp)
             .collect();
         match hits.as_slice() {
-            [one] => return Ok(one),
             [] => {}
+            [one] => {
+                let role_ok = step.role.as_ref().is_none_or(|r| *r == one.role);
+                if role_ok && norm_label(&one.label) == want_label {
+                    return Ok(one);
+                }
+                return Err(Divergence::ControlMissing {
+                    label: step.label.clone(),
+                });
+            }
             many => {
                 return Err(Divergence::Ambiguous {
                     label: step.label.clone(),
@@ -258,15 +283,20 @@ fn resolve_target<'s>(
             }
         }
     }
-    let Some(role) = step.role.as_ref().filter(|_| !step.label.trim().is_empty()) else {
+    let Some(role) = step.role.as_ref() else {
         return Err(Divergence::ControlMissing {
             label: step.label.clone(),
         });
     };
+    if want_label.chars().count() < 2 || GENERIC_LABELS.contains(&want_label.as_str()) {
+        return Err(Divergence::ControlMissing {
+            label: step.label.clone(),
+        });
+    }
     let hits: Vec<&Element> = screen
         .elements
         .iter()
-        .filter(|e| e.role == *role && e.label.trim() == step.label.trim())
+        .filter(|e| e.role == *role && norm_label(&e.label) == want_label)
         .collect();
     match hits.as_slice() {
         [one] => Ok(one),

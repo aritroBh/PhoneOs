@@ -140,7 +140,7 @@ fn oversized_flow_list_is_trimmed_on_load() {
     let flows: Vec<String> = (0..MAX_FLOWS_TEST + 5)
         .map(|i| {
             let mut g = f.clone();
-            g.id = format!("{i:04}");
+            g.intent_key = format!("task {i:04}");
             g.last_used_ms = i as u64;
             serde_json::to_string(&g).unwrap()
         })
@@ -148,6 +148,43 @@ fn oversized_flow_list_is_trimmed_on_load() {
     let json = format!(r#"{{"flows":{{"flows":[{}]}}}}"#, flows.join(","));
     let store = MemoryStore::from_json(&json).unwrap();
     assert_eq!(store.flows.len(), 200);
-    assert!(store.flows.get("0000").is_none(), "oldest evicted");
+    assert!(store.flows.find("task 0000").is_none(), "oldest evicted");
 }
 const MAX_FLOWS_TEST: usize = 200;
+
+#[test]
+fn fifty_thousand_flows_load_quickly_and_are_bounded() {
+    let f = record_text_flow("text mom hi", "zzz").unwrap();
+    let one = serde_json::to_string(&f).unwrap();
+    let json = format!(
+        r#"{{"flows":{{"flows":[{}]}}}}"#,
+        vec![one; 50_000].join(",")
+    );
+    let t = std::time::Instant::now();
+    let store = MemoryStore::from_json(&json).unwrap();
+    assert!(t.elapsed().as_secs() < 5);
+    assert!(store.flows.len() <= 200);
+}
+
+#[test]
+fn loaded_flows_are_revalidated() {
+    let f = record_text_flow("text mom hi", "zzz").unwrap();
+    let mut bad_id = f.clone();
+    bad_id.id = "forged".into();
+    bad_id.failures = 5; // should be retired
+    let mut empty = f.clone();
+    empty.intent_key = "other".into();
+    empty.steps.clear();
+    let mut long = f.clone();
+    long.intent_key = "long".into();
+    long.steps = vec![f.steps[0].clone(); 65];
+    let json = serde_json::json!({"flows":{"flows":[bad_id, empty, long]}}).to_string();
+    let store = MemoryStore::from_json(&json).unwrap();
+    assert_eq!(store.flows.len(), 1);
+    let loaded = &store.flows.flows()[0];
+    assert_eq!(
+        loaded.id,
+        flow_id(&loaded.intent_key, &loaded.app_bundle_id)
+    );
+    assert!(loaded.retired);
+}

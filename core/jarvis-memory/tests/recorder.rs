@@ -294,3 +294,69 @@ fn flow_json_roundtrip_and_ids_are_stable() {
     assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
     assert_eq!(flow_id("x", "y").len(), 16);
 }
+
+#[test]
+fn typing_after_tapping_a_secure_field_without_focus_is_never_stored() {
+    let mut login = screen(
+        "com.example.acme",
+        vec![
+            el(1, Role::TextField, "Email", 11),
+            el(2, Role::SecureTextField, "Password", 12),
+        ],
+    );
+    login.elements[1].secure = true;
+    let mut rec = Recorder::new("log in");
+    rec_step(&mut rec, Action::Tap { element: 2 }, Some(2), &login);
+    rec_step(
+        &mut rec,
+        Action::Type {
+            element: None,
+            text: "hunter2".into(),
+            submit: true,
+        },
+        None,
+        &login,
+    );
+    let flow = rec.finish(true, 1).unwrap();
+    assert!(matches!(flow.steps[1].action, FlowAction::HandBack { .. }));
+    let mut m = MemoryStore::new();
+    m.flows.upsert(flow);
+    assert!(!m.to_json().unwrap().contains("hunter2"));
+
+    // Even without a preceding tap: secure field on screen and nothing focused.
+    let mut rec = Recorder::new("log in");
+    rec_step(&mut rec, Action::Tap { element: 1 }, Some(1), &login);
+    rec_step(
+        &mut rec,
+        Action::Type {
+            element: None,
+            text: "hunter3".into(),
+            submit: true,
+        },
+        None,
+        &login,
+    );
+    let flow = rec.finish(true, 1).unwrap();
+    assert!(!serde_json::to_string(&flow).unwrap().contains("hunter3"));
+}
+
+#[test]
+fn sensitive_values_match_by_normalised_containment() {
+    let t = thread();
+    let mut rec = Recorder::new("pay");
+    rec.set_sensitive_values(vec!["4111111111111111".into()]);
+    rec_step(&mut rec, Action::Tap { element: 3 }, Some(3), &t);
+    rec_step(
+        &mut rec,
+        Action::Type {
+            element: Some(2),
+            text: "4111 1111-1111 1111".into(),
+            submit: false,
+        },
+        Some(2),
+        &t,
+    );
+    let flow = rec.finish(true, 1).unwrap();
+    assert!(matches!(flow.steps[1].action, FlowAction::HandBack { .. }));
+    assert!(!serde_json::to_string(&flow).unwrap().contains("4111"));
+}

@@ -81,20 +81,71 @@ fn fingerprint_ignores_frame_and_index_when_the_layout_shifts() {
 }
 
 #[test]
-fn identifier_beats_label_so_relabelling_keeps_identity() {
-    let make = |label: &str| {
+fn identifier_and_label_are_both_part_of_the_identity() {
+    // Two buttons sharing one identifier but meaning different things swap places:
+    // each fingerprint must follow its label, not its position.
+    let order = |a: &str, b: &str| {
         compacted(vec![
-            button(label, 20.0, 100.0, 100.0, 44.0).with_identifier("cart.checkout")
+            button(a, 20.0, 100.0, 100.0, 44.0).with_identifier("action_button"),
+            button(b, 20.0, 200.0, 100.0, 44.0).with_identifier("action_button"),
         ])
     };
-    let a = make("Checkout (2)");
-    let b = make("Checkout (3)");
-    assert_eq!(a.elements[0].fingerprint, b.elements[0].fingerprint);
+    let before = order("Cancel", "Delete account");
+    let after = order("Delete account", "Cancel");
+    for l in ["Cancel", "Delete account"] {
+        assert_eq!(
+            by_label(&before, l).fingerprint,
+            by_label(&after, l).fingerprint,
+            "{l} changed fingerprint when order swapped"
+        );
+    }
+    assert_ne!(
+        by_label(&before, "Cancel").fingerprint,
+        by_label(&before, "Delete account").fingerprint
+    );
+}
 
-    // Without an identifier the label is the identity.
-    let c = compacted(vec![button("Checkout (2)", 20.0, 100.0, 100.0, 44.0)]);
-    let d = compacted(vec![button("Checkout (3)", 20.0, 100.0, 100.0, 44.0)]);
-    assert_ne!(c.elements[0].fingerprint, d.elements[0].fingerprint);
+#[test]
+fn controls_in_rows_are_identified_by_their_row() {
+    let row = |title: &str, y: f64| {
+        UiNode::new(Role::Cell, r(0.0, y, 393.0, 60.0)).with_children(vec![
+            label(title, 16.0, y + 10.0),
+            button("Delete", 300.0, y + 8.0, 70.0, 44.0),
+        ])
+    };
+    let before = compacted(vec![row("Old draft", 100.0), row("Tax return", 200.0)]);
+    let after = compacted(vec![row("Tax return", 100.0), row("Old draft", 200.0)]);
+    let delete_in = |c: &jarvis_proto::CompactScreen, row_y: f64| {
+        c.elements
+            .iter()
+            .find(|e| e.label == "Delete" && (e.frame.y - row_y).abs() < 30.0)
+            .unwrap()
+            .fingerprint
+    };
+    // "Old draft" row moved from y=100 to y=200; its Delete must keep its fingerprint.
+    assert_eq!(delete_in(&before, 100.0), delete_in(&after, 200.0));
+    assert_eq!(delete_in(&before, 200.0), delete_in(&after, 100.0));
+    assert_ne!(delete_in(&before, 100.0), delete_in(&before, 200.0));
+}
+
+#[test]
+fn controls_under_a_labelled_container_pick_up_its_label() {
+    let make = |title: &str| {
+        compacted(vec![UiNode::new(
+            Role::Other("other".into()),
+            r(0.0, 100.0, 393.0, 100.0),
+        )
+        .with_label(title)
+        .with_children(vec![button("Remove", 300.0, 110.0, 70.0, 44.0)])])
+    };
+    assert_ne!(
+        make("Home").elements[0].fingerprint,
+        make("Work").elements[0].fingerprint
+    );
+    assert_eq!(
+        make("Home").elements[0].fingerprint,
+        make("Home").elements[0].fingerprint
+    );
 }
 
 #[test]

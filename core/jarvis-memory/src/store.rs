@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::flow::{flow_id, Bindings, Flow};
+use crate::flow::{flow_id, Bindings, Flow, MAX_STEPS};
 use crate::intent::{intent_key, is_slotted, match_slotted};
 use crate::log::{LogEntry, TaskLog};
 use crate::profile::{Profile, ProfileField};
@@ -12,6 +12,8 @@ use crate::profile::{Profile, ProfileField};
 pub const SCHEMA_VERSION: u32 = 1;
 /// Default cap on stored flows.
 pub const MAX_FLOWS: usize = 200;
+/// Most flows, profile fields or log entries read from one input; the rest are ignored.
+pub const MAX_PARSED_ITEMS: usize = 1000;
 
 /// Errors from loading or saving memory.
 #[derive(Debug, thiserror::Error)]
@@ -163,25 +165,26 @@ impl FlowStore {
     }
 
     fn evict(&mut self, protect: Option<&str>) {
-        while self.flows.len() > self.max_flows {
-            let victim = self
-                .flows
-                .iter()
-                .enumerate()
-                .filter(|(_, f)| Some(f.id.as_str()) != protect)
-                .min_by(|(_, a), (_, b)| {
-                    a.last_used_ms
-                        .cmp(&b.last_used_ms)
-                        .then_with(|| a.id.cmp(&b.id))
-                })
-                .map(|(i, _)| i);
-            match victim {
-                Some(i) => {
-                    self.flows.remove(i);
-                }
-                None => break,
-            }
+        let excess = self.flows.len().saturating_sub(self.max_flows);
+        if excess == 0 {
+            return;
         }
+        let mut order: Vec<(u64, &str, usize)> = self
+            .flows
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| Some(f.id.as_str()) != protect)
+            .map(|(i, f)| (f.last_used_ms, f.id.as_str(), i))
+            .collect();
+        order.sort();
+        let doomed: std::collections::BTreeSet<usize> =
+            order.iter().take(excess).map(|(_, _, i)| *i).collect();
+        let mut i = 0usize;
+        self.flows.retain(|_| {
+            let keep = !doomed.contains(&i);
+            i += 1;
+            keep
+        });
     }
 
     /// Records the result of a replay. Updates counters and `last_used_ms`, and retires the
@@ -201,12 +204,28 @@ impl FlowStore {
         Some(flow.retired)
     }
 
+    /// Validates loaded flows: ids are recomputed, retirement re-applied, invalid flows
+    /// (no key, no steps, too many steps) dropped, duplicates merged, the cap enforced.
     fn from_flows(flows: Vec<Flow>) -> Self {
-        let mut store = Self::default();
-        let mut flows = flows;
+        let mut flows: Vec<Flow> = flows
+            .into_iter()
+            .filter(|f| {
+                !f.intent_key.is_empty() && !f.steps.is_empty() && f.steps.len() <= MAX_STEPS
+            })
+            .map(|mut f| {
+                f.id = flow_id(&f.intent_key, &f.app_bundle_id);
+                if f.should_retire() {
+                    f.retired = true;
+                }
+                f
+            })
+            .collect();
         flows.sort_by(|a, b| a.id.cmp(&b.id).then(b.last_used_ms.cmp(&a.last_used_ms)));
         flows.dedup_by(|b, a| a.id == b.id);
-        store.flows = flows;
+        let mut store = Self {
+            flows,
+            ..Self::default()
+        };
         store.evict(None);
         store
     }
@@ -276,7 +295,7 @@ impl MemoryStore {
         }
         let mut store = MemoryStore::default();
         if let Some(section) = section(obj, "flows")? {
-            let flows = lenient_list::<Flow>(section.get("flows"), "flows.flows")?;
+            let flows = lenient_list::<Flow>(section.get("flows"), "flows.flows", false)?;
             store.flows = FlowStore::from_flows(flows);
         }
         if let Some(section) = section(obj, "profile")? {
@@ -284,7 +303,7 @@ impl MemoryStore {
                 let map = fields.as_object().ok_or_else(|| {
                     MemoryError::Invalid("profile.fields is not an object".to_owned())
                 })?;
-                for (k, v) in map {
+                for (k, v) in map.iter().take(MAX_PARSED_ITEMS) {
                     if let Ok(field) = serde_json::from_value::<ProfileField>(v.clone()) {
                         store.profile.fields.insert(k.clone(), field);
                     }
@@ -292,7 +311,7 @@ impl MemoryStore {
             }
         }
         if let Some(section) = section(obj, "log")? {
-            let entries = lenient_list::<LogEntry>(section.get("entries"), "log.entries")?;
+            let entries = lenient_list::<LogEntry>(section.get("entries"), "log.entries", true)?;
             store.log = TaskLog::from_entries(entries);
         }
         Ok(store)
@@ -315,11 +334,18 @@ fn section<'a>(
 fn lenient_list<T: serde::de::DeserializeOwned>(
     value: Option<&Value>,
     what: &str,
+    keep_last: bool,
 ) -> Result<Vec<T>, MemoryError> {
     match value {
         None | Some(Value::Null) => Ok(Vec::new()),
         Some(Value::Array(items)) => Ok(items
             .iter()
+            .skip(if keep_last {
+                items.len().saturating_sub(MAX_PARSED_ITEMS)
+            } else {
+                0
+            })
+            .take(MAX_PARSED_ITEMS)
             .filter_map(|v| serde_json::from_value::<T>(v.clone()).ok())
             .collect()),
         Some(_) => Err(MemoryError::Invalid(format!("{what} is not an array"))),

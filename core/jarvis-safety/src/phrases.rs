@@ -81,6 +81,7 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("call back", SendMessage),
     p("dial", SendMessage),
     p("facetime", SendMessage),
+    p("face time", SendMessage),
     p("video call", SendMessage),
     p("voice call", SendMessage),
     p("start call", SendMessage),
@@ -266,6 +267,9 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("cancel subscription", AccountChange),
     p("cancel membership", AccountChange),
     p("cancel plan", AccountChange),
+    p("cancel order", AccountChange),
+    p("cancel booking", AccountChange),
+    p("cancel reservation", AccountChange),
     p("transfer ownership", AccountChange),
     p("block", AccountChange),
     p("block contact", AccountChange),
@@ -416,6 +420,7 @@ pub const CREDENTIAL_FIELD_PHRASES: &[Phrase] = &[
 pub const COMPOSE_FIELD_PHRASES: &[Phrase] = &[
     p("message", SendMessage),
     p("imessage", SendMessage),
+    p("i message", SendMessage),
     p("text message", SendMessage),
     p("reply", SendMessage),
     p("write a reply", SendMessage),
@@ -457,6 +462,28 @@ pub const SETTINGS_ACTION_PHRASES: &[Phrase] = &[
     p("confirm", AccountChange),
 ];
 
+/// Labels that only navigate or back out; tapping them is never boosted to `Payment` on a
+/// checkout screen.
+pub const NAVIGATION_PHRASES: &[Phrase] = &[
+    p("cancel", RiskCategory::None),
+    p("back", RiskCategory::None),
+    p("close", RiskCategory::None),
+    p("not now", RiskCategory::None),
+    p("no thanks", RiskCategory::None),
+    p("dismiss", RiskCategory::None),
+    p("edit", RiskCategory::None),
+    p("change", RiskCategory::None),
+    p("learn more", RiskCategory::None),
+    p("help", RiskCategory::None),
+    p("details", RiskCategory::None),
+    p("more info", RiskCategory::None),
+    p("terms", RiskCategory::None),
+    p("privacy policy", RiskCategory::None),
+    p("menu", RiskCategory::None),
+    p("search", RiskCategory::None),
+    p("home", RiskCategory::None),
+];
+
 /// Bundle id of the App Store, where "Get" and "Install" start a (possibly paid) download.
 pub const APP_STORE_BUNDLE_ID: &str = "com.apple.AppStore";
 
@@ -464,14 +491,29 @@ pub const APP_STORE_BUNDLE_ID: &str = "com.apple.AppStore";
 pub const SETTINGS_BUNDLE_ID: &str = "com.apple.Preferences";
 
 /// Extra phrases that apply only inside one app.
-pub const APP_PHRASES: &[(&str, &[Phrase])] = &[(
-    APP_STORE_BUNDLE_ID,
-    &[
-        p("get", Purchase),
-        p("install", Purchase),
-        p("redownload", Purchase),
-    ],
-)];
+pub const APP_PHRASES: &[(&str, &[Phrase])] = &[
+    (
+        APP_STORE_BUNDLE_ID,
+        &[
+            p("get", Purchase),
+            p("install", Purchase),
+            p("redownload", Purchase),
+        ],
+    ),
+    (
+        // Before iOS 18 saved passwords live inside Settings, not the Passwords app.
+        SETTINGS_BUNDLE_ID,
+        &[
+            p("passwords", Credential),
+            p("passwords and accounts", Credential),
+            p("face id and passcode", AccountChange),
+            p("face id passcode", AccountChange),
+            p("touch id and passcode", AccountChange),
+            p("touch id passcode", AccountChange),
+            p("passcode", AccountChange),
+        ],
+    ),
+];
 
 /// Highest-risk-first ordering used to combine several signals into one category.
 pub(crate) fn severity(c: RiskCategory) -> u8 {
@@ -506,8 +548,49 @@ pub(crate) struct LabelRisk {
     pub generic: bool,
 }
 
-/// Applies `tables` to the label tokens `toks`.
+/// Joins runs of two or more single-letter tokens, so a spelled-out `P a y` or `D.E.L.E.T.E`
+/// reads as one word.
+fn join_spelled(toks: &[String]) -> Vec<String> {
+    let single = |t: &String| t.chars().count() == 1 && t.chars().all(char::is_alphabetic);
+    let mut out: Vec<String> = Vec::with_capacity(toks.len());
+    let mut run: Vec<&String> = Vec::new();
+    let flush = |run: &mut Vec<&String>, out: &mut Vec<String>| {
+        if run.len() >= 2 {
+            out.push(run.iter().map(|s| s.as_str()).collect());
+        } else {
+            out.extend(run.iter().map(|s| (*s).clone()));
+        }
+        run.clear();
+    };
+    for t in toks {
+        if single(t) {
+            run.push(t);
+        } else {
+            flush(&mut run, &mut out);
+            out.push(t.clone());
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+
+/// Applies `tables` to the label tokens `toks`, and to the same tokens with spelled-out
+/// letters joined; the riskier reading wins.
 pub(crate) fn match_tokens(toks: &[String], tables: &[&[Phrase]]) -> LabelRisk {
+    let plain = match_tokens_once(toks, tables);
+    let joined = join_spelled(toks);
+    if joined.as_slice() == toks {
+        return plain;
+    }
+    let spelled = match_tokens_once(&joined, tables);
+    LabelRisk {
+        category: max_risk(plain.category, spelled.category),
+        generic: plain.generic || spelled.generic,
+    }
+}
+
+/// Applies `tables` to the label tokens `toks`.
+fn match_tokens_once(toks: &[String], tables: &[&[Phrase]]) -> LabelRisk {
     // (start, end, phrase) for every raw match.
     let mut found: Vec<(usize, usize, &Phrase)> = Vec::new();
     for table in tables {
