@@ -61,6 +61,9 @@ enum JarvisIcon: String, CaseIterable {
     case moveUp = "chevron.up"
     case remove = "minus.circle"
     case log = "list.bullet"
+    case pause = "pause.fill"
+    case stepBack = "backward.frame.fill"
+    case stepForward = "forward.frame.fill"
 
     /// The symbol as an image (scale it with `.font(.system(size:))`).
     var image: Image { Image(systemName: rawValue) }

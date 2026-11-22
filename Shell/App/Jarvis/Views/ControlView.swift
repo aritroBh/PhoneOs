@@ -88,6 +88,21 @@ struct ControlView: View {
                         ProximityRow(identifier: "control.away.proximity").card()
                     }
 
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionLabel(text: "Live view")
+                        SwitchRow(title: "Show real screen in Live view", icon: .wayScreen, isOn: Binding(
+                            get: { model.settings.liveViewScreenshots },
+                            set: { model.setLiveViewScreenshots($0) }
+                        ), identifier: "control.liveView.realScreen")
+                        .card()
+                        Text("Uses screenshots kept in memory only. Off: Jarvis draws an outline of the screen instead.")
+                            .font(Theme.meta)
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 4)
+                            .accessibilityIdentifier("control.liveView.footnote")
+                    }
+
                     VStack(alignment: .leading, spacing: 8) {
                         SectionLabel(text: "How careful")
                         HStack(spacing: 2) {

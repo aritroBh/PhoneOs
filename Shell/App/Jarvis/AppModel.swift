@@ -82,6 +82,8 @@ final class AppModel: ObservableObject {
     /// The rules file was damaged and set aside: tasks wait for "I have reviewed my rules".
     @Published private(set) var settingsNeedReview = false
     @Published private(set) var live = LiveRun()
+    /// The Live view: what Jarvis did, step by step, with a cursor (the current or last run).
+    @Published private(set) var viewer = PointerTimeline()
     @Published private(set) var prompt: HumanPrompt?
     @Published private(set) var history: [TaskRecord] = []
     @Published private(set) var memory: MemorySnapshot = .empty
@@ -422,11 +424,23 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Leaves the finished run view.
+    /// Leaves the finished run view. The Live view's replay and its frames go with it.
     func dismissRun() {
         guard center.session == nil else { return }
         showingRun = false
         live = LiveRun()
+        viewer = PointerTimeline()
+        coordinator.viewerFrames.removeAll()
+    }
+
+    /// The Live view's real-screen frames (memory only).
+    var viewerFrames: ViewerFrameStore { coordinator.viewerFrames }
+
+    /// "Show real screen in Live view". Turning it off drops the frames at once, also those
+    /// of a run that is going.
+    func setLiveViewScreenshots(_ on: Bool) {
+        settings.liveViewScreenshots = on
+        if !on { coordinator.viewerFrames.isEnabled = false }
     }
 
     // MARK: - What runs (every task, whoever asked)
@@ -440,19 +454,23 @@ final class AppModel: ObservableObject {
             lastTask = session.text
             lastSkill = session.skill
             live = LiveRun(task: session.text, maxSteps: Int(settings.clampedMaxSteps), skillName: session.skill?.name)
+            viewer = PointerTimeline(framesEnabled: settings.liveViewScreenshots)
             if session.origin.workflow == nil { showingRun = true }
         case .session(_, let runEvent):
             // A lock abandoned the pending question or confirmation: the broker withdrew that
             // prompt by its id when the driver gave up the wait (never a newer one).
             live.apply(runEvent)
+            viewer.apply(runEvent)
         case .sessionFinished(let session, let outcome):
             switch outcome {
             case .notStarted(let why):
                 setupError = why
-                live.apply(.update(.finished(RunResult(
+                let notStarted = RunEvent.update(.finished(RunResult(
                     outcome: Outcome(status: .failed, summary: why, steps: 0, durationMs: 0),
                     endReason: .sessionFinished, memory: .unavailable(why), effectCount: 0, modelCalls: 0
-                ))))
+                )))
+                live.apply(notStarted)
+                viewer.apply(notStarted)
             case .finished:
                 if let skill = session.skill { try? skills.recordRun(id: skill.id) }
             }
@@ -460,6 +478,7 @@ final class AppModel: ObservableObject {
         case .workflowStarted:
             if awayPhase != .off { exitAway() }
             live = LiveRun()
+            viewer = PointerTimeline()
             showingWorkflowRun = true
         case .workflowFinished:
             refreshWorkflows()

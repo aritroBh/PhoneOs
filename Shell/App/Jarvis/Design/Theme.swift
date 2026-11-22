@@ -96,6 +96,19 @@ enum Theme {
     static let filter = Font.system(size: 14, weight: .semibold)
     static let awayStatus = Font.system(size: 13, weight: .medium)
 
+    // MARK: Live view (the phone-shaped viewer and its cursor)
+    static let viewerMaxHeight: CGFloat = 440
+    static let viewerBezel: CGFloat = 7
+    static let viewerOuterRadius: CGFloat = 30
+    static let viewerScreenRadius: CGFloat = 23
+    static let cursorHeight: CGFloat = 22
+    static let cursorTagFont = Font.system(size: 11, weight: .semibold)
+    static let wireframeLabelMax: CGFloat = 10
+    static let rippleStart: CGFloat = 14
+    static let rippleGrowth: CGFloat = 40
+    static let pressRing: CGFloat = 40
+    static let swipeTrailWidth: CGFloat = 8
+
     // MARK: Motion (ease-out; Reduce Motion disables movement)
     static let fast = Animation.easeOut(duration: 0.125)
     static let medium = Animation.easeOut(duration: 0.3)

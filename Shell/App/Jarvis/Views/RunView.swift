@@ -1,9 +1,12 @@
 import SwiftUI
 import JarvisKit
 
-/// Ask (running / done): what Jarvis sees, the step timeline, Stop; then the result.
+/// Ask (running / done): what Jarvis sees (the Live view of the screen with its cursor, or
+/// the element list), the step timeline, Stop; then the result. After the run the Live view
+/// stays as a replay of it.
 struct RunView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var sightMode: SightMode = .screen
 
     private var live: LiveRun { model.live }
 
@@ -48,7 +51,13 @@ struct RunView: View {
                     if let result = live.result {
                         ResultCard(result: result)
                     }
-                    SightCard(live: live)
+                    SightSwitch(mode: $sightMode)
+                    switch sightMode {
+                    case .screen:
+                        LiveScreenView(timeline: model.viewer.timeline, frames: model.viewerFrames)
+                    case .elements:
+                        SightCard(live: live)
+                    }
                     StepTimeline(steps: live.steps)
                 }
             }
@@ -90,6 +99,63 @@ struct RunView: View {
                 .accessibilityIdentifier("run.runAgain")
             }
         }
+    }
+}
+
+/// What the sight area shows: the Live view or the element list.
+enum SightMode: String, CaseIterable, Identifiable {
+    case screen
+    case elements
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .screen: "Screen"
+        case .elements: "Elements"
+        }
+    }
+
+    var icon: JarvisIcon {
+        switch self {
+        case .screen: .runner
+        case .elements: .log
+        }
+    }
+}
+
+/// "Screen / Elements": a two-way switch, white when selected (like "How careful").
+private struct SightSwitch: View {
+    @Binding var mode: SightMode
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(SightMode.allCases) { option in
+                let selected = mode == option
+                Button {
+                    withAnimation(Theme.fast) { mode = option }
+                } label: {
+                    Label {
+                        Text(option.title)
+                    } icon: {
+                        Image.decorative(option.icon, size: Theme.iconCompact)
+                    }
+                    .font(Theme.meta.weight(.semibold))
+                    .foregroundStyle(selected ? Theme.primaryText : Theme.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: Theme.filterHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.radiusElement - 2, style: .continuous)
+                            .fill(selected ? Theme.primaryFill : Color.clear)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: Theme.radiusElement - 2, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityIdentifier("run.view.\(option.rawValue)")
+            }
+        }
+        .padding(3)
+        .card(radius: Theme.radiusElement + 1)
     }
 }
 

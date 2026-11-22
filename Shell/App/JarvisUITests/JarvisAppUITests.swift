@@ -270,6 +270,85 @@ final class JarvisAppUITests: QATestCase {
         XCTAssertTrue(app.buttons["run.newTask"].exists)
     }
 
+    /// The Live view on the run screen: a demo task plays in it (the viewer's value is its
+    /// caption), the caption changes as the run goes, and the replay controls step back to
+    /// an earlier step, forward again, and back to live.
+    @MainActor
+    func testLiveViewFollowsAndReplaysDemoTask() {
+        let app = launch(["-jarvis-playground", "-jarvis-reset"])
+        tab("Ask", in: app).tap()
+        let composer = app.textFields["ask.composer"]
+        require(composer, "the composer", in: app)
+        composer.tap()
+        composer.typeText("Turn off Wi-Fi")
+        app.buttons["ask.send"].tap()
+
+        // The viewer is on the run screen from the start (it may be hidden from the
+        // accessibility tree while the confirmation sheet is up, so it is only sampled).
+        let viewer = app.descendants(matching: .any)["run.live"].firstMatch
+        var captions: [String] = []
+        func noteCaption() {
+            guard viewer.exists, let value = viewer.value as? String, !value.isEmpty, captions.last != value else { return }
+            captions.append(value)
+        }
+        noteCaption()
+
+        // First use of the demo app asks once; the viewer keeps going behind the sheet.
+        let approve = app.buttons["confirm.approve"]
+        let askDeadline = Date().addingTimeInterval(20)
+        while !approve.exists && Date() < askDeadline {
+            noteCaption()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        require(approve, "the first-use confirmation", timeout: 5, in: app)
+        approve.tap()
+        require(viewer, "the Live view", timeout: 10, in: app)
+
+        let status = app.staticTexts["run.status"]
+        let doneDeadline = Date().addingTimeInterval(30)
+        while !status.exists && Date() < doneDeadline {
+            noteCaption()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        require(status, "the run result", timeout: 5, in: app)
+        XCTAssertEqual(status.label, "Done")
+        // Let the last step finish playing, then read the final caption.
+        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+        noteCaption()
+        XCTAssertGreaterThan(Set(captions).count, 1, "the Live view's caption never changed: \(captions)")
+        let finalCaption = viewer.value as? String
+        XCTAssertEqual(finalCaption, "Done")
+
+        let back = app.buttons["run.live.back"]
+        require(back, "the step-back button", in: app)
+        if !back.isHittable { app.swipeUp() }
+        back.tap()
+        let atFirst = NSPredicate(format: "value CONTAINS %@", "Step 1 of 2")
+        expectation(for: atFirst, evaluatedWith: viewer)
+        waitForExpectations(timeout: 5)
+        XCTAssertNotEqual(viewer.value as? String, finalCaption, "stepping back did not change the caption")
+        XCTAssertTrue((viewer.value as? String)?.hasPrefix("Tap") == true, "the first step is not a tap: \(String(describing: viewer.value))")
+
+        app.buttons["run.live.forward"].tap()
+        let atSecond = NSPredicate(format: "value CONTAINS %@", "Step 2 of 2")
+        expectation(for: atSecond, evaluatedWith: viewer)
+        waitForExpectations(timeout: 5)
+
+        XCTAssertTrue(app.buttons["run.live.play"].exists, "no play button")
+        XCTAssertTrue(app.descendants(matching: .any)["run.live.scrubber"].firstMatch.exists, "no scrubber")
+        app.buttons["run.live.followLive"].tap()
+        let live = NSPredicate(format: "value == %@", "Done")
+        expectation(for: live, evaluatedWith: viewer)
+        waitForExpectations(timeout: 5)
+
+        // The element list is one tap away.
+        let elements = app.buttons["run.view.elements"]
+        require(elements, "the Screen / Elements switch", in: app)
+        if !elements.isHittable { app.swipeDown() }
+        elements.tap()
+        require(app.descendants(matching: .any)["run.sight"].firstMatch, "the element list", in: app)
+    }
+
     /// The demo phone starts locked: the run view shows "Unlock to continue" with the time
     /// waited, then the phone "unlocks", the run asks for first use and finishes.
     @MainActor
