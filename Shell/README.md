@@ -146,6 +146,22 @@ of `Policy` or `SessionConfig`, so new core fields keep their defaults. `RunnerS
 `ToolSpec` and `ToolParam` have no core defaults. Each is built in exactly one place
 (`RunnerObservation.runnerSnapshot`, `ToolSpecs`), so a new field means one edit.
 
+### Prompt cache
+
+The system prompt is 70-85% of each prompt and identical at every step, so
+`OpenAICompatibleModel` always sends it first (byte-for-byte as the core gave it) and adds
+`"cache_prompt": true` (llama.cpp's server keeps the prefix in its KV cache) according to
+`Configuration.promptCaching` / `JarvisSettings.modelPromptCaching`: `.automatic` (default)
+sends it and, when the server answers 400/422 with a body naming the field (`cache_prompt`,
+"unrecognized", "unknown field", "extra fields", "additional properties"), retries that one
+request without it and omits it from then on for that client; any other error is returned
+unchanged and not retried. `.on` always sends it, `.off` never. The retry is one more HTTP
+call inside the same `generate`, so the caller's deadline still covers both. At task start
+the coordinator calls `startPromptWarmUp(for:system:)`: a detached, never-awaited
+`PromptWarming.warmUp` (`max_tokens: 1`, user "ok", 5 s own timeout, errors ignored, one in
+flight, once per system prompt per client unless forced). Real requests are not queued behind
+it. Prompt text is never logged.
+
 ## Stored files (JarvisKit side, Linux-tested)
 
 Every JSON store keeps three cases apart (`StoredFileRead`): **missing** (defaults or empty,
@@ -162,7 +178,8 @@ deleted or overwritten, as `SkillLibrary` does) and the caller is told.
   `relaxed_categories`, `deny_categories`, `app_trust`, `remote_control_enabled`, `max_steps`,
   `max_minutes`, `max_locked_wait_minutes`: wrong type, `null`, or a value this build does not
   know, also one entry of a list) makes the whole file damaged, so it is set aside and the owner
-  must review; the model/runner addresses, context size, Away toggles and the two real-screen
+  must review; the model/runner addresses, context size, prompt caching (`model_prompt_caching`:
+  `automatic` / `on` / `off`), Away toggles and the two real-screen
   options stay lenient; `save` throws `StoredFileError` while the file is unreadable;
   `load()` (defaults for anything but `.loaded`) must not feed a task. **`SettingsGate`** (main
   actor) holds the settings the app runs with and the `problem`; `refresh()` re-reads while

@@ -190,6 +190,8 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     public var modelName: String
     /// Context window assumed for the model.
     public var modelContextTokens: Int
+    /// Whether model requests ask the server to cache the prompt prefix (`cache_prompt`).
+    public var modelPromptCaching: PromptCaching
     /// The LoopCtrl runner.
     public var runnerBaseURL: String
     /// Per-app trust, feeding `Policy.appRules`.
@@ -231,6 +233,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         modelBaseURL: String = "http://127.0.0.1:8080",
         modelName: String = "local-model",
         modelContextTokens: Int = 8_192,
+        modelPromptCaching: PromptCaching = .automatic,
         runnerBaseURL: String = "http://127.0.0.1:8300",
         appTrust: [AppTrust] = JarvisSettings.defaultAppTrust,
         awayAcknowledged: Bool = false,
@@ -250,6 +253,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         self.modelBaseURL = modelBaseURL
         self.modelName = modelName
         self.modelContextTokens = modelContextTokens
+        self.modelPromptCaching = modelPromptCaching
         self.runnerBaseURL = runnerBaseURL
         self.appTrust = appTrust
         self.awayAcknowledged = awayAcknowledged
@@ -271,6 +275,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         case modelBaseURL = "model_base_url"
         case modelName = "model_name"
         case modelContextTokens = "model_context_tokens"
+        case modelPromptCaching = "model_prompt_caching"
         case runnerBaseURL = "runner_base_url"
         case appTrust = "app_trust"
         case awayAcknowledged = "away_acknowledged"
@@ -305,6 +310,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         modelBaseURL = (try? c.decodeIfPresent(String.self, forKey: .modelBaseURL)) ?? d.modelBaseURL
         modelName = (try? c.decodeIfPresent(String.self, forKey: .modelName)) ?? d.modelName
         modelContextTokens = (try? c.decodeIfPresent(Int.self, forKey: .modelContextTokens)) ?? d.modelContextTokens
+        modelPromptCaching = (try? c.decodeIfPresent(PromptCaching.self, forKey: .modelPromptCaching)) ?? d.modelPromptCaching
         runnerBaseURL = (try? c.decodeIfPresent(String.self, forKey: .runnerBaseURL)) ?? d.runnerBaseURL
         appTrust = try Self.strict(c, .appTrust, d.appTrust)
         awayAcknowledged = (try? c.decodeIfPresent(Bool.self, forKey: .awayAcknowledged)) ?? d.awayAcknowledged

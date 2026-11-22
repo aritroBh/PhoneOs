@@ -61,7 +61,8 @@ public enum ModelBackendFactory {
                     contextTokens: UInt32(min(max(settings.modelContextTokens, 1_024), 1_000_000)),
                     supportsVision: false,
                     constrainedDecoding: .jsonSchema
-                )
+                ),
+                promptCaching: settings.modelPromptCaching
             )
             return OpenAICompatibleModel(configuration: configuration, screenshots: screenshots, transport: transport)
         }
@@ -263,6 +264,8 @@ public final class JarvisCoordinator: Sendable {
         case .live:
             do {
                 baseModel = try ModelBackendFactory.make(settings: settings, screenshots: screenshots)
+                // Best effort, never awaited: the server evaluates the fixed prompt prefix meanwhile.
+                if let system = try? systemPrompt() { startPromptWarmUp(for: baseModel, system: system) }
                 let runnerURL = try ModelBackendFactory.validURL(settings.runnerBaseURL)
                 // LoopCtrl can say whether the screen is locked (`device_info`): check it after
                 // every command, so a tap that landed on the lock screen is not trusted.

@@ -1,8 +1,42 @@
 import Foundation
 import JarvisCore
+import Synchronization
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+
+/// Whether chat requests ask the server to keep the prompt prefix in its KV cache.
+/// The system prompt is byte-identical at every step and is sent first, so a server that
+/// caches the prefix evaluates only the user part per step.
+public enum PromptCaching: String, Codable, Sendable, CaseIterable {
+    /// Send `"cache_prompt": true`; when the server rejects the field (HTTP 400/422 naming
+    /// it), retry that request once without it and stop sending it from this client on.
+    case automatic
+    /// Always send `"cache_prompt": true`; a server error is reported as it is.
+    case on
+    /// Never send the field.
+    case off
+}
+
+/// A model client that can evaluate the fixed system prompt ahead of the first step.
+/// Separate from `ModelProvider` so fakes need not implement it.
+public protocol PromptWarming: Sendable {
+    /// Best-effort prefix warm-up: never throws, never blocks other requests, result
+    /// ignored. Once per distinct `system` per client unless `force`.
+    func warmUp(system: String, force: Bool) async
+}
+
+extension PromptWarming {
+    /// `warmUp(system:force:)` without forcing.
+    public func warmUp(system: String) async { await warmUp(system: system, force: false) }
+}
+
+/// Starts `model`'s warm-up (when it has one) without awaiting it: a detached task whose
+/// outcome the caller never sees. Call at task start; it cannot delay or alter the run.
+public func startPromptWarmUp(for model: any ModelProvider, system: String) {
+    guard let warming = model as? any PromptWarming else { return }
+    Task.detached(priority: .utility) { await warming.warmUp(system: system, force: false) }
+}
 
 /// `ModelProvider` over an OpenAI-compatible `/v1/chat/completions` endpoint (llama.cpp
 /// server, LM Studio, Ollama, vLLM, hosted APIs). The development backend and the
@@ -13,7 +47,7 @@ import FoundationNetworking
 /// the core sends a JSON schema and `constrainedDecoding == .jsonSchema`, a
 /// `response_format` of type `json_schema`. With `.gbnfGrammar` the GBNF goes in a
 /// top-level `grammar` field (a llama.cpp server extension).
-public final class OpenAICompatibleModel: ModelProvider {
+public final class OpenAICompatibleModel: ModelProvider, PromptWarming {
     /// Server and model settings.
     public struct Configuration: Sendable {
         /// Server base URL, e.g. `http://127.0.0.1:8080` (the path below is appended).
@@ -35,6 +69,9 @@ public final class OpenAICompatibleModel: ModelProvider {
         public var schemaName: String
         /// `response_format.json_schema.strict`.
         public var strictSchema: Bool
+        /// Whether requests carry `"cache_prompt": true` (llama.cpp's prompt-prefix KV
+        /// cache). See `PromptCaching`.
+        public var promptCaching: PromptCaching
 
         /// Settings with development defaults.
         public init(
@@ -46,7 +83,8 @@ public final class OpenAICompatibleModel: ModelProvider {
             temperature: Double = 0,
             capabilities: ModelCapabilities = ModelCapabilities(contextTokens: 8_192, supportsVision: false, constrainedDecoding: .jsonSchema),
             schemaName: String = "jarvis_action",
-            strictSchema: Bool = false
+            strictSchema: Bool = false,
+            promptCaching: PromptCaching = .automatic
         ) {
             self.baseURL = baseURL
             self.path = path
@@ -57,6 +95,7 @@ public final class OpenAICompatibleModel: ModelProvider {
             self.capabilities = capabilities
             self.schemaName = schemaName
             self.strictSchema = strictSchema
+            self.promptCaching = promptCaching
         }
     }
 
@@ -66,6 +105,17 @@ public final class OpenAICompatibleModel: ModelProvider {
     private let screenshots: ScreenshotStore
     private let annotator: any ScreenshotAnnotator
     private let transport: any HTTPTransport
+
+    private struct CacheState {
+        /// The server rejected `cache_prompt` (automatic mode only).
+        var unsupported = false
+        var warmInFlight = false
+        var warmedPrompts: Set<Int> = []
+    }
+    private let cacheState = Mutex(CacheState())
+
+    /// Seconds a warm-up may take.
+    static let warmUpTimeout: TimeInterval = 5
 
     /// A client. `screenshots` must be the store the `SessionDriver` writes to.
     public init(
@@ -82,9 +132,41 @@ public final class OpenAICompatibleModel: ModelProvider {
 
     public func generate(_ request: ModelRequest) async throws -> String {
         let body = try await requestBody(for: request)
+        do {
+            return try await post(body, timeout: configuration.timeout)
+        } catch let ModelError.httpStatus(code, text)
+            where configuration.promptCaching == .automatic && body.hasCachePrompt
+                && (code == 400 || code == 422) && Self.mentionsCacheField(text) {
+            // The server does not know `cache_prompt`: remember, and retry once without it.
+            // Timeouts: the rejected call was an answer, not a timeout, and the retry is a
+            // fresh HTTP call with the full `configuration.timeout`; the caller's own
+            // deadline (the driver's per-call timeout) covers `generate` as a whole, so the
+            // retry adds one HTTP call and no extra attempt in the caller's accounting.
+            cacheState.withLock { $0.unsupported = true }
+            return try await post(body.removingCachePrompt(), timeout: configuration.timeout)
+        }
+    }
+
+    /// Whether an error body names the rejected field (conservative on purpose).
+    static func mentionsCacheField(_ text: String) -> Bool {
+        let t = text.lowercased()
+        return ["cache_prompt", "unrecognized", "unknown field", "extra fields", "additional properties"]
+            .contains { t.contains($0) }
+    }
+
+    /// Whether the next request carries `cache_prompt`.
+    private var sendsCachePrompt: Bool {
+        switch configuration.promptCaching {
+        case .on: true
+        case .off: false
+        case .automatic: !cacheState.withLock { $0.unsupported }
+        }
+    }
+
+    private func post(_ body: JSONValue, timeout: TimeInterval) async throws -> String {
         var http = URLRequest(url: configuration.baseURL.appendingPathComponent(String(configuration.path.drop(while: { $0 == "/" }))))
         http.httpMethod = "POST"
-        http.timeoutInterval = configuration.timeout
+        http.timeoutInterval = timeout
         http.setValue("application/json", forHTTPHeaderField: "Content-Type")
         http.setValue("application/json", forHTTPHeaderField: "Accept")
         if let key = configuration.apiKey {
@@ -108,6 +190,45 @@ public final class OpenAICompatibleModel: ModelProvider {
             throw ModelError.httpStatus(response.statusCode, body: data.snippet())
         }
         return try Self.replyText(data)
+    }
+
+    public func warmUp(system: String, force: Bool) async {
+        await warmUp(system: system, force: force, timeout: Self.warmUpTimeout)
+    }
+
+    /// `timeout` is a parameter for tests.
+    func warmUp(system: String, force: Bool, timeout: TimeInterval) async {
+        let key = system.hashValue
+        let go = cacheState.withLock { s -> Bool in
+            if s.warmInFlight || (!force && s.warmedPrompts.contains(key)) { return false }
+            s.warmInFlight = true
+            s.warmedPrompts.insert(key)
+            return true
+        }
+        guard go else { return }
+        var body: [String: JSONValue] = [
+            "model": .string(configuration.model),
+            "messages": [
+                ["role": "system", "content": .string(system)],
+                ["role": "user", "content": "ok"],
+            ],
+            "max_tokens": 1,
+            "temperature": 0,
+            "stream": false,
+        ]
+        if sendsCachePrompt { body["cache_prompt"] = true }
+        let request = JSONValue.object(body)
+        // Bounded by its own deadline even when the transport ignores cancellation: the
+        // first of {reply, deadline} resumes the waiter and the other is cancelled.
+        await Deadline.race(seconds: timeout) { [self] in
+            do {
+                _ = try await post(request, timeout: timeout)
+            } catch ModelError.httpStatus(let code, let text)
+                where configuration.promptCaching == .automatic && (code == 400 || code == 422) && Self.mentionsCacheField(text) {
+                cacheState.withLock { $0.unsupported = true }
+            } catch {}
+        }
+        cacheState.withLock { $0.warmInFlight = false }
     }
 
     /// The chat-completions body for `request` (internal for tests).
@@ -135,6 +256,9 @@ public final class OpenAICompatibleModel: ModelProvider {
             "temperature": .number(configuration.temperature),
             "stream": false,
         ]
+        // The messages above keep the system prompt first, byte-for-byte as given, so the
+        // server's prefix cache matches at every step.
+        if sendsCachePrompt { body["cache_prompt"] = true }
         switch configuration.capabilities.constrainedDecoding {
         case .jsonSchema:
             if let schemaText = request.jsonSchema {
@@ -190,6 +314,46 @@ public final class OpenAICompatibleModel: ModelProvider {
             return texts.joined()
         default:
             throw ModelError.malformedResponse("content is \(content.typeName)")
+        }
+    }
+}
+
+extension JSONValue {
+    fileprivate var hasCachePrompt: Bool {
+        if case .object(let o) = self { return o["cache_prompt"] != nil }
+        return false
+    }
+
+    fileprivate func removingCachePrompt() -> JSONValue {
+        guard case .object(var o) = self else { return self }
+        o["cache_prompt"] = nil
+        return .object(o)
+    }
+}
+
+/// Runs an operation against a deadline and returns at whichever comes first, even when the
+/// operation ignores cancellation (it then finishes detached and its result is dropped).
+enum Deadline {
+    static func race(seconds: TimeInterval, _ operation: @escaping @Sendable () async -> Void) async {
+        let done = Mutex(false)
+        let tasks = Mutex<[Task<Void, Never>]>([])
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            @Sendable func finish() {
+                let first = done.withLock { d -> Bool in
+                    defer { d = true }
+                    return !d
+                }
+                guard first else { return }
+                tasks.withLock { $0 }.forEach { $0.cancel() }
+                continuation.resume()
+            }
+            let work = Task { await operation(); finish() }
+            let timer = Task {
+                try? await Task.sleep(for: .seconds(seconds))
+                if !Task.isCancelled { finish() }
+            }
+            tasks.withLock { $0 = [work, timer] }
+            if done.withLock({ $0 }) { work.cancel(); timer.cancel() }
         }
     }
 }

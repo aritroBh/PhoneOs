@@ -311,6 +311,8 @@ App/Jarvis/
 └─ Intents/                 App Intents, Action Button
 ```
 
+**Prefix-cache contract.** The system prompt (`system_prompt()`, about 486 tokens) is 70-85% of every prompt and is byte-identical at every step, so a model backend must send it first, unchanged, and keep its evaluated prefix in the runtime's KV cache; only the user part is evaluated per step. The OpenAI-compatible client sends `cache_prompt` (llama.cpp) and warms the prefix at task start with a one-token request that never delays the run. An in-process on-phone runtime must keep the same prefix evaluated (reuse the KV state of the system prompt across steps and tasks) and may evaluate it ahead of the first step.
+
 ## Known gaps
 
 - Between reading the screen and acting (the model's thinking time) an action that needs no approval is not checked against a fresh look; only approved actions and the lock state are. A screen that changes in that window can receive a tap planned on the old one.
