@@ -6,9 +6,10 @@ import Testing
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
-
-// Regression tests from the adversarial review of the Live view (its nine probes, kept as
-// written). Each test states the safe / expected behaviour.
+// Regression tests from the adversarial review of the Live view (its nine probes). The
+// probes of the viewer's logic (privacy, decoding, unknowns, scene, stopped steps) moved with
+// that logic to core/jarvis-viewer/tests/review.rs; what stays here is the driver's capture
+// of real-screen pixels and, end to end through `LiveViewModel`, the samples' privacy.
 
 private let phoneSize = Size(width: 393, height: 852)
 
@@ -52,131 +53,17 @@ private struct ReviewRun {
         events.append(.update(.effectCompleted(.act(command: command), event: .actResult(result: RunnerResult(ok: true, error: nil)))))
     }
 
-    func timeline() -> ViewerTimeline {
-        var t = PointerTimeline()
-        for e in events { t.apply(e) }
-        return t.timeline
+    /// The run fed through the adapter, as the app feeds it.
+    func viewer() -> LiveViewModel {
+        let viewer = LiveViewModel()
+        for e in events { viewer.apply(e) }
+        return viewer
     }
 }
 
-private func encoded(_ t: ViewerTimeline) throws -> String {
-    String(decoding: try JSONEncoder().encode(t), as: UTF8.self)
-}
-
-@Suite("Live view review: Live view privacy vs the core's redaction", .timeLimit(.minutes(1)))
-struct ReviewViewerPrivacy {
-    /// A message bubble with a one-time code and a saved card shown on screen. The core's
-    /// `redact_element` masks both before any prompt; the viewer should not be weaker.
-    @Test("on-screen OTPs and card numbers do not reach wireframe labels, captions or the encoded timeline")
-    func screenTextIsRedacted() throws {
-        let full = Rect(x: 0, y: 0, width: 393, height: 852)
-        let otpFrame = Rect(x: 16, y: 300, width: 361, height: 60)
-        let tree = pnode(.application, "Messages", full, [pnode(.window, nil, full, [
-            pnode(.staticText, "Your Apple ID code is 482913. Do not share it.", otpFrame),
-            pnode(.cell, "Visa 4111 1111 1111 1111", Rect(x: 16, y: 400, width: 361, height: 44)),
-        ])])
-        var run = ReviewRun()
-        run.observe(pobserved(tree))
-        run.act(.tap(x: 100, y: 320))
-        let t = run.timeline()
-        let json = try encoded(t)
-        // Bound first: the Swift Testing macro (6.4.3) fails `!(x?.y ?? "").contains(…)` whatever
-        // the value (it evaluates the negation to `()`); the assertion is the same.
-        let caption = t.steps.last?.caption ?? ""
-        #expect(!caption.contains("482913"), "caption: \(caption)")
-        #expect(!json.contains("482913"), "the OTP is in the encoded timeline")
-        #expect(!json.contains("4111 1111 1111 1111"), "the card number is in the encoded timeline")
-    }
-
-    /// The model types an OTP (e.g. from the owner's answer or the task text) into a plain
-    /// "Verification code" field. The core treats that field as credential-like and never
-    /// shows its value; LiveRun shows "Type into …" only.
-    @Test("an OTP typed into a plain 'Verification code' field is not shown")
-    func typedOTPHidden() throws {
-        let full = Rect(x: 0, y: 0, width: 393, height: 852)
-        let tree = pnode(.application, "Bank", full, [pnode(.window, nil, full, [
-            pnode(.textField, "Verification code", Rect(x: 16, y: 200, width: 361, height: 44), focused: true),
-        ])])
-        var run = ReviewRun()
-        run.observe(pobserved(tree))
-        run.act(.typeText(text: "482913"), action: .type(element: nil, text: "482913", submit: false))
-        let t = run.timeline()
-        #expect(!(try encoded(t)).contains("482913"), "caption: \(t.steps.last?.caption ?? "")")
-    }
-
-    @Test("a card number typed into a plain 'Card number' field is not shown")
-    func typedCardHidden() throws {
-        let full = Rect(x: 0, y: 0, width: 393, height: 852)
-        let tree = pnode(.application, "Shop", full, [pnode(.window, nil, full, [
-            pnode(.textField, "Card number", Rect(x: 16, y: 200, width: 361, height: 44), focused: true),
-        ])])
-        var run = ReviewRun()
-        run.observe(pobserved(tree))
-        run.act(.typeText(text: "4111 1111 1111 1111"), action: .type(element: nil, text: "4111 1111 1111 1111", submit: false))
-        let t = run.timeline()
-        #expect(!(try encoded(t)).contains("4111"), "caption: \(t.steps.last?.caption ?? "")")
-    }
-}
-
-@Suite("Live view review: secure-flagged field on a runner-text screen", .timeLimit(.minutes(1)))
-struct ReviewViewerSecureFlagText {
-    /// The core renders a secure-flagged TextField (UiNode.secure, role TextField) as
-    /// `TextField` in the prompt (render.rs role_name + flags: no secure marker). On a
-    /// runner-text screen that prompt line is the viewer's only evidence.
-    @Test("typing into a secure-flagged TextField named by the prompt on a text screen is not shown")
-    func secureFlaggedTextField() throws {
-        let prompt = """
-        <<<SCREEN_DATA>>>
-        App: Bank (com.example.bank)
-        [1] TextField "Passcode" (focused)
-        <<<END_SCREEN_DATA>>>
-        """
-        var run = ReviewRun()
-        run.observe(.observedRunnerText(snapshot: RunnerSnapshot(
-            source: "x", appBundleId: "com.example.bank", appName: "Bank", size: phoneSize, keyboardVisible: true,
-            orientation: .portrait, screenshot: nil, deviceLocked: false
-        )))
-        run.events.append(.prompt(prompt))
-        run.act(.typeText(text: "731904"), action: .type(element: 1, text: "731904", submit: false))
-        let t = run.timeline()
-        #expect(!(try encoded(t)).contains("731904"), "caption: \(t.steps.last?.caption ?? "")")
-    }
-}
-
-@Suite("Live view review: Live view forward-compatible decoding", .timeLimit(.minutes(1)))
-struct ReviewViewerDecoding {
-    private func sampleJSON() throws -> String {
-        let full = Rect(x: 0, y: 0, width: 393, height: 852)
-        let tree = pnode(.application, "Mail", full, [pnode(.window, nil, full, [
-            pnode(.button, "Send", Rect(x: 16, y: 400, width: 361, height: 44)),
-        ])])
-        var run = ReviewRun()
-        run.observe(pobserved(tree))
-        run.act(.tap(x: 100, y: 420))
-        run.act(.swipe(from: Point(x: 200, y: 700), to: Point(x: 200, y: 200), durationMs: 300))
-        return try encoded(run.timeline())
-    }
-
-    @Test("an unknown gesture kind from a newer sender does not fail the whole timeline")
-    func unknownGesture() throws {
-        let json = try sampleJSON().replacingOccurrences(of: "\"kind\":\"swipe\"", with: "\"kind\":\"pinch\"")
-        #expect(json.contains("pinch"))
-        let decoded = try? JSONDecoder().decode(ViewerTimeline.self, from: Data(json.utf8))
-        #expect(decoded != nil, "one unknown gesture made the whole timeline undecodable")
-    }
-
-    @Test("an unknown screen source / step state / activity does not fail the whole timeline")
-    func unknownOthers() throws {
-        let base = try sampleJSON()
-        for (old, new) in [("\"source\":\"tree\"", "\"source\":\"mirror\""),
-                           ("\"kind\":\"done\"", "\"kind\":\"skipped\""),
-                           ("\"kind\":\"idle\"", "\"kind\":\"paused\""),
-                           ("\"kind\":\"acting\"", "\"kind\":\"paused\"")] where base.contains(old) {
-            let json = base.replacingOccurrences(of: old, with: new)
-            let decoded = try? JSONDecoder().decode(ViewerTimeline.self, from: Data(json.utf8))
-            #expect(decoded != nil, "\(new) made the whole timeline undecodable")
-        }
-    }
+/// The adapter's encoded timeline as text (the remote stream's bytes).
+private func encoded(_ viewer: LiveViewModel) throws -> String {
+    String(decoding: try #require(viewer.encode()), as: UTF8.self)
 }
 
 // MARK: - The driver option against a LoopCtrl stub
@@ -325,20 +212,15 @@ private func typedField(_ label: String?, placeholder: String? = nil, identifier
     return pnode(.application, "Shop", full, [pnode(.window, nil, full, [field])])
 }
 
-private func typeStep(into root: UiNode, _ text: String) throws -> (ViewerStep, String) {
-    var run = ReviewRun()
-    run.observe(pobserved(root))
-    run.act(.typeText(text: text), action: .type(element: nil, text: text, submit: false))
-    let t = run.timeline()
-    return (try #require(t.steps.last), try encoded(t))
-}
 
-@Suite("Live view review: screen text goes through the core's redaction", .timeLimit(.minutes(1)))
-struct ReviewViewerRedaction {
-    @Test("labels, placeholders, captions and the app name hold no OTP, card number, IBAN or key")
-    func labelsAndCaptions() throws {
-        let full = Rect(x: 0, y: 0, width: 393, height: 852)
+@Suite("Live view review: secrets never reach the encoded timeline through the adapter", .timeLimit(.minutes(1)))
+struct ReviewViewerAdapterPrivacy {
+    /// Every sample on screen (labels, a placeholder, the app name) and typed into fields,
+    /// plain, credential-like and secure, fed through `LiveViewModel` as the app feeds it.
+    @Test("samples shown on screen or typed never appear in encode() bytes, captions or wireframes")
+    func samplesNeverEncoded() throws {
         let samples = [otpSample, cardSample, ibanSample, keySample]
+        let full = Rect(x: 0, y: 0, width: 393, height: 852)
         var children: [UiNode] = []
         for (i, sample) in samples.enumerated() {
             children.append(pnode(.button, sample.0, Rect(x: 16, y: Double(100 + 60 * i), width: 361, height: 44)))
@@ -355,117 +237,37 @@ struct ReviewViewerRedaction {
         run.number = 1
         for i in samples.indices { run.act(.tap(x: 100, y: Double(120 + 60 * i))) }
         run.act(.tap(x: 100, y: 520))
-        let t = run.timeline()
-        let json = try encoded(t)
-        let screen = try #require(t.currentScreen)
+        // Typed: into a plain field (the core's redaction would change the text), a
+        // credential-like one and a secure one.
+        for sample in samples {
+            run.observe(pobserved(typedField("Message")))
+            run.act(.typeText(text: sample.0), action: .type(element: nil, text: sample.0, submit: false))
+            run.observe(pobserved(typedField("Card number")))
+            run.act(.typeText(text: sample.1), action: .type(element: nil, text: sample.1, submit: false))
+            run.observe(pobserved(typedField("Name", secure: true)))
+            run.act(.typeText(text: sample.1), action: .type(element: nil, text: sample.1, submit: false))
+        }
+        let viewer = run.viewer()
+        let json = try encoded(viewer)
+        let t = viewer.timeline
+        #expect(t.steps.count == samples.count + 1 + 3 * samples.count)
         for sample in samples {
             #expect(!json.contains(sample.1), "\(sample.1) in the encoded timeline")
-            #expect(!screen.elements.contains { ($0.label ?? "").contains(sample.1) })
             #expect(!t.steps.contains { $0.caption.contains(sample.1) })
+            #expect(!t.screens.contains { ($0.appName ?? "").contains(sample.1) })
+            for info in t.screens {
+                let screen = try #require(viewer.screen(id: info.id))
+                #expect(!screen.elements.contains { ($0.label ?? "").contains(sample.1) })
+            }
         }
-        // What is shown is the core's redaction of the label, capped.
-        for (i, sample) in samples.enumerated() {
-            let expected = try #require(ViewerPrivacy.label(sample.0))
-            #expect(expected == ViewerPrivacy.capped(try redactScreenText(text: sample.0), ViewerPrivacy.maxLabelCharacters))
-            #expect(t.steps[i].caption == "Tap \u{201C}\(expected)\u{201D}")
-            #expect(expected.contains("[redacted"))
-        }
-        #expect(screen.elements.last?.label?.contains("[redacted card]") == true, "the placeholder is redacted too")
-        #expect(screen.appName?.contains("482913") == false)
-    }
-
-    @Test("a secret is redacted before the label is cut, so a cut cannot split it out of the detector")
-    func redactBeforeCap() throws {
-        let long = String(repeating: "x", count: 30) + " card 4111 1111 1111 1111"
-        let label = try #require(ViewerPrivacy.label(long))
-        #expect(!label.contains("4111"), "\(label)")
-        #expect(ViewerPrivacy.label("Send") == "Send")
-        #expect(ViewerPrivacy.label("") == nil && ViewerPrivacy.label(nil) == nil)
-    }
-
-    @Test("links: the host of http and https, only the scheme otherwise")
-    func links() {
-        #expect(ViewerPrivacy.link(of: "https://user:pw@Example.com:8443/path?q=1") == "example.com")
-        #expect(ViewerPrivacy.link(of: "http://example.org") == "example.org")
-        #expect(ViewerPrivacy.link(of: "myapp://SECRETTOKEN123/reset?code=1") == "myapp:")
-        #expect(ViewerPrivacy.host(of: "myapp://SECRETTOKEN123/reset") == nil, "a custom scheme's host can be a token")
-        #expect(ViewerPrivacy.link(of: "tel:+15551234567") == "tel:")
-        #expect(ViewerPrivacy.link(of: "notaurl") == nil)
-        #expect(ViewerPrivacy.link(of: "1bad:thing") == nil)
-        var run = ReviewRun()
-        run.act(.openUrl(url: "myapp://SECRETTOKEN123/reset"))
-        run.act(.openUrl(url: "https://Example.com/a"))
-        let t = run.timeline()
-        #expect(t.steps.map(\.caption) == ["Open a myapp: link", "Open example.com"])
-        #expect(t.steps[0].gesture == .openURL(host: "myapp:"))
-        #expect(!((try? encoded(t)) ?? "SECRETTOKEN").contains("SECRETTOKEN"))
-    }
-}
-
-@Suite("Live view review: typed text and credential-like fields", .timeLimit(.minutes(1)))
-struct ReviewViewerTyping {
-    @Test("a field the core calls credential-like, by label, placeholder or identifier, never shows typed text")
-    func credentialLikeFields() throws {
-        let cases: [(UiNode, String)] = [
-            (typedField("CVV"), "CVV"),
-            (typedField("Card number"), "Card number"),
-            (typedField("IBAN"), "IBAN"),
-            (typedField("One-time code"), "One-time code"),
-            (typedField(nil, placeholder: "Verification code"), "Verification code"),
-            (typedField(nil, placeholder: "Card number"), "Card number"),
-            (typedField("Name", secure: true), "Name"),
-        ]
-        for (tree, label) in cases {
-            let (step, json) = try typeStep(into: tree, "731904")
-            #expect(step.caption == "Type into \u{201C}\(label)\u{201D}", "\(label)")
-            #expect(step.gesture == .type(text: nil))
-            #expect(!json.contains("731904"), "\(label)")
-        }
-        // An identifier the core would use as the label.
-        let byIdentifier = typedField(nil, identifier: "Verification code")
-        let (step, json) = try typeStep(into: byIdentifier, "731904")
-        #expect(step.caption == "Type text" && !json.contains("731904"))
-        // The core's answer is what decides.
-        #expect(ViewerPrivacy.fieldValueHidden(role: .textField, label: "Card number", placeholder: nil, identifier: nil, secure: false))
-        #expect(ViewerPrivacy.fieldValueHidden(role: .textField, label: nil, placeholder: "CVV", identifier: nil, secure: false))
-        #expect(!ViewerPrivacy.fieldValueHidden(role: .textField, label: "Email", placeholder: nil, identifier: nil, secure: false))
-    }
-
-    @Test("text the core's redaction would change is not shown, even in a plain field")
-    func redactedText() throws {
-        for sample in [otpSample, cardSample, ibanSample, keySample] {
-            let (step, json) = try typeStep(into: typedField("Message"), sample.0)
-            #expect(step.caption == "Type into \u{201C}Message\u{201D}", "\(sample.0)")
-            #expect(!json.contains(sample.1))
-        }
-        let (plain, _) = try typeStep(into: typedField("Message"), "See you at 7")
-        #expect(plain.caption == "Type \u{201C}See you at 7\u{201D}", "plain text in a plain field is still shown")
-    }
-
-    @Test("on a runner-text screen typed text is never shown; the label comes from the prompt, redacted")
-    func runnerTextScreens() throws {
-        let prompt = """
-        <<<SCREEN_DATA>>>
-        App: Notes (com.apple.mobilenotes)
-        [1] TextField "Title"
-        [2] TextView "Code 482913 is your login code" (focused)
-        <<<END_SCREEN_DATA>>>
-        """
-        for element: UInt32? in [1, 2, nil] {
-            var run = ReviewRun()
-            run.observe(.observedRunnerText(snapshot: RunnerSnapshot(
-                source: "x", appBundleId: "com.apple.mobilenotes", appName: "Notes", size: phoneSize, keyboardVisible: true,
-                orientation: .portrait, screenshot: nil, deviceLocked: false
-            )))
-            run.events.append(.prompt(prompt))
-            run.act(.typeText(text: "Groceries"), action: .type(element: element, text: "Groceries", submit: false))
-            let t = run.timeline()
-            let step = try #require(t.steps.last)
-            let json = try encoded(t)
-            #expect(step.gesture == .type(text: nil))
-            #expect(!json.contains("Groceries") && !json.contains("482913"), "\(String(describing: element))")
-            if element == 1 { #expect(step.caption == "Type into \u{201C}Title\u{201D}") }
-        }
+        #expect(t.steps[0].caption.contains("[redacted"), "what is shown is the core's redaction: \(t.steps[0].caption)")
+        // Plain text in a plain field is still shown, so the checks above are not vacuous.
+        var plain = ReviewRun()
+        plain.observe(pobserved(typedField("Message")))
+        plain.act(.typeText(text: "See you at 7"), action: .type(element: nil, text: "See you at 7", submit: false))
+        let shown = plain.viewer()
+        #expect(shown.timeline.steps.last?.caption == "Type \u{201C}See you at 7\u{201D}")
+        #expect(try encoded(shown).contains("See you at 7"))
     }
 }
 
@@ -743,161 +545,10 @@ private final class WaitObservingPhone: PhoneRunner, Sendable {
     func viewerScreenshot() async throws -> CapturedScreenshot? { viewerPixels }
 }
 
-// MARK: - C. Decoding from a newer sender
+// MARK: - E. Frames of unwatched runs
 
-@Suite("Live view review: unknown values decode, render neutrally and round-trip", .timeLimit(.minutes(1)))
-struct ReviewViewerUnknowns {
-    @Test("unknown gesture, step state, activity and source keep their tags through a round trip")
-    func roundTrip() throws {
-        let screen = ViewerScreen(id: 1, size: ViewerSize(width: 393, height: 852), appName: nil, bundleId: "b", source: .unknown("mirror"),
-                                  elements: [], elementsTruncated: false, frameKey: nil, focusedInputSecure: nil)
-        let step = ViewerStep(number: 1, coreStep: nil, screenID: 1, gesture: .unknown("pinch"), target: nil, caption: "Pinch",
-                              state: .unknown("skipped"))
-        let stopped = ViewerStep(number: 2, coreStep: nil, screenID: 1, gesture: .wait(ms: 5), target: nil, caption: "Wait",
-                                 state: .stopped)
-        let t = ViewerTimeline(taskId: "x", steps: [step, stopped], screens: [screen], currentScreenID: 1, activity: .unknown("paused"))
-        let json = try encoded(t)
-        for tag in [#""kind":"pinch""#, #""kind":"skipped""#, #""kind":"paused""#, #""source":"mirror""#, #""kind":"stopped""#] {
-            #expect(json.contains(tag), "\(tag)")
-        }
-        let back = try JSONDecoder().decode(ViewerTimeline.self, from: Data(json.utf8))
-        #expect(back == t)
-        let sorted = JSONEncoder()
-        sorted.outputFormatting = [.sortedKeys]
-        #expect(try sorted.encode(back) == (try sorted.encode(t)), "encoding is stable")
-        // Known values keep their tags.
-        for source: ViewerScreen.Source in [.tree, .runnerText, .locked] {
-            #expect(try JSONDecoder().decode(ViewerScreen.Source.self, from: try JSONEncoder().encode(source)) == source)
-        }
-        #expect(ViewerScreen.Source.runnerText.tag == "runner_text")
-        // An outcome this reader does not know.
-        let finished = try JSONDecoder().decode(ViewerActivity.self, from: Data(#"{"kind":"finished","outcome":"exploded"}"#.utf8))
-        #expect(finished == .unknown("finished"))
-    }
-
-    @Test("unknowns render neutrally: no cursor movement, not failed, a neutral caption")
-    func rendering() {
-        let g = ViewerGesture.unknown("pinch")
-        #expect(!g.isPointer && g.kind == "pinch")
-        let rest = ViewerPoint(x: 10, y: 20)
-        let pose = CursorPath.pose(g, from: rest, screen: .fallbackPhone, atMs: 100)
-        #expect(pose.position == rest && pose.phase == .parked)
-        #expect(!ViewerStepState.unknown("x").isFailed && ViewerStepState.unknown("x").title == nil)
-        #expect(ViewerActivity.unknown("paused").caption == "Working…" && ViewerActivity.unknown("paused").isIdle)
-    }
-}
-
-// MARK: - D. Pure pieces the SwiftUI view reads
-
-private func tapsTimeline(_ points: [(Double, Double)], finished: Bool = false) -> ViewerTimeline {
-    let full = Rect(x: 0, y: 0, width: 393, height: 852)
-    var run = ReviewRun()
-    run.observe(pobserved(pnode(.application, "App", full, [])))
-    for p in points { run.act(.tap(x: p.0, y: p.1)) }
-    var pt = PointerTimeline()
-    for e in run.events { pt.apply(e) }
-    pt.apply(.update(.effect(.infer(request: ModelRequest(system: "", user: "", image: nil, marks: [], maxTokens: 1, grammar: nil,
-                                                           jsonSchema: nil, kind: .text)), number: 99)))
-    if finished {
-        pt.apply(.update(.finished(RunResult(outcome: Outcome(status: .success, summary: "", steps: 1, durationMs: 1),
-                                             endReason: .sessionFinished, memory: .saved, effectCount: 1, modelCalls: 1))))
-    }
-    return pt.timeline
-}
-
-@Suite("Live view review: frames, fitting and continuity", .timeLimit(.minutes(1)))
-struct ReviewViewerScene {
-    @Test("needs frames: replay playing, a step animation in flight, the idle pulse of a running run; otherwise static")
-    func needsFrames() {
-        let running = tapsTimeline([(100, 100), (300, 700)])
-        var live = ReplayState()
-        live.sync(numbers: running.stepNumbers, now: 0)
-        // The newest step just started: in flight.
-        #expect(LiveViewScene.needsFrames(timeline: running, replay: live, now: 0.01))
-        // Played out, Jarvis thinking: the idle pulse needs frames, but not under Reduce Motion.
-        #expect(LiveViewScene.needsFrames(timeline: running, replay: live, now: 100))
-        #expect(!LiveViewScene.needsFrames(timeline: running, replay: live, now: 100, reduceMotion: true))
-
-        let finished = tapsTimeline([(100, 100), (300, 700)], finished: true)
-        var replay = ReplayState()
-        replay.sync(numbers: finished.stepNumbers, now: 0)
-        #expect(!LiveViewScene.needsFrames(timeline: finished, replay: replay, now: 100), "a finished run, following, settled: static")
-        replay.stepBack(numbers: finished.stepNumbers, now: 200)
-        #expect(LiveViewScene.needsFrames(timeline: finished, replay: replay, now: 200.05), "the scrubbed step animates")
-        #expect(!LiveViewScene.needsFrames(timeline: finished, replay: replay, now: 300), "paused replay of a finished run: static")
-        replay.togglePlay(numbers: finished.stepNumbers, now: 300)
-        #expect(LiveViewScene.needsFrames(timeline: finished, replay: replay, now: 10_000), "playing")
-        #expect(!LiveViewScene.needsFrames(timeline: ViewerTimeline(), replay: ReplayState(), now: 5), "no run: static")
-    }
-
-    @Test("the screenshot is fitted into the screen rect keeping its aspect ratio")
-    func aspectFit() {
-        let rect = ViewerRect(x: 10, y: 20, width: 200, height: 400)
-        #expect(rect.aspectFit(ViewerSize(width: 393, height: 786)) == ViewerRect(x: 10, y: 20, width: 200, height: 400))
-        let wide = rect.aspectFit(ViewerSize(width: 400, height: 200))
-        #expect(wide == ViewerRect(x: 10, y: 170, width: 200, height: 100))
-        let tall = rect.aspectFit(ViewerSize(width: 100, height: 400))
-        #expect(tall == ViewerRect(x: 60, y: 20, width: 100, height: 400))
-        #expect(rect.aspectFit(ViewerSize(width: 0, height: 10)) == rect)
-        #expect(rect.aspectFit(ViewerSize(width: .nan, height: 10)) == rect)
-        #expect(ViewerRect.zero.aspectFit(ViewerSize(width: 1, height: 1)) == .zero)
-        let m = ViewerMapping(screen: ViewerSize(width: 393, height: 852), view: ViewerSize(width: 300, height: 600))
-        let fitted = m.contentRect.aspectFit(ViewerSize(width: 786, height: 1704))
-        #expect(abs(fitted.width - m.contentRect.width) < 1e-9 && abs(fitted.height - m.contentRect.height) < 1e-9)
-    }
-
-    @Test("following live, a step arriving mid-glide starts from where the cursor is: no jump")
-    func continuity() throws {
-        let one = tapsTimeline([(20, 20)])
-        var replay = ReplayState()
-        replay = LiveViewScene.synced(replay, timeline: one, now: 0)
-        // 0.1 s into the first glide (it starts at the centre).
-        let mid = LiveViewScene.make(timeline: one, replay: replay, now: 0.1).pose.position
-        #expect(mid != ViewerPoint(x: 20, y: 20) && mid != ViewerSize.fallbackPhone.center)
-        let two = tapsTimeline([(20, 20), (380, 800)])
-        replay = LiveViewScene.synced(replay, timeline: two, now: 0.1)
-        #expect(replay.current == 2)
-        let start = LiveViewScene.make(timeline: two, replay: replay, now: 0.1).pose.position
-        #expect(start.distance(to: mid) < 1e-6, "the new step starts where the cursor was (\(mid)), not at \(start)")
-        let end = LiveViewScene.make(timeline: two, replay: replay, now: 0.1 + CursorPath.playMs(step: 2, in: two, from: replay.origin) / 1_000)
-        #expect(end.pose.position == ViewerPoint(x: 380, y: 800) || end.step == nil)
-        // A step arriving after the previous one played out starts from its rest point.
-        var settled = ReplayState()
-        settled = LiveViewScene.synced(settled, timeline: one, now: 0)
-        settled = LiveViewScene.synced(settled, timeline: two, now: 50)
-        #expect(settled.origin == ViewerPoint(x: 20, y: 20))
-        let first = LiveViewScene.make(timeline: two, replay: settled, now: 50).pose.position
-        #expect(first == ViewerPoint(x: 20, y: 20))
-        // Replay never carries an origin.
-        settled.stepBack(numbers: two.stepNumbers, now: 60)
-        #expect(settled.origin == nil)
-    }
-}
-
-// MARK: - E. Stopped steps and unwatched runs
-
-@Suite("Live view review: stopped steps and frames of unwatched runs", .timeLimit(.minutes(1)))
+@Suite("Live view review: frames of unwatched runs", .timeLimit(.minutes(1)))
 struct ReviewViewerStopped {
-    @Test("a step cancelled mid-command reads Stopped, claiming nothing about the phone")
-    func stopped() {
-        var run = ReviewRun()
-        run.observe(pobserved(pnode(.application, "App", Rect(x: 0, y: 0, width: 393, height: 852))))
-        run.number += 1
-        run.events.append(.update(.effect(.act(command: .tap(x: 1, y: 1)), number: run.number)))
-        run.events.append(.update(.effectCompleted(.act(command: .tap(x: 1, y: 1)), event: .cancel)))
-        run.number += 1
-        run.events.append(.update(.effect(.act(command: .tap(x: 2, y: 2)), number: run.number)))
-        run.events.append(.update(.finished(RunResult(outcome: Outcome(status: .cancelled, summary: "", steps: 0, durationMs: 0),
-                                                      endReason: .cancelled, memory: .saved, effectCount: 3, modelCalls: 0))))
-        let t = run.timeline()
-        #expect(t.steps.map(\.state) == [.stopped, .stopped])
-        #expect(t.steps.allSatisfy { !$0.state.isFailed && $0.state.title == "Stopped" })
-        var replay = ReplayState()
-        replay.sync(numbers: t.stepNumbers, now: 0)
-        replay.stepBack(numbers: t.stepNumbers, now: 0)
-        #expect(LiveViewScene.make(timeline: t, replay: replay, now: 0).accessibilityValue.contains("stopped"))
-    }
-
     @Test("a run's frames go when it ends with no Live view on screen; they stay while it is shown")
     func unwatched() async throws {
         let store = ViewerFrameStore()

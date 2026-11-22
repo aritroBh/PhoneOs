@@ -83,7 +83,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var settingsNeedReview = false
     @Published private(set) var live = LiveRun()
     /// The Live view: what Jarvis did, step by step, with a cursor (the current or last run).
-    @Published private(set) var viewer = PointerTimeline()
+    /// The core's viewer behind it holds the logic; `viewerTimeline` is republished only
+    /// when an update changed something.
+    private(set) var viewer = LiveViewModel()
+    @Published private(set) var viewerTimeline = CoreViewerTimeline.empty
     @Published private(set) var prompt: HumanPrompt?
     @Published private(set) var history: [TaskRecord] = []
     @Published private(set) var memory: MemorySnapshot = .empty
@@ -429,12 +432,23 @@ final class AppModel: ObservableObject {
         guard center.session == nil else { return }
         showingRun = false
         live = LiveRun()
-        viewer = PointerTimeline()
+        resetViewer()
         coordinator.viewerFrames.removeAll()
     }
 
     /// The Live view's real-screen frames (memory only).
     var viewerFrames: ViewerFrameStore { coordinator.viewerFrames }
+
+    /// A fresh Live view (a run starts, or the run view goes).
+    private func resetViewer(framesEnabled: Bool = false) {
+        viewer = LiveViewModel(framesEnabled: framesEnabled)
+        viewerTimeline = viewer.timeline
+    }
+
+    /// Feeds one event to the Live view (one FFI call); republishes only on a change.
+    private func feedViewer(_ event: RunEvent) {
+        if viewer.apply(event) { viewerTimeline = viewer.timeline }
+    }
 
     /// "Show real screen in Live view". Turning it off drops the frames at once, also those
     /// of a run that is going.
@@ -454,13 +468,13 @@ final class AppModel: ObservableObject {
             lastTask = session.text
             lastSkill = session.skill
             live = LiveRun(task: session.text, maxSteps: Int(settings.clampedMaxSteps), skillName: session.skill?.name)
-            viewer = PointerTimeline(framesEnabled: settings.liveViewScreenshots)
+            resetViewer(framesEnabled: settings.liveViewScreenshots)
             if session.origin.workflow == nil { showingRun = true }
         case .session(_, let runEvent):
             // A lock abandoned the pending question or confirmation: the broker withdrew that
             // prompt by its id when the driver gave up the wait (never a newer one).
             live.apply(runEvent)
-            viewer.apply(runEvent)
+            feedViewer(runEvent)
         case .sessionFinished(let session, let outcome):
             switch outcome {
             case .notStarted(let why):
@@ -470,7 +484,7 @@ final class AppModel: ObservableObject {
                     endReason: .sessionFinished, memory: .unavailable(why), effectCount: 0, modelCalls: 0
                 )))
                 live.apply(notStarted)
-                viewer.apply(notStarted)
+                feedViewer(notStarted)
             case .finished:
                 if let skill = session.skill { try? skills.recordRun(id: skill.id) }
             }
@@ -478,7 +492,7 @@ final class AppModel: ObservableObject {
         case .workflowStarted:
             if awayPhase != .off { exitAway() }
             live = LiveRun()
-            viewer = PointerTimeline()
+            resetViewer()
             showingWorkflowRun = true
         case .workflowFinished:
             refreshWorkflows()

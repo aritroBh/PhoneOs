@@ -290,13 +290,14 @@ deleted or overwritten, as `SkillLibrary` does) and the caller is told.
 
 ## Live view (JarvisKit side, Linux-tested)
 
-`Sources/JarvisKit/Viewer/`: what the run screen's Live view draws, as plain values.
-`PointerTimeline` reduces the same `RunEvent` stream as `LiveRun` into a `ViewerTimeline` (one
-`ViewerStep` per runner command: gesture, the screen it acted on, the element under the pointer
-for display only, caption, state; capped at 200 steps). `CursorPath` gives the cursor's pose at
-any moment of a step (glide, press, drag), `ViewerMapping` maps screen points into the view,
-`ReplayState` is the scrubber and `LiveViewScene` combines them; the SwiftUI view
-(`App/Jarvis/Views/LiveScreenView.swift`) only draws what these return. The backdrop is a
+`Sources/JarvisKit/Viewer/`: the Live view's logic is in the core (`core/jarvis-viewer`, the
+FFI's `JarvisViewer`: reducer, privacy, wire format, cursor path, replay, scene). `LiveViewModel`
+is the shell's thin adapter: it maps each `RunEvent` (the same stream `LiveRun` reads) to a
+`CoreViewerUpdate` and feeds it (one FFI call per update), republishes the light timeline only
+when the core says something changed, caches a few wireframes by screen id (bounded, dropped when
+the timeline no longer refers to them), and passes on the per-frame `scene(query:)` and the replay
+controls; FFI errors leave it usable (the view draws nothing rather than crash). The SwiftUI view
+(`App/Jarvis/Views/LiveScreenView.swift`) draws the scene's view-point values only. The backdrop is a
 wireframe of the typed tree, or, with "Show real screen in Live view" on
 (`DriverConfiguration.viewerScreenshots`, off by default), screenshots kept in a
 `ViewerFrameStore` (memory only, capped by count and bytes). The option never changes the run:

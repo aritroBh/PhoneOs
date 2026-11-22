@@ -1,10 +1,11 @@
 import Foundation
+import JarvisCore
 import Synchronization
 
 /// Names one observation of one run: the run's task id and the number of the driver effect
 /// that observed (`DriverUpdate.effect(_, number:)` of the `observe`, or of the
-/// `awaitUnlock` that observed). The driver stores a Live view frame under it and
-/// `PointerTimeline` refers to it, so neither has to tell the other.
+/// `awaitUnlock` that observed). The driver stores a Live view frame under it and the core's
+/// viewer names it (`CoreViewerFrameKey`), so neither has to tell the other.
 public struct ViewerFrameKey: Sendable, Equatable, Hashable, Codable {
     public var taskId: String
     public var observation: Int
@@ -12,6 +13,13 @@ public struct ViewerFrameKey: Sendable, Equatable, Hashable, Codable {
     public init(taskId: String, observation: Int) {
         self.taskId = taskId
         self.observation = observation
+    }
+
+    /// The core's key (its observation number is the same effect number, as `UInt64`);
+    /// `nil` only for a number no `Int` holds, which no driver produces.
+    public init?(_ key: CoreViewerFrameKey) {
+        guard let observation = Int(exactly: key.observation) else { return nil }
+        self.init(taskId: key.taskId, observation: observation)
     }
 
     enum CodingKeys: String, CodingKey {

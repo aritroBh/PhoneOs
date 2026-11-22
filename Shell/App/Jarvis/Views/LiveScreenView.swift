@@ -1,32 +1,37 @@
 import SwiftUI
 import UIKit
+import JarvisCore
 import JarvisKit
 
 /// The Live view: a phone-shaped viewer of the screen Jarvis acts on, with a cursor that
 /// glides to each target and shows the tap, long press or swipe, a caption, and replay
 /// controls (step back, play, step forward, scrubber, speed, Live).
 ///
-/// Everything it shows is decided in JarvisKit: `LiveViewScene` (which screen, which step,
-/// the caption), `CursorPath` (where the cursor is at each moment) and `ViewerMapping`
-/// (screen points to view points). This view only draws, once per frame of
-/// `TimelineView(.animation)`, which is paused whenever nothing moves
-/// (`LiveViewScene.needsFrames`). The real screen is never drawn while the app is not
-/// active, so the app switcher's snapshot never holds it.
+/// Everything it shows is decided in the core (`JarvisViewer`, through `LiveViewModel`):
+/// once per frame of `TimelineView(.animation)` the scene says which screen and step to
+/// show, the caption and tone, and where the cursor, target outline and swipe trail are in
+/// view points. This view only draws. The `TimelineView` is paused whenever nothing moves
+/// (the scene's `needsFrames`). The real screen is never drawn while the app is not active,
+/// so the app switcher's snapshot never holds it.
 ///
 /// iOS does not let an app draw over other apps, so this viewer lives inside Jarvis.
 struct LiveScreenView: View {
-    var timeline: ViewerTimeline
+    var viewer: LiveViewModel
+    var timeline: CoreViewerTimeline
     var frames: ViewerFrameStore
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @State private var replay = ReplayState()
+    /// The scrubber's state and texts, as the last replay call returned them.
+    @State private var status: CoreReplayStatus?
     @State private var images = FrameImageCache()
-    /// Bumped by the last animation frame before nothing moves, so `body` runs again and
-    /// pauses the `TimelineView`.
+    /// Bumped when the drawn scene stops needing frames, so `body` runs again and pauses the
+    /// `TimelineView`.
     @State private var settleTick = 0
     /// This view is on screen (between `onAppear` and `onDisappear`).
     @State private var appeared = false
+    /// The phone screen's size in points (the scene maps into it); zero until laid out.
+    @State private var screenArea = CGSize.zero
 
     var body: some View {
         VStack(spacing: Theme.gap) {
@@ -45,21 +50,27 @@ struct LiveScreenView: View {
             TimelineView(.animation(minimumInterval: nil, paused: paused)) { context in
                 // A paused schedule may hand an old date: draw the present.
                 let now = paused ? Self.now() : context.date.timeIntervalSinceReferenceDate
-                let scene = LiveViewScene.make(timeline: timeline, replay: replay, now: now, reduceMotion: reduceMotion)
+                // The one FFI call of this frame (the wireframe comes from the cache).
+                let scene = viewer.scene(CoreSceneQuery(nowMs: now * 1_000, reduceMotion: reduceMotion,
+                                                       viewWidth: Double(screenArea.width), viewHeight: Double(screenArea.height)))
+                let screen = viewer.screen(id: scene?.screenId)
                 PhoneScreen(
                     scene: scene,
-                    tone: tone(for: scene),
+                    screen: screen,
+                    step: timeline.step(number: scene?.stepNumber),
+                    tone: Self.color(scene?.tone),
                     // Never the real screen while the app is not active (app switcher).
-                    image: scenePhase == .active ? images.image(for: scene.screen?.frameKey, in: frames) : nil,
+                    image: scenePhase == .active ? images.image(for: viewer.frameKey(for: screen?.info), in: frames) : nil,
                     now: now,
-                    reduceMotion: reduceMotion
+                    reduceMotion: reduceMotion,
+                    area: $screenArea
                 )
-                .onChange(of: context.date) { _, date in
-                    let t = date.timeIntervalSinceReferenceDate
-                    advancePlayback(now: t)
-                    if !LiveViewScene.needsFrames(timeline: timeline, replay: replay, now: t, reduceMotion: reduceMotion) {
-                        settleTick &+= 1
-                    }
+                .onChange(of: scene?.needsFrames ?? false) { _, needs in
+                    if !needs { settleTick &+= 1 }
+                }
+                .onChange(of: ReplayMark(scene)) { _, _ in
+                    // Playback moved on, or steps arrived: the labels follow.
+                    status = viewer.replayStatus()
                 }
             }
             .frame(maxWidth: .infinity)
@@ -69,7 +80,7 @@ struct LiveScreenView: View {
         .padding(EdgeInsets(top: 14, leading: 10, bottom: 10, trailing: 10))
         .card(fill: Theme.well)
         .onAppear {
-            replay.sync(numbers: timeline.stepNumbers, now: Self.now())
+            status = viewer.replay(.reset, nowMs: Self.nowMs(), reduceMotion: reduceMotion)
             appeared = true
             reportShown()
         }
@@ -78,25 +89,22 @@ struct LiveScreenView: View {
             reportShown()
         }
         .onChange(of: scenePhase) { _, _ in reportShown() }
-        .onChange(of: timeline.stepNumbers) { _, _ in
-            // A step arriving mid-animation continues from where the cursor is.
-            replay = LiveViewScene.synced(replay, timeline: timeline, now: Self.now(), reduceMotion: reduceMotion)
-        }
         .onChange(of: timeline.taskId) { _, _ in
             // A new run: follow it live, whatever the last replay was doing.
-            var fresh = ReplayState()
-            fresh.sync(numbers: timeline.stepNumbers, now: Self.now())
-            replay = fresh
+            status = viewer.replay(.reset, nowMs: Self.nowMs(), reduceMotion: reduceMotion)
         }
     }
 
     private static func now() -> Double { Date().timeIntervalSinceReferenceDate }
 
+    /// The core's clock: milliseconds.
+    private static func nowMs() -> Double { now() * 1_000 }
+
     /// Whether the `TimelineView` is paused: nothing moves, or the app is not active.
     /// `tick` only makes `body` depend on `settleTick`.
     private func isPaused(_ tick: Int) -> Bool {
         guard scenePhase == .active else { return true }
-        return !LiveViewScene.needsFrames(timeline: timeline, replay: replay, now: Self.now(), reduceMotion: reduceMotion)
+        return !viewer.needsFrames(nowMs: Self.nowMs(), reduceMotion: reduceMotion)
     }
 
     /// Tells the frame store whether this Live view is on screen (a run that ends unwatched
@@ -105,71 +113,52 @@ struct LiveScreenView: View {
         frames.isShown = appeared && scenePhase == .active
     }
 
-    /// While playing: on to the next step once the shown one has played out.
-    private func advancePlayback(now: Double) {
-        guard replay.isPlaying else { return }
-        let current = timeline
-        let reduce = reduceMotion
-        var next = replay
-        next.advance(numbers: current.stepNumbers, now: now) { number in
-            CursorPath.playMs(step: number, in: current, reduceMotion: reduce)
-        }
-        if next != replay { replay = next }
-    }
-
     /// The caption dot's colour: acting, failed, waiting on the owner, done.
-    private func tone(for scene: LiveViewScene) -> Color {
-        if let step = scene.step {
-            if step.state == .stopped { return Theme.textTertiary }
-            return step.state.isFailed ? Theme.error : Theme.tally
-        }
-        switch timeline.activity {
-        case .waitingForApproval, .waitingForAnswer, .locked: return Theme.warning
-        case .finished(let outcome):
-            switch outcome {
-            case .success: return Theme.connected
-            case .cancelled, .interrupted: return Theme.textTertiary
-            case .failed, .blocked: return Theme.error
-            }
+    private static func color(_ tone: CoreSceneTone?) -> Color {
+        guard let tone else { return Theme.textTertiary }
+        switch tone {
         case .acting: return Theme.tally
-        case .idle, .looking, .thinking, .usingTool, .unknown: return Theme.textTertiary
+        case .waiting: return Theme.warning
+        case .error: return Theme.error
+        case .success: return Theme.connected
+        case .neutral: return Theme.textTertiary
         }
     }
 
     // MARK: Replay controls
 
-    private var positionText: String {
-        let numbers = timeline.stepNumbers
-        guard !numbers.isEmpty else { return "No steps yet" }
-        if replay.isFollowing { return "Live · \(numbers.count) \(numbers.count == 1 ? "step" : "steps")" }
-        let index = replay.current.flatMap { numbers.firstIndex(of: $0) } ?? (numbers.count - 1)
-        return "Step \(index + 1) of \(numbers.count)"
+    /// A scrubber control; its returned state drives the labels.
+    private func replay(_ action: CoreReplayAction) {
+        status = viewer.replay(action, nowMs: Self.nowMs(), reduceMotion: reduceMotion)
     }
 
+    private var positionText: String { status?.positionText ?? "No steps yet" }
+
     private var controls: some View {
-        let numbers = timeline.stepNumbers
-        let hasSteps = !numbers.isEmpty
+        let count = timeline.steps.count
+        let hasSteps = count > 0
+        let playing = status?.playing ?? false
         return VStack(spacing: Theme.gapSmall) {
             HStack(spacing: Theme.gapSmall) {
                 controlButton(.stepBack, label: "Previous step", identifier: "run.live.back", disabled: !hasSteps) {
-                    replay.stepBack(numbers: numbers, now: Self.now())
+                    replay(.stepBack)
                 }
-                controlButton(replay.isPlaying ? .pause : .play, label: replay.isPlaying ? "Pause replay" : "Play replay",
+                controlButton(playing ? .pause : .play, label: playing ? "Pause replay" : "Play replay",
                               identifier: "run.live.play", disabled: !hasSteps) {
-                    replay.togglePlay(numbers: numbers, now: Self.now())
+                    replay(.togglePlay)
                 }
                 controlButton(.stepForward, label: "Next step", identifier: "run.live.forward", disabled: !hasSteps) {
-                    replay.stepForward(numbers: numbers, now: Self.now())
+                    replay(.stepForward)
                 }
                 Slider(
                     value: Binding(
-                        get: { replay.fraction(numbers: numbers) },
-                        set: { replay.scrub(fraction: $0, numbers: numbers, now: Self.now()) }
+                        get: { status?.fraction ?? 1 },
+                        set: { replay(.scrubFraction(fraction: $0)) }
                     ),
                     in: 0...1
                 )
                 .tint(Theme.tally)
-                .disabled(numbers.count < 2)
+                .disabled(count < 2)
                 .accessibilityLabel("Replay position")
                 .accessibilityValue(positionText)
                 .accessibilityIdentifier("run.live.scrubber")
@@ -181,7 +170,7 @@ struct LiveScreenView: View {
                     .accessibilityHidden(true)
                 Spacer(minLength: 4)
                 speedButton
-                liveChip(numbers: numbers)
+                liveChip
             }
             .padding(.leading, 6)
         }
@@ -203,10 +192,11 @@ struct LiveScreenView: View {
     }
 
     private var speedButton: some View {
-        Button {
-            replay.setSpeed(replay.speed.next, now: Self.now())
+        let title = status?.speedTitle ?? "1×"
+        return Button {
+            replay(.nextSpeed)
         } label: {
-            Text(replay.speed.title)
+            Text(title)
                 .font(Theme.mono.weight(.semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.horizontal, 10)
@@ -218,14 +208,14 @@ struct LiveScreenView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Replay speed")
-        .accessibilityValue(replay.speed.title)
+        .accessibilityValue(title)
         .accessibilityIdentifier("run.live.speed")
     }
 
-    private func liveChip(numbers: [Int]) -> some View {
-        let following = replay.isFollowing
+    private var liveChip: some View {
+        let following = status?.following ?? true
         return Button {
-            replay.goLive(numbers: numbers, now: Self.now())
+            replay(.goLive)
         } label: {
             HStack(spacing: 6) {
                 Circle()
@@ -248,41 +238,64 @@ struct LiveScreenView: View {
     }
 }
 
+/// What of the drawn scene the replay labels depend on (refreshed when it changes).
+private struct ReplayMark: Equatable {
+    var current: UInt32?
+    var following: Bool
+    var playing: Bool
+    var count: UInt32
+
+    init(_ scene: CoreLiveScene?) {
+        current = scene?.replayCurrent
+        following = scene?.following ?? true
+        playing = scene?.playing ?? false
+        count = scene?.positionCount ?? 0
+    }
+}
+
 // MARK: - The phone
 
 /// The phone-shaped screen: backdrop, target outline, gesture marks, cursor and caption.
-/// One accessibility element whose value is the caption.
+/// One accessibility element whose value is the caption. Draws only the scene's values
+/// (view points); nothing at all when the scene could not be had.
 private struct PhoneScreen: View {
-    var scene: LiveViewScene
+    var scene: CoreLiveScene?
+    /// The backdrop's screen with its wireframe.
+    var screen: CoreViewerScreen?
+    /// The step shown.
+    var step: CoreViewerStep?
     var tone: Color
     var image: UIImage?
     var now: Double
     var reduceMotion: Bool
+    /// Reports the screen's size in points (what the scene maps into).
+    @Binding var area: CGSize
 
-    private var screenSize: ViewerSize { scene.screen?.size.usable ?? ViewerSize.fallbackPhone }
+    /// The screen's aspect ratio (an iPhone in portrait until there is a scene).
+    private var displayAspect: Double { scene?.displayAspect ?? 393.0 / 852.0 }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             GeometryReader { proxy in
-                let mapping = ViewerMapping(
-                    screen: screenSize,
-                    view: ViewerSize(width: Double(proxy.size.width), height: Double(proxy.size.height))
-                )
                 ZStack(alignment: .topLeading) {
                     Theme.ground
-                    backdrop(mapping)
-                    targetOutline(mapping)
-                    gestureMarks(mapping)
-                    cursor(mapping)
+                    if let scene, scene.scale > 0 {
+                        backdrop(scene)
+                        targetOutline(scene)
+                        gestureMarks(scene)
+                        cursor(scene)
+                    }
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+                .onAppear { area = proxy.size }
+                .onChange(of: proxy.size) { _, size in area = size }
             }
             .clipShape(RoundedRectangle(cornerRadius: Theme.viewerScreenRadius, style: .continuous))
 
-            CaptionPill(text: scene.caption, tone: tone, pulsing: scene.isIdle)
+            CaptionPill(text: scene?.caption ?? "", tone: tone, pulsing: scene?.isIdle ?? false)
                 .padding(Theme.gapSmall)
         }
-        .aspectRatio(CGFloat(screenSize.displayAspect), contentMode: .fit)
+        .aspectRatio(CGFloat(displayAspect), contentMode: .fit)
         .padding(Theme.viewerBezel)
         .background(RoundedRectangle(cornerRadius: Theme.viewerOuterRadius, style: .continuous).fill(Theme.raisedHigh))
         .overlay(
@@ -292,42 +305,40 @@ private struct PhoneScreen: View {
         .frame(maxHeight: Theme.viewerMaxHeight)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Live view")
-        .accessibilityValue(scene.accessibilityValue)
+        .accessibilityValue(scene?.accessibilityValue ?? "")
         .accessibilityIdentifier("run.live")
     }
 
     // MARK: Backdrop
 
-    @ViewBuilder private func backdrop(_ mapping: ViewerMapping) -> some View {
-        let content = mapping.contentRect.cgRect
+    @ViewBuilder private func backdrop(_ scene: CoreLiveScene) -> some View {
+        let content = scene.content.cgRect
         if let image {
             // Aspect-fit in the screen's rect: never stretched.
-            let fit = mapping.contentRect
-                .aspectFit(ViewerSize(width: Double(image.size.width), height: Double(image.size.height)))
-                .cgRect
             Image(uiImage: image)
                 .resizable()
                 .interpolation(.medium)
-                .frame(width: fit.width, height: fit.height)
-                .position(x: fit.midX, y: fit.midY)
-        } else if scene.screen?.source == .locked {
+                .scaledToFit()
+                .frame(width: content.width, height: content.height)
+                .position(x: content.midX, y: content.midY)
+        } else if screen?.info.source == .locked {
             VStack(spacing: Theme.gapSmall) {
                 Image.decorative(.lock, size: Theme.iconDisplay)
                 Text("Locked").font(Theme.meta.weight(.semibold))
             }
             .foregroundStyle(Theme.textTertiary)
             .position(x: content.midX, y: content.midY)
-        } else if let elements = scene.screen?.elements, !elements.isEmpty {
-            WireframeCanvas(elements: elements, mapping: mapping)
+        } else if let elements = screen?.elements, !elements.isEmpty {
+            WireframeCanvas(elements: elements, scene: scene)
         }
     }
 
     // MARK: Target and gesture marks
 
-    @ViewBuilder private func targetOutline(_ mapping: ViewerMapping) -> some View {
-        if let step = scene.step, let target = step.target, let rect = mapping.toView(target.frame) {
-            let color = step.state.isFailed ? Theme.error : Theme.tally
-            let arrived = scene.pose.phase != .gliding
+    @ViewBuilder private func targetOutline(_ scene: CoreLiveScene) -> some View {
+        if let rect = scene.targetInView {
+            let color = step?.state.isFailed == true ? Theme.error : Theme.tally
+            let arrived = scene.phase != .gliding
             let r = rect.cgRect.insetBy(dx: -3, dy: -3)
             RoundedRectangle(cornerRadius: Theme.radiusInner, style: .continuous)
                 .fill(color.opacity(arrived ? 0.14 : 0.06))
@@ -341,15 +352,13 @@ private struct PhoneScreen: View {
         }
     }
 
-    @ViewBuilder private func gestureMarks(_ mapping: ViewerMapping) -> some View {
-        if let step = scene.step {
-            let pose = scene.pose
-            let at = mapping.toView(pose.position).cgPoint
+    @ViewBuilder private func gestureMarks(_ scene: CoreLiveScene) -> some View {
+        if let step {
+            let at = scene.cursorInView.cgPoint
             switch step.gesture {
-            case .swipe(let from, let to, _):
-                if pose.phase == .swiping || pose.phase == .resting {
-                    let start = mapping.toView(from).cgPoint
-                    let end = pose.phase == .resting ? mapping.toView(to).cgPoint : at
+            case .swipe:
+                // The scene gives the trail while the finger drags and once it rests.
+                if let start = scene.trailStart?.cgPoint, let end = scene.trailEnd?.cgPoint {
                     Path { path in
                         path.move(to: start)
                         path.addLine(to: end)
@@ -361,8 +370,8 @@ private struct PhoneScreen: View {
                         .position(start)
                 }
             case .tap:
-                if pose.phase == .pressing {
-                    let progress = CGFloat(pose.progress)
+                if scene.phase == .pressing {
+                    let progress = CGFloat(scene.progress)
                     // Reduce Motion: a fading ring of fixed size instead of an expanding one.
                     let diameter = reduceMotion
                         ? Theme.rippleStart + Theme.rippleGrowth / 2
@@ -377,19 +386,19 @@ private struct PhoneScreen: View {
                         .position(at)
                 }
             case .longPress:
-                if pose.phase == .pressing {
+                if scene.phase == .pressing {
                     ZStack {
                         Circle()
                             .stroke(Theme.tally.opacity(0.25), lineWidth: 3)
                         Circle()
-                            .trim(from: 0, to: CGFloat(pose.progress))
+                            .trim(from: 0, to: CGFloat(scene.progress))
                             .stroke(Theme.tally, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                             .rotationEffect(.degrees(-90))
                     }
                     .frame(width: Theme.pressRing, height: Theme.pressRing)
                     .position(at)
                 }
-            case .type, .key, .launch, .openURL, .wait, .unknown:
+            case .typeText, .key, .launch, .openUrl, .wait, .unknown:
                 EmptyView()
             }
         }
@@ -397,9 +406,9 @@ private struct PhoneScreen: View {
 
     // MARK: Cursor
 
-    private func cursor(_ mapping: ViewerMapping) -> some View {
-        let tip = mapping.toView(scene.pose.position).cgPoint
-        return CursorPointer(pressed: scene.pose.isPressed, idle: scene.isIdle, now: now, reduceMotion: reduceMotion)
+    private func cursor(_ scene: CoreLiveScene) -> some View {
+        let tip = scene.cursorInView.cgPoint
+        return CursorPointer(pressed: scene.pressed, idle: scene.isIdle, now: now, reduceMotion: reduceMotion)
             .fixedSize()
             .offset(x: tip.x, y: tip.y)
             .accessibilityIdentifier("run.live.cursor")
@@ -409,13 +418,13 @@ private struct PhoneScreen: View {
 /// The wireframe backdrop: one rounded rectangle per shown element, tinted by kind, with its
 /// label when there is room.
 private struct WireframeCanvas: View {
-    var elements: [ViewerElement]
-    var mapping: ViewerMapping
+    var elements: [CoreViewerElement]
+    var scene: CoreLiveScene
 
     var body: some View {
         Canvas { context, _ in
             for element in elements {
-                guard let mapped = mapping.toView(element.frame) else { continue }
+                guard let mapped = scene.viewRect(element.frame) else { continue }
                 let rect = mapped.cgRect
                 guard rect.width >= 1, rect.height >= 1 else { continue }
                 let style = WireframeStyle(kind: element.kind)
@@ -448,7 +457,7 @@ private struct WireframeStyle {
     var fillOpacity: Double
     var strokeOpacity: Double
 
-    init(kind: ViewerElementKind) {
+    init(kind: CoreViewerElementKind) {
         switch kind {
         case .control: self.init(color: Theme.textSoft, fillOpacity: 0.10, strokeOpacity: 0.30)
         case .input: self.init(color: Theme.textPrimary, fillOpacity: 0.06, strokeOpacity: 0.45)
@@ -567,10 +576,10 @@ final class FrameImageCache {
     }
 }
 
-private extension ViewerRect {
+private extension Rect {
     var cgRect: CGRect { CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(width), height: CGFloat(height)) }
 }
 
-private extension ViewerPoint {
+private extension Point {
     var cgPoint: CGPoint { CGPoint(x: CGFloat(x), y: CGFloat(y)) }
 }
