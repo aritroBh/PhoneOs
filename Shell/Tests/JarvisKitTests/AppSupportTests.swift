@@ -56,8 +56,9 @@ struct SettingsTests {
         #expect(policy.maxDurationMs == 180_000)
         #expect(policy.maxLockedWaitMs == 30 * 60_000, "the default lock wait")
         #expect(policy.deniedApps == defaults.deniedApps, "Passwords and Wallet stay denied")
-        #expect(policy.appRules.contains(AppRule(bundleIdPrefix: "com.apple.MobileSMS", level: .stepByStep)))
-        #expect(policy.appRules.contains(AppRule(bundleIdPrefix: "com.apple.Passbook", level: .denied)))
+        // Each rule carries the app's display name (the core matches icons by it).
+        #expect(policy.appRules.contains(AppRule(bundleIdPrefix: "com.apple.MobileSMS", level: .stepByStep, name: "Messages")))
+        #expect(policy.appRules.contains(AppRule(bundleIdPrefix: "com.apple.Passbook", level: .denied, name: "Wallet")))
 
         settings.maxSteps = 0
         settings.maxMinutes = 10_000
@@ -66,6 +67,22 @@ struct SettingsTests {
         #expect(policy.maxLockedWaitMs == 60_000)
         #expect(policy.maxSteps == 1)
         #expect(policy.maxDurationMs == 120 * 60_000)
+    }
+
+    @Test("apply passes each app's display name; a blank name is left out")
+    func applyPassesDisplayNames() throws {
+        let settings = JarvisSettings(appTrust: [
+            AppTrust(bundleIdPrefix: " com.examplebank.mobile ", name: "  My Bank ", level: .denied),
+            AppTrust(bundleIdPrefix: "com.example.notes", name: "   ", level: .trusted),
+        ])
+        var policy = try defaultPolicy()
+        settings.apply(to: &policy)
+        #expect(policy.appRules == [
+            AppRule(bundleIdPrefix: "com.examplebank.mobile", level: .denied, name: "My Bank"),
+            AppRule(bundleIdPrefix: "com.example.notes", level: .trusted, name: nil),
+        ])
+        // The generated initializer still accepts rules without a name.
+        #expect(AppRule(bundleIdPrefix: "com.example", level: .guarded).name == nil)
     }
 
     @Test("trust lookup uses the longest prefix at dot boundaries")

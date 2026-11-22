@@ -344,7 +344,14 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         policy.maxLockedWaitMs = maxLockedWaitMs
         policy.appRules = appTrust
             .filter { !$0.bundleIdPrefix.trimmingCharacters(in: .whitespaces).isEmpty }
-            .map { AppRule(bundleIdPrefix: $0.bundleIdPrefix.trimmingCharacters(in: .whitespaces), level: $0.level.core) }
+            .map { trust in
+                // The name the owner sees: the core refuses a denied app's home-screen icon,
+                // app-switcher card or `open_app` by it.
+                let name = trust.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                return AppRule(bundleIdPrefix: trust.bundleIdPrefix.trimmingCharacters(in: .whitespaces),
+                               level: trust.level.core,
+                               name: name.isEmpty ? nil : name)
+            }
     }
 
     /// Whether the core still asks for `category` under these settings.
