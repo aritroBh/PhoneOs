@@ -333,27 +333,15 @@ extension JSONValue {
 
 /// Runs an operation against a deadline and returns at whichever comes first, even when the
 /// operation ignores cancellation (it then finishes detached and its result is dropped).
+///
+/// Through `IORace`, the driver's own race, which compiles under Swift 6.3 on the Mac: a
+/// first version with a local `Mutex` captured by two `Task` closures built with Swift 6.4
+/// on Linux and failed on the Mac ("passing closure as a 'sending' parameter risks causing
+/// data races").
 enum Deadline {
     static func race(seconds: TimeInterval, _ operation: @escaping @Sendable () async -> Void) async {
-        let done = Mutex(false)
-        let tasks = Mutex<[Task<Void, Never>]>([])
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            @Sendable func finish() {
-                let first = done.withLock { d -> Bool in
-                    defer { d = true }
-                    return !d
-                }
-                guard first else { return }
-                tasks.withLock { $0 }.forEach { $0.cancel() }
-                continuation.resume()
-            }
-            let work = Task { await operation(); finish() }
-            let timer = Task {
-                try? await Task.sleep(for: .seconds(seconds))
-                if !Task.isCancelled { finish() }
-            }
-            tasks.withLock { $0 = [work, timer] }
-            if done.withLock({ $0 }) { work.cancel(); timer.cancel() }
+        _ = try? await IORace<Void>().run(kind: .infer, timeout: .seconds(seconds)) {
+            await operation()
         }
     }
 }
