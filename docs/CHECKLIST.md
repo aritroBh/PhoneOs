@@ -97,6 +97,10 @@ Waiting for a Mac build (app code changed after `18bc128`, the last commit compi
 - [x] After an approval the screen is read again; the action runs only if its target is still the same control
 - [x] Second review, of that fix itself: 8 more proven defects (4 critical), fixed. An approval is tied to the target's state, its row, the amounts on screen and what the classifier read; summaries name the neighbouring item, the total, on/off
 - [x] Spotlight, widgets and suggestions cannot open a denied app; classifier scans cannot be padded past a risky control
+- [x] Third, fourth and fifth reviews of the approval path: each broke the version before it. The binding is now the raw digest (with what is shown), the compact content in order, the raw node the target comes from, and the category with the full summary; exclusions apply to digest and compaction alike
+- [ ] Sixth review of that binding: in progress. Until a review passes without a critical finding, treat the approval path as not yet proven
+- [x] Screens read through the third-party runner's text format always ask (the format can be forged by on-screen text)
+- [ ] Typed runner for the device: Jarvis's own XCUITest runner serving typed trees to the app (today it exists only inside the UI test bundle); needed before hands-off use, because the text path now asks before every action
 - [x] Denied apps are refused by display name (home-screen icon, switcher card, `open_app`)
 - [ ] First-use approval for `OpenUrl` and tools with no declared app
 - [ ] Non-English safety phrases
