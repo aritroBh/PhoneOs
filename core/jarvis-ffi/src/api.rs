@@ -68,40 +68,14 @@ pub fn field_value_is_hidden(
     secure: bool,
 ) -> Result<bool, JarvisError> {
     guarded("field_value_is_hidden", || {
-        let role = p::Role::from(role);
-        if secure || role == p::Role::SecureTextField {
-            return Ok(true);
-        }
-        let placeholder = placeholder.filter(|t| !t.trim().is_empty());
-        let named = |label: String| {
-            jarvis_safety::credential_like_field(&p::Element {
-                index: 1,
-                role: role.clone(),
-                label,
-                value: None,
-                placeholder: placeholder.clone(),
-                frame: p::Rect {
-                    x: 0.0,
-                    y: 0.0,
-                    width: 0.0,
-                    height: 0.0,
-                },
-                enabled: true,
-                focused: false,
-                selected: false,
-                secure: false,
-                fingerprint: 0,
-            })
-        };
-        let candidates = [label, identifier]
-            .into_iter()
-            .flatten()
-            .filter(|t| !t.trim().is_empty())
-            .collect::<Vec<_>>();
-        if candidates.is_empty() {
-            return Ok(named(String::new()));
-        }
-        Ok(candidates.into_iter().any(named))
+        // One implementation, shared with the Live view's reducer (`JarvisViewer`).
+        Ok(jarvis_viewer::privacy::field_value_hidden(
+            &p::Role::from(role),
+            label.as_deref(),
+            placeholder.as_deref(),
+            identifier.as_deref(),
+            secure,
+        ))
     })
 }
 

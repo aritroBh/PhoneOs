@@ -46,6 +46,7 @@ jarvis-memory.workspace = true
 jarvis-skills.workspace = true
 jarvis-remote.workspace = true
 jarvis-safety.workspace = true
+jarvis-viewer.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 uniffi.workspace = true

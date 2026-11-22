@@ -796,5 +796,76 @@ do {
     check("remote checks", false, "\(error)")
 }
 
+// 12. Live view: one feed per driver update, one scene per frame, screens on demand, bytes.
+do {
+    let viewer = try JarvisViewer(config: CoreViewerConfig(
+        maxSteps: 200, framesEnabled: true, knownApps: [AppInfo(bundleId: settingsBundle, name: "Settings")]))
+    func feed(_ u: CoreViewerUpdate) throws -> CoreViewerChange { try viewer.feed(update: u) }
+    let progress = { (step: UInt32, action: Action?) in
+        SessionProgress(step: step, phase: .acting, lastAction: action, app: settingsBundle, modelCalls: 1,
+                        parseRetries: 0, waitingForUnlock: false, lockedWaitMs: 0, lockedTotalMs: 0)
+    }
+    var started = try feed(.started(taskId: "smoke"))
+    check("viewer: started changes the steps", started.steps && started.generation == 1, "\(started)")
+    // A typed screen with a one-time code and a card number on it.
+    var screen = settingsScreen()
+    screen.root.children[0].children.append(UiNode(
+        role: .staticText, label: "Your code is 482913", value: nil, identifier: nil,
+        placeholder: nil, frame: Rect(x: 16, y: 400, width: 361, height: 44), enabled: true, visible: true,
+        hittable: false, focused: false, selected: false, secure: false, children: []))
+    _ = try feed(.effect(effect: .observe(screenshot: false), number: 1))
+    started = try feed(.effectCompleted(effect: .observe(screenshot: false),
+                                        event: .observed(observation: ScreenObservation(screen: screen, screenshot: nil))))
+    check("viewer: an observation adds a screen", started.screens)
+    let tap = RunnerCommand.tap(x: 196.5, y: 222)
+    _ = try feed(.effect(effect: .act(command: tap), number: 2))
+    _ = try feed(.progress(progress: progress(1, .tap(element: 2))))
+    _ = try feed(.effectCompleted(effect: .act(command: tap), event: .actResult(result: RunnerResult(ok: true, error: nil))))
+    _ = try feed(.effect(effect: .observe(screenshot: false), number: 3))
+    _ = try feed(.effectCompleted(effect: .observe(screenshot: false),
+                                  event: .observedRunnerText(snapshot: snapshot(wifiText(on: true)))))
+    let type = RunnerCommand.typeText(text: "hunter2")
+    _ = try feed(.effect(effect: .act(command: type), number: 4))
+    _ = try feed(.progress(progress: progress(2, .type(element: nil, text: "hunter2", submit: false))))
+    _ = try feed(.effectCompleted(effect: .act(command: type), event: .actResult(result: RunnerResult(ok: true, error: nil))))
+    _ = try feed(.finished(status: .success))
+    let timeline = try viewer.timeline()
+    check("viewer: two steps with captions",
+          timeline.steps.map(\.caption) == ["Tap \u{201C}Wi-Fi\u{201D}", "Type text"], "\(timeline.steps.map(\.caption))")
+    check("viewer: the activity is finished",
+          timeline.activity == .finished(outcome: .success) && timeline.activityCaption == "Done")
+    let firstScreen = timeline.steps.first?.screenId ?? 0
+    let wire = try viewer.screen(id: firstScreen)
+    check("viewer: a screen's wireframe on demand",
+          wire?.info.source == .tree && (wire?.elements.contains { $0.label == "Wi-Fi" } ?? false)
+              && wire?.info.frameKey == CoreViewerFrameKey(taskId: "smoke", observation: 1))
+    let bytes = try viewer.encode()
+    let text = String(decoding: bytes, as: UTF8.self)
+    check("viewer: the encoding is versioned and holds no secret",
+          text.contains("\"version\":\(viewerWireVersion())") && !text.contains("482913") && !text.contains("hunter2"))
+    let remote = try JarvisViewer.decoded(bytes: bytes, config: CoreViewerConfig(maxSteps: 200, framesEnabled: false, knownApps: []))
+    check("viewer: decoded bytes re-encode identically", try remote.encode() == bytes)
+    do {
+        _ = try JarvisViewer.decoded(bytes: Data("{\"version\":99}".utf8), config: CoreViewerConfig(maxSteps: 1, framesEnabled: false, knownApps: []))
+        check("viewer: bad bytes throw InvalidJson", false, "accepted")
+    } catch JarvisError.InvalidJson {
+        check("viewer: bad bytes throw InvalidJson", true)
+    }
+    let query = { (now: Double) in CoreSceneQuery(nowMs: now, reduceMotion: false, viewWidth: 196.5, viewHeight: 426) }
+    let live = try viewer.scene(query: query(1_000))
+    check("viewer: the first frame plays the newest step",
+          live.stepNumber == 2 && live.needsFrames && live.following && live.scale == 0.5, "\(live)")
+    let settled = try viewer.scene(query: query(60_000))
+    check("viewer: a finished run settles", !settled.needsFrames && settled.caption == "Done" && settled.tone == .success)
+    let status = try viewer.replay(action: .stepBack, nowMs: 70_000, reduceMotion: false)
+    let replayed = try viewer.scene(query: query(80_000))
+    check("viewer: replay shows step 1 with its position",
+          status.positionText == "Step 1 of 2" && replayed.stepNumber == 1 && replayed.positionIndex == 1
+              && replayed.accessibilityValue == "Tap \u{201C}Wi-Fi\u{201D}, Step 1 of 2" && replayed.targetInView != nil,
+          "\(status) \(replayed)")
+} catch {
+    check("viewer checks", false, "\(error)")
+}
+
 print("\(failures == 0 ? "PASS" : "FAIL") swift smoke: \(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

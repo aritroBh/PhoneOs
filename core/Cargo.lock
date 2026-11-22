@@ -568,6 +568,7 @@ dependencies = [
  "jarvis-remote",
  "jarvis-safety",
  "jarvis-skills",
+ "jarvis-viewer",
  "serde_json",
  "thiserror",
  "uniffi",
@@ -657,6 +658,17 @@ version = "0.1.0"
 dependencies = [
  "jarvis-memory",
  "jarvis-proto",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "jarvis-viewer"
+version = "0.1.0"
+dependencies = [
+ "jarvis-proto",
+ "jarvis-safety",
  "serde",
  "serde_json",
  "thiserror",

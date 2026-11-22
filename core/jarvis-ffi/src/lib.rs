@@ -21,11 +21,20 @@
 //!   `JarvisRemoteClient.pair/connect` (a remote device), plus `neverRemoteApprove()`,
 //!   `remotelyApprovable(category:)`, `newDeviceRemotePermissions()`
 //!   ([`JarvisRemoteHub`], [`JarvisRemoteClient`]; secrets and shell duties in `remote.rs`).
+//! - `JarvisViewer(config:) throws` (the Live view of one run) and
+//!   `JarvisViewer.decoded(bytes:config:) throws` (a timeline received as bytes):
+//!   `feed(update:)` once per driver update (`CoreViewerUpdate` mirrors `DriverUpdate`),
+//!   `scene(query:)` once per drawn frame (a flat `CoreSceneQuery` in, a flat
+//!   `CoreLiveScene` out), `timeline()` (steps and screen summaries, no wireframes),
+//!   `screen(id:)` (one wireframe), `encode()` (the versioned wire bytes for the remote
+//!   stream), `replay(action:nowMs:reduceMotion:)`, `replayStatus()`, `generation()`;
+//!   `viewerWireVersion()` ([`JarvisViewer`]; the logic is the `jarvis-viewer` crate,
+//!   records carry a `Core` prefix so they never collide with the shell's `Viewer*` types).
 //! - Free functions: `actionJsonSchema()`, `actionGbnf()`, `systemPrompt()`,
 //!   `coreVersion()`, `parseRunnerTextToScreen(snapshot:)`, `defaultPolicy()`,
 //!   `defaultModelProfile()`, `defaultSessionConfig()`, and for the Live view
 //!   `redactScreenText(text:)` and `fieldValueIsHidden(role:label:placeholder:identifier:secure:)`
-//!   ([`api`]).
+//!   ([`api`]; kept for the shell's Swift Live view until it uses `JarvisViewer`).
 //! - Mirrors of every type in the `Event`/`Effect` graph as records and enums
 //!   ([`types`]), converted to and from `jarvis-proto` in `convert.rs` (`From`/`TryFrom`).
 //! - One error enum, [`JarvisError`].
@@ -59,6 +68,7 @@ mod runner;
 mod session;
 mod skills;
 pub mod types;
+mod viewer;
 mod workflows;
 
 pub use error::JarvisError;
@@ -69,6 +79,13 @@ pub use remote::{
 pub use session::JarvisSession;
 pub use skills::JarvisSkills;
 pub use types::*;
+pub use viewer::{
+    viewer_wire_version, CoreCursorPhase, CoreLiveScene, CoreReplayAction, CoreReplaySpeed,
+    CoreReplayStatus, CoreSceneQuery, CoreSceneTone, CoreViewerActivity, CoreViewerChange,
+    CoreViewerConfig, CoreViewerElement, CoreViewerElementKind, CoreViewerFrameKey,
+    CoreViewerGesture, CoreViewerOutcome, CoreViewerScreen, CoreViewerScreenInfo, CoreViewerSource,
+    CoreViewerStep, CoreViewerStepState, CoreViewerTimeline, CoreViewerUpdate, JarvisViewer,
+};
 pub use workflows::{
     default_run_limits, resolve_utterance, schedule_is_due, schedule_minutes_since_last,
     schedule_minutes_until_next, weekday_from_index, JarvisWorkflowRun, JarvisWorkflows,
