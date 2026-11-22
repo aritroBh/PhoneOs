@@ -120,14 +120,20 @@ final class XCUITestPhoneRunner: PhoneRunner {
         let start = Date()
         let snapshot = try app.snapshot()
         let raw = SnapshotCopy.copy(snapshot)
-        let snapshotMs = Int(Date().timeIntervalSince(start) * 1_000)
-        var size = Size(width: raw.frame.width, height: raw.frame.height)
+        let snapshotMs = (Date().timeIntervalSince(start) * 1_000).clampedInt
+        let rootFrame = raw.frame.sanitized
+        var size = Size(width: rootFrame.width, height: rootFrame.height)
         if size.width <= 0 || size.height <= 0 {
-            let screen = UIScreen.main.bounds.size
-            size = Size(width: Double(screen.width), height: Double(screen.height))
-            notes.append("the application element has no frame; screen size taken from UIScreen (\(size.width)x\(size.height))")
+            // Points from the screenshot (pixels / scale): UIScreen.main is deprecated.
+            let image = XCUIScreen.main.screenshot().image
+            size = Size(width: Double(image.size.width).finiteClamped(Rect.coordinateLimit),
+                        height: Double(image.size.height).finiteClamped(Rect.coordinateLimit))
+            notes.append("the application element has no frame; screen size taken from a screenshot (\(size.width.compactText)x\(size.height.compactText))")
         }
         let built = UiTreeBuilder.build(raw, screenSize: size)
+        if built.sanitizedFrames > 0 {
+            notes.append("\(built.sanitizedFrames) element frame(s) were non-finite, huge or negative and were sanitised (raw values in the tree dump)")
+        }
         if raw.subtreeFocus == nil, !focusNoteGiven {
             focusNoteGiven = true
             notes.append("keyboard focus is not readable from snapshots on this iOS; focused flags are false")
@@ -139,8 +145,8 @@ final class XCUITestPhoneRunner: PhoneRunner {
             captured = CapturedScreenshot(
                 data: shot.pngRepresentation,
                 mimeType: "image/png",
-                pixelWidth: UInt32(max(0, image.size.width * image.scale)),
-                pixelHeight: UInt32(max(0, image.size.height * image.scale)),
+                pixelWidth: Double(image.size.width * image.scale).clampedUInt32,
+                pixelHeight: Double(image.size.height * image.scale).clampedUInt32,
                 scale: Double(image.scale)
             )
         }
@@ -299,7 +305,11 @@ final class XCUITestPhoneRunner: PhoneRunner {
     private func point(_ app: XCUIApplication, _ x: Double, _ y: Double) -> XCUICoordinate {
         // The core sends absolute screen points; the app's frame origin is the screen origin
         // in portrait, so offset from the normalised (0, 0) corner.
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: x, dy: y))
+        // Never hand XCTest a non-finite or absurd offset (the core computes points from
+        // sanitised frames, but this is the last line before the event synthesiser).
+        let limit = Rect.coordinateLimit
+        return app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: x.finiteClamped(limit), dy: y.finiteClamped(limit)))
     }
 
     private var ok: RunnerResult { RunnerResult(ok: true, error: nil) }

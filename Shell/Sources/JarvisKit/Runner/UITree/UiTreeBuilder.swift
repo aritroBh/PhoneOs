@@ -10,6 +10,8 @@ import JarvisCore
 /// - Secure text fields are `secure` and never carry a value (XCUITest reports bullets).
 /// - A text input whose value equals its placeholder has no value (XCUITest reports the
 ///   placeholder as the value of an empty field).
+/// - Frames are sanitised (`Rect.sanitized`): non-finite components become 0, values are
+///   clamped to ±100 000 pt, negative sizes become 0. System UI does report such frames.
 /// - `visible`: non-empty frame that intersects the screen (when the screen size is known);
 ///   the core does the finer geometry (partly visible, under the keyboard, alerts).
 /// - `hittable` equals `visible`: XCUITest snapshots carry no hittability, and the text path
@@ -27,6 +29,8 @@ public enum UiTreeBuilder {
         public var nodeCount: Int
         /// Raw types that mapped to `Role.other` (name → count), for the artifacts.
         public var unmappedTypes: [String: Int]
+        /// Elements whose frame had to be sanitised (non-finite, huge or negative).
+        public var sanitizedFrames: Int
     }
 
     /// Converts `raw` (normally the `Application` element). `screenSize` (points) decides
@@ -35,13 +39,16 @@ public enum UiTreeBuilder {
         var keyboard = false
         var count = 0
         var unmapped: [String: Int] = [:]
-        let bounds = screenSize.map { Rect(x: 0, y: 0, width: $0.width, height: $0.height) }
+        var sanitizedFrames = 0
+        let bounds = screenSize.map { Rect(x: 0, y: 0, width: $0.width, height: $0.height).sanitized }
 
         func convert(_ e: RawElement, depth: Int) -> UiNode {
             count += 1
             let role = XCUIElementTypeCode.role(e.elementType)
             if case .other(let name) = role { unmapped[name, default: 0] += 1 }
-            let visible = isVisible(e.frame, in: bounds)
+            let frame = e.frame.sanitized
+            if frame != e.frame { sanitizedFrames += 1 }
+            let visible = isVisible(frame, in: bounds)
             if role == .keyboard && visible { keyboard = true }
             let secure = role == .secureTextField
             let placeholder = nonEmpty(e.placeholder)
@@ -59,7 +66,7 @@ public enum UiTreeBuilder {
                 value: value,
                 identifier: nonEmpty(e.identifier),
                 placeholder: placeholder,
-                frame: e.frame,
+                frame: frame,
                 enabled: e.isEnabled,
                 visible: visible,
                 hittable: visible,
@@ -71,7 +78,8 @@ public enum UiTreeBuilder {
         }
 
         let root = convert(raw, depth: 0)
-        return Result(root: root, keyboardVisible: keyboard, nodeCount: count, unmappedTypes: unmapped)
+        return Result(root: root, keyboardVisible: keyboard, nodeCount: count, unmappedTypes: unmapped,
+                      sanitizedFrames: sanitizedFrames)
     }
 
     /// Deepest level converted.
@@ -191,8 +199,7 @@ public enum UiTreeBuilder {
     }
 
     private static func num(_ v: Double) -> String {
-        guard v.isFinite else { return "\(v)" }
-        return v.rounded() == v ? String(Int64(v)) : String(format: "%.1f", v)
+        v.compactText
     }
 
     private static func escape(_ s: String) -> String {

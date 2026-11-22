@@ -106,6 +106,69 @@ struct UiTreeBuilderTests {
         #expect(!result.keyboardVisible)
     }
 
+    @Test("non-finite, huge and negative frames never trap: sanitised for the core, printed in dumps")
+    func hostileFrames() async throws {
+        let frames: [Rect] = [
+            Rect(x: .nan, y: 0, width: 10, height: 10),
+            Rect(x: 0, y: .infinity, width: 10, height: 10),
+            Rect(x: -.infinity, y: 0, width: .infinity, height: .infinity),
+            Rect(x: 1e300, y: -1e300, width: 1e300, height: 10),
+            Rect(x: -5, y: -5, width: -20, height: -30),
+            Rect(x: 0, y: 0, width: 0, height: 0),
+            Rect(x: -0.0, y: .nan, width: .nan, height: .greatestFiniteMagnitude),
+        ]
+        let hostile = RawElement(elementType: T.application, label: "SpringBoard",
+                                 frame: Rect(x: 0, y: 0, width: 440, height: 956),
+                                 children: frames.map { RawElement(elementType: T.button, label: "b", frame: $0) })
+        for size in [Size(width: 440, height: 956), Size(width: .nan, height: .infinity)] {
+            let result = UiTreeBuilder.build(hostile, screenSize: size)
+            #expect(result.sanitizedFrames == 6)
+            for child in result.root.children {
+                #expect(child.frame.isFinite)
+                #expect(child.frame.width >= 0 && child.frame.height >= 0)
+                #expect(abs(child.frame.x) <= Rect.coordinateLimit && abs(child.frame.y) <= Rect.coordinateLimit)
+            }
+            #expect(!UiTreeBuilder.dump(result.root).isEmpty)
+        }
+        let rawDump = UiTreeBuilder.dump(hostile)
+        #expect(rawDump.contains("{{nan, 0}, {10, 10}}"))
+        #expect(rawDump.contains("{{-inf, 0}, {inf, inf}}"))
+        #expect(rawDump.contains("{{1e+300, -1e+300}, {1e+300, 10}}"))
+        #expect(rawDump.contains("{{-5, -5}, {-20, -30}}"))
+
+        // The sanitised tree goes through the core without trouble.
+        let built = UiTreeBuilder.build(hostile, screenSize: Size(width: 440, height: 956))
+        let model = FakeModel { _, _ in #"{"thought":"seen","action":"done","summary":"ok"}"# }
+        let h = Harness()
+        let driver = try SessionDriver(
+            config: try SessionConfigBuilder.make(capabilities: model.capabilities),
+            task: TaskSpec(id: "hostile", text: "Look"), memoryJSON: "",
+            dependencies: DriverDependencies(runner: StaticTreePhone(root: built.root), model: model, tools: h.tools,
+                                             human: h.gate, memory: h.memory, screenshots: h.screenshots)
+        )
+        #expect(await driver.run().outcome.status == .success)
+    }
+
+    @Test("total numeric conversions")
+    func safeNumbers() {
+        #expect(Double.nan.clampedInt == 0)
+        #expect(Double.infinity.clampedInt == 0)
+        #expect(1e300.clampedInt == Int.max)
+        #expect((-1e300).clampedInt == Int.min)
+        #expect((-3.7).clampedInt == -3)
+        #expect(Double.nan.clampedUInt32 == 0)
+        #expect((-1.0).clampedUInt32 == 0)
+        #expect(1e20.clampedUInt32 == UInt32.max)
+        #expect(12.9.clampedUInt32 == 12)
+        #expect(Double.nan.compactText == "nan")
+        #expect((-Double.infinity).compactText == "-inf")
+        #expect(1e300.compactText == "1e+300")
+        #expect((-0.0).compactText == "0")
+        #expect(3.25.compactText == "3.2" || 3.25.compactText == "3.3")
+        #expect(Double.infinity.finiteClamped(5) == 0)
+        #expect(1e9.finiteClamped(5) == 5)
+    }
+
     @Test("subtree focus: found, readable but none, unreadable")
     func subtreeFocus() {
         #expect(loginSnapshot.subtreeFocus == true)

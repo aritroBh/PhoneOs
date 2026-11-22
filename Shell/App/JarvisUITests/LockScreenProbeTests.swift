@@ -8,7 +8,7 @@ import JarvisKit
 /// whether a session recovers after waking.
 ///
 /// Every step runs even when an earlier one failed, records what happened (never what was
-/// expected), and adds observation artifacts (`lock-probe-<step>/…`: typed tree, the core's
+/// expected), and adds observation artifacts (`lock-probe-<step>.NN-…`: typed tree, the core's
 /// compact screen, screenshot) plus one line in `lock-probe.json`. XCTest issues raised by
 /// probing calls are captured as data with `XCTExpectFailure` (non-strict).
 ///
@@ -55,9 +55,9 @@ final class LockScreenProbeTests: QATestCase {
         await observe("3a-locked-snapshot", "observe while locked (which app is in front?)")
         record("3b-locked-screenshot", "XCUIScreen.main.screenshot()") { details in
             let shot = XCUIScreen.main.screenshot()
-            details["pixels"] = "\(Int(shot.image.size.width * shot.image.scale))x\(Int(shot.image.size.height * shot.image.scale))"
+            details["pixels"] = "\(Double(shot.image.size.width * shot.image.scale).compactText)x\(Double(shot.image.size.height * shot.image.scale).compactText)"
             details["png_bytes"] = "\(shot.pngRepresentation.count)"
-            attach(XCTAttachment(screenshot: shot), "lock-probe/3b-locked-screenshot.png")
+            attach(XCTAttachment(screenshot: shot), "lock-probe.3b-locked-screenshot.png")
             return "screenshot taken"
         }
         record("3c-locked-tap", "tap the screen centre via SpringBoard coordinates") { _ in
@@ -132,11 +132,11 @@ final class LockScreenProbeTests: QATestCase {
                 entries.append(Entry(step: "5-recovery", action: "scripted toggle task after waking",
                                      outcome: "\(outcome.result.outcome.status): \(outcome.result.outcome.summary)",
                                      details: ["model_calls": "\(outcome.result.modelCalls)", "steps": "\(outcome.result.outcome.steps)"],
-                                     elapsedMs: Int(Date().timeIntervalSince(start) * 1_000)))
+                                     elapsedMs: (Date().timeIntervalSince(start) * 1_000).clampedInt))
             } catch {
                 recovered = false
                 entries.append(Entry(step: "5-recovery", action: "scripted toggle task after waking",
-                                     outcome: "threw: \(error)", details: [:], elapsedMs: Int(Date().timeIntervalSince(start) * 1_000)))
+                                     outcome: "threw: \(error)", details: [:], elapsedMs: (Date().timeIntervalSince(start) * 1_000).clampedInt))
             }
         } else {
             entries.append(Entry(step: "5-recovery", action: "scripted toggle task after waking",
@@ -149,7 +149,7 @@ final class LockScreenProbeTests: QATestCase {
         let summary = summaryText(locked: locked, unlocked: unlocked, recovered: recovered)
         XCTContext.runActivity(named: "Lock-screen probe summary") { activity in
             let text = XCTAttachment(string: summary)
-            text.name = "lock-probe-summary.txt"
+            text.name = "lock-probe.summary.txt"
             text.lifetime = .keepAlways
             activity.add(text)
         }
@@ -190,7 +190,7 @@ final class LockScreenProbeTests: QATestCase {
             outcome += " (XCTest issues recorded)"
         }
         entries.append(Entry(step: step, action: action, outcome: outcome, details: details,
-                             elapsedMs: Int(Date().timeIntervalSince(start) * 1_000)))
+                             elapsedMs: (Date().timeIntervalSince(start) * 1_000).clampedInt))
     }
 
     /// One observation through the real core (a one-step session whose model only says
@@ -219,7 +219,7 @@ final class LockScreenProbeTests: QATestCase {
             outcome = "threw: \(error)"
         }
         entries.append(Entry(step: step, action: action, outcome: outcome, details: details,
-                             elapsedMs: Int(Date().timeIntervalSince(start) * 1_000)))
+                             elapsedMs: (Date().timeIntervalSince(start) * 1_000).clampedInt))
     }
 
     // MARK: - Report

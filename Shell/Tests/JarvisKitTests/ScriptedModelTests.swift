@@ -153,16 +153,50 @@ struct ScriptedModelTests {
         #expect(model.decisions.contains { $0.reply.contains(#""action":"scroll""#) })
     }
 
-    @Test("dismiss rules tap first-launch prompts that are not part of the task")
+    @Test("a dismiss rule fires only with its context, once, and never over the task's target")
     func dismissRule() async throws {
+        let notNow = ElementQuery("Not Now", match: .exact, roles: ["Button"])
         let phone = PromptThenListPhone()
         let model = ScriptedModel(
             steps: [.tap("Continue reading", match: .exact), .done("ok", when: ["Article"])],
-            options: .init(dismiss: [ElementQuery("Not Now", match: .exact, roles: ["Button"])])
+            options: .init(dismiss: [
+                // Wrong context: never fires although "Not Now" is listed.
+                DismissRule(tap: notNow, when: [ElementQuery("Welcome", match: .exact)]),
+                DismissRule(tap: notNow, when: [ElementQuery("What's New", match: .exact)]),
+            ])
         )
         let result = try await run(phone, model, task: "Continue reading", knownApps: [])
         #expect(result.outcome.status == .success, "\(result.outcome.summary)")
-        #expect(model.decisions.first?.reason.hasPrefix("dismiss rule") == true)
+        let dismissals = model.decisions.filter { $0.reason.hasPrefix("dismiss rule") }
+        #expect(dismissals.count == 1)
+        #expect(dismissals.first?.reason.contains("What's New") == true)
+    }
+
+    @Test("rule matching: context required, use limit, target present blocks it")
+    func dismissMatching() async throws {
+        let screen = PromptScreen(prompt: """
+        <<<SCREEN_DATA>>>
+        [1] TextField "Address" value="127.0.0.1"
+        [2] Button "Close"
+        <<<END_SCREEN_DATA>>>
+        """)
+        let close = ElementQuery("Close", match: .exact, roles: ["Button"])
+        #expect(DismissRule(tap: close, when: [ElementQuery("What's New")]).match(screen) == nil)
+        #expect(DismissRule(tap: close, when: []).match(screen)?.index == 2)
+
+        // An always-on rule with uses left still yields to a listed step target, and is
+        // spent after one use.
+        let model = ScriptedModel(
+            steps: [.tap("Address", role: "TextField"), .tap("Nowhere")],
+            options: .init(dismiss: [DismissRule(tap: close, when: [])], patience: 1, waitMs: 1)
+        )
+        let request = { ModelRequest(system: "", user: $0, image: nil, marks: [], maxTokens: 160, grammar: nil, jsonSchema: nil, kind: .text) }
+        let first = try await model.generate(request(screen.block.map { "<<<SCREEN_DATA>>>\n\($0)\n<<<END_SCREEN_DATA>>>" } ?? ""))
+        #expect(first.contains(#""element":1"#), "the target wins over the rule: \(first)")
+        let second = try await model.generate(request("<<<SCREEN_DATA>>>\n[1] TextField \"Address\"\n[2] Button \"Close\"\n<<<END_SCREEN_DATA>>>"))
+        #expect(second.contains(#""element":2"#), "the rule fires when the target is missing: \(second)")
+        let third = try await model.generate(request("<<<SCREEN_DATA>>>\n[1] TextField \"Address\"\n[2] Button \"Close\"\n<<<END_SCREEN_DATA>>>"))
+        #expect(third.contains(#""action":"wait""#), "the rule is spent: \(third)")
     }
 
     @Test("the transcript has prompts, replies, script reasons, effects, events and the result")
@@ -175,6 +209,13 @@ struct ScriptedModelTests {
         #expect(kinds.isSuperset(of: ["task", "prompt", "reply", "script", "effect", "event", "progress", "result"]))
         #expect(transcript.entries.filter { $0.title.hasSuffix(": system") }.count == 1, "system prompt recorded once")
         #expect(model.requests.count == 3)
+        transcript.record("command", "tap(1.5, 2) -> ok")
+        let timeline = transcript.timeline()
+        let lines = timeline.split(separator: "\n")
+        #expect(lines.filter { $0.hasPrefix("model: ") }.count == 3)
+        #expect(lines.filter { $0.hasPrefix("  why: ") }.count == 3)
+        #expect(lines.last == "  act: tap(1.5, 2) -> ok")
+        #expect(transcript.timeline(maxLines: 2).hasPrefix("(5 earlier lines omitted)"))
         let decoded = try JSONValue(parsing: transcript.jsonData())
         #expect(decoded["name"]?.stringValue == "demo")
         let entries = try #require(decoded["entries"]?.arrayValue)

@@ -133,14 +133,44 @@ public enum ScriptStep: Sendable, Equatable, CustomStringConvertible {
     }
 }
 
+/// A prompt that is not part of the task (first-launch sheet, onboarding card) and the
+/// button that dismisses it. Narrow on purpose: it fires only while every `context`
+/// element is listed too (so "Close" on an onboarding sheet is not "Close" in a toolbar),
+/// at most `maxUses` times, and never while the current step's target is listed.
+public struct DismissRule: Sendable, Equatable, CustomStringConvertible {
+    /// The element to tap.
+    public var tap: ElementQuery
+    /// Elements that identify the surface; all must be listed.
+    public var context: [ElementQuery]
+    /// Times this rule may fire in one run.
+    public var maxUses: Int
+
+    public init(tap: ElementQuery, when context: [ElementQuery], maxUses: Int = 1) {
+        self.tap = tap
+        self.context = context
+        self.maxUses = max(0, maxUses)
+    }
+
+    public var description: String {
+        "tap \(tap) when " + (context.isEmpty ? "(always)" : context.map(\.description).joined(separator: " and "))
+    }
+
+    /// The element to tap on `screen`, when the rule applies there.
+    public func match(_ screen: PromptScreen) -> PromptScreen.Element? {
+        guard context.allSatisfy({ $0.find(in: screen) != nil }) else { return nil }
+        return tap.find(in: screen)
+    }
+}
+
 /// A deterministic `ModelProvider` for QA: it answers each request by reading the rendered
 /// screen in the prompt (`PromptScreen`) and picking the element whose label matches the
 /// current script step, exactly as a model would choose an index. It never sees the tree.
 ///
 /// Behaviour per request, in order:
 /// 1. When the last step was declined by the owner, reply `options.onDeclined`.
-/// 2. When a dismiss rule's element is listed (and the current step's target is not), tap it
-///    (first-launch prompts and system sheets), at most `options.maxDismissals` times.
+/// 2. When a `DismissRule` matches (its element and its whole context are listed, it has
+///    uses left, and the current step's target is not listed), tap it; at most
+///    `options.maxDismissals` dismissals per run.
 /// 3. When the last step failed (`failed: …`) and its target is still listed, retry it once.
 /// 4. Run the current step. A missing target waits (`wait` actions) up to
 ///    `options.patience` times, then fails with a reason that lists what was on screen.
@@ -149,8 +179,8 @@ public enum ScriptStep: Sendable, Equatable, CustomStringConvertible {
 public final class ScriptedModel: ModelProvider {
     /// Tunables.
     public struct Options: Sendable, Equatable {
-        /// Elements to tap whenever they appear (prompts that are not part of the task).
-        public var dismiss: [ElementQuery]
+        /// Prompts that are not part of the task, and how to dismiss them.
+        public var dismiss: [DismissRule]
         /// Most dismiss taps per run.
         public var maxDismissals: Int
         /// Waits for a missing target before failing.
@@ -161,8 +191,8 @@ public final class ScriptedModel: ModelProvider {
         public var onDeclined: ScriptStep
 
         public init(
-            dismiss: [ElementQuery] = [],
-            maxDismissals: Int = 6,
+            dismiss: [DismissRule] = [],
+            maxDismissals: Int = 3,
             patience: Int = 4,
             waitMs: Int = 700,
             onDeclined: ScriptStep = .fail(reason: "the owner declined")
@@ -192,6 +222,7 @@ public final class ScriptedModel: ModelProvider {
         var waits = 0
         var scrolls = 0
         var dismissals = 0
+        var ruleUses: [Int: Int] = [:]
         var retried: Set<Int> = []
         /// Step index and query of the last tap/type reply.
         var lastAction: (step: Int, query: ElementQuery)?
@@ -242,11 +273,12 @@ public final class ScriptedModel: ModelProvider {
         }
 
         let current = s.cursor < steps.count ? steps[s.cursor] : nil
-        let currentTargetListed = current.flatMap(Self.query).flatMap { $0.find(in: screen) } != nil
+        let currentTargetListed = current.map(Self.queries)?.contains { $0.find(in: screen) != nil } ?? false
         if !currentTargetListed, s.dismissals < options.maxDismissals {
-            for rule in options.dismiss {
-                if let e = rule.find(in: screen) {
+            for (i, rule) in options.dismiss.enumerated() where s.ruleUses[i, default: 0] < rule.maxUses {
+                if let e = rule.match(screen) {
                     s.dismissals += 1
+                    s.ruleUses[i, default: 0] += 1
                     return (nil, Self.json(["action": "tap", "element": .number(Double(e.index))], thought: "dismiss \(e.label)"),
                             "dismiss rule \(rule) matched \(e.line)")
                 }
@@ -345,11 +377,12 @@ public final class ScriptedModel: ModelProvider {
         return Self.json(["action": "fail", "reason": .string(reason)], thought: "cannot continue")
     }
 
-    private static func query(_ step: ScriptStep) -> ElementQuery? {
+    /// The elements whose presence means the step can proceed.
+    private static func queries(_ step: ScriptStep) -> [ElementQuery] {
         switch step {
-        case .tap(let q), .type(let q, _, _), .scrollTo(let q, _, _): q
-        case .done(_, let expecting): expecting.first
-        default: nil
+        case .tap(let q), .type(let q, _, _), .scrollTo(let q, _, _): [q]
+        case .done(_, let expecting): expecting
+        default: []
         }
     }
 

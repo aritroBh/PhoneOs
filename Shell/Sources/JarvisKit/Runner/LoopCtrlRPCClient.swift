@@ -71,7 +71,7 @@ final class LoopCtrlRPCClient: Sendable {
             throw LoopCtrlError.malformedResponse(method: method, reason: "not a JSON object: \(plain.snippet(120))")
         }
         if let error = envelope[E.error], error != .null {
-            let code = error[E.errorCode]?.numberValue.map { Int($0) }
+            let code = error[E.errorCode]?.numberValue.map(\.clampedInt)
             let message = error[E.errorMessage]?.stringValue ?? "no message"
             guard let code else {
                 throw LoopCtrlError.malformedResponse(method: method, reason: "error without a numeric code: \(message)")

@@ -124,7 +124,7 @@ public struct MemorySnapshot: Sendable, Equatable {
             self = .empty
             return
         }
-        let int = { (v: JSONValue?) -> Int in Int(v?.numberValue ?? 0) }
+        let int = { (v: JSONValue?) -> Int in (v?.numberValue ?? 0).clampedInt }
         log = Array((root["log"]?["entries"]?.arrayValue ?? []).map { e in
             let steps = e["steps"]?.arrayValue ?? []
             var apps: [String] = []
@@ -137,7 +137,7 @@ public struct MemorySnapshot: Sendable, Equatable {
                 summary: e["summary"]?.stringValue ?? "",
                 steps: steps.count,
                 apps: apps,
-                durationMs: max(0, int(e["finished_ms"]) - int(e["started_ms"]))
+                durationMs: max(0, int(e["finished_ms"]).subtractingReportingOverflow(int(e["started_ms"])).partialValue)
             )
         }.reversed())
         flows = (root["flows"]?["flows"]?.arrayValue ?? []).map { f in

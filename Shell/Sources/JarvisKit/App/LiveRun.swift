@@ -107,7 +107,7 @@ public struct LiveRun: Sendable, Equatable {
         case .reply(let text):
             modelChoseSinceLastAct = true
             if let json = Self.firstJSONObject(text) {
-                chosen = json["element"]?.numberValue.map { UInt32(max(0, $0)) }
+                chosen = json["element"]?.numberValue.map(\.clampedUInt32)
                 chosenVerb = json["action"]?.stringValue
                 lastReplyAction = chosenVerb
             }

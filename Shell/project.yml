@@ -73,6 +73,10 @@ targets:
         product: JarvisKit
       - package: JarvisKit
         product: JarvisCore
+      # Linked explicitly so appintentsmetadataprocessor extracts AskJarvisIntent and the
+      # App Shortcuts (without it: "Metadata extraction skipped. No AppIntents.framework
+      # dependency found.", and Siri/Shortcuts never see the intent).
+      - sdk: AppIntents.framework
 
   JarvisUITests:
     type: bundle.ui-testing

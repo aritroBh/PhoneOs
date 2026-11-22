@@ -48,7 +48,7 @@ public struct ToolArguments: Sendable, Equatable {
     public func string(_ name: String) -> String? {
         switch values[name] {
         case .string(let s): s
-        case .number(let n): n.rounded() == n ? String(Int64(n)) : String(n)
+        case .number(let n): n.isFinite && n.rounded() == n && abs(n) < 9.0e15 ? String(Int64(n)) : String(n)
         case .bool(let b): String(b)
         default: nil
         }

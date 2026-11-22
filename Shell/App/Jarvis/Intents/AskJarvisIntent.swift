@@ -4,8 +4,8 @@ import SwiftUI
 /// "Ask Jarvis": runs a task and returns its summary. Opens the app, because the run view
 /// and the confirmation sheets live there (a risky step must be approved on screen).
 struct AskJarvisIntent: AppIntent {
-    static var title: LocalizedStringResource = "Ask Jarvis"
-    static var openAppWhenRun: Bool = true
+    static let title: LocalizedStringResource = "Ask Jarvis"
+    static let openAppWhenRun: Bool = true
 
     @Parameter(title: "Task", requestValueDialog: "What should Jarvis do?")
     var task: String

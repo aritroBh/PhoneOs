@@ -82,6 +82,9 @@ struct QAOutcome {
     var requests: [ModelRequest]
     var replies: [String?]
     var transcriptJSON: String
+    /// Ordered model replies, script reasons, commands (with coordinates) and owner
+    /// decisions, at most 40 lines.
+    var timeline: String
 
     /// Every prompt (system and user parts) and reply, for leak checks.
     var allModelText: String {
@@ -98,6 +101,9 @@ struct QAOutcome {
         if let user = requests.last?.user, let screen = PromptScreen(prompt: user).block {
             lines.append("last screen the model saw:\n\(screen)")
         }
+        if !timeline.isEmpty {
+            lines.append("timeline (model replies, script reasons, executed actions):\n\(timeline)")
+        }
         return lines.joined(separator: "\n")
     }
 }
@@ -106,13 +112,15 @@ struct QAOutcome {
 /// XCUITest runner, a model, and complete artifacts.
 ///
 /// Artifacts (all `XCTAttachment`, lifetime `.keepAlways`), per observation `NN`:
-/// - `<name>/NN-screen.txt`: the screen block of the prompt built from that observation
+/// Names use `.` as separator: the result bundle export drops `/` from attachment names
+/// (run 13 turned `run/03-screen.txt` into `run03-screen`).
+/// - `<name>.NN-screen.txt`: the screen block of the prompt built from that observation
 ///   (exactly what the model read), or why there was none.
-/// - `<name>/NN-tree.txt`: the typed tree as the core receives it, then the raw XCUITest
+/// - `<name>.NN-tree.txt`: the typed tree as the core receives it, then the raw XCUITest
 ///   snapshot with XCTest type names and raw numbers, plus adapter notes and timing.
-/// - `<name>/NN.png`: a screenshot taken with the snapshot.
-/// and per run `<name>-transcript.json` (prompts, replies, script reasons, effects,
-/// events, owner decisions, commands, timing) and `<name>-result.txt`.
+/// - `<name>.NN.png`: a screenshot taken with the snapshot.
+/// and per run `<name>.transcript.json` (prompts, replies, script reasons, effects,
+/// events, owner decisions, commands, timing) and `<name>.result.txt`.
 @MainActor
 final class QARun {
     let name: String
@@ -185,18 +193,13 @@ final class QARun {
 
         attachScreens()
         let json = String(decoding: transcript.jsonData(), as: UTF8.self)
-        attach(XCTAttachment(data: transcript.jsonData(), uniformTypeIdentifier: "public.json"), "\(name)-transcript.json")
+        attach(XCTAttachment(data: transcript.jsonData(), uniformTypeIdentifier: "public.json"), "\(name).transcript.json")
         let outcome = QAOutcome(
             result: result, memoryJSON: memory.saves.last, requests: model.requests, replies: model.replies,
-            transcriptJSON: json
+            transcriptJSON: json, timeline: transcript.timeline(maxLines: 40)
         )
-        attach(XCTAttachment(string: Transcript.describe(result) + "\n\n" + outcome.explanation), "\(name)-result.txt")
+        attach(XCTAttachment(string: Transcript.describe(result) + "\n\n" + outcome.explanation), "\(name).result.txt")
         return outcome
-    }
-
-    /// Notes an interruption (system alert) seen by an XCTest interruption monitor.
-    func recordInterruption(_ text: String) {
-        transcript.record("interruption", "system alert", text)
     }
 
     // MARK: - Artifacts
@@ -206,7 +209,7 @@ final class QARun {
         let n = String(format: "%02d", record.number)
         var header = [
             "observation \(record.number): \(record.bundleId)",
-            "screen \(Int(record.raw.frame.width))x\(Int(record.raw.frame.height)) pt, keyboard \(record.built.keyboardVisible ? "visible" : "hidden")",
+            "screen \(record.raw.frame.width.compactText)x\(record.raw.frame.height.compactText) pt, keyboard \(record.built.keyboardVisible ? "visible" : "hidden")",
             "nodes \(record.built.nodeCount), XCUITest snapshot \(record.snapshotMs) ms",
         ]
         if !record.built.unmappedTypes.isEmpty {
@@ -216,9 +219,9 @@ final class QARun {
         let text = header.joined(separator: "\n")
             + "\n\n== typed tree (what the core receives) ==\n" + UiTreeBuilder.dump(record.built.root)
             + "\n\n== raw XCUITest snapshot (type name and raw number) ==\n" + UiTreeBuilder.dump(record.raw) + "\n"
-        attach(XCTAttachment(string: text), "\(name)/\(n)-tree.txt")
+        attach(XCTAttachment(string: text), "\(name).\(n)-tree.txt")
         if let shot = record.screenshot {
-            attach(XCTAttachment(screenshot: shot), "\(name)/\(n).png")
+            attach(XCTAttachment(screenshot: shot), "\(name).\(n).png")
         }
         transcript.record("observation", "#\(record.number) \(record.bundleId), \(record.built.nodeCount) nodes, \(record.snapshotMs) ms", record.notes.isEmpty ? nil : record.notes.joined(separator: "\n"))
     }
@@ -236,7 +239,7 @@ final class QARun {
             } else {
                 text = "observation \(number): no model call was built from it (a verification after an action, a replayed flow step, or the final state). The typed tree is in \(n)-tree.txt.\n"
             }
-            attach(XCTAttachment(string: text), "\(name)/\(n)-screen.txt")
+            attach(XCTAttachment(string: text), "\(name).\(n)-screen.txt")
         }
     }
 
@@ -247,18 +250,35 @@ final class QARun {
     }
 }
 
+/// Where an interruption monitor's notes go: the transcript of the run in progress. Sendable,
+/// so the monitor's handler captures it instead of the test case.
+final class InterruptionLog: Sendable {
+    private let current = Mutex<Transcript?>(nil)
+
+    func attach(_ transcript: Transcript?) {
+        current.withLock { $0 = transcript }
+    }
+
+    func record(_ text: String) {
+        current.withLock { $0 }?.record("interruption", "system alert (interruption monitor)", text)
+    }
+}
+
 /// Shared set-up for the agent tests.
 class QATestCase: XCTestCase {
     static let appBundleId = "dev.jarvis.app"
-    /// The run whose transcript receives interruption notes.
-    var currentRun: QARun?
+    /// Interruption monitor notes go to the transcript of the latest `makeRun`.
+    let interruptions = InterruptionLog()
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         continueAfterFailure = false
-        _ = addUIInterruptionMonitor(withDescription: "System alert (logged; the agent handles it)") { [weak self] element in
-            let text = element.label
-            MainActor.assumeIsolated { self?.currentRun?.recordInterruption(text) }
+        let interruptions = interruptions
+        _ = addUIInterruptionMonitor(withDescription: "System alert (logged; the agent handles it)") { element in
+            // XCTest calls the handler on the main thread; XCUIElement is main-actor bound.
+            nonisolated(unsafe) let alert = element
+            let text = MainActor.assumeIsolated { alert.label }
+            interruptions.record(text)
             return false
         }
     }
@@ -276,7 +296,7 @@ class QATestCase: XCTestCase {
     @MainActor
     func makeRun(_ name: String, runner: XCUITestPhoneRunner = XCUITestPhoneRunner()) -> QARun {
         let run = QARun(name: name, testCase: self, runner: runner)
-        currentRun = run
+        interruptions.attach(run.transcript)
         return run
     }
 

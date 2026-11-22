@@ -87,7 +87,7 @@ public final class FileMemoryStore: MemoryPersisting {
     private func quarantineSync() throws -> URL? {
         let fm = FileManager.default
         guard fm.fileExists(atPath: fileURL.path) else { return nil }
-        let stamp = Int64(now().timeIntervalSince1970 * 1_000)
+        let stamp = (now().timeIntervalSince1970 * 1_000).clampedInt
         var target = fileURL.appendingPathExtension("corrupt-\(stamp)")
         var n = 1
         while fm.fileExists(atPath: target.path) {

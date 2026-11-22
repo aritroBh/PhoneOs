@@ -32,10 +32,15 @@ struct AppsView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(model.settings.appTrust.enumerated()), id: \.element.id) { index, app in
                         if index > 0 { Divider().overlay(Theme.bezel) }
-                        AppTrustRow(app: app, expanded: expanded == app.id) {
+                        AppTrustRow(
+                            app: app,
+                            expanded: expanded == app.id,
+                            level: Binding(
+                                get: { app.level },
+                                set: { model.setTrust($0, for: app.bundleIdPrefix) }
+                            )
+                        ) {
                             withAnimation(Theme.medium) { expanded = expanded == app.id ? nil : app.id }
-                        } setLevel: { level in
-                            model.setTrust(level, for: app.bundleIdPrefix)
                         }
                     }
                 }
@@ -184,8 +189,8 @@ private struct ConnectionTile: View {
 private struct AppTrustRow: View {
     var app: AppTrust
     var expanded: Bool
+    @Binding var level: TrustLevelOption
     var toggle: () -> Void
-    var setLevel: (TrustLevelOption) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.gap) {
@@ -210,7 +215,7 @@ private struct AppTrustRow: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("apps.row.\(app.bundleIdPrefix)")
             if expanded {
-                Picker("Trust level for \(app.name)", selection: Binding(get: { app.level }, set: setLevel)) {
+                Picker("Trust level for \(app.name)", selection: $level) {
                     ForEach(TrustLevelOption.allCases) { level in
                         Text(level.title).tag(level)
                     }

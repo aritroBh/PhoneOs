@@ -7,13 +7,15 @@ import JarvisKit
 /// prompts are handled by the agent (dismiss rules) and logged by the interruption monitor.
 /// A failure names what was on screen (see `QAOutcome.explanation` and the artifacts).
 final class SystemAppAgentTests: QATestCase {
-    /// Labels of first-launch prompts the agent may tap away (never part of a task).
+    /// First-launch surfaces the agent may dismiss. Each rule needs the surface's own text
+    /// to be listed and fires at most once, so a toolbar "Close" (run 13: Safari's
+    /// StopButton, which aborted the page load) is never mistaken for one. Only "What's New"
+    /// style sheets are covered; anything else stays on screen and shows up in the artifacts.
     private static let firstLaunchDismissals = [
-        ElementQuery("Not Now", match: .exact, roles: ["Button"]),
-        ElementQuery("Continue", match: .exact, roles: ["Button"]),
-        ElementQuery("Later", match: .exact, roles: ["Button"]),
-        ElementQuery("Close", match: .exact, roles: ["Button"]),
-        ElementQuery("Dismiss", match: .exact, roles: ["Button"]),
+        DismissRule(tap: ElementQuery("Continue", match: .exact, roles: ["Button"]),
+                    when: [ElementQuery("What's New", match: .contains, roles: ["StaticText"])]),
+        DismissRule(tap: ElementQuery("Not Now", match: .exact, roles: ["Button"]),
+                    when: [ElementQuery("What's New", match: .contains, roles: ["StaticText"])]),
     ]
 
     private let settingsId = "com.apple.Preferences"
@@ -90,7 +92,7 @@ final class SystemAppAgentTests: QATestCase {
         let submitted = await server.waitForSubmission(timeout: .seconds(5))
         let serverLog = server.log.joined(separator: "\n")
         let logAttachment = XCTAttachment(string: "server at \(url)\n" + (serverLog.isEmpty ? "(no request reached the server)" : serverLog))
-        logAttachment.name = "system-safari-form/server-log.txt"
+        logAttachment.name = "system-safari-form.server-log.txt"
         logAttachment.lifetime = .keepAlways
         add(logAttachment)
 

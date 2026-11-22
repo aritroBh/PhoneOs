@@ -101,6 +101,32 @@ public final class Transcript: Sendable {
         }
     }
 
+    /// The run in order, one compact line per model reply, script reason, executed command,
+    /// owner decision and IO failure, for failure messages in the job log. Longer runs keep
+    /// the last `maxLines` lines and say how many were left out.
+    public func timeline(maxLines: Int = 40) -> String {
+        var lines: [String] = []
+        for e in entries {
+            switch e.kind {
+            case "reply": lines.append("model: \(Self.oneLine(e.text ?? e.title, 200))")
+            case "script": lines.append("  why: \(Self.oneLine(e.text ?? "", 200))")
+            case "command": lines.append("  act: \(Self.oneLine(e.title, 200))")
+            case "owner": lines.append("owner: \(Self.oneLine(e.title, 160))")
+            case "io_failed": lines.append("io failed: \(Self.oneLine(e.title + " " + (e.text ?? ""), 200))")
+            case "interruption": lines.append("interruption: \(Self.oneLine(e.text ?? "", 160))")
+            default: break
+            }
+        }
+        let cap = max(1, maxLines)
+        guard lines.count > cap else { return lines.joined(separator: "\n") }
+        return (["(\(lines.count - cap) earlier lines omitted)"] + lines.suffix(cap)).joined(separator: "\n")
+    }
+
+    static func oneLine(_ text: String, _ limit: Int) -> String {
+        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+        return flat.count > limit ? String(flat.prefix(limit - 1)) + "…" : flat
+    }
+
     /// The transcript as pretty-printed JSON (`{"name": …, "entries": […]}`).
     public func jsonData() -> Data {
         struct File: Encodable {
@@ -154,9 +180,10 @@ public final class Transcript: Sendable {
 
     public static func describe(_ command: RunnerCommand) -> String {
         switch command {
-        case .tap(let x, let y): "tap(\(x), \(y))"
-        case .longPress(let x, let y, let ms): "long_press(\(x), \(y), \(ms) ms)"
-        case .swipe(let from, let to, let ms): "swipe((\(from.x), \(from.y)) -> (\(to.x), \(to.y)), \(ms) ms)"
+        case .tap(let x, let y): "tap(\(x.compactText), \(y.compactText))"
+        case .longPress(let x, let y, let ms): "long_press(\(x.compactText), \(y.compactText), \(ms) ms)"
+        case .swipe(let from, let to, let ms):
+            "swipe((\(from.x.compactText), \(from.y.compactText)) -> (\(to.x.compactText), \(to.y.compactText)), \(ms) ms)"
         case .typeText(let text): "type_text(\(text.count) chars)"
         case .pressKey(let key): "press_key(\(key))"
         case .launchApp(let id): "launch_app(\(id))"

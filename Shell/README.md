@@ -179,8 +179,9 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   picks elements by reading the prompt's screen block. Tier A drives the Playground
   fixtures; Tier B drives Settings, SpringBoard and Safari (form served by
   `FormCaptureServer` on the shared loopback); `LockScreenProbeTests` gathers evidence about
-  the lock screen. Every observation attaches `<run>/NN-screen.txt`, `NN-tree.txt`, `NN.png`;
-  every run attaches `<run>-transcript.json` and `<run>-result.txt` (`.keepAlways`).
+  the lock screen. Every observation attaches `<run>.NN-screen.txt`, `<run>.NN-tree.txt`, `<run>.NN.png`;
+  every run attaches `<run>.transcript.json` and `<run>.result.txt` (`.keepAlways`). Names
+  use `.`, not `/`: the result-bundle export drops `/`.
 
 ## Not verified on a device
 
