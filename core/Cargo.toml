@@ -63,3 +63,11 @@ unwrap_used = "warn"
 expect_used = "warn"
 panic = "warn"
 indexing_slicing = "warn"
+
+# X25519 in an unoptimised build costs ~10 ms per scalar multiplication, which dominates the
+# jarvis-remote test suite. Optimise just the curve arithmetic in dev/test builds.
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
+[profile.dev.package.x25519-dalek]
+opt-level = 3
