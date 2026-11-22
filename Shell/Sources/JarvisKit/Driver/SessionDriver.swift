@@ -99,6 +99,16 @@ public actor SessionDriver {
     private var cancelInFlightIO: (@Sendable () -> Void)?
     private var lastObservationIssue: String?
     private var waitingForUnlock = false
+    // Guard against a runner whose lock answers contradict (refuses a command as locked,
+    // answers `lockState()` unlocked): a wait that ended under `shortUnlockWait` followed
+    // within `suspectWindow` by another wait needs two consecutive unlocked polls
+    // the strict gap (`lockWatchInterval`, at least 250 ms) apart before it may end. Real (continuous) time, not the core's clock.
+    private let wallClock = ContinuousClock()
+    private var unlockWaitStartedAt: ContinuousClock.Instant?
+    private var lastUnlockWaitEnd: (at: ContinuousClock.Instant, length: Duration)?
+    private var strictUnlockWait = false
+    private static let shortUnlockWait: Duration = .seconds(1)
+    private static let suspectWindow: Duration = .seconds(10)
     /// The number of the effect being carried out (names the Live view's frames).
     private var currentEffectNumber = 0
     /// A Live view frame of the last observation, kept only once the core's answer to that
@@ -395,6 +405,12 @@ public actor SessionDriver {
         emit(.awaitingUnlock(reason: reason, waitedMs: waitedMs))
         if !waitingForUnlock {
             waitingForUnlock = true
+            let now = wallClock.now
+            unlockWaitStartedAt = now
+            if let last = lastUnlockWaitEnd, last.length < Self.shortUnlockWait,
+               now - last.at < Self.suspectWindow {
+                strictUnlockWait = true
+            }
             await tellOwner { await $0.awaitUnlock(reason: reason, waitedMs: waitedMs) }
         }
         let delay = configuration.unlockPollInterval
@@ -414,11 +430,32 @@ public actor SessionDriver {
             state = .unknown
         }
         switch state {
-        case .locked: return .tick
-        case .unlocked: return .deviceUnlocked
+        case .locked:
+            return .tick
+        case .unlocked:
+            guard strictUnlockWait else { return .deviceUnlocked }
+            // Strict wait: a second unlocked answer, at least the gap (`lockWatchInterval`,
+            // 250 ms minimum) after the first, inside this one step (no effect per poll).
+            let gap = max(configuration.lockWatchInterval ?? .milliseconds(250), .milliseconds(250))
+            do {
+                try await io(.awaitUnlock, nil) { try await Task.sleep(for: gap) }
+            } catch {
+                if isOurCancellation(error) { return stop(.cancelled) }
+            }
+            let again: DeviceLockState
+            do {
+                again = try await io(.lockState, configuration.observeTimeout) { try await runner.lockState() }
+            } catch let error where isOurCancellation(error) {
+                return stop(.cancelled)
+            } catch {
+                emit(.ioFailed(.lockState, message: describe(error), willRetry: false))
+                again = .unknown
+            }
+            return again == .unlocked ? .deviceUnlocked : .tick
         // The runner cannot tell: a fresh observation answers (locked: keep waiting). No
         // Live view frame while the session waits for an unlock.
-        case .unknown: return await observe(screenshot: false, forViewer: false)
+        case .unknown:
+            return await observe(screenshot: false, forViewer: false)
         }
     }
 
@@ -542,6 +579,9 @@ public actor SessionDriver {
     private func endUnlockWait() async {
         guard waitingForUnlock else { return }
         waitingForUnlock = false
+        let now = wallClock.now
+        lastUnlockWaitEnd = (now, now - (unlockWaitStartedAt ?? now))
+        strictUnlockWait = false
         emit(.unlockWaitEnded)
         await tellOwner { await $0.unlockWaitEnded() }
     }

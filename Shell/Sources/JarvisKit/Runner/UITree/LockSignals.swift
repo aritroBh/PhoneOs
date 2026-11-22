@@ -1,23 +1,23 @@
 import Foundation
+import Synchronization
 
-/// The lock readings a runner without a lock API has, and the decision rule for each use.
+/// The raw lock readings a runner without a lock API has. They are only readings: the
+/// decision is `LockJudge`'s, one verdict for commands and for resuming alike.
 ///
 /// Readings (both may be wrong or missing on a given iOS or simulator, which is why both are
 /// recorded and neither alone may latch a session):
 /// - `notify`: the Darwin notify state of `com.apple.springboard.lockstate` (`nil`: not
 ///   readable). It can stay stale in the simulator.
 /// - `lockScreen`: SpringBoard's tree matches `LockScreenSignature` (`nil`: not checked,
-///   for example because the snapshot failed).
+///   for example because the snapshot failed, or an app is in front).
 /// - `front`: what is in front.
 ///
-/// Rules:
-/// - **Refusing a command** (`forCommands`): locked when either reading says locked. Acting
-///   on a phone that might be locked is the costly mistake.
-/// - **Resuming or watching** (`forResume`, what `PhoneRunner.lockState()` answers): unlocked
-///   as soon as an app is in front, or SpringBoard is in front without the lock screen (the
-///   home screen), even if the notify state still says locked; the notify state decides only
-///   when the lock screen could not be checked. A stale notify state therefore cannot hold
-///   a session in its unlock wait.
+/// There used to be two rules over these (commands: either says locked; resume: unlocked as
+/// soon as an app is in front). They contradicted each other whenever `notify` said locked
+/// with an app in front: the command was refused, the unlock wait ended at once, the command
+/// was refused again, and the task's retries went in a few seconds (run on c0cff3e,
+/// `testLockMidTaskWaitsAndResumesAfterUnlock`). Never combine raw rules again: staleness of
+/// `notify` is decided by time, in `LockJudge`, once.
 public struct LockSignals: Sendable, Equatable, CustomStringConvertible {
     public enum Front: Sendable, Equatable {
         /// An app (not SpringBoard) is in front.
@@ -36,35 +36,7 @@ public struct LockSignals: Sendable, Equatable, CustomStringConvertible {
         self.front = front
     }
 
-    /// Whether to refuse a command: either reading says locked.
-    public var forCommands: DeviceLockState {
-        if notify == true || effectiveLockScreen == true { return .locked }
-        if notify != nil || effectiveLockScreen != nil { return .unlocked }
-        return .unknown
-    }
-
-    /// Whether the session may resume (and what the lock watch reacts to).
-    public var forResume: DeviceLockState {
-        switch front {
-        case .app:
-            return .unlocked
-        case .springBoard:
-            if let lockScreen { return lockScreen ? .locked : .unlocked }
-            switch notify {
-            case true?: return .locked
-            case false?: return .unlocked
-            case nil: return .unknown
-            }
-        }
-    }
-
-    /// The lock screen reading with an app in front counted as "not the lock screen".
-    private var effectiveLockScreen: Bool? {
-        if case .app = front { return lockScreen ?? false }
-        return lockScreen
-    }
-
-    /// Both raw readings and both decisions, for notes and failure messages.
+    /// The raw readings (the verdict is in `LockVerdict.description`).
     public var description: String {
         let frontText: String
         switch front {
@@ -72,7 +44,89 @@ public struct LockSignals: Sendable, Equatable, CustomStringConvertible {
         case .springBoard: frontText = "SpringBoard"
         }
         return "lock signals: notify(com.apple.springboard.lockstate)=\(notify.map(String.init) ?? "unavailable"), "
-            + "lock screen=\(lockScreen.map(String.init) ?? "not checked"), front=\(frontText) "
-            + "-> commands \(forCommands.rawValue), resume \(forResume.rawValue)"
+            + "lock screen=\(lockScreen.map(String.init) ?? "not checked"), front=\(frontText)"
+    }
+}
+
+/// What `LockJudge` decided for one reading.
+public struct LockVerdict: Sendable, Equatable, CustomStringConvertible {
+    /// The one answer, for refusing a command and for `PhoneRunner.lockState()` alike.
+    public var state: DeviceLockState
+    /// How long the notify reading has been continuously true (`nil`: it is not true now).
+    public var notifyTrueFor: Duration?
+    /// Set on the one reading at which the notify state was declared stale (for the
+    /// observation notes).
+    public var staleNote: String?
+
+    public init(state: DeviceLockState, notifyTrueFor: Duration? = nil, staleNote: String? = nil) {
+        self.state = state
+        self.notifyTrueFor = notifyTrueFor
+        self.staleNote = staleNote
+    }
+
+    public var description: String {
+        let held = notifyTrueFor.map { ", notify true for \(Self.seconds($0))" } ?? ""
+        return "-> \(state.rawValue)\(held)"
+    }
+
+    static func seconds(_ d: Duration) -> String {
+        let c = d.components
+        let s = Double(c.seconds) + Double(c.attoseconds) / 1e18
+        return String(format: "%.1f s", s)
+    }
+}
+
+/// Judges `LockSignals` over time: one verdict used for commands and for resume, so the two
+/// can never disagree.
+///
+/// - the lock screen is confirmed: locked;
+/// - the notify state says locked, the lock screen is not confirmed (not checked, or not
+///   shown; an app or SpringBoard in front): locked while the notify state has been true for
+///   less than `notifyStaleAfter`; after that, with the lock screen never confirmed in the
+///   stretch, it is declared stale (once, with a note) and the verdict is unlocked until the
+///   notify state reads false. A confirmed lock screen restarts the clock (it was real);
+/// - the notify state says unlocked: unlocked;
+/// - no notify reading: the lock screen reading decides; neither: unknown.
+///
+/// Time is passed in (any origin, never decreasing); the judge reads no clock.
+public final class LockJudge: Sendable {
+    public static let defaultNotifyStaleAfter: Duration = .seconds(12)
+
+    private struct State {
+        var notifyTrueSince: Duration?
+        var stale = false
+    }
+
+    public let notifyStaleAfter: Duration
+    private let state = Mutex(State())
+
+    public init(notifyStaleAfter: Duration = LockJudge.defaultNotifyStaleAfter) {
+        self.notifyStaleAfter = notifyStaleAfter
+    }
+
+    public func judge(_ signals: LockSignals, at now: Duration) -> LockVerdict {
+        state.withLock { s -> LockVerdict in
+            if signals.notify != true {
+                s.notifyTrueSince = nil
+                s.stale = false
+                if signals.lockScreen == true { return LockVerdict(state: .locked) }
+                if signals.notify == false || signals.lockScreen == false { return LockVerdict(state: .unlocked) }
+                return LockVerdict(state: .unknown)
+            }
+            if s.notifyTrueSince == nil { s.notifyTrueSince = now }
+            if signals.lockScreen == true {
+                s.notifyTrueSince = now
+                s.stale = false
+                return LockVerdict(state: .locked, notifyTrueFor: .zero)
+            }
+            let held = max(.zero, now - (s.notifyTrueSince ?? now))
+            if s.stale { return LockVerdict(state: .unlocked, notifyTrueFor: held) }
+            if held >= notifyStaleAfter {
+                s.stale = true
+                let note = "the lock notification has said locked for \(LockVerdict.seconds(notifyStaleAfter)) with no lock screen; treated as stale"
+                return LockVerdict(state: .unlocked, notifyTrueFor: held, staleNote: note)
+            }
+            return LockVerdict(state: .locked, notifyTrueFor: held)
+        }
     }
 }

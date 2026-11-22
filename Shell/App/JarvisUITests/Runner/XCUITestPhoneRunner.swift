@@ -84,6 +84,9 @@ final class XCUITestPhoneRunner: PhoneRunner {
     private var lastLockEvidence: String?
     private var pendingLockNotes: [String] = []
     private let started = Date()
+    /// The one judge for commands and for resume (JarvisKit, Linux-tested): staleness of the
+    /// notify reading is decided by time, here, nowhere else.
+    private let lockJudge = LockJudge()
     /// Lock readings with the time since the runner was made: every change, and every
     /// reading with `noteLockSignalsEveryObservation` (for failure messages).
     private(set) var lockSignalHistory: [String] = []
@@ -119,7 +122,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
             // Give a keyboard that is still animating in time to appear (off the main actor).
             if !(await keyboardIsUp()) { try await Task.sleep(for: .milliseconds(500)) }
         }
-        if await lockSignals().forCommands == .locked {
+        if await commandLockState() == .locked {
             await noteRefusal(command)
             return .deviceLocked("the device is locked; \(Transcript.describe(command)) was not performed")
         }
@@ -131,11 +134,12 @@ final class XCUITestPhoneRunner: PhoneRunner {
     /// reported as locked (`RunnerResult.checkedAfterCommand`), so the core re-observes
     /// after the unlock instead of trusting it.
     private func lockedAfterCommand() -> DeviceLockState {
-        switch notifyLockState() {
-        case true?: .locked
-        case false?: .unlocked
-        case nil: .unknown
-        }
+        // Same judge as everywhere else (a stale notify reading is not trusted here either);
+        // no lock screen reading is taken, which is what keeps this cheap.
+        let signals = LockSignals(notify: notifyLockState(), lockScreen: nil, front: .app(lastActivated ?? Self.springboard))
+        let verdict = lockJudge.judge(signals, at: lockClockNow())
+        record(signals, verdict, everyTime: false)
+        return verdict.state
     }
 
     // MARK: - Observation (main actor)
@@ -168,10 +172,10 @@ final class XCUITestPhoneRunner: PhoneRunner {
             lockScreen: bundleId == Self.springboard ? LockScreenSignature.matches(raw) : nil,
             front: bundleId == Self.springboard ? .springBoard : .app(bundleId)
         )
-        record(signals, everyTime: configuration.noteLockSignalsEveryObservation)
-        // The resume rule: a stale notify state must not keep an observation "locked" while
-        // an app or the home screen is in front (commands are still refused on either signal).
-        let locked = signals.forResume == .locked
+        let verdict = lockJudge.judge(signals, at: lockClockNow())
+        record(signals, verdict, everyTime: configuration.noteLockSignalsEveryObservation)
+        // One verdict for commands and resume (`LockJudge`).
+        let locked = verdict.state == .locked
         notes += pendingLockNotes
         pendingLockNotes = []
         if built.sanitizedFrames > 0 {
@@ -264,18 +268,32 @@ final class XCUITestPhoneRunner: PhoneRunner {
     //    whether the simulator's notifyd publishes it to the test runner is [unverified].
     // 2. SpringBoard in front showing the lock screen (`LockScreenSignature`, from the
     //    run-16 probe trees).
-    // Commands are refused when either says locked; `lockState()` (unlock polls and the
-    // lock watch) answers with the resume rule, so a stale reading cannot latch a wait.
+    // `LockJudge` turns them into ONE verdict (the notify reading counts as stale after 12 s
+    // without a confirmed lock screen), used for refusing commands, for `lockState()` (unlock
+    // polls and the lock watch) and for observations: the answers cannot contradict.
     // Every change of the readings goes into the next observation's notes.
 
     private func lockStateOnMain() -> DeviceLockState {
-        lockSignals().forResume
+        judgedLockState()
     }
 
-    /// Both readings now, judged as for a command (locked when either says so). For test
+    /// Both readings now, judged (the same verdict `lockState()` gives). For test
     /// preconditions ("did the simulator lock?"); recorded in `lockSignalHistory` on change.
     func commandLockState() -> DeviceLockState {
-        lockSignals().forCommands
+        judgedLockState()
+    }
+
+    /// Time for the judge: seconds since the runner was made.
+    private func lockClockNow() -> Duration {
+        Duration.seconds(Date().timeIntervalSince(started))
+    }
+
+    /// Reads both signals now and judges them.
+    private func judgedLockState() -> DeviceLockState {
+        let signals = lockSignals()
+        let verdict = lockJudge.judge(signals, at: lockClockNow())
+        record(signals, verdict, everyTime: false)
+        return verdict.state
     }
 
     /// Reads both signals now.
@@ -290,14 +308,20 @@ final class XCUITestPhoneRunner: PhoneRunner {
         } else {
             signals = LockSignals(notify: notify, lockScreen: nil, front: .app(front))
         }
-        record(signals, everyTime: false)
         return signals
     }
 
-    private func record(_ signals: LockSignals, everyTime: Bool) {
-        let evidence = signals.description
-        let changed = evidence != lastLockEvidence
-        lastLockEvidence = evidence
+    private func record(_ signals: LockSignals, _ verdict: LockVerdict, everyTime: Bool) {
+        let evidence = "\(signals) \(verdict)"
+        // Change detection ignores the running "notify true for" time.
+        let key = "\(signals) \(verdict.state.rawValue)"
+        let changed = key != lastLockEvidence
+        lastLockEvidence = key
+        if let note = verdict.staleNote {
+            pendingLockNotes.append(note)
+            let seconds = String(format: "%.1f", Date().timeIntervalSince(started))
+            lockSignalHistory.append("t+\(seconds)s \(note)")
+        }
         guard changed || everyTime else { return }
         pendingLockNotes.append(evidence)
         let seconds = String(format: "%.1f", Date().timeIntervalSince(started))
