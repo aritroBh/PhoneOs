@@ -53,6 +53,13 @@ Verified on a macOS runner (Xcode 26.6, iPhone 17 Pro Max simulator, iOS 26.5):
 - [x] App with Workflows + Remote screens builds; lock-mid-task resumes and finishes after the unlock (run 10: 25 of 27)
 - [ ] All 27 green: the two run-10 failures were in the tests and are changed; rerun blocked (Actions jobs are not being started for this private repository, see the PR)
 
+Waiting for a Mac build (app code changed after `18bc128`, the last commit compiled on a Mac; the JarvisKit side of each change is tested on Linux):
+
+- [~] `AppModel.swift`: rules gate and banner, re-read on activation and after the first unlock, intent time limit, notification permission in the foreground, remote control following the saved setting
+- [~] `Platform/RemoteAdapters.swift`: listener rebuild with backoff, peer address rule, byte budgets, ready deadline, connection cap
+- [~] `Platform/WorkflowNotifications.swift`, `UnlockNotifier.swift`, `Views/ControlView.swift`, `Views/AskView.swift`, `Views/WorkflowsView.swift`
+- [ ] Check first on the Mac: `NWConnection.currentPath` is set at `.ready` (else global IPv6 peers are refused); `NWPath.usesInterfaceType(.cellular)`; the `.contentProcessed` and `asyncAfter` closures under strict concurrency; `UNUserNotificationCenter.notificationSettings()`; `XCUIElement` answering `hasKeyboardFocus` in the UI tests
+
 ## Skills, workflows, remote control
 
 - [x] `jarvis-skills`: skill store, trigger matcher with slots, `SkillContext` in sessions, app confinement
