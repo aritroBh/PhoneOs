@@ -75,7 +75,7 @@ impl ClientCredentials {
     /// Loads [`ClientCredentials::to_json`] output.
     pub fn from_json(json: &str) -> Result<Self, PersistError> {
         let doc: CredentialsJson =
-            serde_json::from_str(json).map_err(|e| PersistError::Corrupt(e.to_string()))?;
+            serde_json::from_str(json).map_err(|e| PersistError::corrupt(&e))?;
         if doc.schema_version != CREDENTIALS_VERSION {
             return Err(PersistError::UnsupportedVersion(doc.schema_version));
         }

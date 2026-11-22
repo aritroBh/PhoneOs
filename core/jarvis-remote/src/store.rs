@@ -132,7 +132,7 @@ impl DeviceStore {
     /// inconsistent input is an error; nothing is partially loaded.
     pub fn from_json(json: &str) -> Result<Self, PersistError> {
         let probe: serde_json::Value =
-            serde_json::from_str(json).map_err(|e| PersistError::Corrupt(e.to_string()))?;
+            serde_json::from_str(json).map_err(|e| PersistError::corrupt(&e))?;
         let version = probe
             .get("schema_version")
             .and_then(serde_json::Value::as_u64)
@@ -143,7 +143,7 @@ impl DeviceStore {
             ));
         }
         let doc: StoreJson =
-            serde_json::from_value(probe).map_err(|e| PersistError::Corrupt(e.to_string()))?;
+            serde_json::from_value(probe).map_err(|e| PersistError::corrupt(&e))?;
         let mut devices: Vec<DeviceRecord> = Vec::with_capacity(doc.devices.len());
         for d in doc.devices {
             let key_bytes: [u8; 32] = from_hex(&d.key)

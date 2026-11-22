@@ -42,6 +42,26 @@ pub enum PersistError {
     Invalid(String),
 }
 
+impl PersistError {
+    /// A [`PersistError::Corrupt`] that says what kind of error and where, never what was
+    /// there: serde_json's own message quotes the offending value (`invalid type: string
+    /// "…"`), and in these files the values are keys.
+    pub(crate) fn corrupt(e: &serde_json::Error) -> Self {
+        use serde_json::error::Category;
+        let kind = match e.classify() {
+            Category::Io => "read error",
+            Category::Syntax => "not JSON",
+            Category::Data => "wrong shape",
+            Category::Eof => "ends early",
+        };
+        if e.line() == 0 {
+            Self::Corrupt(kind.to_owned())
+        } else {
+            Self::Corrupt(format!("{kind} at line {} column {}", e.line(), e.column()))
+        }
+    }
+}
+
 /// A hub operation the shell asked for could not be done.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum HubError {

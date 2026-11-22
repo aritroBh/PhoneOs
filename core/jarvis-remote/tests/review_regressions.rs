@@ -1091,3 +1091,36 @@ fn z_key_under_another_id_and_mac_reflection_fail() {
     ));
     assert!(!rig.hub.is_authenticated(901));
 }
+
+/// A corrupt store or credentials file is reported by kind and position only: serde_json's
+/// own message quotes the value it choked on, and in these files that can be a key.
+#[test]
+fn corrupt_persistence_errors_never_quote_the_input() {
+    use jarvis_remote::{ClientCredentials, DeviceStore};
+    const MARK: &str = "5ec2e7c0ffee5ec2e7c0ffee";
+    let inputs = [
+        format!(r#"{{"schema_version":2,"devices":"{MARK}"}}"#),
+        format!(r#"{{"schema_version":2,"devices":[{{"id":7,"key":"{MARK}"}}]}}"#),
+        format!(r#"{{"schema_version":2,"devices":[], "{MARK}"#),
+        format!(r#""{MARK}""#),
+        format!(r#"{{"schema_version":"{MARK}"}}"#),
+    ];
+    for input in &inputs {
+        for error in [
+            DeviceStore::from_json(input).err(),
+            ClientCredentials::from_json(input).err(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let shown = format!("{error} {error:?}");
+            assert!(!shown.contains(MARK), "the error quotes the input: {shown}");
+        }
+    }
+    // Still useful: the kind and the place.
+    let error = DeviceStore::from_json("{not json").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "corrupt device store: not JSON at line 1 column 2"
+    );
+}
