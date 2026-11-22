@@ -171,6 +171,8 @@ struct SectionLabel: View {
 struct ScreenTitle: View {
     var title: String
     var subtitle: String?
+    /// The title's accessibility identifier (`<screen>.title`).
+    var identifier: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -179,6 +181,7 @@ struct ScreenTitle: View {
                 .tracking(Theme.largeTitleTracking)
                 .foregroundStyle(Theme.textPrimary)
                 .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier(identifier)
             if let subtitle {
                 Text(subtitle).font(Theme.body).foregroundStyle(Theme.textSecondary)
             }
