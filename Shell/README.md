@@ -278,7 +278,11 @@ deleted or overwritten, as `SkillLibrary` does) and the caller is told.
   Progress is forwarded with the typed `Screen` from the last observation. `catalogChanged`
   is sent when enabled skills/workflows change. Off by default; on loads the hub from the
   secret store (a refused store is kept and reported), starts the transport and a 1 s tick;
-  a poisoned hub is rebuilt from the store. `RemotePairingOffer`/`Redacted` never print.
+  a poisoned hub is rebuilt from the store; `ensureListening()` restarts only the transport
+  (the hub and its devices stay, open connections are closed and the hub told) when the
+  service is on but its listener failed. The consumer acknowledges every `.received` to
+  its transport (`consumed`); `InMemoryRemoteTransport` counts them (`unconsumedBytes`) and
+  can fail its listener (`failListener`) for tests. `RemotePairingOffer`/`Redacted` never print.
   `RemoteAuditLog` is bounded (300) and on disk (no secrets). Ports: `SecretStore`
   (`InMemorySecretStore`), `RandomSource` (`GeneratorRandomSource` for tests only),
   `RemoteTransport` (`InMemoryRemoteTransport`; `InProcessRemote` drives the real
@@ -355,12 +359,30 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   control: master switch, status, Pair a device (code, QR from `CIQRCodeGenerator`, countdown,
   Cancel; the code is read from the model each second and gone when the offer ends), devices
   with per-device permissions, the core's never-remote list, rename, remove, lockout, audit
-  log. App Intents: `AskJarvisIntent`, `RunJarvisWorkflowIntent` (`openAppWhenRun = false`,
-  waits up to 25 s for the outcome). Adapters in `Platform/`: `KeychainSecretStore`
+  log. App Intents: `AskJarvisIntent`, `RunJarvisWorkflowIntent` (`openAppWhenRun = false`);
+  both wait up to 25 s for the outcome with `value(of:within:)` (JarvisKit, tested: returns
+  `nil` at the limit without cancelling the task) and otherwise answer that it is still
+  running; an automation is answered with the rules problem or "cannot read its workflows
+  until the phone has been unlocked once" (`WorkflowLibrary.externalUnavailable`) rather than
+  "there is no workflow". Adapters in `Platform/`: `KeychainSecretStore`
   (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, not synchronizable),
   `SecureRandomSource` (`SecRandomCopyBytes`), `NetworkRemoteTransport` (`NWListener`, TCP,
-  Bonjour `_jarvis-remote._tcp`, local addresses only, no cellular; Info.plist
-  `NSLocalNetworkUsageDescription` + `NSBonjourServices`), `UserNotificationWorkflowNotifier`. In playground mode the
+  Bonjour `_jarvis-remote._tcp`, no cellular interface; Info.plist
+  `NSLocalNetworkUsageDescription` + `NSBonjourServices`). Its rules live in JarvisKit
+  (`Remote/RemoteTransportPolicy.swift`, tested): a peer is judged when its connection is
+  ready by `PeerAddressPolicy` (loopback, link-local, private IPv4, unique-local IPv6, global
+  IPv6 only on a path that is not cellular; IPv4-mapped follows IPv4; nothing on a cellular
+  path); a connection not ready within 10 s is cancelled, a failed one is cancelled;
+  received-but-unconsumed bytes (`RemoteTransport.consumed`) and sent-but-unprocessed bytes
+  are each bounded per connection by a `ByteBudget` (`RemoteTransportLimits`, from the
+  core's `MAX_BUFFERED_BYTES`) and the connection is closed past it; a failed listener is
+  cancelled and rebuilt after `ListenerRestartPolicy`'s delay (1 s doubling to 60 s, reset
+  after 30 s of health), and `RemoteControlService.ensureListening()` (called when the app
+  becomes active) restarts a transport whose status is failed. Notifications
+  (`UnlockNotifier`, `UserNotificationWorkflowNotifier`) never ask for permission: `AppModel`
+  asks in the foreground when the owner turns on remote control, saves a workflow with a
+  Notify step or starts a task, reads the state when the app becomes active
+  (`notificationAccess`), and Control shows one line when notifications are denied. In playground mode the
   Playground tab replaces Workflows (a sixth tab would go behind "More"); Workflows is then a
   row in Control. Also: the run view (what Jarvis sees, step timeline, Stop, "Using skill"),
   confirmation and question sheets (`HumanPromptBroker`), Away mode (explanation, then a black

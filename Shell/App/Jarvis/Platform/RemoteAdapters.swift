@@ -78,42 +78,77 @@ struct SecureRandomSource: RandomSource {
 }
 
 /// The local listener: TCP on any free port, advertised over Bonjour as
-/// `_jarvis-remote._tcp` (declared in `NSBonjourServices`). Peers outside the local network
-/// (not private, link-local or loopback addresses) are refused; cellular is never used.
-/// Bytes are handed to the hub as they arrive (framing is the hub's job).
+/// `_jarvis-remote._tcp` (declared in `NSBonjourServices`). Peers are judged by
+/// `PeerAddressPolicy` once the connection is ready (local addresses; global IPv6 only on a
+/// path that is not cellular); cellular is never used. Bytes are handed to the hub as they
+/// arrive (framing is the hub's job), within `RemoteTransportLimits`: a connection with too
+/// many received bytes the hub has not consumed, or too many sent bytes the network has not
+/// processed, is closed; one that is not ready within 10 s is cancelled. A listener that
+/// fails is cancelled and rebuilt after `ListenerRestartPolicy`'s delay while the transport
+/// is on.
 final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
     static let serviceType = "_jarvis-remote._tcp"
+
+    private struct Entry {
+        let connection: NWConnection
+        let inbound = ByteBudget(limit: RemoteTransportLimits.maxUnconsumedInboundBytes)
+        let outbound = ByteBudget(limit: RemoteTransportLimits.maxUnsentOutboundBytes)
+        /// `.opened` was reported (so `.closed` is owed when it goes).
+        var opened = false
+    }
 
     private let queue = DispatchQueue(label: "dev.jarvis.remote.transport")
     // Touched on `queue` only.
     private var listener: NWListener?
-    private var connections: [UInt64: NWConnection] = [:]
+    private var connections: [UInt64: Entry] = [:]
     private var nextID: UInt64 = 1
     private var continuation: AsyncStream<RemoteTransportEvent>.Continuation?
+    private var restart = ListenerRestartPolicy()
+    /// Changes with every listener made and with `stop()`: callbacks of an older listener and
+    /// rebuilds scheduled for it do nothing.
+    private var generation: UInt64 = 0
 
     func start() -> AsyncStream<RemoteTransportEvent> {
         let (stream, continuation) = AsyncStream.makeStream(of: RemoteTransportEvent.self)
-        queue.async { self.startListening(continuation) }
+        queue.async {
+            self.continuation = continuation
+            self.restart = ListenerRestartPolicy()
+            self.startListening()
+        }
         return stream
     }
 
     func send(_ bytes: Data, to connection: UInt64) {
         queue.async {
-            self.connections[connection]?.send(content: bytes, completion: .contentProcessed { _ in })
+            guard let entry = self.connections[connection] else { return }
+            let count = bytes.count
+            guard entry.outbound.add(count) else {
+                self.drop(connection)
+                return
+            }
+            let outbound = entry.outbound
+            entry.connection.send(content: bytes, completion: .contentProcessed { _ in outbound.remove(count) })
+        }
+    }
+
+    func consumed(_ count: Int, on connection: UInt64) {
+        queue.async {
+            self.connections[connection]?.inbound.remove(count)
         }
     }
 
     func close(_ connection: UInt64) {
         queue.async {
-            self.connections.removeValue(forKey: connection)?.cancel()
+            self.connections.removeValue(forKey: connection)?.connection.cancel()
         }
     }
 
     func stop() {
         queue.async {
+            self.generation &+= 1
             self.listener?.cancel()
             self.listener = nil
-            for connection in self.connections.values { connection.cancel() }
+            for entry in self.connections.values { entry.connection.cancel() }
             self.connections = [:]
             self.continuation?.finish()
             self.continuation = nil
@@ -122,30 +157,40 @@ final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
 
     // MARK: - On the queue
 
-    private func startListening(_ continuation: AsyncStream<RemoteTransportEvent>.Continuation) {
-        self.continuation = continuation
+    private static func nowMs() -> UInt64 { DispatchTime.now().uptimeNanoseconds / 1_000_000 }
+
+    private func startListening() {
+        guard let continuation else { return }
+        generation &+= 1
+        let generation = self.generation
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = false
         parameters.prohibitedInterfaceTypes = [.cellular]
         do {
             let listener = try NWListener(using: parameters)
             listener.service = NWListener.Service(type: Self.serviceType)
-            listener.stateUpdateHandler = { [weak self] state in self?.listenerChanged(state) }
+            listener.stateUpdateHandler = { [weak self] state in self?.listenerChanged(state, generation: generation) }
             listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
             listener.start(queue: queue)
             self.listener = listener
         } catch {
             continuation.yield(.failed("the listener could not start (\(error))"))
+            scheduleRebuild()
         }
     }
 
-    private func listenerChanged(_ state: NWListener.State) {
+    private func listenerChanged(_ state: NWListener.State, generation: UInt64) {
+        guard generation == self.generation else { return }
         switch state {
         case .ready:
+            restart.listenerReady(nowMs: Self.nowMs())
             let port = listener?.port.map { " on port \($0.rawValue)" } ?? ""
             continuation?.yield(.listening(detail: "Same Wi-Fi, \(Self.serviceType)\(port)"))
         case .failed(let error):
             continuation?.yield(.failed("the listener stopped (\(error))"))
+            listener?.cancel()
+            listener = nil
+            scheduleRebuild()
         case .waiting(let error):
             continuation?.yield(.failed("waiting for the network (\(error))"))
         default:
@@ -153,63 +198,91 @@ final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
         }
     }
 
+    /// Rebuilds the listener after the policy's delay, unless the transport was stopped or
+    /// restarted meanwhile.
+    private func scheduleRebuild() {
+        let delay = restart.listenerFailed(nowMs: Self.nowMs())
+        let generation = self.generation
+        queue.asyncAfter(deadline: .now() + .milliseconds(Int(clamping: delay))) { [weak self] in
+            guard let self, self.generation == generation, self.continuation != nil, self.listener == nil else { return }
+            self.startListening()
+        }
+    }
+
     private func accept(_ connection: NWConnection) {
-        guard Self.isLocal(connection.endpoint) else {
+        guard connections.count < RemoteTransportLimits.maxConnections else {
             connection.cancel()
             return
         }
         let id = nextID
         nextID += 1
-        connections[id] = connection
+        connections[id] = Entry(connection: connection)
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             switch state {
             case .ready:
-                self.continuation?.yield(.opened(id))
-                self.receive(id, connection)
+                self.ready(id)
             case .failed, .cancelled:
-                if self.connections.removeValue(forKey: id) != nil {
-                    self.continuation?.yield(.closed(id))
-                }
+                self.drop(id)
             default:
                 break
             }
         }
         connection.start(queue: queue)
+        // A connection that never becomes ready must not stay forever.
+        queue.asyncAfter(deadline: .now() + .milliseconds(RemoteTransportLimits.connectionReadyTimeoutMs)) { [weak self] in
+            guard let self, let entry = self.connections[id], !entry.opened else { return }
+            self.drop(id)
+        }
+    }
+
+    /// The peer is judged now that the path is known; refused peers are cancelled before
+    /// the hub hears of them.
+    private func ready(_ id: UInt64) {
+        guard let connection = connections[id]?.connection else { return }
+        let cellular = connection.currentPath.map { $0.usesInterfaceType(.cellular) }
+        guard PeerAddressPolicy.decide(address: Self.addressBytes(connection.endpoint), pathIsCellular: cellular) == .accept else {
+            drop(id)
+            return
+        }
+        connections[id]?.opened = true
+        continuation?.yield(.opened(id))
+        receive(id, connection)
     }
 
     private func receive(_ id: UInt64, _ connection: NWConnection) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1_024) { [weak self] data, _, isComplete, error in
-            guard let self else { return }
-            if let data, !data.isEmpty, self.connections[id] != nil {
+            guard let self, let entry = self.connections[id] else { return }
+            if let data, !data.isEmpty {
+                guard entry.inbound.add(data.count) else {
+                    // The peer sends faster than the hub consumes: close it.
+                    self.drop(id)
+                    return
+                }
                 self.continuation?.yield(.received(id, data))
             }
             if isComplete || error != nil {
-                connection.cancel()
+                self.drop(id)
                 return
             }
             self.receive(id, connection)
         }
     }
 
-    /// Private (RFC 1918), link-local and loopback IPv4; link-local, unique-local and
-    /// loopback IPv6.
-    static func isLocal(_ endpoint: NWEndpoint) -> Bool {
-        guard case .hostPort(let host, _) = endpoint else { return false }
+    /// Cancels and forgets connection `id`; the hub hears `.closed` if it heard `.opened`.
+    private func drop(_ id: UInt64) {
+        guard let entry = connections.removeValue(forKey: id) else { return }
+        entry.connection.cancel()
+        if entry.opened { continuation?.yield(.closed(id)) }
+    }
+
+    /// The peer's address bytes (4 or 16), empty for anything but an IP host and port.
+    static func addressBytes(_ endpoint: NWEndpoint) -> [UInt8] {
+        guard case .hostPort(let host, _) = endpoint else { return [] }
         switch host {
-        case .ipv4(let address):
-            let b = [UInt8](address.rawValue)
-            guard b.count == 4 else { return false }
-            return b[0] == 10 || (b[0] == 172 && (16...31).contains(b[1])) || (b[0] == 192 && b[1] == 168)
-                || (b[0] == 169 && b[1] == 254) || b[0] == 127
-        case .ipv6(let address):
-            let b = [UInt8](address.rawValue)
-            guard b.count == 16 else { return false }
-            if address.isLoopback || address.isLinkLocal { return true }
-            if let v4 = address.asIPv4 { return isLocal(.hostPort(host: .ipv4(v4), port: 0)) }
-            return b[0] & 0xFE == 0xFC
-        default:
-            return false
+        case .ipv4(let address): return [UInt8](address.rawValue)
+        case .ipv6(let address): return [UInt8](address.rawValue)
+        default: return []
         }
     }
 }

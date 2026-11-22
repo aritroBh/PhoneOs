@@ -184,15 +184,7 @@ public final class RemoteControlService {
     private func start() {
         guard hub == nil else { return }
         guard loadHub() else { return }
-        let transport = makeTransport()
-        self.transport = transport
-        status = .starting
-        let events = transport.start()
-        consumer = Task { @MainActor [weak self] in
-            for await event in events {
-                self?.handle(event)
-            }
-        }
+        startTransport()
         let interval = tickInterval
         ticker = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -213,6 +205,48 @@ public final class RemoteControlService {
         } else if let workflow = center.workflow {
             enqueue(.local(.sessionStarted(taskId: workflow.origin.remoteTaskId)))
         }
+    }
+
+    /// Makes and starts a transport and the task that consumes its events. Every `.received`
+    /// is acknowledged to the transport that produced it (`consumed`) once it was handled.
+    private func startTransport() {
+        let transport = makeTransport()
+        self.transport = transport
+        status = .starting
+        let events = transport.start()
+        consumer = Task { @MainActor [weak self] in
+            for await event in events {
+                self?.handle(event)
+                if case .received(let id, let bytes) = event { transport.consumed(bytes.count, on: id) }
+            }
+        }
+    }
+
+    /// Stops the transport only (the hub stays): its connections are closed and the hub is
+    /// told so.
+    private func stopTransport() {
+        consumer?.cancel()
+        consumer = nil
+        transport?.stop()
+        transport = nil
+        let closed = open.sorted()
+        open = []
+        for id in closed {
+            connected[id] = nil
+            enqueue(.hub { [weak self] hub in try hub.connectionClosed(connId: id, nowMs: self?.clock() ?? 0) })
+        }
+    }
+
+    /// Restarts the transport when remote control is on but its listener failed (an
+    /// `NWListener` commonly fails while the app is suspended). The app calls it whenever it
+    /// becomes active. Returns whether it restarted the transport.
+    @discardableResult
+    public func ensureListening() -> Bool {
+        guard hub != nil, case .failed = status else { return false }
+        stopTransport()
+        startTransport()
+        changed()
+        return true
     }
 
     /// Loads the hub; false (and `.storeProblem`) when the saved state cannot be used. The

@@ -58,6 +58,10 @@ public protocol RemoteTransport: Sendable {
     /// Starts listening. Events arrive on the stream in order; it ends after `stop()`.
     func start() -> AsyncStream<RemoteTransportEvent>
     func send(_ bytes: Data, to connection: UInt64)
+    /// The consumer has taken `count` bytes of `.received` on `connection` (called once per
+    /// `.received` event, with its byte count). The network transport counts received bytes
+    /// not consumed yet and closes a connection that goes over its budget.
+    func consumed(_ count: Int, on connection: UInt64)
     /// Closes one connection (no `.closed` event is required for it).
     func close(_ connection: UInt64)
     /// Stops listening and closes every connection.

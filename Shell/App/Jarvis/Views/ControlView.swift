@@ -31,6 +31,20 @@ struct ControlView: View {
                     ScreenTitle(title: "Control", subtitle: "Limits Jarvis works inside. Only you can change them.",
                                 identifier: "control.title")
 
+                    if let warning = model.notificationAccess.warning {
+                        // Same look as the rules problem on Ask.
+                        Label {
+                            Text(warning).font(Theme.meta)
+                        } icon: {
+                            Image.decorative(.warning, size: Theme.iconStandard)
+                        }
+                        .foregroundStyle(Theme.textPrimary)
+                        .padding(Theme.gap)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .card(fill: Theme.warningFill, radius: Theme.radiusElement)
+                        .accessibilityIdentifier("control.notificationsOff")
+                    }
+
                     VStack(spacing: 0) {
                         NavigationLink {
                             RemoteControlView()

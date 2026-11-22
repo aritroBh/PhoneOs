@@ -11,6 +11,9 @@ public final class InMemoryRemoteTransport: RemoteTransport {
         var events: AsyncStream<RemoteTransportEvent>.Continuation?
         var endpoints: [UInt64: InMemoryRemoteEndpoint] = [:]
         var nextID: UInt64 = 1
+        var starts = 0
+        /// Bytes delivered as `.received` and not yet reported `consumed`, per connection.
+        var unconsumed: [UInt64: Int] = [:]
     }
 
     private let state = Mutex(State())
@@ -18,13 +21,17 @@ public final class InMemoryRemoteTransport: RemoteTransport {
     public init() {}
 
     public var isListening: Bool { state.withLock { $0.listening } }
+    /// How many times `start()` was called.
+    public var startCount: Int { state.withLock { $0.starts } }
+    /// Bytes delivered to the phone side and not yet reported consumed, over all connections.
+    public var unconsumedBytes: Int { state.withLock { $0.unconsumed.values.reduce(0, +) } }
 
     // MARK: Phone side
 
     public func start() -> AsyncStream<RemoteTransportEvent> {
         let (stream, continuation) = AsyncStream.makeStream(of: RemoteTransportEvent.self)
         let previous = state.withLock { s -> AsyncStream<RemoteTransportEvent>.Continuation? in
-            defer { s.events = continuation; s.listening = true }
+            defer { s.events = continuation; s.listening = true; s.starts += 1 }
             return s.events
         }
         previous?.finish()
@@ -37,6 +44,14 @@ public final class InMemoryRemoteTransport: RemoteTransport {
         endpoint?.deliver(bytes)
     }
 
+    public func consumed(_ count: Int, on connection: UInt64) {
+        state.withLock { s in
+            guard let left = s.unconsumed[connection] else { return }
+            let rest = left - count
+            s.unconsumed[connection] = rest > 0 ? rest : nil
+        }
+    }
+
     public func close(_ connection: UInt64) {
         let endpoint = state.withLock { $0.endpoints.removeValue(forKey: connection) }
         endpoint?.closedByPhone()
@@ -44,11 +59,23 @@ public final class InMemoryRemoteTransport: RemoteTransport {
 
     public func stop() {
         let (events, endpoints) = state.withLock { s -> (AsyncStream<RemoteTransportEvent>.Continuation?, [InMemoryRemoteEndpoint]) in
-            defer { s.events = nil; s.endpoints = [:]; s.listening = false }
+            defer { s.events = nil; s.endpoints = [:]; s.listening = false; s.unconsumed = [:] }
             return (s.events, Array(s.endpoints.values))
         }
         endpoints.forEach { $0.closedByPhone() }
         events?.finish()
+    }
+
+    /// Test hook: the listener fails the way an `NWListener` can after the app was
+    /// suspended. `.failed(why)` is reported and new connections are refused until `start()`
+    /// is called again; open connections stay.
+    public func failListener(_ why: String = "the listener failed") {
+        let events = state.withLock { s -> AsyncStream<RemoteTransportEvent>.Continuation? in
+            guard s.listening else { return nil }
+            s.listening = false
+            return s.events
+        }
+        events?.yield(.failed(why))
     }
 
     // MARK: Remote side
@@ -69,7 +96,11 @@ public final class InMemoryRemoteTransport: RemoteTransport {
     }
 
     fileprivate func fromRemote(_ id: UInt64, _ bytes: Data) {
-        let events = state.withLock { s in s.endpoints[id] != nil ? s.events : nil }
+        let events = state.withLock { s -> AsyncStream<RemoteTransportEvent>.Continuation? in
+            guard s.endpoints[id] != nil, let events = s.events else { return nil }
+            s.unconsumed[id, default: 0] += bytes.count
+            return events
+        }
         events?.yield(.received(id, bytes))
     }
 

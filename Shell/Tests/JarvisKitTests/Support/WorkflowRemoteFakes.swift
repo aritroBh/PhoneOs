@@ -166,6 +166,8 @@ final class RecordingTransport: RemoteTransport {
         inner.send(bytes, to: connection)
     }
 
+    func consumed(_ count: Int, on connection: UInt64) { inner.consumed(count, on: connection) }
+
     func close(_ connection: UInt64) {
         log.add(.close(connection))
         inner.close(connection)

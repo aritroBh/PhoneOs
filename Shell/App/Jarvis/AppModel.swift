@@ -68,8 +68,13 @@ final class AppModel: ObservableObject {
     @Published var settings: JarvisSettings {
         didSet {
             guard settings != oldValue else { return }
-            // Refused while the rules file cannot be read: it is never overwritten.
-            try? settingsGate.save(settings)
+            // Refused while the rules file cannot be read: it is never overwritten. The owner
+            // is told, because the file's value comes back the next time it is read.
+            do {
+                try settingsGate.save(settings)
+            } catch {
+                setupError = SettingsGate.unsavedMessage(error)
+            }
         }
     }
     /// Why the owner's rules cannot be used yet (tasks are refused with these words).
@@ -120,6 +125,11 @@ final class AppModel: ObservableObject {
 
     // Away mode
     @Published private(set) var awayPhase: AwayModeController.Phase = .off
+
+    // Notifications ("Unlock to continue", Notify steps)
+    @Published private(set) var notificationAccess: NotificationAccess = .unknown
+    /// Permission was asked in this launch (it is asked once, while Jarvis is in front).
+    private var askedForNotifications = false
 
     let launch: LaunchOptions
     let coordinator: JarvisCoordinator
@@ -238,6 +248,7 @@ final class AppModel: ObservableObject {
         }
         if settings.remoteControlEnabled { remote.setEnabled(true) }
         if launch.playground && launch.seedRemoteDevice { seedRemoteDevice() }
+        refreshNotificationAccess()
     }
 
     private static func seedSkills(_ launch: LaunchOptions, at url: URL) {
@@ -366,13 +377,14 @@ final class AppModel: ObservableObject {
 
     /// Runs `text` and returns the summary (Ask Jarvis intent). A workflow or a skill is
     /// used only when the core picks exactly one with everything filled; nothing can be
-    /// asked from Siri.
-    func runAndWait(_ text: String) async -> String {
+    /// asked from Siri. Waits at most `limit`: a longer task keeps running and the answer
+    /// says so.
+    func runAndWait(_ text: String, limit: Duration = .seconds(25)) async -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var skill: SkillContext?
         switch try? workflows.resolve(trimmed) {
         case .runWorkflow(let workflow)?:
-            return await runWorkflowAndWait(workflow.id)
+            return await runWorkflowAndWait(workflow.id, limit: limit)
         case .runSkill(_, let context)?:
             skill = context
         default:
@@ -381,7 +393,10 @@ final class AppModel: ObservableObject {
         guard let task = startRun(trimmed, skill: skill) else {
             return setupError ?? TaskCenter.Refusal.busy.description
         }
-        return (await task.value).outcome.summary
+        guard let result = await value(of: task, within: limit) else {
+            return "Jarvis is still working on it."
+        }
+        return result.outcome.summary
     }
 
     /// Starts a task through `TaskCenter`; the run view follows its events.
@@ -390,6 +405,7 @@ final class AppModel: ObservableObject {
         setupError = nil
         switch center.start(text, skill: skill, origin: .owner) {
         case .success(let task):
+            requestNotificationPermission()
             return task
         case .failure(let refusal):
             if refusal != .emptyTask { setupError = refusal.description }
@@ -464,7 +480,7 @@ final class AppModel: ObservableObject {
     func dismissPrompt(_ prompt: HumanPrompt) {
         switch prompt {
         case .confirm: broker.decline(prompt.id)
-        case .question: if broker.pending?.id == prompt.id { broker.cancelAll() }
+        case .question: broker.withdraw(prompt.id)
         case .yesNo: broker.answerYesNo(prompt.id, yes: false)
         }
     }
@@ -551,7 +567,9 @@ final class AppModel: ObservableObject {
     func saveWorkflow(_ draft: WorkflowDraft) -> Result<Workflow, WorkflowLibraryError> {
         defer { refreshWorkflows() }
         do {
-            return .success(try workflows.save(draft))
+            let workflow = try workflows.save(draft)
+            if workflow.hasNotifyStep { requestNotificationPermission() }
+            return .success(workflow)
         } catch let error as WorkflowLibraryError {
             return .failure(error)
         } catch {
@@ -600,6 +618,12 @@ final class AppModel: ObservableObject {
     /// its outcome in one line. Waits at most `limit`: a longer workflow keeps running and
     /// the answer says so.
     func runExternal(_ key: String, limit: Duration = .seconds(25)) async -> String {
+        // The first unlock may have happened since the files were last read.
+        reloadSettings()
+        if let why = WorkflowLibrary.externalUnavailable(settingsRefusal: settingsGate.refusal,
+                                                         workflowsBlocked: workflows.isWriteBlocked) {
+            return why
+        }
         guard let workflow = workflows.find(key) else {
             return "There is no workflow \u{201C}\(key)\u{201D} (or it is off)."
         }
@@ -612,17 +636,9 @@ final class AppModel: ObservableObject {
             return refusal.description
         case .success(let task):
             let name = workflows.workflow(id: id)?.name ?? id
-            let outcome = await withTaskGroup(of: WorkflowOutcome?.self) { group -> WorkflowOutcome? in
-                group.addTask { await task.value }
-                group.addTask {
-                    try? await Task.sleep(for: limit)
-                    return nil
-                }
-                let first = await group.next() ?? nil
-                group.cancelAll()
-                return first
-            }
-            guard let outcome else { return "\(name) is still running in Jarvis." }
+            // Returns at the limit without cancelling the workflow (a task group would wait
+            // for it to end, and iOS would end the intent first).
+            guard let outcome = await value(of: task, within: limit) else { return "\(name) is still running in Jarvis." }
             return "\(name): \(outcome.summary)"
         }
     }
@@ -668,6 +684,8 @@ final class AppModel: ObservableObject {
         settings.remoteControlEnabled = on
         remote.setEnabled(on)
         mirrorRemote()
+        // A paired device's task can wait for an unlock while the phone is in a pocket.
+        if on { requestNotificationPermission() }
     }
 
     /// Opens a pairing offer; returns why it could not.
@@ -788,6 +806,9 @@ final class AppModel: ObservableObject {
             reloadSettings()
             away.appReturnedToForeground()
             checkSchedules()
+            // An NWListener often fails while the app is suspended: listen again.
+            if remote.ensureListening() { mirrorRemote() }
+            refreshNotificationAccess()
         } else {
             away.appLeftForeground()
         }
@@ -799,6 +820,31 @@ final class AppModel: ObservableObject {
         awayPhase = away.phase
     }
 
+    // MARK: - Notifications
+
+    /// Asks for notification permission while Jarvis is in front, where the system can show
+    /// the alert (once per launch; the system itself asks only once). Called when the owner
+    /// turns on remote control, saves a workflow with a Notify step or starts a task. Never
+    /// in playground mode (UI tests must not meet a system alert).
+    private func requestNotificationPermission() {
+        guard !launch.playground, !askedForNotifications,
+              UIApplication.shared.applicationState == .active else { return }
+        askedForNotifications = true
+        Task { @MainActor [weak self] in
+            let access = await NotificationPermission.request()
+            self?.notificationAccess = access
+        }
+    }
+
+    /// Reads the permission again (the owner may have changed it in Settings).
+    private func refreshNotificationAccess() {
+        guard !launch.playground else { return }
+        Task { @MainActor [weak self] in
+            let access = await NotificationPermission.current()
+            self?.notificationAccess = access
+        }
+    }
+
     // MARK: - The owner's rules
 
     /// Reads the rules again while they could not be read (the app became active, or
@@ -807,7 +853,12 @@ final class AppModel: ObservableObject {
         if settingsGate.refresh() {
             let loaded = settingsGate.settings
             if settings != loaded { settings = loaded }
-            if settings.remoteControlEnabled && !remote.isOn { remote.setEnabled(true) }
+            // Remote control follows the rules file both ways.
+            if settings.remoteControlEnabled != remote.isOn {
+                remote.setEnabled(settings.remoteControlEnabled)
+                mirrorRemote()
+            }
+            away.applySaved(acknowledged: settings.awayAcknowledged, proximity: settings.awayProximity)
         }
         if [skills.reloadIfBlocked(), workflows.reloadIfBlocked()].contains(true) { refreshSkills(); refreshWorkflows() }
         mirrorSettingsProblem()

@@ -208,6 +208,17 @@ public final class WorkflowLibrary: Sendable {
         return workflows.first { $0.name.compare(trimmed, options: [.caseInsensitive]) == .orderedSame }
     }
 
+    public static let unreadableAnswer = "Jarvis cannot read its workflows until the phone has been unlocked once."
+
+    /// Why a Shortcuts automation (or Siri) cannot run a workflow now, before looking it up:
+    /// the owner's rules cannot be used (`settingsRefusal`, the gate's words), or the
+    /// workflows file could not be read (`workflowsBlocked`, typically before the first unlock
+    /// after a restart; "there is no workflow" would be wrong then). `nil` when it may run.
+    public static func externalUnavailable(settingsRefusal: String?, workflowsBlocked: Bool) -> String? {
+        if let settingsRefusal { return settingsRefusal }
+        return workflowsBlocked ? unreadableAnswer : nil
+    }
+
     // MARK: - Ask
 
     /// What to do with the owner's words: `resolveUtterance` decides between a workflow, a

@@ -486,6 +486,12 @@ public final class SettingsGate {
         settings = new
     }
 
+    /// What the owner is told when `save` threw: the file keeps the rules it had, and they
+    /// apply again the next time Jarvis reads it (after the first unlock, or at launch).
+    public static func unsavedMessage(_ error: any Error) -> String {
+        "Your change could not be saved (\(error)). The saved rules apply again the next time Jarvis reads them."
+    }
+
     private func apply(_ read: SettingsRead) {
         switch read {
         case .loaded(let loaded):

@@ -91,6 +91,13 @@ public final class AwayModeController {
         if dimmed { display.isProximityMonitoringEnabled = on }
     }
 
+    /// The owner's saved choices, read again (the rules file became readable after the first
+    /// unlock). The phase does not change: nothing starts or ends here.
+    public func applySaved(acknowledged: Bool, proximity: Bool) {
+        self.acknowledged = acknowledged
+        setProximity(proximity)
+    }
+
     /// The app left the foreground (resign active / background): the screen is put back,
     /// Away mode stays chosen.
     public func appLeftForeground() {
