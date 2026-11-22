@@ -410,7 +410,6 @@ pub const CREDENTIAL_FIELD_PHRASES: &[Phrase] = &[
     p("recovery key", Credential),
     p("seed phrase", Credential),
     p("recovery phrase", Credential),
-    x("pin code"),
 ];
 
 /// Text-input labels whose Return key publishes or sends what was typed.
