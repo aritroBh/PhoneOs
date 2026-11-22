@@ -93,6 +93,9 @@ Waiting for a Mac build (app code changed after `18bc128`, the last commit compi
 - [x] Partial re-run after the fixes (Qwen3-4B-Instruct, its 9 failed tasks: 5 pass, 6 with one corrected expectation)
 - [ ] Eval with a model of 2B or less and with constrained decoding
 - [x] `jarvis-remote`: corrupt-store errors never quote the file (keys)
+- [x] Independent adversarial review of the safety gates (agent, safety, observe, memory): 6 proven defects (3 critical: unclassified scroll and element-less swipe over a pay slider, Return-key risk dead after compaction) + 3 more, all fixed with regression tests
+- [x] After an approval the screen is read again; the action runs only if its target is still the same control
+- [x] Denied apps are refused by display name (home-screen icon, switcher card, `open_app`)
 - [ ] First-use approval for `OpenUrl` and tools with no declared app
 - [ ] Non-English safety phrases
 
