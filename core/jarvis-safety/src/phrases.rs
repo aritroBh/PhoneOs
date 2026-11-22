@@ -18,7 +18,10 @@ use jarvis_proto::RiskCategory::{
     AccountChange, Credential, Delete, Payment, PublicPost, Purchase, SendMessage, SystemSetting,
 };
 
-use crate::text::tokens;
+use std::collections::BTreeMap;
+use std::sync::OnceLock;
+
+use crate::text::{bounded, tokens};
 
 /// One row of a phrase table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +89,16 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("voice call", SendMessage),
     p("start call", SendMessage),
     p("join call", SendMessage),
+    p("answer", SendMessage),
+    p("accept call", SendMessage),
+    p("decline call", SendMessage),
+    p("accept invitation", SendMessage),
+    p("accept invite", SendMessage),
+    p("decline invitation", SendMessage),
+    p("decline invite", SendMessage),
+    p("decline", SendMessage),
+    p("airdrop", SendMessage),
+    p("air drop", SendMessage),
     x("send code"),
     x("send a code"),
     x("send me a code"),
@@ -119,6 +132,8 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("add to story", PublicPost),
     p("share to story", PublicPost),
     p("make public", PublicPost),
+    p("your story", PublicPost),
+    p("share story", PublicPost),
     // --- Payment (moving money) ---
     p("pay", Payment),
     p("pay now", Payment),
@@ -154,6 +169,18 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("double click to pay", Payment),
     p("slide to pay", Payment),
     p("paynow", Payment),
+    p("dollarsign", Payment),
+    p("creditcard", Purchase),
+    p("paperplane", SendMessage),
+    p("sell", Payment),
+    p("sell now", Payment),
+    p("swap", Payment),
+    p("convert", Payment),
+    p("trade", Payment),
+    p("stake", Payment),
+    p("add cash", Payment),
+    p("give", Payment),
+    x("give feedback"),
     // --- Purchase ---
     p("buy", Purchase),
     p("buy now", Purchase),
@@ -189,6 +216,19 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("preorder", Purchase),
     p("renew", Purchase),
     p("place bid", Purchase),
+    p("bid", Purchase),
+    p("book", Purchase),
+    p("order", Purchase),
+    x("address book"),
+    x("phone book"),
+    x("order status"),
+    x("order history"),
+    x("order details"),
+    x("order number"),
+    x("order summary"),
+    x("track order"),
+    x("sort order"),
+    x("in order"),
     p("make offer", Purchase),
     p("book now", Purchase),
     p("book it", Purchase),
@@ -219,6 +259,9 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("clear history", Delete),
     p("clear data", Delete),
     p("clear website data", Delete),
+    p("clear history and website data", Delete),
+    p("delete all data", Delete),
+    p("remove all data", Delete),
     p("clear browsing data", Delete),
     p("clear cache", Delete),
     p("clear chat", Delete),
@@ -243,6 +286,13 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("unfriend", Delete),
     p("unfollow", Delete),
     p("deleteall", Delete),
+    p("unsend", Delete),
+    p("restore", Delete),
+    p("dont save", Delete),
+    p("do not save", Delete),
+    p("replace", Delete),
+    p("overwrite", Delete),
+    x("restore purchases"),
     x("clear search"),
     x("clear text"),
     // --- Account changes ---
@@ -259,6 +309,9 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("sign out", AccountChange),
     p("signout", AccountChange),
     p("sign off", AccountChange),
+    p("sign out of icloud", AccountChange),
+    p("sign out of all devices", AccountChange),
+    p("sign out of all sessions", AccountChange),
     p("log out", AccountChange),
     p("logout", AccountChange),
     p("log off", AccountChange),
@@ -277,6 +330,12 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("leave group", AccountChange),
     p("leave conversation", AccountChange),
     p("make admin", AccountChange),
+    p("leave", AccountChange),
+    p("leave server", AccountChange),
+    p("leave channel", AccountChange),
+    p("exit group", AccountChange),
+    p("unmatch", AccountChange),
+    p("unlink", AccountChange),
     p("turn off two factor", AccountChange),
     p("two factor", AccountChange),
     // --- Device settings ---
@@ -295,6 +354,7 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("download and install", SystemSetting),
     p("update now", SystemSetting),
     p("restart", SystemSetting),
+    p("disconnect", SystemSetting),
     p("shut down", SystemSetting),
     p("power off", SystemSetting),
     p("slide to power off", SystemSetting),
@@ -340,6 +400,8 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     g("apply", RiskCategory::None),
     g("update", RiskCategory::None),
     g("join", RiskCategory::None),
+    g("open", RiskCategory::None),
+    g("allow access", SystemSetting),
 ];
 
 /// Phrases that only count as *context* (text elsewhere on the screen), never as the label
@@ -383,6 +445,12 @@ pub const CONTEXT_PHRASES: &[Phrase] = &[
     p("new password", AccountChange),
     p("current password", AccountChange),
     p("confirm password", AccountChange),
+    p("invitation", SendMessage),
+    p("invited you", SendMessage),
+    p("incoming call", SendMessage),
+    p("in app purchases", Purchase),
+    p("in app purchase", Purchase),
+    p("open this page in", SystemSetting),
 ];
 
 /// Text-input labels that make typing into the field a credential entry.
@@ -435,6 +503,7 @@ pub const COMPOSE_FIELD_PHRASES: &[Phrase] = &[
     p("caption", PublicPost),
     p("write a caption", PublicPost),
     p("review", PublicPost),
+    p("aa", SendMessage),
     x("search messages"),
     x("email address"),
 ];
@@ -490,7 +559,8 @@ pub const APP_STORE_BUNDLE_ID: &str = "com.apple.AppStore";
 /// Bundle id of the Settings app, where switches and "Save" change the device.
 pub const SETTINGS_BUNDLE_ID: &str = "com.apple.Preferences";
 
-/// Extra phrases that apply only inside one app.
+/// Extra phrases that apply only inside apps whose bundle id starts with the given prefix
+/// (case-insensitive).
 pub const APP_PHRASES: &[(&str, &[Phrase])] = &[
     (
         APP_STORE_BUNDLE_ID,
@@ -511,8 +581,147 @@ pub const APP_PHRASES: &[(&str, &[Phrase])] = &[
             p("touch id and passcode", AccountChange),
             p("touch id passcode", AccountChange),
             p("passcode", AccountChange),
+            p("install", SystemSetting),
+            p("install profile", SystemSetting),
         ],
     ),
+    (
+        "com.apple.mobilecal",
+        &[
+            p("accept", SendMessage),
+            p("maybe", SendMessage),
+            p("decline", SendMessage),
+        ],
+    ),
+    (
+        "com.apple.InCallService",
+        &[p("accept", SendMessage), p("slide to answer", SendMessage)],
+    ),
+];
+
+/// Verbs that commit to a purchase when the screen shows a price ("Book" next to
+/// "$189 night") or in-app-purchase wording, even without "Total".
+pub const PRICE_VERB_PHRASES: &[Phrase] = &[
+    p("get", Purchase),
+    p("book", Purchase),
+    p("order", Purchase),
+    p("reserve", Purchase),
+    p("rent", Purchase),
+    p("install", Purchase),
+    p("download", Purchase),
+    p("request", Purchase),
+    p("join", Purchase),
+    p("start", Purchase),
+    p("unlock", Purchase),
+];
+
+/// Share-sheet actions that stay on the device; any other row on a share sheet (a person,
+/// an AirDrop device, an app) sends.
+pub const SHARE_SAFE_PHRASES: &[Phrase] = &[
+    p("copy", RiskCategory::None),
+    p("save image", RiskCategory::None),
+    p("save video", RiskCategory::None),
+    p("save to files", RiskCategory::None),
+    p("add to photos", RiskCategory::None),
+    p("print", RiskCategory::None),
+    p("options", RiskCategory::None),
+    p("edit actions", RiskCategory::None),
+    p("add to reading list", RiskCategory::None),
+    p("add bookmark", RiskCategory::None),
+    p("find on page", RiskCategory::None),
+    p("markup", RiskCategory::None),
+    p("airdrop", RiskCategory::None),
+];
+
+/// SF Symbol names (as some apps leave them as accessibility labels) and what they mean.
+/// A label matches an entry when it equals it or continues it with `.` (`trash.fill`);
+/// the longest matching entry wins.
+pub const SF_SYMBOLS: &[(&str, RiskCategory)] = &[
+    ("paperplane", SendMessage),
+    ("arrow.up.circle", SendMessage),
+    ("arrow.up.message", SendMessage),
+    ("phone", SendMessage),
+    ("video", SendMessage),
+    ("envelope", SendMessage),
+    ("trash", Delete),
+    ("trash.slash", RiskCategory::None),
+    ("xmark.bin", Delete),
+    ("minus.circle", Delete),
+    ("square.and.arrow.up", PublicPost),
+    ("cart", Purchase),
+    ("bag", Purchase),
+    ("creditcard", Purchase),
+    ("dollarsign", Payment),
+    ("banknote", Payment),
+];
+
+/// What an [`AppRule`] applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleTarget {
+    /// Any pressable element that is not a tab, a key or plainly navigation.
+    AnyPressable,
+    /// Table and collection cells.
+    Cell,
+    /// Switches.
+    Switch,
+    /// Pressable elements whose text contains a phone number.
+    PhoneNumber,
+}
+
+/// A behaviour that applies only inside apps whose bundle id starts with `bundle_prefix`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppRule {
+    /// Bundle id prefix, compared case-insensitively.
+    pub bundle_prefix: &'static str,
+    /// Which elements it covers.
+    pub target: RuleTarget,
+    /// The category a tap on them gets (at least).
+    pub category: RiskCategory,
+}
+
+/// App-scoped rules: tapping a Phone row dials, a Home tile operates an accessory, a
+/// switch in Settings or Control Center changes the device.
+pub const APP_RULES: &[AppRule] = &[
+    AppRule {
+        bundle_prefix: "com.apple.mobilephone",
+        target: RuleTarget::Cell,
+        category: SendMessage,
+    },
+    AppRule {
+        bundle_prefix: "com.apple.mobilephone",
+        target: RuleTarget::PhoneNumber,
+        category: SendMessage,
+    },
+    AppRule {
+        bundle_prefix: "com.apple.MobileAddressBook",
+        target: RuleTarget::PhoneNumber,
+        category: SendMessage,
+    },
+    AppRule {
+        bundle_prefix: "com.apple.facetime",
+        target: RuleTarget::Cell,
+        category: SendMessage,
+    },
+    AppRule {
+        bundle_prefix: "com.apple.Home",
+        target: RuleTarget::AnyPressable,
+        category: SystemSetting,
+    },
+    AppRule {
+        bundle_prefix: SETTINGS_BUNDLE_ID,
+        target: RuleTarget::Switch,
+        category: SystemSetting,
+    },
+    AppRule {
+        bundle_prefix: "com.apple.springboard",
+        target: RuleTarget::Switch,
+        category: SystemSetting,
+    },
+    AppRule {
+        bundle_prefix: "com.apple.controlcenter",
+        target: RuleTarget::Switch,
+        category: SystemSetting,
+    },
 ];
 
 /// Highest-risk-first ordering used to combine several signals into one category.
@@ -546,6 +755,57 @@ pub(crate) struct LabelRisk {
     pub category: RiskCategory,
     /// Whether a surviving match is a generic confirmation.
     pub generic: bool,
+}
+
+/// A phrase table indexed by its first word, phrases pre-tokenized.
+#[derive(Debug)]
+struct Compiled {
+    by_first: BTreeMap<String, Vec<(Vec<String>, Phrase)>>,
+}
+
+fn compile(table: &[Phrase]) -> Compiled {
+    let mut by_first: BTreeMap<String, Vec<(Vec<String>, Phrase)>> = BTreeMap::new();
+    for phrase in table {
+        let words = tokens(phrase.text);
+        if let Some(first) = words.first() {
+            by_first
+                .entry(first.clone())
+                .or_default()
+                .push((words, *phrase));
+        }
+    }
+    Compiled { by_first }
+}
+
+/// Every table the crate matches against, compiled once.
+fn compiled_tables() -> &'static [(&'static [Phrase], Compiled)] {
+    static TABLES: OnceLock<Vec<(&'static [Phrase], Compiled)>> = OnceLock::new();
+    TABLES.get_or_init(|| {
+        let mut all: Vec<&'static [Phrase]> = vec![
+            ACTION_PHRASES,
+            CONTEXT_PHRASES,
+            CREDENTIAL_FIELD_PHRASES,
+            COMPOSE_FIELD_PHRASES,
+            SETTINGS_CONTEXT_PHRASES,
+            SETTINGS_ACTION_PHRASES,
+            NAVIGATION_PHRASES,
+            PRICE_VERB_PHRASES,
+            SHARE_SAFE_PHRASES,
+        ];
+        all.extend(APP_PHRASES.iter().map(|(_, t)| *t));
+        all.into_iter().map(|t| (t, compile(t))).collect()
+    })
+}
+
+/// Runs `f` with the compiled form of `table` (cached for the crate's own tables).
+fn with_compiled<R>(table: &[Phrase], f: impl FnOnce(&Compiled) -> R) -> R {
+    let cached = compiled_tables()
+        .iter()
+        .find(|(t, _)| t.len() == table.len() && *t == table);
+    match cached {
+        Some((_, c)) => f(c),
+        None => f(&compile(table)),
+    }
 }
 
 /// Joins runs of two or more single-letter tokens, so a spelled-out `P a y` or `D.E.L.E.T.E`
@@ -589,53 +849,119 @@ pub(crate) fn match_tokens(toks: &[String], tables: &[&[Phrase]]) -> LabelRisk {
     }
 }
 
-/// Applies `tables` to the label tokens `toks`.
+/// Applies `tables` to the label tokens `toks` in O(tokens × phrases sharing a first
+/// word), then drops every match strictly inside a longer one with a single sweep.
 fn match_tokens_once(toks: &[String], tables: &[&[Phrase]]) -> LabelRisk {
-    // (start, end, phrase) for every raw match.
-    let mut found: Vec<(usize, usize, &Phrase)> = Vec::new();
+    // (start, end, category, generic) for every raw match.
+    let mut found: Vec<(usize, usize, RiskCategory, bool)> = Vec::new();
     for table in tables {
-        for phrase in table.iter() {
-            let words = tokens(phrase.text);
-            let n = words.len();
-            if n == 0 || n > toks.len() {
-                continue;
-            }
-            for (start, window) in toks.windows(n).enumerate() {
-                if window == words.as_slice() {
-                    found.push((start, start.saturating_add(n), phrase));
+        with_compiled(table, |c| {
+            for (i, t) in toks.iter().enumerate() {
+                let Some(cands) = c.by_first.get(t) else {
+                    continue;
+                };
+                for (words, phrase) in cands {
+                    let end = i.saturating_add(words.len());
+                    if toks.get(i..end) == Some(words.as_slice()) {
+                        found.push((i, end, phrase.category, phrase.inherits_context));
+                    }
                 }
             }
-        }
+        });
     }
+    // Start ascending, end descending: every earlier group either starts earlier or is
+    // longer, so a match is swallowed exactly when an earlier group reaches its end.
+    found.sort_by_key(|&(s, e, _, _)| (s, std::cmp::Reverse(e)));
     let mut out = LabelRisk::default();
-    for &(s, e, phrase) in &found {
-        let len = e.saturating_sub(s);
-        let swallowed = found
-            .iter()
-            .any(|&(s2, e2, _)| s2 <= s && e <= e2 && e2.saturating_sub(s2) > len);
-        if swallowed {
-            continue;
+    let mut best_end: Option<usize> = None;
+    let mut group: Option<(usize, usize)> = None;
+    let mut group_swallowed = false;
+    for &(s, e, category, generic) in &found {
+        if group != Some((s, e)) {
+            if let Some((_, ge)) = group {
+                best_end = Some(best_end.map_or(ge, |b| b.max(ge)));
+            }
+            group = Some((s, e));
+            group_swallowed = best_end.is_some_and(|b| b >= e);
         }
-        out.category = max_risk(out.category, phrase.category);
-        out.generic |= phrase.inherits_context;
+        if !group_swallowed {
+            out.category = max_risk(out.category, category);
+            out.generic |= generic;
+        }
     }
     out
 }
 
-/// Applies `tables` to `label`.
+/// Applies only the phrases of `tables` that cover *all* of `toks` (spelled-out letters
+/// joined too).
+pub(crate) fn match_whole(toks: &[String], tables: &[&[Phrase]]) -> LabelRisk {
+    let mut out = LabelRisk::default();
+    for candidate in [toks.to_vec(), join_spelled(toks)] {
+        let Some(first) = candidate.first() else {
+            continue;
+        };
+        for table in tables {
+            with_compiled(table, |c| {
+                for (words, phrase) in c.by_first.get(first).into_iter().flatten() {
+                    if *words == candidate {
+                        out.category = max_risk(out.category, phrase.category);
+                        out.generic |= phrase.inherits_context;
+                    }
+                }
+            });
+        }
+    }
+    out
+}
+
+/// Applies `tables` to `label` (at most [`crate::text::MAX_LABEL_CHARS`] of it, head and
+/// tail).
 pub(crate) fn match_label(label: &str, tables: &[&[Phrase]]) -> LabelRisk {
-    match_tokens(&tokens(label), tables)
+    match_tokens(&tokens(&bounded(label)), tables)
+}
+
+/// Whether `bundle_id` starts with `prefix`, ignoring ASCII case.
+pub(crate) fn in_app(bundle_id: &str, prefix: &str) -> bool {
+    bundle_id
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
 }
 
 /// The phrase tables that apply to the tapped element inside `bundle_id`.
 pub(crate) fn action_tables(bundle_id: &str) -> Vec<&'static [Phrase]> {
     let mut tables = vec![ACTION_PHRASES];
     for (app, phrases) in APP_PHRASES {
-        if app.eq_ignore_ascii_case(bundle_id) {
+        if in_app(bundle_id, app) {
             tables.push(phrases);
         }
     }
     tables
+}
+
+/// The meaning of `label` if it is an SF Symbol name (`paperplane.fill`, `trash`):
+/// `Some(category)` from [`SF_SYMBOLS`] (`Some(RiskCategory::None)` for an unknown one),
+/// or `None` when it does not look like a dotted symbol name. Undotted names such as
+/// `trash` or `paperplane` are ordinary words for the phrase table.
+pub(crate) fn sf_symbol_risk(label: &str) -> Option<RiskCategory> {
+    let l = label.trim();
+    let symbol_chars = l.contains('.')
+        && !l.starts_with('.')
+        && !l.ends_with('.')
+        && l.chars().any(|c| c.is_ascii_lowercase())
+        && l.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.');
+    if !symbol_chars {
+        return None;
+    }
+    let best = SF_SYMBOLS
+        .iter()
+        .filter(|(name, _)| {
+            l == *name
+                || l.strip_prefix(name)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
+        .max_by_key(|(name, _)| name.len());
+    Some(best.map_or(RiskCategory::None, |(_, c)| *c))
 }
 
 /// The category the action phrase table assigns to `label` on its own, without screen

@@ -28,7 +28,10 @@ pub fn sanitize_screen_text(text: &str) -> String {
 /// 3. Whitespace collapses to single spaces and is trimmed; runs of three or more of
 ///    `~ # = * _ - '` shrink to two.
 /// 4. `screen data` in any case, spacing or look-alike spelling (`SCREEN_DATA`,
-///    `ScreenData`, `scrеen-data` with a Cyrillic `е`) becomes `screen data`.
+///    `ScreenData`, `scrеen-data` with a Cyrillic `е`) becomes `(screen data)`, or
+///    `(end screen data)` after an `END` word; bracket look-alikes wrapping it (`‹‹‹`,
+///    `《《`, `≪`, `«`, fullwidth `＜`, `⟨`) are dropped, so nothing that resembles a block
+///    delimiter survives.
 /// 5. Longer than `max_chars` characters: cut and end with `…` (total `max_chars`).
 ///
 /// Idempotent: `sanitize(sanitize(x)) == sanitize(x)` for the same limit.
@@ -56,8 +59,10 @@ fn map_chars(text: &str) -> Vec<char> {
             | '\u{2329}' | '\u{276E}' | '\u{2770}' | '\u{29FC}' | '\u{1438}' => '\u{2039}',
             '>' | '\u{203A}' | '\u{02C3}' | '\u{276D}' | '\u{FE65}' | '\u{3009}' | '\u{27E9}'
             | '\u{232A}' | '\u{276F}' | '\u{2771}' | '\u{29FD}' | '\u{1433}' => '\u{203A}',
-            '[' | '\u{3010}' | '\u{3014}' | '\u{3016}' | '\u{301A}' | '\u{27E6}' => '(',
-            ']' | '\u{3011}' | '\u{3015}' | '\u{3017}' | '\u{301B}' | '\u{27E7}' => ')',
+            '[' | '\u{3010}' | '\u{3014}' | '\u{3016}' | '\u{301A}' | '\u{27E6}' | '\u{2045}'
+            | '\u{FE5D}' | '\u{FE47}' => '(',
+            ']' | '\u{3011}' | '\u{3015}' | '\u{3017}' | '\u{301B}' | '\u{27E7}' | '\u{2046}'
+            | '\u{FE5E}' | '\u{FE48}' => ')',
             '`' => '\'',
             other => other,
         });
@@ -99,19 +104,78 @@ fn starts_with_folded(chars: &[char], i: usize, word: &str) -> bool {
     true
 }
 
+/// Opening brackets that could pose as a delimiter's `<<<` (after step 2).
+fn is_open_like(c: char) -> bool {
+    matches!(
+        c,
+        '\u{2039}' | '«' | '《' | '≪' | '⟪' | '(' | '{' | '\u{300C}' | '\u{300E}'
+    )
+}
+
+/// Closing counterparts of [`is_open_like`].
+fn is_close_like(c: char) -> bool {
+    matches!(
+        c,
+        '\u{203A}' | '»' | '》' | '≫' | '⟫' | ')' | '}' | '\u{300D}' | '\u{300F}'
+    )
+}
+
 /// Step 4.
 fn neutralize_keyword(chars: &[char]) -> Vec<char> {
-    let mut out = Vec::with_capacity(chars.len());
+    let is_sep = |c: Option<&char>| matches!(c, Some(' ' | '_' | '-' | '.' | '·' | ':' | '/'));
+    let mut out: Vec<char> = Vec::with_capacity(chars.len());
     let mut i = 0usize;
     while i < chars.len() {
         if starts_with_folded(chars, i, "screen") {
             let mut j = i + 6;
-            while matches!(chars.get(j), Some(' ' | '_' | '-' | '.' | '·' | ':' | '/')) {
+            while is_sep(chars.get(j)) {
                 j += 1;
             }
             if starts_with_folded(chars, j, "data") {
+                // Look back over separators, an optional "end" word and an opening
+                // bracket run; look ahead over separators and a closing bracket run.
+                let k0 = out.len();
+                let mut k = k0;
+                while k > 0 && is_sep(out.get(k - 1)) {
+                    k -= 1;
+                }
+                let has_end = k >= 3
+                    && starts_with_folded(&out, k - 3, "end")
+                    && !(k > 3 && out.get(k - 4).is_some_and(|c| c.is_alphanumeric()));
+                let after_end = if has_end { k - 3 } else { k };
+                let mut b = after_end;
+                if has_end {
+                    while b > 0 && is_sep(out.get(b - 1)) {
+                        b -= 1;
+                    }
+                }
+                let bracket_start = b;
+                while b > 0 && out.get(b - 1).is_some_and(|c| is_open_like(*c)) {
+                    b -= 1;
+                }
+                let cut = if b < bracket_start {
+                    b
+                } else if has_end {
+                    after_end
+                } else {
+                    k0
+                };
+                out.truncate(cut);
+                let mut f = j + 4;
+                while is_sep(chars.get(f)) {
+                    f += 1;
+                }
+                let close_start = f;
+                while chars.get(f).is_some_and(|c| is_close_like(*c)) {
+                    f += 1;
+                }
+                out.push('(');
+                if has_end {
+                    out.extend("end ".chars());
+                }
                 out.extend("screen data".chars());
-                i = j + 4;
+                out.push(')');
+                i = if f > close_start { f } else { j + 4 };
                 continue;
             }
         }

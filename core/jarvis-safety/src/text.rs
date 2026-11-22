@@ -8,7 +8,8 @@
 /// True for characters that render as nothing (or only reorder text) and so can be used to
 /// split a keyword without changing how it looks: zero-width and joiner characters, bidi
 /// controls, soft hyphen, variation selectors, Hangul fillers, Unicode tag characters,
-/// interlinear annotation marks and non-whitespace C0/C1 controls.
+/// interlinear annotation marks, blank-rendering letters (Braille blank, Hangul and
+/// musical fillers) and non-whitespace C0/C1 controls.
 pub(crate) fn is_invisible(c: char) -> bool {
     let u = u32::from(c);
     if c.is_control() {
@@ -34,7 +35,9 @@ pub(crate) fn is_invisible(c: char) -> bool {
             | 0xFFA0
             | 0xFFF0..=0xFFFB
             | 0x1BCA0..=0x1BCA3
+            | 0x1D159
             | 0x1D173..=0x1D17A
+            | 0x2800
             | 0xE0000..=0xE0FFF
     )
 }
@@ -70,6 +73,39 @@ fn fold_styled(c: char) -> char {
         0x1D7CE..=0x1D7FF => char::from_u32(0x30 + (u - 0x1D7CE) % 10).unwrap_or(c),
         0x24B6..=0x24CF => letter(u - 0x24B6),
         0x24D0..=0x24E9 => letter(26 + (u - 0x24D0)),
+        _ => fold_letterlike(c),
+    }
+}
+
+/// Letterlike symbols (U+2100 block) that read as an ASCII letter.
+fn fold_letterlike(c: char) -> char {
+    match c {
+        'ℂ' => 'C',
+        'ℊ' => 'g',
+        'ℋ' | 'ℌ' | 'ℍ' => 'H',
+        'ℎ' | 'ℏ' => 'h',
+        'ℐ' | 'ℑ' => 'I',
+        'ℒ' => 'L',
+        'ℓ' => 'l',
+        'ℕ' => 'N',
+        '℘' | 'ℙ' => 'P',
+        'ℚ' => 'Q',
+        'ℛ' | 'ℜ' | 'ℝ' => 'R',
+        'ℤ' => 'Z',
+        'ℬ' => 'B',
+        'ℰ' => 'E',
+        'ℯ' | '℮' => 'e',
+        'ℱ' => 'F',
+        'ℳ' => 'M',
+        'ℴ' => 'o',
+        'ℹ' => 'i',
+        'K' => 'K',
+        'Å' => 'A',
+        'ⅅ' => 'D',
+        'ⅆ' => 'd',
+        'ⅇ' => 'e',
+        'ⅈ' => 'i',
+        'ⅉ' => 'j',
         _ => c,
     }
 }
@@ -78,29 +114,34 @@ fn fold_styled(c: char) -> char {
 /// Latin) to that letter. Applied after lowercasing.
 fn fold_confusable(c: char) -> char {
     match c {
-        'а' | 'α' | 'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' => 'a',
-        'в' | 'β' | 'ь' => 'b',
-        'с' | 'ϲ' | 'ç' => 'c',
-        'ԁ' => 'd',
-        'е' | 'ё' | 'ε' | 'è' | 'é' | 'ê' | 'ë' | 'ē' => 'e',
-        'ɡ' => 'g',
-        'н' | 'һ' => 'h',
-        'і' | 'ї' | 'ι' | 'ì' | 'í' | 'î' | 'ï' | 'ı' => 'i',
-        'ј' => 'j',
-        'к' | 'κ' => 'k',
-        'м' => 'm',
-        'η' | 'ñ' | 'п' => 'n',
-        'о' | 'ο' | 'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' => 'o',
-        'р' | 'ρ' => 'p',
+        'а' | 'α' | 'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' | 'ᴀ' | 'ɑ' => {
+            'a'
+        }
+        'в' | 'β' | 'ь' | 'ʙ' => 'b',
+        'с' | 'ϲ' | 'ç' | 'ć' | 'č' | 'ᴄ' => 'c',
+        'ԁ' | 'ď' | 'đ' | 'ᴅ' => 'd',
+        'е' | 'ё' | 'ε' | 'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ę' | 'ě' | 'ᴇ' => 'e',
+        'ꜰ' => 'f',
+        'ɡ' | 'ğ' | 'ɢ' | 'ց' => 'g',
+        'н' | 'һ' | 'ʜ' | 'հ' => 'h',
+        'і' | 'ї' | 'ι' | 'ì' | 'í' | 'î' | 'ï' | 'ı' | 'ɪ' => 'i',
+        'ј' | 'ᴊ' => 'j',
+        'к' | 'κ' | 'ᴋ' => 'k',
+        'ł' | 'ľ' | 'ĺ' | 'ʟ' => 'l',
+        'м' | 'ᴍ' => 'm',
+        'η' | 'ñ' | 'п' | 'ń' | 'ň' | 'ɴ' | 'ո' => 'n',
+        'о' | 'ο' | 'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ő' | 'ᴏ' | 'օ' => 'o',
+        'р' | 'ρ' | 'ᴘ' => 'p',
         'ԛ' => 'q',
-        'г' => 'r',
-        'ѕ' => 's',
-        'т' | 'τ' => 't',
-        'υ' | 'ù' | 'ú' | 'û' | 'ü' | 'ū' => 'u',
-        'ν' => 'v',
-        'ԝ' | 'ω' => 'w',
+        'г' | 'ř' | 'ʀ' => 'r',
+        'ѕ' | 'ś' | 'ş' | 'š' | 'ș' | 'ꜱ' => 's',
+        'т' | 'τ' | 'ť' | 'ț' | 'ᴛ' => 't',
+        'υ' | 'ù' | 'ú' | 'û' | 'ü' | 'ū' | 'ů' | 'ű' | 'ᴜ' | 'ս' => 'u',
+        'ν' | 'ᴠ' => 'v',
+        'ԝ' | 'ω' | 'ᴡ' => 'w',
         'х' | 'χ' => 'x',
-        'у' | 'ý' | 'ÿ' | 'γ' => 'y',
+        'у' | 'ý' | 'ÿ' | 'γ' | 'ʏ' => 'y',
+        'ž' | 'ź' | 'ż' | 'ᴢ' => 'z',
         _ => c,
     }
 }
@@ -140,6 +181,47 @@ fn fold_upper_confusable(c: char) -> Option<char> {
         'Ζ' => 'z',
         _ => return None,
     })
+}
+
+/// Most characters of one label that matching reads; longer labels are cut to their head
+/// and tail (see [`bounded`]) and count as unreadable when tapped.
+pub(crate) const MAX_LABEL_CHARS: usize = 1024;
+
+/// `text` if it has at most [`MAX_LABEL_CHARS`] characters, else its first three quarters
+/// and last quarter of that budget joined by a space. Keeps all matching linear and
+/// bounded per element.
+pub(crate) fn bounded(text: &str) -> std::borrow::Cow<'_, str> {
+    let n = text.chars().count();
+    if n <= MAX_LABEL_CHARS {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let head = MAX_LABEL_CHARS / 4 * 3;
+    let tail = MAX_LABEL_CHARS / 4;
+    let mut out: String = text.chars().take(head).collect();
+    out.push(' ');
+    out.extend(text.chars().skip(n.saturating_sub(tail)));
+    std::borrow::Cow::Owned(out)
+}
+
+/// Whether a letter can be read by the phrase net: ASCII, foldable to ASCII, or Latin
+/// script (whose accented forms the tables approximate).
+fn is_readable_letter(c: char) -> bool {
+    fold_char(c).is_ascii()
+        || matches!(u32::from(c), 0x00C0..=0x024F | 0x1E00..=0x1EFF)
+        || is_combining(c)
+}
+
+/// True when the phrase tables cannot read `label`: it contains letters of a script they
+/// do not cover (CJK, Arabic, Cyrillic words beyond look-alikes...), or it is longer than
+/// the matcher reads. `classify` treats a tap on such a pressable element as risky.
+pub fn label_is_unreadable(label: &str) -> bool {
+    if label.chars().count() > MAX_LABEL_CHARS {
+        return true;
+    }
+    label
+        .chars()
+        .filter(|c| !is_invisible(*c))
+        .any(|c| c.is_alphabetic() && !is_readable_letter(c))
 }
 
 /// True for apostrophe-like characters, which are deleted inside words (`don't` → `dont`).
@@ -242,6 +324,10 @@ fn is_currency_symbol(c: char) -> bool {
             | '₿'
             | '￥'
             | '￡'
+            | '円'
+            | '元'
+            | '원'
+            | '₨'
     )
 }
 
@@ -249,7 +335,9 @@ fn is_currency_symbol(c: char) -> bool {
 const CURRENCY_WORDS: &[&str] = &[
     "usd", "eur", "gbp", "cad", "aud", "nzd", "jpy", "cny", "rmb", "inr", "chf", "sek", "nok",
     "dkk", "pln", "mxn", "brl", "zar", "sgd", "hkd", "krw", "ils", "aed", "dollar", "dollars",
-    "euro", "euros", "pound", "pounds", "bucks", "rupees", "yen",
+    "euro", "euros", "pound", "pounds", "bucks", "rupees", "yen", "kr", "kc", "zl", "rs", "lei",
+    "ft", "kn", "rub", "uah", "php", "thb", "vnd", "idr", "myr", "won", "yuan", "sar", "egp",
+    "ngn", "kes", "czk", "huf", "ron", "bgn", "isk",
 ];
 
 /// True when `text` contains something that reads as a money amount: a currency symbol

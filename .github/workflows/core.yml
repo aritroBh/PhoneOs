@@ -42,4 +42,14 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-features
       - name: Check iOS target
-        run: cargo check -p jarvis-ffi --target aarch64-apple-ios
+        run: cargo check -p jarvis-ffi --target aarch64-apple-ios --no-default-features
+      - name: Simulator eval (scripted)
+        run: cargo run -q -p jarvis-sim -- eval builtin --strict
+      - name: Swift smoke test against the Rust library
+        run: |
+          if command -v swiftc >/dev/null 2>&1; then
+            swiftc --version
+            JARVIS_SMOKE_STATIC=1 jarvis-ffi/scripts/swift-smoke.sh
+          else
+            echo "::warning::swiftc not found on this runner; Swift smoke test skipped"
+          fi

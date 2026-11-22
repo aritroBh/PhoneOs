@@ -17,15 +17,16 @@ pub enum BudgetVerdict {
 
 /// Tracks a task's steps, elapsed time and failures against its [`Policy`].
 ///
-/// All arithmetic saturates. Time is the latest `now_ms` seen, so a clock that goes
-/// backwards neither panics nor buys extra time.
+/// All arithmetic saturates. Elapsed time is the sum of the *forward* steps between the
+/// times seen, so a clock that jumps backwards neither panics nor buys extra time: after a
+/// jump back, time counts again from the new reading.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Budget {
     max_steps: u32,
     max_duration_ms: u64,
     max_consecutive_failures: u32,
-    start_ms: u64,
-    latest_ms: u64,
+    elapsed_ms: u64,
+    last_ms: u64,
     steps: u32,
     successes: u32,
     failures: u32,
@@ -39,8 +40,8 @@ impl Budget {
             max_steps: policy.max_steps,
             max_duration_ms: policy.max_duration_ms,
             max_consecutive_failures: policy.max_consecutive_failures,
-            start_ms: now_ms,
-            latest_ms: now_ms,
+            elapsed_ms: 0,
+            last_ms: now_ms,
             steps: 0,
             successes: 0,
             failures: 0,
@@ -50,7 +51,10 @@ impl Budget {
 
     /// Records the time `now_ms` without counting anything.
     pub fn observe(&mut self, now_ms: u64) {
-        self.latest_ms = self.latest_ms.max(now_ms);
+        self.elapsed_ms = self
+            .elapsed_ms
+            .saturating_add(now_ms.saturating_sub(self.last_ms));
+        self.last_ms = now_ms;
     }
 
     /// Counts one agent step taken at `now_ms`.
@@ -91,9 +95,11 @@ impl Budget {
         }
     }
 
-    /// Milliseconds since the start, using the latest time seen (never negative).
+    /// Milliseconds elapsed: the forward time recorded so far plus any forward time from
+    /// the last reading to `now_ms` (which is not recorded).
     pub fn elapsed_ms(&self, now_ms: u64) -> u64 {
-        self.latest_ms.max(now_ms).saturating_sub(self.start_ms)
+        self.elapsed_ms
+            .saturating_add(now_ms.saturating_sub(self.last_ms))
     }
 
     /// Steps recorded so far.

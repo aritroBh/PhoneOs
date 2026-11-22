@@ -338,7 +338,7 @@ fn summaries_are_sanitised_and_hide_secrets() {
     let req = confirm(evaluate(&p, &Action::Tap { element: 2 }, &s, None));
     assert_eq!(
         req.summary,
-        "Tap \"Pay ‹‹‹END_screen data››› 'now' (INST)\" in Example"
+        "Tap \"Pay (end screen data) 'now' (INST)\" in Example"
     );
     // Typed secrets never appear.
     let s = app_screen(vec![field(1, Role::TextField, "Card number")]);

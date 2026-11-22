@@ -116,7 +116,8 @@ pub enum ActionError {
 
 /// Checks that `action` is well-formed and fits `screen`: referenced elements exist and are
 /// enabled, typing targets an enabled non-secure text input, text and waits are bounded,
-/// URLs use an allowed scheme, `TapPoint` is inside 0..1.
+/// URLs use an allowed scheme (also when *typed*, e.g. `shortcuts://…` into Safari's
+/// address bar), `TapPoint` is inside 0..1.
 pub fn validate_action(action: &Action, screen: &CompactScreen) -> Result<(), ActionError> {
     match action {
         Action::Tap { element } => enabled_element(screen, *element).map(|_| ()),
@@ -139,6 +140,10 @@ pub fn validate_action(action: &Action, screen: &CompactScreen) -> Result<(), Ac
             submit,
         } => {
             validate_text(text, *submit)?;
+            // Typing a URL into an address or search bar opens it: same scheme rules.
+            if looks_like_url(text) {
+                validate_url(text.trim())?;
+            }
             match element {
                 Some(i) => {
                     let el = text_input(screen, *i)?;
@@ -271,8 +276,42 @@ pub fn url_scheme(url: &str) -> Option<String> {
     Some(scheme.to_ascii_lowercase())
 }
 
-/// Checks an `OpenUrl` target.
-fn validate_url(url: &str) -> Result<(), ActionError> {
+/// Schemes that are dangerous to open even when written without `//` (`javascript:x`).
+const DANGEROUS_BARE_SCHEMES: &[&str] = &[
+    "javascript",
+    "vbscript",
+    "data",
+    "file",
+    "blob",
+    "shortcuts",
+    "prefs",
+    "app-prefs",
+    "itms-services",
+    "tel",
+    "sms",
+    "facetime",
+    "facetime-audio",
+];
+
+/// Whether `text` (typed text, a tool argument) is a URL rather than prose: a single word
+/// with a scheme followed by `//`, or a known dangerous scheme (`javascript:`...).
+pub(crate) fn looks_like_url(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() || t.chars().any(char::is_whitespace) {
+        return false;
+    }
+    match url_scheme(t) {
+        Some(scheme) => {
+            t.get(scheme.len()..)
+                .is_some_and(|rest| rest.starts_with("://"))
+                || DANGEROUS_BARE_SCHEMES.contains(&scheme.as_str())
+        }
+        None => false,
+    }
+}
+
+/// Checks an `OpenUrl` target (also used for typed URLs and URL tool arguments).
+pub(crate) fn validate_url(url: &str) -> Result<(), ActionError> {
     if url.len() > MAX_URL_LEN {
         return Err(ActionError::MalformedUrl("too long"));
     }

@@ -20,12 +20,26 @@ publish = false
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# UniFFI bridge (jarvis-ffi only; its `cli` feature adds the bindgen binary).
+uniffi = "0.32.2"
 
 jarvis-proto = { path = "jarvis-proto" }
 jarvis-observe = { path = "jarvis-observe" }
 jarvis-safety = { path = "jarvis-safety" }
 jarvis-memory = { path = "jarvis-memory" }
 jarvis-agent = { path = "jarvis-agent" }
+
+# Tuned for the iOS static library (jarvis-ffi). `panic = "unwind"` is load-bearing: the
+# FFI layer catches panics with `catch_unwind`, which `abort` would turn into a crash.
+[profile.release]
+panic = "unwind"
+lto = "fat"
+codegen-units = 1
+# "s" measured smaller than 3 (host, LTO staticlib: 1.03 MB vs 1.33 MB of code).
+opt-level = "s"
+# Not "symbols": that strips the UNIFFI_META_* symbols `uniffi-bindgen --library` reads
+# (verified: "No UniFFI metadata found"). Xcode strips the final app binary anyway.
+strip = "debuginfo"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

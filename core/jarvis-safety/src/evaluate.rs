@@ -9,7 +9,7 @@ use crate::classify::{classify, type_target};
 use crate::gate::{gate, Gate};
 use crate::redact::{contains_secret, redact};
 use crate::sanitize::sanitize_screen_text_with_limit;
-use crate::validate::validate_action;
+use crate::validate::{looks_like_url, validate_action, validate_url};
 
 /// What the agent should do with a proposed action.
 #[derive(Debug, Clone, PartialEq)]
@@ -79,6 +79,18 @@ pub fn evaluate(
             affected_app = app.clone();
         }
         Action::CallTool { name, .. } => {
+            let mut strings = Vec::new();
+            if let Action::CallTool { args, .. } = action {
+                crate::classify::tool_strings(args, &mut strings);
+            }
+            for s in strings.iter().filter(|s| looks_like_url(s)) {
+                if let Err(e) = validate_url(s.trim()) {
+                    return Decision::Deny(format!(
+                        "tool argument: {}",
+                        clean(&e.to_string(), MAX_SUMMARY_CHARS)
+                    ));
+                }
+            }
             let Some(spec) = tool.filter(|t| t.name == *name) else {
                 return Decision::Deny(format!(
                     "unknown tool \"{}\"",
@@ -185,12 +197,10 @@ fn summarize_with(action: &Action, screen: &CompactScreen, category: RiskCategor
             None => format!("Swipe {direction:?}{in_app}"),
         },
         Action::TapPoint { x, y } => {
-            let p = jarvis_proto::Point::new(x * screen.size.width, y * screen.size.height);
-            let on = screen
-                .elements
-                .iter()
-                .filter(|e| e.frame.contains(p))
-                .min_by(|a, b| a.frame.area().total_cmp(&b.frame.area()))
+            // The element that decided the risk: the riskiest pressable one under the
+            // point, never a decorative text inside it.
+            let on = crate::classify::tap_point(*x, *y, screen)
+                .1
                 .map(|e| format!(" on {}", describe(e)))
                 .unwrap_or_default();
             format!("Tap at ({:.0}%, {:.0}%){on}{in_app}", x * 100.0, y * 100.0)

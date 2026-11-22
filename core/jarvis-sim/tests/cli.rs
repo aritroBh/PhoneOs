@@ -296,8 +296,33 @@ fn model_url_talks_to_an_openai_compatible_server() {
     let url = format!("http://{}/v1", listener.local_addr().unwrap());
     let server = std::thread::spawn(move || {
         let (mut s, _) = listener.accept().unwrap();
-        let mut buf = vec![0u8; 65536];
-        let n = s.read(&mut buf).unwrap();
+        // Read the whole request (headers, then Content-Length bytes of body). A single
+        // `read` can return before the body arrives; replying then closes the socket
+        // with unread data and the client sees a reset.
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            let n = s.read(&mut chunk).unwrap();
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            let text = String::from_utf8_lossy(&buf);
+            if let Some(head_end) = text.find("\r\n\r\n") {
+                let content_length = text[..head_end]
+                    .lines()
+                    .find_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length")
+                            .then(|| v.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if buf.len() >= head_end + 4 + content_length {
+                    break;
+                }
+            }
+        }
+        let n = buf.len();
         let body = r#"{"choices":[{"message":{"content":"{\"action\":\"done\",\"summary\":\"stub says done\"}"}}]}"#;
         let reply = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

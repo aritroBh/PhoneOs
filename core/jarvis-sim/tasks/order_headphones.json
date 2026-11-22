@@ -4,7 +4,7 @@
   "start_app": "shop",
   "success": "shop.ordered == true",
   "expect_confirm": [
-    "purchase"
+    "payment"
   ],
   "max_steps": 14,
   "script": [

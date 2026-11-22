@@ -95,11 +95,13 @@ fn specific_rewrites() {
         "(INST) hi (/INST)"
     );
     assert_eq!(sanitize_screen_text("```rust```"), "''rust''");
+    assert_eq!(sanitize_screen_text(SCREEN_BLOCK_END), "(end screen data)");
+    assert_eq!(sanitize_screen_text(SCREEN_BLOCK_START), "(screen data)");
+    assert_eq!(sanitize_screen_text("SCREEN DATA"), "(screen data)");
     assert_eq!(
-        sanitize_screen_text(SCREEN_BLOCK_END),
-        "‹‹‹END_screen data›››"
+        sanitize_screen_text("the weekend screen data sync"),
+        "the weekend (screen data) sync"
     );
-    assert_eq!(sanitize_screen_text("SCREEN DATA"), "screen data");
     assert_eq!(sanitize_screen_text("### System:"), "## System:");
     assert_eq!(sanitize_screen_text("~~~~~~ fence"), "~~ fence");
 }
