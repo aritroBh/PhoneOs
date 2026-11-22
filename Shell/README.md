@@ -18,7 +18,8 @@ Shell/
 │     │                          HumanGate, MonotonicClock
 │     ├─ Runner/                 PhoneRunner (+ ObservedUI), LoopCtrlRunner, LoopCtrlAPI,
 │     │                          LoopCtrlRPCClient, LoopCtrlError, RequestSealer
-│     │  └─ UITree/              RawElement, XCUIElementTypeCode, UiTreeBuilder (snapshot → UiNode)
+│     │  └─ UITree/              RawElement, XCUIElementTypeCode, UiTreeBuilder (snapshot → UiNode),
+│     │                          LockScreenSignature, LockSignals (lock decision rule)
 │     ├─ Model/                  ModelProvider + ModelCapabilities, OpenAICompatibleModel,
 │     │                          ModelError, ScreenshotAnnotator
 │     ├─ Store/                  MemoryPersisting, FileMemoryStore, ScreenshotStore
@@ -233,8 +234,17 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   `FormCaptureServer` on the shared loopback); `LockScreenProbeTests` gathers evidence about
   the lock screen and `LockedPhoneAgentTests` locks mid-task. The XCUITest runner reads the
   lock from Darwin notify `com.apple.springboard.lockstate` (looked up with `dlsym`,
-  availability in the simulator [unverified]) or from SpringBoard showing the lock screen
-  (`LockScreenSignature`, from the run-16 probe trees); both readings go into the notes. Every observation attaches `<run>.NN-screen.txt`, `<run>.NN-tree.txt`, `<run>.NN.png`;
+  availability in the simulator [unverified]) and from SpringBoard showing the lock screen
+  (`LockScreenSignature`, from the run-16 probe trees). `LockSignals` (JarvisKit, tested)
+  combines them: commands are refused when either says locked; `lockState()` (unlock polls,
+  lock watch) and observations say unlocked as soon as an app or the home screen is in front,
+  so a stale notify state cannot hold a run in its unlock wait. Every change of the readings
+  goes into the notes and `lockSignalHistory` (every reading with
+  `noteLockSignalsEveryObservation`, on in the lock test).
+- Time limits in the UI tests: the harness sets `maxLockedWaitMs` 20 s (3 s in the lock
+  probe), unlock polls 0.5 s, lock watch 1 s, every driver deadline ≤ 30 s and a run budget of
+  150 s (under the CI per-test limit); playground mode in the app does the same
+  (`JarvisCoordinator(maxLockedWaitOverrideMs:)`, 20 s). No UI-test wait is longer than 30 s. Every observation attaches `<run>.NN-screen.txt`, `<run>.NN-tree.txt`, `<run>.NN.png`;
   every run attaches `<run>.transcript.json` and `<run>.result.txt` (`.keepAlways`). Names
   use `.`, not `/`: the result-bundle export drops `/`.
 
