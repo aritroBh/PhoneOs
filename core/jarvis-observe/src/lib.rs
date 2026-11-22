@@ -20,6 +20,8 @@ mod runner_text;
 
 pub use compact::{compact, compact_view, CompactView};
 pub use diff::{diff, screen_hash, ScreenDiff};
+#[doc(hidden)]
+pub use digest::order_free_census;
 pub use digest::{screen_digest, screen_digest_input, ScreenDigest};
 pub use fingerprint::{fingerprint, fnv1a64, identity_key};
 pub use lookup::{find_by_fingerprint, marks, resolve, ResolveError};

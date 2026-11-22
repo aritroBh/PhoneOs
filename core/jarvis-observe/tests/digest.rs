@@ -474,6 +474,405 @@ fn the_ios26_keyboard_window_is_hashed_and_its_bar_listed() {
         .all(|i| (*i as usize) < view.parents.len()));
 }
 
+// ---------------------------------------------------------------------------------------
+// Digest v6: order-free runs (CI run of df4a416). Within one parent, a maximal run of
+// consecutive sibling subtrees in which every node is hidden and area-less (and none is a
+// text input, a secure node, a labelled text or image, a keyboard or a key, or in the
+// keyboard or its input assistant) is hashed as a sorted multiset; everything else keeps
+// its order.
+// ---------------------------------------------------------------------------------------
+
+/// A hidden, area-less node.
+fn ghost(role: Role, label: &str) -> UiNode {
+    UiNode::new(role, Rect::default())
+        .with_label(label)
+        .with_identifier(label)
+        .visible(false)
+}
+
+fn gb(label: &str) -> UiNode {
+    ghost(Role::Button, label)
+}
+
+/// An app screen whose window holds a shown button and a hidden, area-less wrapper with
+/// `kids`.
+fn wrapped(kids: Vec<UiNode>) -> Screen {
+    app_screen(vec![
+        button("Pay", 16.0, 700.0, 361.0, 50.0),
+        UiNode::new(Role::Button, Rect::default())
+            .visible(false)
+            .with_children(kids),
+    ])
+}
+
+/// The simulator's case: a hidden, area-less folder whose two hidden, area-less children
+/// come back in the other order. Nested reorders inside an order-free subtree are equal
+/// too, at any depth.
+#[test]
+fn a_reorder_inside_an_order_free_run_keeps_the_digest() {
+    let folder = |kids: Vec<UiNode>| gb("Utilities folder").with_children(kids);
+    let a = wrapped(vec![
+        gb("Fitness"),
+        folder(vec![gb("Passwords"), gb("Shortcuts")]),
+        gb("Jarvis"),
+    ]);
+    let b = wrapped(vec![
+        gb("Fitness"),
+        folder(vec![gb("Shortcuts"), gb("Passwords")]),
+        gb("Jarvis"),
+    ]);
+    assert!(same(&a, &b), "the folder's children swapped");
+    let c = wrapped(vec![
+        gb("Jarvis"),
+        gb("Fitness"),
+        folder(vec![gb("Shortcuts"), gb("Passwords")]),
+    ]);
+    assert!(same(&a, &c), "the run's members in any order");
+    // Deeper: grandchildren of a member.
+    let deep = |swap: bool| {
+        let mut g = vec![gb("x"), gb("y"), ghost(Role::Other("Other".into()), "")];
+        if swap {
+            g.rotate_left(1);
+        }
+        wrapped(vec![gb("p").with_children(vec![gb("q").with_children(g)])])
+    };
+    assert!(same(&deep(false), &deep(true)));
+    // Unlabelled texts and images are order-free (they lend no words).
+    let plain = |swap: bool| {
+        let mut k = vec![
+            UiNode::new(Role::StaticText, Rect::default()).visible(false),
+            UiNode::new(Role::Image, Rect::default())
+                .with_identifier("chevron")
+                .visible(false),
+        ];
+        if swap {
+            k.reverse();
+        }
+        wrapped(k)
+    };
+    assert!(same(&plain(false), &plain(true)));
+    // The input never holds a member's text verbatim, only its subtree hash.
+    let input = screen_digest_input(&a);
+    assert!(!input.windows(9).any(|w| w == b"Passwords"));
+}
+
+/// Any hashed field of any node in a run (the member or a descendant) changing changes the
+/// digest.
+#[test]
+fn a_content_change_inside_a_run_changes_the_digest() {
+    let base = || {
+        wrapped(vec![
+            gb("Fitness"),
+            gb("Utilities folder").with_children(vec![gb("Passwords"), gb("Shortcuts")]),
+        ])
+    };
+    let a = base();
+    type Change = (&'static str, fn(&mut UiNode));
+    let changes: [Change; 7] = [
+        ("label", |n| n.label = Some("Pass".into())),
+        ("value", |n| n.value = Some("1".into())),
+        ("identifier", |n| n.identifier = Some("P".into())),
+        ("placeholder", |n| n.placeholder = Some("P".into())),
+        ("role", |n| n.role = Role::Link),
+        ("enabled", |n| n.enabled = !n.enabled),
+        ("selected", |n| n.selected = !n.selected),
+    ];
+    for target in ["Fitness", "Passwords"] {
+        for (what, f) in &changes {
+            let mut b = base();
+            edit(&mut b, |n| {
+                if n.label.as_deref() == Some(target) {
+                    f(n);
+                }
+            });
+            assert!(!same(&a, &b), "{what} of {target}");
+        }
+    }
+    // Ignored fields stay ignored inside a run too.
+    let mut b = base();
+    edit(&mut b, |n| {
+        n.hittable = !n.hittable;
+        n.focused = !n.focused;
+    });
+    assert!(same(&a, &b));
+}
+
+/// Adding, removing or duplicating a member, or a member's child, changes the digest (a
+/// multiset, not a set).
+#[test]
+fn structure_inside_a_run_counts_duplicates_included() {
+    let s = |names: &[&str]| wrapped(names.iter().map(|n| gb(n)).collect());
+    assert!(same(&s(&["A", "B"]), &s(&["B", "A"])));
+    assert!(!same(&s(&["A", "B"]), &s(&["A", "B", "C"])), "added");
+    assert!(!same(&s(&["A", "B"]), &s(&["A"])), "removed");
+    assert!(!same(&s(&["A", "B"]), &s(&["A", "A", "B"])), "duplicated");
+    assert!(
+        !same(&s(&["A", "A", "B"]), &s(&["A", "B", "B"])),
+        "multiset"
+    );
+    assert!(same(&s(&["A", "A", "B"]), &s(&["A", "B", "A"])));
+    // A member gaining a child, or a child moving to another member.
+    let t = |a: Vec<UiNode>, b: Vec<UiNode>| {
+        wrapped(vec![gb("A").with_children(a), gb("B").with_children(b)])
+    };
+    assert!(!same(&t(vec![], vec![]), &t(vec![gb("x")], vec![])));
+    assert!(!same(&t(vec![gb("x")], vec![]), &t(vec![], vec![gb("x")])));
+    assert!(same(
+        &t(vec![gb("x")], vec![]),
+        &wrapped(vec![gb("B"), gb("A").with_children(vec![gb("x")])])
+    ));
+}
+
+/// Runs are maximal and consecutive: a member moving across a sibling that is not
+/// order-free (shown, framed, hidden but framed) changes the digest, and so does moving
+/// to another parent or depth.
+#[test]
+fn a_run_never_spans_a_sibling_that_keeps_its_order() {
+    let shown = || button("Pay", 16.0, 600.0, 361.0, 50.0);
+    let framed_hidden =
+        || UiNode::new(Role::Other("Other".into()), rect(500.0, 0.0, 100.0, 100.0)).visible(false);
+    let visible_arealess = || UiNode::new(Role::Button, Rect::default()).with_label("v");
+    for (what, sep) in [
+        ("shown", shown as fn() -> UiNode),
+        ("hidden with a frame", framed_hidden),
+        ("visible without area", visible_arealess),
+    ] {
+        let a = wrapped(vec![gb("A"), sep(), gb("B")]);
+        let b = wrapped(vec![gb("B"), sep(), gb("A")]);
+        assert!(!same(&a, &b), "across a {what} sibling");
+        let c = wrapped(vec![sep(), gb("A"), gb("B")]);
+        assert!(!same(&a, &c), "moved across a {what} sibling");
+        // Inside each side of it, order is free.
+        let d = wrapped(vec![gb("A"), gb("C"), sep(), gb("B")]);
+        let e = wrapped(vec![gb("C"), gb("A"), sep(), gb("B")]);
+        assert!(same(&d, &e), "{what}");
+    }
+    // Another parent, another depth.
+    let a = wrapped(vec![gb("A"), gb("B").with_children(vec![gb("C")])]);
+    let b = wrapped(vec![gb("A").with_children(vec![gb("C")]), gb("B")]);
+    assert!(!same(&a, &b), "another parent");
+    let c = wrapped(vec![gb("A"), gb("B"), gb("C")]);
+    assert!(!same(&a, &c), "another depth");
+    // Shown siblings keep their order even with identical frames (the compact screen
+    // cannot tell them apart).
+    let twins = |swap: bool| {
+        let mut k = vec![
+            button("Pay", 16.0, 600.0, 361.0, 50.0),
+            button("Cancel", 16.0, 600.0, 361.0, 50.0),
+        ];
+        if swap {
+            k.reverse();
+        }
+        app_screen(k)
+    };
+    assert!(!same(&twins(false), &twins(true)));
+}
+
+/// A node anywhere in a member's subtree becoming visible or getting an area takes that
+/// subtree out of the rule: its order is hashed again.
+#[test]
+fn a_visible_or_framed_descendant_takes_the_subtree_out_of_the_rule() {
+    let pair = |x: UiNode, swap: bool| {
+        let mut k = vec![gb("A").with_children(vec![x]), gb("B")];
+        if swap {
+            k.reverse();
+        }
+        wrapped(k)
+    };
+    let ghost_child = || gb("c");
+    assert!(same(
+        &pair(ghost_child(), false),
+        &pair(ghost_child(), true)
+    ));
+    let visible_child = || UiNode::new(Role::Button, Rect::default()).with_label("c");
+    assert!(!same(
+        &pair(visible_child(), false),
+        &pair(visible_child(), true)
+    ));
+    let framed_child = || {
+        UiNode::new(Role::Button, rect(-500.0, 0.0, 10.0, 10.0))
+            .with_label("c")
+            .visible(false)
+    };
+    assert!(!same(
+        &pair(framed_child(), false),
+        &pair(framed_child(), true)
+    ));
+    // The member itself.
+    let s = |a: UiNode, swap: bool| {
+        let mut k = vec![a, gb("B")];
+        if swap {
+            k.reverse();
+        }
+        wrapped(k)
+    };
+    let shown_member = || button("A", 16.0, 100.0, 100.0, 40.0).visible(false);
+    assert!(!same(&s(shown_member(), false), &s(shown_member(), true)));
+    // A non-finite origin with nothing on screen is area-less; a NaN origin with a size is
+    // clamped onto the screen (drawn), so it keeps its order.
+    let at =
+        |x: f64| move || UiNode::new(Role::Button, Rect::new(x, 0.0, 10.0, 10.0)).visible(false);
+    let inf = at(f64::INFINITY);
+    assert!(same(&s(inf(), false), &s(inf(), true)));
+    let nan = at(f64::NAN);
+    assert!(!same(&s(nan(), false), &s(nan(), true)));
+}
+
+/// What compaction reads in document order is never order-free: text inputs (the fields a
+/// submit sends), secure nodes, labelled texts and images (their words make an enclosing
+/// control's label), keyboards and keys.
+#[test]
+fn what_compaction_reads_in_order_keeps_its_order() {
+    let swap = |make: &dyn Fn(&str) -> UiNode| {
+        let a = wrapped(vec![make("A"), make("B")]);
+        let b = wrapped(vec![make("B"), make("A")]);
+        same(&a, &b)
+    };
+    for role in [
+        Role::TextField,
+        Role::SecureTextField,
+        Role::TextView,
+        Role::SearchField,
+        Role::Key,
+    ] {
+        assert!(!swap(&|l| ghost(role.clone(), l)), "{role:?}");
+    }
+    // A keyboard's label is not hashed (seventh review); its structure is, in order.
+    assert!(!swap(&|l| {
+        let kids = if l == "A" { vec![gb("k")] } else { vec![] };
+        ghost(Role::Keyboard, l).with_children(kids)
+    }));
+    assert!(!swap(&|l| gb(l).secure(true)), "secure flag");
+    assert!(!swap(&|l| ghost(Role::StaticText, l)), "labelled text");
+    assert!(!swap(&|l| ghost(Role::Image, l)), "labelled image");
+    assert!(
+        !swap(&|l| UiNode::new(Role::StaticText, Rect::default())
+            .with_value(l)
+            .visible(false)),
+        "text with a value"
+    );
+    // Nested anywhere below a member, too.
+    assert!(!swap(
+        &|l| gb(l).with_children(vec![ghost(Role::TextField, "f")])
+    ));
+    assert!(!swap(
+        &|l| gb(l).with_children(vec![ghost(Role::StaticText, "t")])
+    ));
+    // The compact screen proves why: those hidden texts are an unlabelled button's label.
+    let pay = |a: &str, b: &str| {
+        app_screen(vec![UiNode::new(
+            Role::Button,
+            rect(16.0, 600.0, 361.0, 50.0),
+        )
+        .with_children(vec![
+            ghost(Role::StaticText, a),
+            ghost(Role::StaticText, b),
+        ])])
+    };
+    assert_ne!(compact(&pay("Pay", "$5")), compact(&pay("$5", "Pay")));
+}
+
+/// Nodes in the keyboard or its input assistant keep their order (their text is not hashed
+/// in the first place; their structure is, in order).
+#[test]
+fn keyboard_nodes_keep_their_order() {
+    let s = |swap: bool| {
+        let mut keys = vec![
+            UiNode::new(Role::Other("Other".into()), Rect::default()).visible(false),
+            UiNode::new(Role::Button, Rect::default())
+                .with_identifier("x")
+                .visible(false),
+        ];
+        if swap {
+            keys.reverse();
+        }
+        app_screen_with(
+            vec![UiNode::new(Role::Keyboard, rect(0.0, 516.0, 393.0, 336.0)).with_children(keys)],
+            true,
+        )
+    };
+    assert!(!same(&s(false), &s(true)));
+}
+
+/// The SpringBoard status bar stays excluded: a run around it is as if it were absent.
+#[test]
+fn an_excluded_status_bar_does_not_split_a_run() {
+    let home =
+        |swap: bool, bar: Option<&str>| {
+            let mut kids = vec![
+                UiNode::new(Role::Other("Other".into()), Rect::default()).visible(false),
+                UiNode::new(Role::Button, Rect::default())
+                    .with_identifier("x")
+                    .visible(false),
+            ];
+            if swap {
+                kids.reverse();
+            }
+            if let Some(t) = bar {
+                kids.insert(
+                    1,
+                    UiNode::new(Role::Other("StatusBar".into()), rect(0.0, 0.0, 393.0, 50.0))
+                        .with_children(vec![text(t, rect(20.0, 10.0, 60.0, 20.0))]),
+                );
+            }
+            let root = UiNode::new(Role::Application, IPHONE_SIZE.to_rect()).with_children(vec![
+                UiNode::new(Role::Window, IPHONE_SIZE.to_rect()).with_children(kids),
+            ]);
+            screen("com.apple.springboard", "Home", root, false)
+        };
+    assert!(same(&home(false, Some("9:41")), &home(true, Some("9:42"))));
+    assert!(same(&home(false, None), &home(true, Some("9:41"))));
+}
+
+/// The ten real iOS 26 fixtures: how common the rule is (runs of two or more members,
+/// their members, the nodes in them), and that the census matches the digest (a reorder of
+/// every counted run keeps it).
+#[test]
+fn ios26_fixtures_order_free_census() {
+    let names = [
+        "alert_dialog",
+        "login_keyboard",
+        "long_list_scrolled",
+        "playground_home",
+        "safari_start_page",
+        "settings_about",
+        "settings_general",
+        "settings_root",
+        "springboard_home",
+        "toggles_off",
+    ];
+    for name in names {
+        let s = fixture(name);
+        let (runs, members, nodes) = jarvis_observe::order_free_census(&s);
+        println!(
+            "{name}: {} nodes, {runs} runs, {members} members, {nodes} nodes under the rule",
+            s.root.count()
+        );
+        // Reversing every hidden, area-less leaf group keeps the digest exactly when the
+        // census says those leaves are in runs.
+        let mut r = s.clone();
+        edit(&mut r, |n| {
+            if n.children.len() > 1
+                && n.children
+                    .iter()
+                    .all(|c| !c.visible && c.frame.is_empty() && c.children.is_empty())
+                && n.children.iter().all(|c| {
+                    !c.role.is_text_input()
+                        && !c.secure
+                        && !(matches!(c.role, Role::StaticText | Role::Image)
+                            && (c.label.is_some() || c.value.is_some()))
+                        && !matches!(c.role, Role::Keyboard | Role::Key)
+                })
+            {
+                n.children.reverse();
+            }
+        });
+        if r != s && runs > 0 {
+            assert!(same(&s, &r), "{name}");
+        }
+    }
+}
+
 /// A `Keyboard` node beside app content: its keys' geometry is hashed, their labels are not
 /// (seventh review; sixth review: hashed whole), and the content next to it is hashed whole.
 #[test]

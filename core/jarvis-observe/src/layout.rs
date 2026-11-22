@@ -395,6 +395,15 @@ impl<'a> Layout<'a> {
     /// Visits every non-excluded node of `root` in depth-first pre-order with what is known
     /// of it ([`Visit`]: depth, shown, drawn, quiet, keyboard window). Iterative: any depth.
     pub fn walk(&self, root: &'a UiNode, mut f: impl FnMut(&'a UiNode, Visit)) {
+        self.walk_pruning(root, |n, v| {
+            f(n, v);
+            true
+        });
+    }
+
+    /// [`Layout::walk`], but a node's children are visited only when `f` returns `true` for
+    /// it (the digest hashes a canonical run of order-free subtrees in one record).
+    pub fn walk_pruning(&self, root: &'a UiNode, mut f: impl FnMut(&'a UiNode, Visit) -> bool) {
         struct Frame<'n> {
             node: &'n UiNode,
             depth: u32,
@@ -430,7 +439,7 @@ impl<'a> Layout<'a> {
                 .quiet_clip
                 .or_else(|| self.quiet_root(node).map(|_| node.frame));
             let quiet_clip = sub_clip.filter(|_| quiet != Quiet::No);
-            f(
+            let descend = f(
                 node,
                 Visit {
                     depth: fr.depth,
@@ -442,6 +451,9 @@ impl<'a> Layout<'a> {
                     in_content: fr.in_content,
                 },
             );
+            if !descend {
+                continue;
+            }
             let child = fr.depth.saturating_add(1);
             let in_content = fr.in_content || is_content_role(&node.role);
             stack.extend(node.children.iter().rev().map(|c| Frame {
