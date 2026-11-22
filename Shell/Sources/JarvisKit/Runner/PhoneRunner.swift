@@ -13,6 +13,32 @@ public protocol PhoneRunner: Sendable {
     /// that it could not do it; throws when the runner could not be reached or its answer
     /// could not be read.
     func perform(_ command: RunnerCommand) async throws -> RunnerResult
+
+    /// Whether the phone is locked now. `SessionDriver` polls it while the session waits for
+    /// an unlock and while it waits for the model or the owner (a lock then interrupts the
+    /// wait). Runners that cannot tell return `.unknown` (the default); the driver then
+    /// relies on `RunnerObservation.deviceLocked` and `RunnerFailure.deviceLocked`.
+    func lockState() async throws -> DeviceLockState
+}
+
+extension PhoneRunner {
+    /// Default: the runner cannot tell.
+    public func lockState() async throws -> DeviceLockState { .unknown }
+}
+
+/// The phone's lock state as a runner reports it.
+public enum DeviceLockState: String, Sendable, Equatable {
+    case locked
+    case unlocked
+    /// The runner has no way to tell.
+    case unknown
+}
+
+extension RunnerResult {
+    /// The runner refused because the phone is locked; nothing was carried out.
+    public static func deviceLocked(_ message: String = "the device is locked") -> RunnerResult {
+        RunnerResult(ok: false, error: message, failure: .deviceLocked)
+    }
 }
 
 /// The UI part of an observation: either the runner's text tree (parsed by the core) or a
@@ -42,6 +68,9 @@ public struct RunnerObservation: Sendable, Equatable {
     public var orientation: Orientation
     /// The screenshot, when one was requested and taken.
     public var screenshot: CapturedScreenshot?
+    /// The runner reports the phone locked: the tree is of the lock screen and the core
+    /// ignores it and waits for an unlock.
+    public var deviceLocked: Bool
     /// Things the runner adapter had to assume or default (shown in the driver's updates,
     /// so nothing is guessed silently).
     public var notes: [String]
@@ -55,11 +84,13 @@ public struct RunnerObservation: Sendable, Equatable {
         keyboardVisible: Bool = false,
         orientation: Orientation = .portrait,
         screenshot: CapturedScreenshot? = nil,
+        deviceLocked: Bool = false,
         notes: [String] = []
     ) {
         self.init(
             ui: .runnerText(source), appBundleId: appBundleId, appName: appName, screenSize: screenSize,
-            keyboardVisible: keyboardVisible, orientation: orientation, screenshot: screenshot, notes: notes
+            keyboardVisible: keyboardVisible, orientation: orientation, screenshot: screenshot,
+            deviceLocked: deviceLocked, notes: notes
         )
     }
 
@@ -72,11 +103,13 @@ public struct RunnerObservation: Sendable, Equatable {
         keyboardVisible: Bool = false,
         orientation: Orientation = .portrait,
         screenshot: CapturedScreenshot? = nil,
+        deviceLocked: Bool = false,
         notes: [String] = []
     ) {
         self.init(
             ui: .tree(root), appBundleId: appBundleId, appName: appName, screenSize: screenSize,
-            keyboardVisible: keyboardVisible, orientation: orientation, screenshot: screenshot, notes: notes
+            keyboardVisible: keyboardVisible, orientation: orientation, screenshot: screenshot,
+            deviceLocked: deviceLocked, notes: notes
         )
     }
 
@@ -89,6 +122,7 @@ public struct RunnerObservation: Sendable, Equatable {
         keyboardVisible: Bool,
         orientation: Orientation,
         screenshot: CapturedScreenshot?,
+        deviceLocked: Bool = false,
         notes: [String]
     ) {
         self.ui = ui
@@ -98,6 +132,7 @@ public struct RunnerObservation: Sendable, Equatable {
         self.keyboardVisible = keyboardVisible
         self.orientation = orientation
         self.screenshot = screenshot
+        self.deviceLocked = deviceLocked
         self.notes = notes
     }
 
@@ -127,7 +162,8 @@ public struct RunnerObservation: Sendable, Equatable {
                 size: screenSize,
                 keyboardVisible: keyboardVisible,
                 orientation: orientation,
-                screenshot: ref
+                screenshot: ref,
+                deviceLocked: deviceLocked
             ))
         case .tree(let root):
             return .observed(observation: ScreenObservation(
@@ -139,7 +175,8 @@ public struct RunnerObservation: Sendable, Equatable {
                     keyboardVisible: keyboardVisible,
                     orientation: orientation
                 ),
-                screenshot: ref
+                screenshot: ref,
+                deviceLocked: deviceLocked
             ))
         }
     }

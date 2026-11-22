@@ -5,7 +5,9 @@ import JarvisCore
 ///
 /// Order within a run: `.started` first; then for every effect `.effect`, `.progress`, and
 /// unless the effect is `.finished`, the effect's own updates (`.confirmationPending`,
-/// `.questionPending`, `.ioFailed`, `.note`) and `.effectCompleted`; `.finished` last, after
+/// `.questionPending`, `.awaitingUnlock`, `.lockDetected`, `.ioFailed`, `.note`) and
+/// `.effectCompleted`; `.unlockWaitEnded` comes right after the `.effect` that ends a wait (or
+/// before `.finished`); `.finished` last, after
 /// which the stream ends.
 public enum DriverUpdate: Sendable, Equatable {
     /// The run began.
@@ -23,6 +25,14 @@ public enum DriverUpdate: Sendable, Equatable {
     /// Something worth logging that is not a failure: a runner adapter assumption, a
     /// runner-text parse issue reported by the core.
     case note(String)
+    /// The session waits for the owner to unlock the phone (every `Effect.awaitUnlock`,
+    /// with the time waited so far).
+    case awaitingUnlock(reason: String, waitedMs: UInt64)
+    /// The driver noticed a lock while it waited for the model, a tool or the owner, and
+    /// abandoned that wait (`Event.deviceLocked` goes to the core).
+    case lockDetected(IOKind)
+    /// A wait for an unlock ended (the next effect is not `awaitUnlock`, or the run ended).
+    case unlockWaitEnded
     /// The effect was carried out and `event` goes back to the core.
     case effectCompleted(Effect, event: Event)
     /// The run ended.
@@ -38,6 +48,12 @@ public enum IOKind: String, Sendable, Equatable, CaseIterable {
     case confirm
     case answer
     case saveMemory
+    /// A lock-state poll.
+    case lockState
+    /// Waiting between unlock polls.
+    case awaitUnlock
+    /// Telling the owner (`OwnerAttention`).
+    case attention
 }
 
 /// How a run ended.
@@ -71,9 +87,6 @@ public enum EndReason: Sendable, Equatable {
     case sessionFinished
     /// `SessionDriver.cancel()` or cancellation of the task running `run()`.
     case cancelled
-    /// Every observe attempt failed; the message is the last error. (The core has no
-    /// "observation failed" event, so the driver stops the session.)
-    case runnerUnavailable(String)
     /// The owner could not be asked or did not answer in time.
     case noAnswer(String)
     /// `DriverConfiguration.maxEffects` was reached.

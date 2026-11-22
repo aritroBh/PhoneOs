@@ -24,6 +24,13 @@ public struct DriverConfiguration: Sendable, Equatable {
     public var maxEffects: Int
     /// Updates buffered for a slow `updates` consumer (newest kept).
     public var updateBufferSize: Int
+    /// Pause between lock-state polls while the session waits for an unlock (each poll
+    /// answers `Effect.awaitUnlock` with `tick`, `deviceUnlocked` or an observation).
+    public var unlockPollInterval: Duration
+    /// How often the runner's lock state is checked while the driver waits for the model,
+    /// a tool or the owner; a lock interrupts the wait with `Event.deviceLocked`. `nil`
+    /// turns the watch off.
+    public var lockWatchInterval: Duration?
 
     /// The defaults, each overridable.
     public init(
@@ -36,7 +43,9 @@ public struct DriverConfiguration: Sendable, Equatable {
         humanTimeout: Duration? = .seconds(600),
         memorySaveTimeout: Duration = .seconds(10),
         maxEffects: Int = 2_000,
-        updateBufferSize: Int = 1_024
+        updateBufferSize: Int = 1_024,
+        unlockPollInterval: Duration = .seconds(2),
+        lockWatchInterval: Duration? = .seconds(3)
     ) {
         self.observeTimeout = observeTimeout
         self.observeAttempts = observeAttempts
@@ -48,5 +57,7 @@ public struct DriverConfiguration: Sendable, Equatable {
         self.memorySaveTimeout = memorySaveTimeout
         self.maxEffects = maxEffects
         self.updateBufferSize = updateBufferSize
+        self.unlockPollInterval = unlockPollInterval
+        self.lockWatchInterval = lockWatchInterval
     }
 }

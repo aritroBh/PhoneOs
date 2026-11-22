@@ -82,6 +82,12 @@ final class IORace<Value: Sendable>: Sendable {
         }
     }
 
+    /// Ends the race with `value` (no-op once it is over): an outside observer decided the
+    /// outcome (the driver's lock watch).
+    func resolve(_ value: Value) {
+        finish(.success(value))
+    }
+
     /// Ends the race with `CancellationError` (no-op once it is over).
     func cancel() {
         finish(.failure(CancellationError()))
