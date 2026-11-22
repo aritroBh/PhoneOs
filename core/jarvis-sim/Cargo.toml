@@ -10,6 +10,9 @@ publish.workspace = true
 default = []
 # OpenAI-compatible HTTP model client (plain http to a local server; no TLS).
 http = ["dep:ureq"]
+# `bench` stages that cross the UniFFI bridge (lifting the Swift-built tree and the
+# `jarvis-ffi` conversion into the core's tree). Off by default: it pulls the UniFFI runtime.
+ffi = ["dep:jarvis-ffi", "dep:uniffi"]
 
 [[bin]]
 name = "jarvis-sim"
@@ -25,6 +28,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 ureq = { version = "2", default-features = false, optional = true }
+jarvis-ffi = { path = "../jarvis-ffi", default-features = false, optional = true }
+uniffi = { workspace = true, optional = true }
 
 [dev-dependencies]
 jarvis-proto = { workspace = true, features = ["test-util"] }

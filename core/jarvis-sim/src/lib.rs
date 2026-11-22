@@ -22,6 +22,7 @@
 )]
 
 pub mod app;
+pub mod bench;
 pub mod builtin;
 pub mod cli;
 pub mod driver;

@@ -30,6 +30,7 @@ USAGE
                  [--step-by-step] [--no-first-use] [--approve-app APP]...
   jarvis-sim eval <DIR | FILE | builtin> [same model, mode and owner flags]
                  [--filter TEXT] [--json] [--strict]
+  jarvis-sim bench [--sizes N,..] [--json PATH] [--check] ...   (see `jarvis-sim bench --help`)
   jarvis-sim apps
   jarvis-sim dump --app ID --screen NAME [--mode structured|runner-text] [--tokens N]
                  [--set app.path=JSON]...
@@ -523,6 +524,12 @@ fn cmd_dump(args: &Args, out: &mut dyn Write) -> Result<i32, String> {
 
 /// Runs the command line and returns the process exit code.
 pub fn main_with(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    // `bench` has its own options (some take no value that this parser would not know).
+    if let Some((first, rest)) = args.split_first() {
+        if first == "bench" {
+            return crate::bench::main_with(rest, out, err);
+        }
+    }
     let parsed = match parse_args(args) {
         Ok(p) => p,
         Err(e) => {

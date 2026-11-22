@@ -638,6 +638,7 @@ name = "jarvis-sim"
 version = "0.1.0"
 dependencies = [
  "jarvis-agent",
+ "jarvis-ffi",
  "jarvis-memory",
  "jarvis-observe",
  "jarvis-proto",
@@ -646,6 +647,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "uniffi",
  "ureq",
 ]
 

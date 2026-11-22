@@ -106,3 +106,31 @@ parse retries, confirmations), every runner command, request and confirmation, t
 `SimSnapshot` for assertions (`snapshot.check("settings.wifi == false")`) and the updated memory.
 Faults: `SimPhone::fail_act_at(n)`, `ScriptedModel::fail_at(n)`, `RunOptions::cancel_at_effect`.
 The simulated clock advances by `ClockCosts` per effect, so time budgets are testable.
+
+## Performance
+
+`jarvis-sim bench` times what the core does per observation: ingest of the tree, compaction,
+the raw digest, prompt rendering, tap points (one control and the sweep of every control),
+classify / evaluate / gate for a tap, a type, a swipe and a Return, and whole `Session::step`
+rounds (observation to prompt, model reply to action, the look after an action, the fresh look
+after an approval), on the ten real iOS 26 trees and on synthetic trees (list, deep, web;
+`page` layout with off-screen nodes hidden as the runner reports them, `dense` layout with every
+node on screen). It uses only `std::time::Instant`, is single threaded, and the synthetic trees
+come from a fixed seed.
+
+```
+cd core
+cargo run --release -p jarvis-sim -- bench                          # full matrix, tables
+cargo run --release -p jarvis-sim --features ffi -- bench           # plus the UniFFI lift/convert stages
+cargo run --release -p jarvis-sim -- bench --json out.json          # every number, machine readable
+cargo run --release -p jarvis-sim -- bench --sizes 5000,10000,20000 --check   # budgets (CI)
+cargo run --release -p jarvis-sim -- bench --quick --no-memory      # smoke run
+```
+
+Times are microseconds: min, p50, p99 and mean over an adaptive number of iterations (`--iters`
+fixes it; the p99 of fewer than 100 samples is the slowest). Use a release build: debug is 10 to
+50 times slower and `--check` refuses to run in it. The workspace release profile is
+`opt-level = "s"`, which is what the phone gets. `--check` compares against the tables in
+`src/bench/budget.rs`: absolute p99 limits and machine-independent scaling ratios (time at 20k
+nodes over 10k, 50k over 10k). Session memory is read from the process's resident set (Linux
+only; the workspace forbids the `unsafe` a counting allocator needs), so it is coarse.
