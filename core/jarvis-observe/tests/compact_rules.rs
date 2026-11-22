@@ -484,3 +484,256 @@ fn fifty_thousand_nodes_nested_deeply_compact_in_linear_time() {
     assert!(c.elements.len() > 10_000, "got {}", c.elements.len());
     assert_eq!(c.elements.first().map(|e| e.index), Some(1));
 }
+
+// ---- hidden flag: container versus leaf -----------------------------------------------------
+
+fn zero_hidden(role: Role, children: Vec<UiNode>) -> UiNode {
+    UiNode::new(role, r(0.0, 0.0, 0.0, 0.0))
+        .visible(false)
+        .with_children(children)
+}
+
+#[test]
+fn hidden_zero_size_container_does_not_hide_its_visible_children() {
+    let page = zero_hidden(
+        Role::Button,
+        vec![
+            button("Settings", 310.0, 418.0, 72.0, 95.0),
+            // A child that is itself hidden stays out, whatever its frame.
+            button("Flagged", 20.0, 418.0, 72.0, 95.0).visible(false),
+            // So does one that is off screen by its own frame.
+            button("Next page", 447.0, 92.0, 72.0, 95.0).visible(false),
+            button("Zero", 0.0, 0.0, 0.0, 0.0).visible(false),
+        ],
+    );
+    let c = compacted(vec![page]);
+    assert_eq!(labels(&c), vec!["Settings"]);
+    assert_eq!(c.elements[0].frame, r(310.0, 418.0, 72.0, 95.0));
+}
+
+#[test]
+fn zero_size_wrappers_of_any_role_are_transparent_even_if_not_flagged() {
+    let cell = UiNode::new(Role::Cell, r(0.0, 0.0, 0.0, 0.0)).with_children(vec![button(
+        "Inside cell",
+        20.0,
+        100.0,
+        100.0,
+        44.0,
+    )]);
+    let nested = zero_hidden(
+        Role::Other("Other".into()),
+        vec![zero_hidden(
+            Role::Button,
+            vec![button("Deep", 20.0, 200.0, 100.0, 44.0)],
+        )],
+    );
+    let c = compacted(vec![cell, nested]);
+    assert_eq!(labels(&c), vec!["Inside cell", "Deep"]);
+}
+
+#[test]
+fn hidden_container_with_a_real_frame_hides_its_whole_subtree() {
+    // An off-screen page or a hidden alert: what it holds cannot be reached, even where a
+    // child's own flag says visible and its frame pokes onto the screen.
+    let page = other(vec![button("Peeking", 430.0, 100.0, 60.0, 44.0)]).visible(false);
+    let off = UiNode::new(Role::Other("Other".into()), r(447.0, 0.0, 440.0, 956.0))
+        .visible(false)
+        .with_children(vec![button("Fitness", 447.0, 92.0, 72.0, 95.0)]);
+    let scroll = UiNode::new(Role::ScrollView, r(-465.0, 0.0, 440.0, 956.0))
+        .visible(false)
+        .with_children(vec![button("Left of home", 10.0, 100.0, 100.0, 44.0)]);
+    let c = compacted(vec![
+        page,
+        off,
+        scroll,
+        button("Here", 20.0, 300.0, 100.0, 44.0),
+    ]);
+    assert_eq!(labels(&c), vec!["Here"]);
+}
+
+#[test]
+fn hidden_leaves_are_dropped_even_inside_a_transparent_parent() {
+    let page = zero_hidden(
+        Role::Other("Other".into()),
+        vec![
+            label("Gone", 20.0, 100.0).visible(false),
+            label("Kept", 20.0, 140.0),
+        ],
+    );
+    let c = compacted(vec![page]);
+    assert_eq!(labels(&c), vec!["Kept"]);
+}
+
+// ---- nested same-role controls --------------------------------------------------------------
+
+fn switch_row(inner: Vec<UiNode>) -> UiNode {
+    UiNode::new(Role::Switch, r(16.0, 168.0, 361.0, 58.0))
+        .with_label("Show tips")
+        .with_value("0")
+        .with_identifier("toggles.tips")
+        .with_children(inner)
+}
+
+fn inner_switch() -> UiNode {
+    UiNode::new(Role::Switch, r(300.0, 183.0, 63.0, 28.0)).with_value("0")
+}
+
+#[test]
+fn switch_row_takes_the_inner_switch_frame_and_keeps_label_and_value() {
+    let c = compacted(vec![switch_row(vec![inner_switch()])]);
+    assert_eq!(c.elements.len(), 1);
+    let e = &c.elements[0];
+    assert_eq!(
+        (e.label.as_str(), e.value.as_deref()),
+        ("Show tips", Some("0"))
+    );
+    assert_eq!(e.frame, r(300.0, 183.0, 63.0, 28.0));
+    assert_eq!(e.frame.center(), jarvis_proto::Point::new(331.5, 197.0));
+}
+
+#[test]
+fn nesting_is_found_through_wrappers_and_followed_down_a_chain() {
+    let innermost = UiNode::new(Role::Switch, r(310.0, 185.0, 40.0, 24.0));
+    let middle = UiNode::new(Role::Switch, r(300.0, 183.0, 63.0, 28.0))
+        .with_children(vec![other(vec![innermost])]);
+    let c = compacted(vec![switch_row(vec![other(vec![middle])])]);
+    assert_eq!(c.elements.len(), 1);
+    assert_eq!(c.elements[0].frame, r(310.0, 185.0, 40.0, 24.0));
+    assert_eq!(c.elements[0].label, "Show tips");
+}
+
+#[test]
+fn inner_state_fills_in_what_the_wrapper_lacks() {
+    let mut inner = inner_switch();
+    inner.value = Some("1".into());
+    let mut outer = switch_row(vec![inner]);
+    outer.value = None;
+    let c = compacted(vec![outer]);
+    assert_eq!(c.elements[0].value.as_deref(), Some("1"));
+
+    let wrapper = UiNode::new(Role::Switch, r(16.0, 168.0, 361.0, 58.0))
+        .with_children(vec![inner_switch().with_label("Airplane Mode")]);
+    let c = compacted(vec![wrapper]);
+    assert_eq!(c.elements[0].label, "Airplane Mode");
+
+    let mut disabled = inner_switch();
+    disabled.enabled = false;
+    let c = compacted(vec![switch_row(vec![disabled])]);
+    assert!(!c.elements[0].enabled);
+}
+
+#[test]
+fn ambiguous_or_foreign_nested_controls_keep_the_wrapper_frame() {
+    let row = r(16.0, 168.0, 361.0, 58.0);
+    // Two inner switches: no way to pick one.
+    let two = switch_row(vec![
+        inner_switch(),
+        UiNode::new(Role::Switch, r(200.0, 183.0, 63.0, 28.0)).with_value("0"),
+    ]);
+    // Sticking out of the wrapper.
+    let outside = switch_row(vec![UiNode::new(Role::Switch, r(340.0, 183.0, 63.0, 28.0))]);
+    // Hidden or without area.
+    let hidden = switch_row(vec![inner_switch().visible(false)]);
+    let flat = switch_row(vec![UiNode::new(Role::Switch, r(300.0, 183.0, 0.0, 0.0))]);
+    // Different identity: a card with its own button, a different value.
+    let card = UiNode::new(Role::Button, r(16.0, 168.0, 361.0, 58.0))
+        .with_label("Product")
+        .with_children(vec![button("Add", 300.0, 183.0, 63.0, 28.0)]);
+    let other_value = switch_row(vec![inner_switch().with_value("1")]);
+    let other_id = switch_row(vec![inner_switch().with_identifier("toggles.other")]);
+    for (name, node) in [
+        ("two", two),
+        ("outside", outside),
+        ("hidden", hidden),
+        ("flat", flat),
+        ("card", card),
+        ("other value", other_value),
+        ("other id", other_id),
+    ] {
+        let c = compacted(vec![node]);
+        assert_eq!(c.elements.len(), 1, "{name}: {:?}", labels(&c));
+        assert_eq!(c.elements[0].frame, row, "{name}");
+    }
+}
+
+#[test]
+fn button_in_button_with_the_same_label_taps_the_inner_button() {
+    let outer = UiNode::new(Role::Button, r(16.0, 100.0, 360.0, 60.0))
+        .with_label("Sign In")
+        .with_children(vec![UiNode::new(
+            Role::Button,
+            r(140.0, 110.0, 100.0, 40.0),
+        )
+        .with_label("Sign In")]);
+    let c = compacted(vec![outer]);
+    assert_eq!(c.elements.len(), 1);
+    assert_eq!(c.elements[0].frame, r(140.0, 110.0, 100.0, 40.0));
+}
+
+#[test]
+fn text_field_wrapper_takes_the_inner_field_frame_and_value() {
+    let inner = UiNode::new(Role::TextField, r(60.0, 110.0, 300.0, 24.0))
+        .with_value("ada@example.com")
+        .focused(true);
+    let outer = UiNode::new(Role::TextField, r(20.0, 100.0, 360.0, 44.0))
+        .with_label("Email")
+        .with_children(vec![inner]);
+    let c = compacted(vec![outer]);
+    assert_eq!(c.elements.len(), 1);
+    let e = &c.elements[0];
+    assert_eq!(
+        (e.label.as_str(), e.value.as_deref()),
+        ("Email", Some("ada@example.com"))
+    );
+    assert_eq!(e.frame, r(60.0, 110.0, 300.0, 24.0));
+    assert!(e.focused);
+}
+
+#[test]
+fn cell_in_cell_is_not_refined_and_still_merges_child_text() {
+    let inner = UiNode::new(Role::Cell, r(40.0, 110.0, 200.0, 30.0))
+        .with_children(vec![text("Inner text", r(44.0, 115.0, 100.0, 20.0))]);
+    let outer = UiNode::new(Role::Cell, r(0.0, 100.0, 393.0, 60.0))
+        .with_children(vec![text("Outer text", r(8.0, 105.0, 100.0, 20.0)), inner]);
+    let c = compacted(vec![outer]);
+    assert_eq!(c.elements.len(), 1);
+    assert_eq!(c.elements[0].frame, r(0.0, 100.0, 393.0, 60.0));
+    assert_eq!(c.elements[0].label, "Outer text, Inner text");
+}
+
+#[test]
+fn nested_control_text_is_still_merged_into_an_unlabeled_wrapper() {
+    let inner = UiNode::new(Role::Button, r(60.0, 110.0, 120.0, 40.0));
+    let outer = UiNode::new(Role::Button, r(16.0, 100.0, 360.0, 60.0))
+        .with_children(vec![text("Continue", r(70.0, 120.0, 100.0, 20.0)), inner]);
+    let c = compacted(vec![outer]);
+    assert_eq!(c.elements.len(), 1);
+    assert_eq!(c.elements[0].label, "Continue");
+    assert_eq!(c.elements[0].frame, r(60.0, 110.0, 120.0, 40.0));
+}
+
+#[test]
+fn long_chain_of_nested_controls_is_followed_in_linear_time() {
+    let mut n = UiNode::new(Role::Switch, r(100.0, 100.0, 50.0, 30.0));
+    for i in 0..3000 {
+        let grow = f64::from(i + 1) * 0.01;
+        n = UiNode::new(
+            Role::Switch,
+            r(
+                100.0 - grow,
+                100.0 - grow,
+                50.0 + 2.0 * grow,
+                30.0 + 2.0 * grow,
+            ),
+        )
+        .with_children(vec![n]);
+    }
+    let mut outer = n;
+    outer.label = Some("Deep switch".into());
+    let started = std::time::Instant::now();
+    let c = compacted(vec![outer]);
+    assert!(started.elapsed().as_secs() < 5);
+    assert_eq!(c.elements.len(), 1);
+    assert_eq!(c.elements[0].frame, r(100.0, 100.0, 50.0, 30.0));
+    assert_eq!(c.elements[0].label, "Deep switch");
+}

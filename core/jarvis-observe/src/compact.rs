@@ -1,4 +1,36 @@
 //! Flattening the accessibility tree into the indexed element list.
+//!
+//! # Visibility: decided per node, from the node's own frame and flag
+//!
+//! The runner sets `visible` from the node's *own* frame only (non-empty and intersecting the
+//! screen, see `UiTreeBuilder.isVisible` on the Swift side). It never looks at ancestors, so
+//! `[hidden]` is a statement about the frame, not a verdict on the subtree: SpringBoard wraps
+//! its home-screen icons in `Button {{0, 0}, {0, 0}} [hidden]` and the icons inside are on
+//! screen. The rule is therefore:
+//!
+//! * A node is **pruned**, together with its whole subtree, when it is flagged invisible *and*
+//!   has a real (non-empty) frame: it is off-screen or hidden by the app, and what it contains
+//!   is not reachable (the next home-screen page at x = 447 on a 440-wide screen, the
+//!   `left-of-home-scroll-view` at x = -465, a hidden alert).
+//! * A node with an **empty frame** and children is *transparent*: a pure grouping node
+//!   whatever its role (`Button`, `Cell`, `Other`). It is never listed itself and does not hide
+//!   anything; each child is judged by its own frame and flag.
+//! * A **leaf** is listed only if its own frame is non-empty, it is not flagged hidden and
+//!   enough of it is on screen (see [`compact`]).
+//!
+//! # Nested controls: the tap lands on the innermost one
+//!
+//! The agent taps the centre of an element's frame. SwiftUI reports a `Toggle` as a `Switch`
+//! spanning the whole row around a `Switch` that is the real control, and a tap on the row's
+//! centre toggles nothing. A listed `Button`/`Link`/`Switch`/`Slider`/`Picker`/`Tab` or text
+//! input that contains exactly one same-role descendant (nearest one, any depth, ignoring
+//! pruned or area-less nodes) keeps its own label/value and takes the frame of that
+//! descendant, repeatedly, when the descendant is fully inside (1 pt tolerance) and is the
+//! same control: no label, value, identifier or placeholder that differs from the wrapper's
+//! (a missing one is compatible, and fills in what the wrapper lacks). Two inner candidates,
+//! an inner control sticking out, or an inner control with its own different label (a card
+//! `Button "Product"` around a `Button "Add"`) leave the wrapper's frame alone. Cells are not
+//! refined: a Cell's frame is the row, and a Cell inside a Cell is a sub-row.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ptr;
@@ -18,6 +50,8 @@ const MIN_VISIBLE_FRACTION: f64 = 0.3;
 const MIN_VISIBLE_SIDE: f64 = 24.0;
 /// At most this many child texts are merged into one label.
 const MAX_MERGED_PARTS: usize = 12;
+/// How far (points) an inner control may stick out of its wrapper and still count as inside.
+const NEST_TOLERANCE: f64 = 1.0;
 
 /// An element before filtering by geometry.
 struct Cand {
@@ -47,9 +81,24 @@ enum Kind {
     Leaf,
 }
 
+/// A node with no area of its own that still has children: a pure grouping node. SpringBoard
+/// wraps its icons in `Button {{0, 0}, {0, 0}} [hidden]`. It says nothing about its children,
+/// which are judged by their own frames and flags.
+fn is_transparent(node: &UiNode) -> bool {
+    node.frame.is_empty() && !node.children.is_empty()
+}
+
+/// A node that is positively hidden: flagged invisible while having a real frame (off-screen
+/// or hidden by the app). Its whole subtree is out. An invisible node with an empty frame is
+/// not hidden in this sense: the runner flags every zero-size node, see [`is_transparent`].
+fn is_pruned(node: &UiNode) -> bool {
+    !node.visible && !node.frame.is_empty()
+}
+
 fn kind(node: &UiNode) -> Kind {
     match &node.role {
         Role::Keyboard | Role::Key => Kind::Skip,
+        _ if is_transparent(node) => Kind::Container,
         r if r.is_text_input() => Kind::Input,
         Role::Button | Role::Link | Role::Switch | Role::Slider | Role::Picker | Role::Tab => {
             Kind::Control
@@ -111,7 +160,7 @@ fn flush_row(row: &mut Vec<usize>, out: &mut Vec<usize>, x: impl Fn(usize) -> f6
 }
 
 fn is_live(node: &UiNode) -> bool {
-    node.visible && kind(node) != Kind::Skip
+    !is_pruned(node) && kind(node) != Kind::Skip
 }
 
 fn is_interactive_kind(node: &UiNode) -> bool {
@@ -237,6 +286,104 @@ impl<'a> Summaries<'a> {
     }
 }
 
+/// What a control is when tapped: its own geometry and state, or those of the same control
+/// one level down when the node is only a wrapper around it (see [`Target::of`]).
+struct Target {
+    frame: Rect,
+    /// Label of the inner control, used when the wrapper has none.
+    label: Option<String>,
+    value: Option<String>,
+    placeholder: Option<String>,
+    enabled: bool,
+    focused: bool,
+    selected: bool,
+}
+
+/// Two labels/values/identifiers describe the same control unless both are set and differ.
+fn compatible(a: &Option<String>, b: &Option<String>) -> bool {
+    let (a, b) = (clean_opt(a), clean_opt(b));
+    a.is_empty() || b.is_empty() || a.to_lowercase() == b.to_lowercase()
+}
+
+/// True when `inner` is the same control as `outer` seen from one level down: same role, and
+/// nothing about it says it is something else (a different label, value, identifier or
+/// placeholder). A card `Button "Product"` around a `Button "Add"` is two controls.
+fn same_control(outer: &UiNode, inner: &UiNode) -> bool {
+    compatible(&outer.label, &inner.label)
+        && compatible(&outer.value, &inner.value)
+        && compatible(&outer.identifier, &inner.identifier)
+        && compatible(&outer.placeholder, &inner.placeholder)
+}
+
+fn contains_rect(outer: &Rect, inner: &Rect) -> bool {
+    inner.x >= outer.x - NEST_TOLERANCE
+        && inner.y >= outer.y - NEST_TOLERANCE
+        && inner.max_x() <= outer.max_x() + NEST_TOLERANCE
+        && inner.max_y() <= outer.max_y() + NEST_TOLERANCE
+}
+
+/// The only nearest same-role descendant of `node` (matches are not searched below), or `None`
+/// when there is none or more than one. Pruned subtrees and nodes without area do not count.
+/// Costs the size of `node`'s subtree minus the part below the match.
+fn single_nested<'a>(node: &'a UiNode) -> Option<&'a UiNode> {
+    let mut found: Option<&'a UiNode> = None;
+    let mut stack: Vec<(&'a UiNode, usize)> = node.children.iter().rev().map(|c| (c, 1)).collect();
+    while let Some((n, depth)) = stack.pop() {
+        if is_pruned(n) || depth > MAX_DEPTH {
+            continue;
+        }
+        if n.role == node.role && !n.frame.is_empty() {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(n);
+            continue;
+        }
+        stack.extend(n.children.iter().rev().map(|c| (c, depth + 1)));
+    }
+    found
+}
+
+impl Target {
+    /// The node itself, unless it wraps a single, fully contained control of the same role that
+    /// is compatible with it. SwiftUI reports a `Toggle` as `Switch "Show tips" {{20, 168},
+    /// {400, 58}}` (the row) around `Switch {{339, 183}, {63, 28}}` (the actual switch), and
+    /// only a tap on the inner one toggles. The target then takes the innermost frame; label
+    /// and value stay the outer node's (the inner values are used where the outer has none).
+    /// The chain is followed while each step stays unambiguous.
+    fn of(node: &UiNode) -> Target {
+        let mut t = Target {
+            frame: node.frame,
+            label: None,
+            value: None,
+            placeholder: None,
+            enabled: node.enabled,
+            focused: node.focused,
+            selected: node.selected,
+        };
+        // Roles that are rows or containers of other things keep the wrapper's frame: a Cell
+        // nested in a Cell is a sub-row, and the outer one is the row the user sees.
+        if !matches!(kind(node), Kind::Control | Kind::Input) {
+            return t;
+        }
+        let mut current = node;
+        while let Some(inner) = single_nested(current) {
+            if !same_control(node, inner) || !contains_rect(&current.frame, &inner.frame) {
+                break;
+            }
+            t.frame = inner.frame;
+            t.label = t.label.or_else(|| non_empty(&inner.label));
+            t.value = t.value.or_else(|| non_empty(&inner.value));
+            t.placeholder = t.placeholder.or_else(|| non_empty(&inner.placeholder));
+            t.enabled &= inner.enabled;
+            t.focused |= inner.focused;
+            t.selected |= inner.selected;
+            current = inner;
+        }
+        t
+    }
+}
+
 #[derive(Clone)]
 struct State {
     depth: usize,
@@ -262,7 +409,7 @@ struct Walker<'a> {
 
 impl<'a> Walker<'a> {
     fn walk(&mut self, node: &'a UiNode, st: &State) {
-        if !node.visible || st.depth > MAX_DEPTH {
+        if is_pruned(node) || st.depth > MAX_DEPTH {
             return;
         }
         let id = self.next_id;
@@ -281,33 +428,38 @@ impl<'a> Walker<'a> {
                 self.descend(node, id, &inner);
             }
             Kind::Input => {
+                let target = Target::of(node);
                 let label = non_empty(&node.label)
                     .or_else(|| non_empty(&node.placeholder))
+                    .or_else(|| target.label.clone())
+                    .or_else(|| target.placeholder.clone())
                     .or_else(|| st.inherit.clone())
                     .or_else(|| non_empty(&node.identifier))
                     .unwrap_or_default();
-                self.push(node, label, &st);
+                self.push(node, label, &st, Some(target));
             }
             Kind::Control => {
+                let target = Target::of(node);
                 let label = non_empty(&node.label)
+                    .or_else(|| target.label.clone())
                     .or_else(|| {
                         Some(self.sums.merged_text(self.sums.span(node))).filter(|t| !t.is_empty())
                     })
                     .or_else(|| st.inherit.clone())
                     .or_else(|| non_empty(&node.identifier))
                     .unwrap_or_default();
-                self.push(node, label, &st);
+                self.push(node, label, &st, Some(target));
             }
             Kind::Text => {
                 if let Some(label) = non_empty(&node.label).or_else(|| non_empty(&node.value)) {
                     if !st.skip_text {
-                        self.push(node, label, &st);
+                        self.push(node, label, &st, None);
                     }
                 }
             }
             Kind::Image | Kind::Leaf => {
                 if let Some(label) = non_empty(&node.label) {
-                    self.push(node, label, &st);
+                    self.push(node, label, &st, None);
                 }
             }
             Kind::Mergeable => self.mergeable(node, id, &st),
@@ -328,7 +480,7 @@ impl<'a> Walker<'a> {
             if label.is_empty() && !is_cell {
                 self.descend(node, id, st);
             } else if !label.is_empty() {
-                self.push(node, label, st);
+                self.push(node, label, st, None);
             }
             return;
         }
@@ -374,7 +526,7 @@ impl<'a> Walker<'a> {
         self.path.pop();
     }
 
-    fn push(&mut self, node: &UiNode, label: String, st: &State) {
+    fn push(&mut self, node: &UiNode, label: String, st: &State, target: Option<Target>) {
         if !st.emit {
             return;
         }
@@ -385,11 +537,18 @@ impl<'a> Walker<'a> {
         }
         let fingerprint = self.ordinals.assign(&node.role, &key, &self.path);
         let secure = node.secure || node.role == Role::SecureTextField;
-        let placeholder = non_empty(&node.placeholder);
+        let (frame, enabled, focused, selected) = match &target {
+            Some(t) => (t.frame, t.enabled, t.focused, t.selected),
+            None => (node.frame, node.enabled, node.focused, node.selected),
+        };
+        let placeholder = non_empty(&node.placeholder)
+            .or_else(|| target.as_ref().and_then(|t| t.placeholder.clone()));
         let value = if secure || node.role == Role::StaticText {
             None
         } else {
-            non_empty(&node.value).filter(|v| placeholder.as_ref() != Some(v))
+            non_empty(&node.value)
+                .or_else(|| target.as_ref().and_then(|t| t.value.clone()))
+                .filter(|v| placeholder.as_ref() != Some(v))
         };
         self.cands.push(Cand {
             role: node.role.clone(),
@@ -400,10 +559,10 @@ impl<'a> Walker<'a> {
             } else {
                 None
             },
-            frame: node.frame,
-            enabled: node.enabled,
-            focused: node.focused,
-            selected: node.selected,
+            frame,
+            enabled,
+            focused,
+            selected,
             secure,
             fingerprint,
             group: st.group,
@@ -417,7 +576,7 @@ fn find_overlays(root: &UiNode) -> (Option<&UiNode>, Option<Rect>) {
     let mut keyboard = None;
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
-        if !n.visible {
+        if is_pruned(n) {
             continue;
         }
         match n.role {
@@ -463,7 +622,11 @@ fn round(f: &Rect) -> [i64; 4] {
 /// Flattens a screen to its indexed, ordered, deduplicated actionable/informative elements.
 ///
 /// * Invisible, zero-area, off-screen (or mostly off-screen) and keyboard-covered nodes are
-///   dropped; partly visible ones keep the visible part of their frame.
+///   dropped; partly visible ones keep the visible part of their frame. A hidden node with a
+///   real frame takes its subtree with it, a zero-size one (flagged hidden by the runner) does
+///   not: its children are judged on their own (see the module docs).
+/// * A control wrapping a single compatible control of the same role (a SwiftUI `Toggle` row)
+///   is listed with the wrapper's label and value and the inner control's frame.
 /// * While an Alert/Sheet is up only its subtree is listed.
 /// * Keyboard keys are never listed; `keyboard_visible` is set instead.
 /// * Cells (and hittable `Other` rows) take their label from child static texts, and those

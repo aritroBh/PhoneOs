@@ -1,0 +1,116 @@
+# Real XCUITest tree from an iPhone 17 Pro Max simulator (iOS 26.5) run, as the
+# runner dumps it ("typed tree"). Jarvis Playground list (identical to the lock-probe baseline tree).
+observation 1: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Playground {{0, 62}, {440, 106}}
+                            StaticText "Playground" {{20.0, 119.7}, {180.3, 40.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  CollectionView {{0, 0}, {440, 956}}
+                                    Other(Other) {{-20, -1744}, {480, 4104}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Cell {{20, 168}, {400, 52}}
+                                      Other(Other) {{20, 168}, {400, 52}}
+                                        Other(Other) {{20, 168}, {400, 52}}
+                                      Other(Other) {{20, 168}, {400, 52}}
+                                        Other(Other) {{20, 168}, {400, 52}}
+                                          Other(Other) {{20, 168}, {400, 52}}
+                                            Button "Login form" id=playground.login {{20, 168}, {400, 52}}
+                                              StaticText "Login form" {{40, 183.8}, {81.7, 20.3}}
+                                              Image id=chevron.forward {{390.7, 188}, {7, 12}}
+                                    Cell {{20, 220}, {400, 52}}
+                                      Other(Other) {{20, 220}, {400, 52}}
+                                        Other(Other) {{20, 220}, {400, 52}}
+                                      Other(Other) {{20, 220}, {400, 52}}
+                                        Other(Other) {{20, 220}, {400, 52}}
+                                          Other(Other) {{20, 220}, {400, 52}}
+                                            Button "Toggles" id=playground.toggles {{20, 220}, {400, 52}}
+                                              StaticText "Toggles" {{40, 235.8}, {60, 20.3}}
+                                              Image id=chevron.forward {{390.7, 240}, {7, 12}}
+                                    Other(Other) {{40, 219}, {360, 1}}
+                                    Cell {{20, 272}, {400, 52}}
+                                      Other(Other) {{20, 272}, {400, 52}}
+                                        Other(Other) {{20, 272}, {400, 52}}
+                                      Other(Other) {{20, 272}, {400, 52}}
+                                        Other(Other) {{20, 272}, {400, 52}}
+                                          Other(Other) {{20, 272}, {400, 52}}
+                                            Button "Long list" id=playground.list {{20, 272}, {400, 52}}
+                                              StaticText "Long list" {{40, 287.8}, {64, 20.3}}
+                                              Image id=chevron.forward {{390.7, 292}, {7, 12}}
+                                    Other(Other) {{40, 271}, {360, 1}}
+                                    Cell {{20, 324}, {400, 52}}
+                                      Other(Other) {{20, 324}, {400, 52}}
+                                        Other(Other) {{20, 324}, {400, 52}}
+                                      Other(Other) {{20, 324}, {400, 52}}
+                                        Other(Other) {{20, 324}, {400, 52}}
+                                          Other(Other) {{20, 324}, {400, 52}}
+                                            Button "Danger zone" id=playground.danger {{20, 324}, {400, 52}}
+                                              StaticText "Danger zone" {{40, 339.8}, {97, 20.3}}
+                                              Image id=chevron.forward {{390.7, 344}, {7, 12}}
+                                    Other(Other) {{40, 323}, {360, 1}}
+                                    Cell {{20, 376}, {400, 52}}
+                                      Other(Other) {{20, 376}, {400, 52}}
+                                        Other(Other) {{20, 376}, {400, 52}}
+                                      Other(Other) {{20, 376}, {400, 52}}
+                                        Other(Other) {{20, 376}, {400, 52}}
+                                          Other(Other) {{20, 376}, {400, 52}}
+                                            Button "Alerts" id=playground.alerts {{20, 376}, {400, 52}}
+                                              StaticText "Alerts" {{40, 391.8}, {44.7, 20.3}}
+                                              Image id=chevron.forward {{390.7, 396}, {7, 12}}
+                                    Other(Other) {{40, 375}, {360, 1}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 863}, {3, 7}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 863}, {3, 7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Activity" {{175.2, 877}, {89.7, 54}}
+                          Image "clock" id=clock.fill {{206.2, 883.3}, {27.3, 27.3}}
+                        Button "Apps" {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Rules" {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}

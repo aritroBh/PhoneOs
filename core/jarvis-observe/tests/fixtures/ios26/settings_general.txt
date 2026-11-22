@@ -1,0 +1,131 @@
+# Real XCUITest tree from an iPhone 17 Pro Max simulator (iOS 26.5) run, as the
+# runner dumps it ("typed tree"). Settings > General.
+observation 3: com.apple.Preferences
+screen 440x956 pt, keyboard hidden
+
+Application "Settings" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    NavigationBar id=General {{0, 62}, {440, 54}}
+                      Button "Settings" id=BackButton {{20, 62}, {44, 44}}
+                      StaticText "General" {{189, 73.7}, {62, 20.7}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 116}, {440, 806}}
+                              Table {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 116}, {440, 17.7}}
+                                Cell id=PLACARD {{20, 133.7}, {400, 200.7}}
+                                  Other(Other) {{20, 133.7}, {400, 200.7}}
+                                    Other(Other) {{20, 133.7}, {400, 200.7}}
+                                      Image {{40, 149.3}, {60, 60.0}}
+                                      StaticText "General" {{40, 224.2}, {80, 26.3}}
+                                      StaticText "Manage your overall setup and preferences for iPhone, such as software updates, device language, CarPlay, AirDrop, and more." {{40, 254.5}, {358.3, 64.3}}
+                                  Other(Other) {{20, 133.7}, {400, 200.7}}
+                                    Other(Other) {{20, 133.7}, {400, 200.7}}
+                                  Other(Other) {{20, 333.3}, {400, 1}}
+                                Other(Other) {{0, 334.3}, {440, 17.3}}
+                                Other(Other) {{0, 351.7}, {440, 17.7}}
+                                Cell "About" id=About {{20, 369.3}, {400, 53}}
+                                  Other(Other) {{20, 369.3}, {369.7, 53}}
+                                    Other(Other) {{20, 369.3}, {369.7, 53}}
+                                      Button "About" id=About {{38, 382}, {88, 28}}
+                                        StaticText "About" {{38, 382}, {88, 28}}
+                                        Image {{38, 382.0}, {28, 28}}
+                                  Other(Other) {{20, 369.3}, {400, 53}}
+                                    Other(Other) {{20, 369.3}, {400, 53}}
+                                  Other(Other) {{80, 421.3}, {320, 1}}
+                                  Button "chevron" {{389.7, 388.7}, {10.3, 14}} [disabled]
+                                Cell "Screen Capture" id=SCREEN_CAPTURE {{20, 422.3}, {400, 53}}
+                                  Other(Other) {{20, 422.3}, {369.7, 53}}
+                                    Other(Other) {{20, 422.3}, {369.7, 53}}
+                                      Button "Screen Capture" id=SCREEN_CAPTURE {{38, 435}, {160.7, 28}}
+                                        StaticText "Screen Capture" {{38, 435}, {160.7, 28}}
+                                        Image {{38, 435.0}, {28, 28}}
+                                  Other(Other) {{20, 422.3}, {400, 53}}
+                                    Other(Other) {{20, 422.3}, {400, 53}}
+                                  Other(Other) {{20, 474.3}, {400, 1}}
+                                  Button "chevron" {{389.7, 441.7}, {10.3, 14}} [disabled]
+                                Other(Other) {{0, 475.3}, {440, 17.3}}
+                                Other(Other) {{0, 492.7}, {440, 17.7}}
+                                Cell "AutoFill & Passwords" id=AUTOFILL {{20, 510.3}, {400, 53}}
+                                  Other(Other) {{20, 510.3}, {369.7, 53}}
+                                    Other(Other) {{20, 510.3}, {369.7, 53}}
+                                      Button "AutoFill & Passwords" id=AUTOFILL {{38, 523}, {200.3, 28}}
+                                        StaticText "AutoFill & Passwords" {{38, 523}, {200.3, 28}}
+                                        Image {{38, 523.0}, {28, 28}}
+                                  Other(Other) {{20, 510.3}, {400, 53}}
+                                    Other(Other) {{20, 510.3}, {400, 53}}
+                                  Other(Other) {{80, 562.3}, {320, 1}}
+                                  Button "chevron" {{389.7, 529.7}, {10.3, 14}} [disabled]
+                                Cell "Dictionary" id=DICTIONARY {{20, 563.3}, {400, 53}}
+                                  Other(Other) {{20, 563.3}, {369.7, 53}}
+                                    Other(Other) {{20, 563.3}, {369.7, 53}}
+                                      Button "Dictionary" id=DICTIONARY {{38, 576}, {119.7, 28}}
+                                        StaticText "Dictionary" {{38, 576}, {119.7, 28}}
+                                        Image {{38, 576.0}, {28, 28}}
+                                  Other(Other) {{20, 563.3}, {400, 53}}
+                                    Other(Other) {{20, 563.3}, {400, 53}}
+                                  Other(Other) {{80, 615.3}, {320, 1}}
+                                  Button "chevron" {{389.7, 582.7}, {10.3, 14}} [disabled]
+                                Cell "Fonts" id=FONT_SETTING {{20, 616.3}, {400, 53}}
+                                  Other(Other) {{20, 616.3}, {369.7, 53}}
+                                    Other(Other) {{20, 616.3}, {369.7, 53}}
+                                      Button "Fonts" id=FONT_SETTING {{38, 629}, {84.7, 28}}
+                                        StaticText "Fonts" {{38, 629}, {84.7, 28}}
+                                        Image {{38, 629.0}, {28, 28}}
+                                  Other(Other) {{20, 616.3}, {400, 53}}
+                                    Other(Other) {{20, 616.3}, {400, 53}}
+                                  Other(Other) {{80, 668.3}, {320, 1}}
+                                  Button "chevron" {{389.7, 635.7}, {10.3, 14}} [disabled]
+                                Cell "Keyboard" id=Keyboard {{20, 669.3}, {400, 53}}
+                                  Other(Other) {{20, 669.3}, {369.7, 53}}
+                                    Other(Other) {{20, 669.3}, {369.7, 53}}
+                                      Button "Keyboard" id=Keyboard {{38, 682}, {114.7, 28}}
+                                        StaticText "Keyboard" {{38, 682}, {114.7, 28}}
+                                        Image {{38, 682.0}, {28, 28}}
+                                  Other(Other) {{20, 669.3}, {400, 53}}
+                                    Other(Other) {{20, 669.3}, {400, 53}}
+                                  Other(Other) {{80, 721.3}, {320, 1}}
+                                  Button "chevron" {{389.7, 688.7}, {10.3, 14}} [disabled]
+                                Cell "Language & Region" id=INTERNATIONAL {{20, 722.3}, {400, 53}}
+                                  Other(Other) {{20, 722.3}, {369.7, 53}}
+                                    Other(Other) {{20, 722.3}, {369.7, 53}}
+                                      Button "Language & Region" id=INTERNATIONAL {{38, 735}, {190.3, 28}}
+                                        StaticText "Language & Region" {{38, 735}, {190.3, 28}}
+                                        Image {{38, 735.0}, {28, 28}}
+                                  Other(Other) {{20, 722.3}, {400, 53}}
+                                    Other(Other) {{20, 722.3}, {400, 53}}
+                                  Other(Other) {{20, 774.3}, {400, 1}}
+                                  Button "chevron" {{389.7, 741.7}, {10.3, 14}} [disabled]
+                                Other(Other) {{0, 775.3}, {440, 17.3}}
+                                Other(Other) {{0, 792.7}, {440, 17.7}}
+                                Cell "VPN & Device Management" id=ManagedConfigurationList {{20, 810.3}, {400, 53}}
+                                  Other(Other) {{20, 810.3}, {369.7, 53}}
+                                    Other(Other) {{20, 810.3}, {369.7, 53}}
+                                      Button "VPN & Device Management" id=ManagedConfigurationList {{38, 823}, {252.3, 28}}
+                                        StaticText "VPN & Device Management" {{38, 823}, {252.3, 28}}
+                                        Image {{38, 823.0}, {28, 28}}
+                                  Other(Other) {{20, 810.3}, {400, 53}}
+                                    Other(Other) {{20, 810.3}, {400, 53}}
+                                  Other(Other) {{20, 862.3}, {400, 1}}
+                                  Button "chevron" {{389.7, 829.7}, {10.3, 14}} [disabled]
+                                Other(Other) {{0, 863.3}, {440, 17.3}}
+                                Other(Other) {{0, 880.7}, {440, 17.7}}
+                                Other(Other) {{0, 898.3}, {440, 17.3}}
+                                Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{407, 116}, {30, 778}}
+                                  Other(Other) {{434, 119}, {3, 761}}
+                                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                                  Other(Other) {{65, 950}, {310, 3}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}

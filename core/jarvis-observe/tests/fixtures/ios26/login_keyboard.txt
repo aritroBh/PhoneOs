@@ -1,0 +1,169 @@
+# Real XCUITest tree from an iPhone 17 Pro Max simulator (iOS 26.5) run, as the
+# runner dumps it ("typed tree"). Jarvis Playground login form, username typed, keyboard up.
+observation 3: dev.jarvis.app
+screen 440x956 pt, keyboard visible
+
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Login form {{0, 62}, {440, 106}}
+                            Button "Playground" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText "Login form" {{20.0, 119.7}, {168.3, 40.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  CollectionView {{0, 0}, {440, 956}}
+                                    Other(Other) {{-20, -1744}, {480, 2033.7}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Cell {{20, 168}, {400, 52}}
+                                      Other(Other) {{20, 168}, {400, 52}}
+                                        Other(Other) {{20, 168}, {400, 52}}
+                                      Other(Other) {{20, 168}, {400, 52}}
+                                        Other(Other) {{20, 168}, {400, 52}}
+                                          Other(Other) {{20, 168}, {400, 52}}
+                                            TextField "Username" value="Ada" placeholder="Username" id=login.username {{40, 183}, {360, 22}} [focused]
+                                    Cell {{20, 220}, {400, 52}}
+                                      Other(Other) {{20, 220}, {400, 52}}
+                                        Other(Other) {{20, 220}, {400, 52}}
+                                      Other(Other) {{20, 220}, {400, 52}}
+                                        Other(Other) {{20, 220}, {400, 52}}
+                                          Other(Other) {{20, 220}, {400, 52}}
+                                            SecureTextField "Password" placeholder="Password" id=login.password {{40, 235.7}, {360, 21.0}} [secure]
+                                    Other(Other) {{40, 219}, {360, 1}}
+                                    Other(Other) {{-20, 289.7}, {480, 2053.7}}
+                                    Cell {{20, 307}, {400, 52}}
+                                      Other(Other) {{20, 307}, {400, 52}}
+                                        Other(Other) {{20, 307}, {400, 52}}
+                                      Other(Other) {{20, 307}, {400, 52}}
+                                        Other(Other) {{20, 307}, {400, 52}}
+                                          Other(Other) {{20, 307}, {400, 52}}
+                                            Button "Sign In" id=login.submit {{20, 307}, {400, 52}}
+                                    Cell {{20, 359}, {400, 52}}
+                                      Other(Other) {{20, 359}, {400, 52}}
+                                        Other(Other) {{20, 359}, {400, 52}}
+                                      Other(Other) {{20, 359}, {400, 52}}
+                                        Other(Other) {{20, 359}, {400, 52}}
+                                          Other(Other) {{20, 359}, {400, 52}}
+                                            StaticText "Signed out" id=login.message {{20, 359}, {400, 52}}
+                                    Other(Other) {{40, 358}, {360, 1}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 495}}
+                                      Other(Other) {{434, 299}, {3, 309}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 495}}
+                                      Other(Other) {{434, 299}, {3, 309}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Activity" id=clock {{175.2, 877}, {89.7, 54}}
+                          Image "clock" id=clock.fill {{206.2, 883.3}, {27.3, 27.3}}
+                        Button "Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Rules" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 611}, {440, 345}}
+        Other(Other) id=inputView {{0, 611}, {440, 345}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 611}, {440, 345}}
+        Other(Other) id=SystemInputAssistantView {{0, 611}, {440, 44}}
+          Other(Other) {{0, 611}, {440, 44}}
+            Other(Other) id=CenterPageView {{0, 611}, {440, 44}}
+              Other(Other) {{0, 11}, {440, 1244}}
+                ScrollView {{0, 611}, {440, 44}}
+              Other(Other) {{0, 611}, {440, 44}}
+                Other(Other) "Typing Predictions" {{0, 611}, {440, 44}}
+                  Other(Other) {{0, 611}, {440, 44}}
+                    Other(Other) {{30, 611}, {380, 44}}
+                      Button "Passwords" {{30, 611}, {380, 44}}
+                        Image id=kb-autofill-key {{169.5, 625}, {13, 23}}
+        Other(Other) {{0, 611}, {440, 345}}
+          Other(Other) {{0, 611}, {440, 345}}
+            Other(Other) {{0, 611}, {440, 345}}
+        Other(Other) {{0, 655}, {440, 243}}
+          Keyboard {{0, 655}, {440, 243}}
+            Other(Other) {{0, 655}, {440, 243}}
+              Other(Other) id=UIKeyboardLayoutStar Preview {{0, 655}, {440, 243}}
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "q" {{4.7, 662}, {43, 56}}
+                Key "w" {{47.7, 662}, {43.3, 56}}
+                Key "e" {{91.0, 662}, {43.3, 56}}
+                Key "r" {{134.3, 662}, {43.3, 56}}
+                Key "t" {{177.7, 662}, {43.3, 56}}
+                Key "y" {{221, 662}, {43.3, 56}}
+                Key "u" {{264.3, 662}, {43.3, 56}}
+                Key "i" {{307.7, 662}, {43.3, 56}}
+                Key "o" {{351, 662}, {43.3, 56}}
+                Key "p" {{394.3, 662}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "a" {{26.0, 718}, {43.3, 56}}
+                Key "s" {{69.3, 718}, {43.3, 56}}
+                Key "d" {{112.7, 718}, {43.3, 56}}
+                Key "f" {{156, 718}, {43.3, 56}}
+                Key "g" {{199.3, 718}, {43.3, 56}}
+                Key "h" {{242.7, 718}, {43.3, 56}}
+                Key "j" {{286, 718}, {43.3, 56}}
+                Key "k" {{329.3, 718}, {43.3, 56}}
+                Key "l" {{372.7, 718}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Button "shift" id=shift {{4.7, 774}, {56, 56}}
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "z" {{69.3, 774}, {43.3, 56}}
+                Key "x" {{112.7, 774}, {43.3, 56}}
+                Key "c" {{156, 774}, {43.3, 56}}
+                Key "v" {{199.3, 774}, {43.3, 56}}
+                Key "b" {{242.7, 774}, {43.3, 56}}
+                Key "n" {{286, 774}, {43.3, 56}}
+                Key "m" {{329.3, 774}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Key "delete" id=delete {{381.3, 774}, {56.3, 56}}
+                Key "numbers" id=more {{4.7, 830}, {108, 56}}
+                Key " " id=space {{112.7, 830}, {216.7, 56}}
+                Button "return" id=Return {{329.3, 830}, {108.3, 56}}
+        Other(Other) {{0, 655}, {440, 301}}
+          Button "Emoji" {{2.5, 887.7}, {80.1, 68.7}}
+            StaticText {{2.5, 887.7}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText {{357.4, 887.4}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText {{357.4, 887.4}, {0, 0}} [hidden]

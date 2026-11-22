@@ -1,10 +1,13 @@
 #![allow(dead_code)]
 //! Shared builders for the observe tests.
 
+pub mod ios;
+
 use jarvis_observe::compact;
 use jarvis_proto::fixtures::{keyboard, node, rect, screen, text};
 use jarvis_proto::{CompactScreen, Element, Role, Screen, UiNode};
 
+#[allow(unused_imports)]
 pub use jarvis_proto::fixtures::{rect as r, IPHONE_SIZE};
 
 /// Wraps content nodes in Application > Window and builds a Settings-like screen.
@@ -55,4 +58,43 @@ pub fn by_label<'a>(c: &'a CompactScreen, label: &str) -> &'a Element {
 
 pub fn count_label(c: &CompactScreen, label: &str) -> usize {
     c.elements.iter().filter(|e| e.label == label).count()
+}
+
+/// One line per element, `[n] Role "label" value="v" (flags) @ x,y w×h`, frame rounded to
+/// whole points. Stable text for asserting on whole compact screens and for before/after diffs.
+pub fn compact_text(c: &CompactScreen) -> String {
+    let mut out = String::new();
+    for e in &c.elements {
+        out.push_str(&format!("[{}] {} {:?}", e.index, e.role.as_str(), e.label));
+        if let Some(v) = &e.value {
+            out.push_str(&format!(" value={v:?}"));
+        }
+        let mut flags = Vec::new();
+        if !e.enabled {
+            flags.push("disabled");
+        }
+        if e.selected {
+            flags.push("selected");
+        }
+        if e.focused {
+            flags.push("focused");
+        }
+        if !flags.is_empty() {
+            out.push_str(&format!(" ({})", flags.join(", ")));
+        }
+        out.push_str(&format!(
+            " @ {},{} {}x{}\n",
+            e.frame.x.round(),
+            e.frame.y.round(),
+            e.frame.width.round(),
+            e.frame.height.round()
+        ));
+    }
+    out
+}
+
+/// The centre of an element's frame: where the agent taps.
+pub fn tap_point(e: &Element) -> (f64, f64) {
+    let c = e.frame.center();
+    (c.x, c.y)
 }
