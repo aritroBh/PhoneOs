@@ -45,6 +45,16 @@ jobs:
         run: cargo check -p jarvis-ffi --target aarch64-apple-ios --no-default-features
       - name: Simulator eval (scripted)
         run: cargo run -q -p jarvis-sim -- eval builtin --strict
+      - name: Performance budgets
+        run: |
+          cargo build --release -p jarvis-sim
+          # The absolute limits are p99 times; a shared runner spikes. A regression fails
+          # every attempt, a spike does not: fail only when three runs in a row fail.
+          for attempt in 1 2 3; do
+            if cargo run --release -p jarvis-sim -- bench --sizes 1000,5000,10000,20000 --check; then exit 0; fi
+            echo "::warning::performance budgets: attempt $attempt failed"
+          done
+          exit 1
       - name: Swift smoke test against the Rust library
         run: |
           if command -v swiftc >/dev/null 2>&1; then

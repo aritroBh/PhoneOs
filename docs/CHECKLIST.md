@@ -152,8 +152,9 @@ Watch Jarvis act: a phone-shaped viewer in the run screen shows the screen Jarvi
 ## Performance (Rust core)
 
 - [x] Benchmark harness (`jarvis-sim bench`, `234e830`): 24 stages of a step on the ten real iOS 26 trees and on 1k–50k-node synthetic trees; prompt size per screen. Real screens: screen read to prompt 0.3 ms p50, under 1.2 ms p99 (shared VM); the fixed system prompt is 70–85% of every prompt
-- [~] Budgets and scaling limits are in the source and hold (`bench --check`); not yet a CI step
-- [ ] Hotspot fixes: the prompt builder renders the screen about seven times a step; quadratic tap-point sweep, change detection and neighbour search on dense screens; clone-heavy redaction. After the ninth-review fixes (same files)
+- [x] Budgets and scaling limits are in the source, hold, and run in CI (`core.yml` "Performance budgets": `bench --sizes 1000,5000,10000,20000 --check`, about 2.5 min plus a 30 s release build). The looser scaling limits whose causes were fixed are gone (change detection, carousel-neighbour search, budgeted render); the step and render budgets are tightened
+- [x] Hotspot fixes, output unchanged (differential tests against the old code, eval transcripts byte-identical at four context sizes): the screen at budget 0 rendered once per prompt and only the returned rendering built; tap-point candidates after the first checked only against the drawn nodes that reach them, the cover named once; change detection by fingerprint map; the neighbour search stops at the first sibling; redaction reads words once and clones no element twice. Real screens, p50 median of the ten: screen read to prompt 0.33 → 0.14 ms, a whole round 0.39 → 0.20 ms. Dense 20k nodes: prompt 144 → 53 ms, look after an action 149 → 50 ms, sweep of every control 330 → 148 ms (fastest of three, same session)
+- [ ] Still super-linear by construction: the sweep of every control (one call per control, each reading every drawn node once). Still linear but heavy on dense screens: redaction, compaction, the classifier's screen tally and the question's facts (each summary redacts the whole screen; two per approved look)
 - [ ] Keep the fixed system prompt in the model's cache between steps (the largest lever for on-phone speed)
 
 ## Checks
