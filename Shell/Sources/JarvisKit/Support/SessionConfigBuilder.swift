@@ -8,13 +8,15 @@ import JarvisCore
 /// this code compiling and the new fields at their defaults.
 public enum SessionConfigBuilder {
     /// The default config with the model profile from `capabilities`, the given tools,
-    /// known apps and the agent's own bundle id (exempt from first-use approval), and
+    /// known apps, the agent's own bundle id (exempt from first-use approval), the skill
+    /// the session runs under (`nil`: none; it can only narrow the policy), and
     /// `adjustPolicy` applied to the default policy (deny list, budgets).
     public static func make(
         capabilities: ModelCapabilities,
         tools: [ToolSpec] = [],
         knownApps: [AppInfo] = [],
         agentBundleId: String? = nil,
+        skill: SkillContext? = nil,
         adjustPolicy: (inout Policy) -> Void = { _ in }
     ) throws -> SessionConfig {
         var config = try defaultSessionConfig()
@@ -22,6 +24,7 @@ public enum SessionConfigBuilder {
         config.tools = tools
         config.knownApps = knownApps
         if let agentBundleId { config.agentBundleId = agentBundleId }
+        config.skill = skill
         adjustPolicy(&config.policy)
         return config
     }

@@ -226,3 +226,51 @@ extension TaskRecord.Status {
         }
     }
 }
+
+/// An honest "not yet" card: what the feature will do and what it waits for. No fake rows.
+struct ComingCard: View {
+    var icon: JarvisIcon
+    var title: String
+    var message: String
+    var points: [String]
+    var identifier: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.gap) {
+            Image.decorative(icon, size: Theme.iconDisplay)
+                .foregroundStyle(Theme.textSoft)
+                .frame(width: Theme.heroTile, height: Theme.heroTile)
+                .modifier(Bezeled(fill: Theme.raisedHigh, radius: Theme.radiusButton))
+            Text(title)
+                .font(Theme.rowTitle)
+                .foregroundStyle(Theme.textPrimary)
+                .accessibilityIdentifier("\(identifier).heading")
+            Text(message)
+                .font(Theme.body)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !points.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.gapSmall) {
+                    ForEach(points, id: \.self) { point in
+                        HStack(alignment: .firstTextBaseline, spacing: Theme.gapSmall) {
+                            Image.decorative(.hollowDot, size: Theme.iconCompact)
+                                .foregroundStyle(Theme.textTertiary)
+                            Text(point)
+                                .font(Theme.meta)
+                                .foregroundStyle(Theme.textSoft)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            }
+            Chip(text: "Needs the next core update", icon: .clock, foreground: Theme.textSoft, fill: Theme.raisedHigh)
+                .padding(.top, 4)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(identifier)
+    }
+}

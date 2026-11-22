@@ -26,9 +26,11 @@ Shell/
 │     ├─ Support/                JSONValue, HTTPTransport, SessionConfigBuilder
 │     ├─ QA/                     PromptScreen, ScriptedModel (+ ElementQuery, ScriptStep),
 │     │                          Transcript + RecordingModel, FormCaptureServer, DemoPhone
+│     ├─ Skills/                 SkillLibrary (+ SkillDraft, SkillRoute, SkillCandidate, SkillSeeds),
+│     │                          CoreErrorMessage
 │     └─ App/                    JarvisSettings (+ Codable mirrors), SettingsStore, TaskHistory,
 │                                MemorySnapshot, HumanPromptBroker, LiveRun, JarvisCoordinator,
-│                                ModelBackendFactory, ConnectionProbe
+│                                ModelBackendFactory, ConnectionProbe, AwayMode, AppAccess
 ├─ App/                          Apple-only, outside Sources/ (never in the Linux build)
 │  ├─ Jarvis/                    SwiftUI app: Design/, Views/, Playground/, Intents/
 │  └─ JarvisUITests/             Runner/ (XCUITestPhoneRunner), Support/ (QA harness), tests
@@ -112,11 +114,46 @@ decoding is on, the core puts both the GBNF grammar and the JSON schema in each
 runtimes (llama.cpp: GBNF, Foundation Models / LiteRT-LM: schema) implement the same
 protocol. They resolve the image from the shared `ScreenshotStore` by `ImageRef.id`.
 
-`SessionConfigBuilder.make(capabilities:tools:knownApps:adjustPolicy:)` starts from
+`SessionConfigBuilder.make(capabilities:tools:knownApps:agentBundleId:skill:adjustPolicy:)` starts from
 `defaultSessionConfig()` and mutates it. JarvisKit never calls the memberwise initialiser
 of `Policy` or `SessionConfig`, so new core fields keep their defaults. `RunnerSnapshot`,
 `ToolSpec` and `ToolParam` have no core defaults. Each is built in exactly one place
 (`RunnerObservation.runnerSnapshot`, `ToolSpecs`), so a new field means one edit.
+
+## Skills, Away mode, Apps (JarvisKit side, Linux-tested)
+
+- **`SkillLibrary`** (`Skills/SkillLibrary.swift`): the owner's skills in `skills.json`
+  (`JarvisPaths.skills`), backed by the core's `JarvisSkills`. Synchronous and serialised
+  (a `Mutex`; the file is small). Writes are atomic with the same file protection as
+  `FileMemoryStore`. Load issues are kept and shown: the core writes damaged entries back
+  unchanged, and a file it refuses as a whole (not JSON, newer schema) is renamed to
+  `skills.json.corrupt-<ms>` and reported, never deleted; if it cannot be renamed, saving is
+  blocked. API: `skills`, `skill(id:)`, `loadIssues`, `save(SkillDraft)` (new drafts become
+  Written skills with an id from the name; `{slot}`s in the phrases become parameters),
+  `setEnabled`, `remove`, `recordRun`, `promote(flowId:memoryJSON:name:)`, `route(text)`,
+  `context(for:values:)`, `context(skillId:values:)`, `taskText(skillId:values:)`, and
+  `learnedFlowID(forTask:memoryJSON:flowIDs:)` (which flow a finished task would replay, decided
+  by the core: each flow is promoted into a scratch store and the task is matched against it).
+- **Errors**: the generated `JarvisError` is `internal`, so `CoreErrorMessage` reads the case
+  name and message with `Mirror`; `SkillLibraryError.invalidSkill(message)` carries the core's
+  words verbatim and `field` says which form field they are about (routing only: every rule
+  is the core's).
+- **`SkillRoute`** from `route(text)`: `.plain` (no match), `.run(candidate, context)` (one
+  exact, unambiguous, complete match), `.askArguments(candidate)` (required values missing),
+  `.choose(candidates)` (the core's `needsOwnerChoice`). `JarvisCoordinator.run(task:settings:
+  skill:human:…)` puts the context in `SessionConfig.skill`; the task record keeps
+  `skillId`/`skillName`, and `LiveRun.skillName` drives "Using skill: …".
+- **`AwayModeController`** (`App/AwayMode.swift`, main actor) over `AwayDisplay` (brightness,
+  idle timer, proximity): explanation until acknowledged (remembered in
+  `JarvisSettings.awayAcknowledged`), dims to 0 after saving the brightness and the idle-timer
+  setting, restores them on exit, on leaving the foreground and on terminate, re-dims on return;
+  double exits never write 0. `AwayModeCopy` holds the owner-facing costs (PLAN §3.1).
+  No wake word is built and nothing claims one.
+- **`AppAccessCatalog.make`** (`App/AppAccess.swift`): one row per app from the trust list, the
+  known apps and the tools that declare an app. Screen = not denied (by the owner or the core's
+  `deniedApps`); app actions = registered `.shortcut` tools for the app; direct = registered
+  `.native` tools for the app. With today's registry (`clock_now` only, no app) every app is
+  screen-only.
 
 ## SessionDriver
 
@@ -168,12 +205,25 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   concurrency checking as warnings (JarvisKit stays Swift 6): XCTest UI APIs are main-actor
   bound and this code was never compiled before CI. For a device, fill in `DEVELOPMENT_TEAM`
   (marked in `project.yml`); a free Apple ID works.
-- The app: tabs Ask / Activity / Apps / Rules over JarvisKit (`AppModel` → `JarvisCoordinator`),
-  the run view (what Jarvis sees, step timeline, Stop), confirmation and question sheets
-  (`HumanPromptBroker`), App Intent `AskJarvisIntent` + `JarvisShortcuts`. Tokens in
+- The app: tabs **Ask · Skills · Workflows · Apps · Control** over JarvisKit (`AppModel` →
+  `JarvisCoordinator`). Ask routes each request through `SkillLibrary.route` (chooser sheet
+  with "Just do what I said", or a values sheet; the run starts after the sheet is gone), and
+  has History (Activity) and Away mode buttons. Skills: search, kind filter, load-issue
+  banner, detail (phrases, guidance, guardrails, on/off, Run now, Delete), editor for Written
+  skills with the core's messages inline. Activity (from Ask and Control) offers "Save as
+  skill" for finished tasks with a learned flow. Apps: ways in + trust. Control: Remote
+  control, Activity, Away mode rows, then the rules (identifiers `rules.*` kept). Workflows and
+  Remote control are honest "needs the next core update" screens. In playground mode the
+  Playground tab replaces Workflows (a sixth tab would go behind "More"); Workflows is then a
+  row in Control. Also: the run view (what Jarvis sees, step timeline, Stop, "Using skill"),
+  confirmation and question sheets (`HumanPromptBroker`), Away mode (explanation, then a black
+  full-screen cover; leave by a 2 s touch and hold; `UIKitAwayDisplay` is the thin adapter),
+  App Intent `AskJarvisIntent` + `JarvisShortcuts`. Tokens in
   `App/Jarvis/Design/Theme.swift`, icons in `JarvisIcon`. Launch arguments:
   `-jarvis-playground` (Playground fixture tab + demo backend: `DemoPhone` and a scripted
-  model, separate data folder), `-jarvis-reset` (fresh settings, memory, history).
+  model, separate data folder), `-jarvis-reset` (fresh settings, memory, history, skills),
+  `-jarvis-seed-damaged-skills` / `-jarvis-seed-ambiguous-skills` (write `SkillSeeds.damaged`
+  / `.ambiguous` as the skills file, for the banner and chooser tests).
 - The model backend is chosen in one place: `ModelBackendKind` / `ModelBackendFactory`.
 - `XCUITestPhoneRunner` (UI-test target) is a `PhoneRunner` over public XCUITest API: it copies
   `XCUIElementSnapshot` into `RawElement`, and `UiTreeBuilder` (JarvisKit, Linux-tested) makes
@@ -247,6 +297,10 @@ xcframework as a SwiftPM binary target. Clang should find its module map in the
 
 - In the generated bindings, `JarvisError` is `internal`, not `public`. Swift callers can
   only catch it as `any Error`. This is why `SessionDriver.init` documents "throws when the
-  memory is rejected" without naming a type.
+  memory is rejected" without naming a type, and why `CoreErrorMessage` reads errors with
+  `Mirror` (case name + `message`). A `public` error type would let it go.
+- There is no FFI for `intent_key`; `SkillLibrary.learnedFlowID` gets the same answer by
+  promoting flows into a scratch store and matching. An `intentKey(text)` export would be
+  simpler.
 - Set-of-marks drawing is the shell's job (`ScreenshotAnnotator`). No annotator that draws
   exists yet.

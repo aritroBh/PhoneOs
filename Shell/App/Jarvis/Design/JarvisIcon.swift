@@ -36,6 +36,22 @@ enum JarvisIcon: String, CaseIterable {
     case hollowDot = "circle"
     case plus = "plus"
     case play = "play.fill"
+    case skills = "sparkles"
+    case workflows = "arrow.triangle.branch"
+    case history = "clock.arrow.circlepath"
+    case away = "moon"
+    case awayFilled = "moon.fill"
+    case remote = "laptopcomputer.and.iphone"
+    case wayScreen = "eye"
+    case wayAppActions = "bolt"
+    case wayDirect = "link"
+    case trash = "trash"
+    case edit = "pencil"
+    case builtIn = "shippingbox"
+    case phrase = "text.quote"
+    case guardrail = "hand.raised"
+    case proximity = "iphone.radiowaves.left.and.right"
+    case warningOutline = "exclamationmark.triangle"
 
     /// The symbol as an image (scale it with `.font(.system(size:))`).
     var image: Image { Image(systemName: rawValue) }

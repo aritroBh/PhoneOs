@@ -30,9 +30,12 @@ public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
     /// Apps the steps ran in, in order of first use.
     public var apps: [String]
     public var finishedAt: Date
+    /// The skill the task ran under (absent in records written before skills).
+    public var skillId: String?
+    public var skillName: String?
 
     public init(id: String, task: String, status: Status, summary: String, steps: Int, modelCalls: Int,
-                durationMs: Int, apps: [String] = [], finishedAt: Date) {
+                durationMs: Int, apps: [String] = [], finishedAt: Date, skillId: String? = nil, skillName: String? = nil) {
         self.id = id
         self.task = task
         self.status = status
@@ -42,14 +45,17 @@ public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
         self.durationMs = durationMs
         self.apps = apps
         self.finishedAt = finishedAt
+        self.skillId = skillId
+        self.skillName = skillName
     }
 
     /// A record of a driver run.
-    public init(task: TaskSpec, result: RunResult, apps: [String] = [], finishedAt: Date = Date()) {
+    public init(task: TaskSpec, result: RunResult, apps: [String] = [], skill: SkillContext? = nil, finishedAt: Date = Date()) {
         self.init(
             id: task.id, task: task.text, status: Status(result.outcome.status), summary: result.outcome.summary,
             steps: Int(result.outcome.steps), modelCalls: result.modelCalls,
-            durationMs: Int(clamping: result.outcome.durationMs), apps: apps, finishedAt: finishedAt
+            durationMs: Int(clamping: result.outcome.durationMs), apps: apps, finishedAt: finishedAt,
+            skillId: skill?.id, skillName: skill?.name
         )
     }
 

@@ -4,6 +4,10 @@ import JarvisKit
 /// Activity: learned flows, then past tasks grouped by day.
 struct ActivityView: View {
     @EnvironmentObject private var model: AppModel
+    /// The task being saved as a skill (the name prompt is up).
+    @State private var promoting: TaskRecord?
+    @State private var skillName = ""
+    @State private var promoteMessage: (text: String, failed: Bool)?
 
     private var days: [(title: String, records: [TaskRecord])] {
         let calendar = Calendar.current
@@ -30,6 +34,19 @@ struct ActivityView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 ScreenTitle(title: "Activity", identifier: "activity.title")
+                if let promoteMessage {
+                    Label {
+                        Text(promoteMessage.text).font(Theme.meta).fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image.decorative(promoteMessage.failed ? .error : .success, size: Theme.iconStandard)
+                    }
+                    .foregroundStyle(promoteMessage.failed ? Theme.errorText : Theme.connected)
+                    .padding(Theme.gap)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .card(fill: promoteMessage.failed ? Theme.errorFill : Theme.surface, radius: Theme.radiusElement)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("activity.promoteResult")
+                }
                 if !model.memory.flows.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionLabel(text: "Learned flows")
@@ -54,7 +71,10 @@ struct ActivityView: View {
                         VStack(spacing: 0) {
                             ForEach(Array(day.records.enumerated()), id: \.element.id) { index, record in
                                 if index > 0 { Divider().overlay(Theme.bezel).padding(.leading, 60) }
-                                ActivityRow(record: record)
+                                ActivityRow(record: record, canPromote: model.promotableFlows[record.task] != nil) {
+                                    skillName = record.task
+                                    promoting = record
+                                }
                             }
                         }
                         .card()
@@ -66,6 +86,31 @@ struct ActivityView: View {
             .padding(.bottom, 24)
         }
         .screenBackground()
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("Save as a skill", isPresented: Binding(
+            get: { promoting != nil },
+            set: { if !$0 { promoting = nil } }
+        )) {
+            TextField("Name", text: $skillName)
+                .accessibilityIdentifier("activity.promote.name")
+            Button("Cancel", role: .cancel) { promoting = nil }
+            Button("Save") {
+                guard let record = promoting else { return }
+                let name = skillName
+                promoting = nil
+                Task {
+                    switch await model.promote(record, name: name) {
+                    case .success(let skill):
+                        promoteMessage = ("Saved “\(skill.name)”. Say “\(skill.triggers.first ?? record.task)” on Ask to run it.", false)
+                    case .failure(let error):
+                        promoteMessage = (error.description, true)
+                    }
+                }
+            }
+            .accessibilityIdentifier("activity.promote.save")
+        } message: {
+            Text("Jarvis learned the steps of this task. As a skill it gets a name, shows in Skills, and the same words run it.")
+        }
         .task { await model.refresh() }
         .refreshable { await model.refresh() }
     }
@@ -89,9 +134,12 @@ private struct FlowChips: View {
 
 private struct ActivityRow: View {
     var record: TaskRecord
+    var canPromote: Bool
+    var promote: () -> Void
 
     private var meta: String {
         var parts: [String] = []
+        if let skill = record.skillName { parts.append("skill \(skill)") }
         if let app = record.apps.first { parts.append(app) }
         parts.append(record.status.title)
         if record.status == .success && record.modelCalls == 0 && record.steps > 0 {
@@ -103,6 +151,30 @@ private struct ActivityRow: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            summary
+            if canPromote {
+                Button(action: promote) {
+                    Label {
+                        Text("Save as skill")
+                    } icon: {
+                        Image.decorative(.skills, size: Theme.iconCompact)
+                    }
+                    .font(Theme.meta.weight(.semibold))
+                    .foregroundStyle(Theme.textSoft)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: Theme.minTarget)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 60 - 12)
+                .padding(.bottom, 4)
+                .accessibilityIdentifier("activity.promote.\(record.id)")
+            }
+        }
+    }
+
+    private var summary: some View {
         HStack(spacing: Theme.gap) {
             StatusTile(status: record.status)
             VStack(alignment: .leading, spacing: 3) {

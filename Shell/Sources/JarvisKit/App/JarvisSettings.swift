@@ -193,6 +193,10 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     public var runnerBaseURL: String
     /// Per-app trust, feeding `Policy.appRules`.
     public var appTrust: [AppTrust]
+    /// The owner accepted what Away mode costs (shown once, before first use).
+    public var awayAcknowledged: Bool
+    /// Away mode blanks the display with the proximity sensor (off by default).
+    public var awayProximity: Bool
 
     public static let defaultAppTrust: [AppTrust] = [
         AppTrust(bundleIdPrefix: "com.apple.Preferences", name: "Settings", level: .guarded),
@@ -215,7 +219,9 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         modelName: String = "local-model",
         modelContextTokens: Int = 8_192,
         runnerBaseURL: String = "http://127.0.0.1:8300",
-        appTrust: [AppTrust] = JarvisSettings.defaultAppTrust
+        appTrust: [AppTrust] = JarvisSettings.defaultAppTrust,
+        awayAcknowledged: Bool = false,
+        awayProximity: Bool = false
     ) {
         self.policyMode = policyMode
         self.firstUseApproval = firstUseApproval
@@ -230,6 +236,8 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         self.modelContextTokens = modelContextTokens
         self.runnerBaseURL = runnerBaseURL
         self.appTrust = appTrust
+        self.awayAcknowledged = awayAcknowledged
+        self.awayProximity = awayProximity
     }
 
     enum CodingKeys: String, CodingKey {
@@ -246,6 +254,8 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         case modelContextTokens = "model_context_tokens"
         case runnerBaseURL = "runner_base_url"
         case appTrust = "app_trust"
+        case awayAcknowledged = "away_acknowledged"
+        case awayProximity = "away_proximity"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -264,6 +274,8 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         modelContextTokens = (try? c.decodeIfPresent(Int.self, forKey: .modelContextTokens)) ?? d.modelContextTokens
         runnerBaseURL = (try? c.decodeIfPresent(String.self, forKey: .runnerBaseURL)) ?? d.runnerBaseURL
         appTrust = (try? c.decodeIfPresent([AppTrust].self, forKey: .appTrust)) ?? d.appTrust
+        awayAcknowledged = (try? c.decodeIfPresent(Bool.self, forKey: .awayAcknowledged)) ?? d.awayAcknowledged
+        awayProximity = (try? c.decodeIfPresent(Bool.self, forKey: .awayProximity)) ?? d.awayProximity
     }
 
     /// Decodes a category list, skipping names this build does not know.

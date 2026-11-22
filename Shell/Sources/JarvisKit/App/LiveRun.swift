@@ -48,6 +48,8 @@ public struct LiveRun: Sendable, Equatable {
     }
 
     public var task: String = ""
+    /// The skill the run uses ("Using skill: …"), `nil` for a plain task.
+    public var skillName: String?
     public var status: Status = .standingBy
     /// The core's step counter.
     public var stepNumber: Int = 0
@@ -75,9 +77,10 @@ public struct LiveRun: Sendable, Equatable {
     private var modelChoseSinceLastAct = false
     private var lastReplyAction: String?
 
-    public init(task: String = "", maxSteps: Int = 0) {
+    public init(task: String = "", maxSteps: Int = 0, skillName: String? = nil) {
         self.task = task
         self.maxSteps = maxSteps
+        self.skillName = skillName
     }
 
     public var isRunning: Bool {
@@ -126,7 +129,8 @@ public struct LiveRun: Sendable, Equatable {
         switch update {
         case .started(let spec):
             let budget = maxSteps
-            self = LiveRun(task: spec.text, maxSteps: budget)
+            let skill = skillName
+            self = LiveRun(task: spec.text, maxSteps: budget, skillName: skill)
             status = .driving
         case .effect(let effect, _):
             switch effect {

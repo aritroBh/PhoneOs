@@ -24,6 +24,18 @@ struct RunView: View {
                     .tracking(Theme.runTitleTracking)
                     .foregroundStyle(Theme.textPrimary)
                     .accessibilityIdentifier("run.title")
+                if let skill = live.skillName {
+                    Label {
+                        Text("Using skill: \(skill)")
+                    } icon: {
+                        Image.decorative(.skills, size: Theme.iconCompact)
+                    }
+                    .font(Theme.meta.weight(.semibold))
+                    .foregroundStyle(Theme.textSoft)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Using skill: \(skill)")
+                    .accessibilityIdentifier("run.skill")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 4)
@@ -70,8 +82,9 @@ struct RunView: View {
                     .accessibilityIdentifier("run.newTask")
                 Button("Run again") {
                     let task = live.task
+                    let skill = model.lastSkill
                     model.dismissRun()
-                    model.start(task)
+                    model.runAgain(task, skill: skill)
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .accessibilityIdentifier("run.runAgain")

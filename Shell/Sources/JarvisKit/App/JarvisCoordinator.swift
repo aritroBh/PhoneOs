@@ -18,6 +18,8 @@ public struct JarvisPaths: Sendable, Equatable {
     public var memory: URL { directory.appendingPathComponent("memory.json") }
     /// A separate memory for demo runs, so demo flows never mix with real ones.
     public var demoMemory: URL { directory.appendingPathComponent("demo-memory.json") }
+    /// The owner's skills (`SkillLibrary`).
+    public var skills: URL { directory.appendingPathComponent("skills.json") }
 }
 
 /// Which IO a run uses.
@@ -160,6 +162,18 @@ public final class JarvisCoordinator: Sendable {
 
     public var memoryURL: URL { selection == .demo ? paths.demoMemory : paths.memory }
 
+    /// The apps the agent knows by name for this selection.
+    public var knownApps: [AppInfo] { selection == .demo ? DemoPhone.knownApps : KnownApps.common }
+
+    /// The tools runs offer the core (the Apps screen derives "app actions" and "direct"
+    /// from them).
+    public func toolSpecs() async -> [ToolSpec] { await tools.toolSpecs() }
+
+    /// The memory JSON as saved (for promoting a learned flow to a skill).
+    public func memoryJSON() async -> String {
+        (try? await FileMemoryStore(fileURL: memoryURL).load()) ?? ""
+    }
+
     /// The memory as the Activity tab reads it.
     public func memorySnapshot() async -> MemorySnapshot {
         let json = (try? await FileMemoryStore(fileURL: memoryURL).load()) ?? ""
@@ -171,10 +185,13 @@ public final class JarvisCoordinator: Sendable {
         text.lowercased().contains("delete") ? DemoPhone.deleteAccountScript : DemoPhone.wifiOffScript
     }
 
-    /// Runs `text` to the end. `onEvent` is called from the driver's context.
+    /// Runs `text` to the end, under `skill` when given (from `SkillLibrary.route` or
+    /// `context(for:values:)`; the core puts its guidance in the prompt and, when confined,
+    /// refuses actions outside its apps). `onEvent` is called from the driver's context.
     public func run(
         task text: String,
         settings: JarvisSettings,
+        skill: SkillContext? = nil,
         human: any HumanGate,
         attention: any OwnerAttention = NoOwnerAttention(),
         onEvent: @escaping @Sendable (RunEvent) -> Void
@@ -188,7 +205,7 @@ public final class JarvisCoordinator: Sendable {
         case .demo:
             runner = DemoPhone(delay: demoDelay, lockedPolls: demoLockedPolls)
             baseModel = ScriptedModel(steps: Self.demoScript(for: text))
-            knownApps = DemoPhone.knownApps
+            knownApps = self.knownApps
         case .live:
             do {
                 baseModel = try ModelBackendFactory.make(settings: settings, screenshots: screenshots)
@@ -197,7 +214,7 @@ public final class JarvisCoordinator: Sendable {
             } catch {
                 return .notStarted(String(describing: error))
             }
-            knownApps = KnownApps.common
+            knownApps = self.knownApps
         }
         let model = TappedModel(
             baseModel,
@@ -212,6 +229,7 @@ public final class JarvisCoordinator: Sendable {
                 tools: await tools.toolSpecs(),
                 knownApps: knownApps,
                 agentBundleId: agentBundleId,
+                skill: skill,
                 adjustPolicy: { settings.apply(to: &$0) }
             )
         } catch {
@@ -251,7 +269,7 @@ public final class JarvisCoordinator: Sendable {
             Task { await driver.cancel() }
         }
         let apps = await forward.value
-        _ = try? TaskHistoryStore(fileURL: paths.history).append(TaskRecord(task: task, result: result, apps: apps))
+        _ = try? TaskHistoryStore(fileURL: paths.history).append(TaskRecord(task: task, result: result, apps: apps, skill: skill))
         return .finished(task, result)
     }
 }

@@ -1,7 +1,8 @@
 import SwiftUI
 import JarvisKit
 
-/// Apps: runner and model status, endpoints, and the trust level per app (Policy.appRules).
+/// Apps: for each app the ways Jarvis can get in (screen, app actions, direct; only what
+/// this build really has) and its trust level; then runner and model status and endpoints.
 struct AppsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var expanded: String?
@@ -12,45 +13,52 @@ struct AppsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                ScreenTitle(title: "Apps", subtitle: "How far Jarvis may go in each app.", identifier: "apps.title")
-                HStack(spacing: Theme.gap) {
-                    ConnectionTile(title: "Runner", detail: "Reads and taps the screen",
-                                   status: model.runnerStatus, identifier: "apps.runnerStatus")
-                    ConnectionTile(title: "Model", detail: modelDetail,
-                                   status: model.modelStatus, identifier: "apps.modelStatus")
-                }
-                Button {
-                    Task { await model.checkConnections() }
-                } label: {
-                    Text("Check again")
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .accessibilityIdentifier("apps.check")
+                ScreenTitle(title: "Apps", subtitle: "Jarvis can work in any app through its screen. Some apps also offer faster ways in.",
+                            identifier: "apps.title")
 
-                endpoints
-
-                VStack(spacing: 0) {
-                    ForEach(Array(model.settings.appTrust.enumerated()), id: \.element.id) { index, app in
-                        if index > 0 { Divider().overlay(Theme.bezel) }
-                        AppTrustRow(
-                            app: app,
-                            expanded: expanded == app.id,
-                            level: Binding(
-                                get: { app.level },
-                                set: { model.setTrust($0, for: app.bundleIdPrefix) }
-                            )
-                        ) {
-                            withAnimation(Theme.medium) { expanded = expanded == app.id ? nil : app.id }
+                VStack(alignment: .leading, spacing: Theme.gap) {
+                    WaysLegend()
+                    VStack(spacing: 0) {
+                        ForEach(Array(model.appAccess.enumerated()), id: \.element.id) { index, app in
+                            if index > 0 { Divider().overlay(Theme.bezel).padding(.leading, 62) }
+                            AppAccessRow(
+                                app: app,
+                                expanded: expanded == app.id,
+                                level: Binding(
+                                    get: { app.trust ?? .guarded },
+                                    set: { model.setTrust($0, for: app.bundleId, name: app.name) }
+                                )
+                            ) {
+                                withAnimation(Theme.medium) { expanded = expanded == app.id ? nil : app.id }
+                            }
                         }
                     }
+                    .card()
+                    Text("New apps start as Guarded, and Jarvis asks the first time it opens one. Denied apps are never opened, whatever the task says. App actions and Direct appear when this build has a tool for that app.")
+                        .font(Theme.meta)
+                        .foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .card()
 
                 addApp
 
-                Text("New apps start as Guarded, and Jarvis asks the first time it acts in one. Denied apps are never opened, whatever the task says.")
-                    .font(Theme.meta)
-                    .foregroundStyle(Theme.textTertiary)
+                VStack(alignment: .leading, spacing: Theme.gap) {
+                    SectionLabel(text: "Connections")
+                    HStack(spacing: Theme.gap) {
+                        ConnectionTile(title: "Runner", detail: "Reads and taps the screen",
+                                       status: model.runnerStatus, identifier: "apps.runnerStatus")
+                        ConnectionTile(title: "Model", detail: modelDetail,
+                                       status: model.modelStatus, identifier: "apps.modelStatus")
+                    }
+                    Button {
+                        Task { await model.checkConnections() }
+                    } label: {
+                        Text("Check again")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("apps.check")
+                    endpoints
+                }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 24)
@@ -111,6 +119,52 @@ struct AppsView: View {
     }
 }
 
+extension AppAccess.Way {
+    var icon: JarvisIcon {
+        switch self {
+        case .screen: .wayScreen
+        case .appActions: .wayAppActions
+        case .direct: .wayDirect
+        }
+    }
+}
+
+/// The key above the list: Screen · App actions · Direct.
+private struct WaysLegend: View {
+    var body: some View {
+        HStack(spacing: Theme.gutter) {
+            ForEach(AppAccess.Way.allCases, id: \.self) { way in
+                HStack(spacing: 6) {
+                    Image.decorative(way.icon, size: Theme.iconCompact)
+                    Text(way.title)
+                }
+                .font(Theme.meta.weight(.semibold))
+                .foregroundStyle(Theme.textSoft)
+            }
+        }
+        .padding(.horizontal, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Ways in: screen, app actions, direct")
+        .accessibilityIdentifier("apps.legend")
+    }
+}
+
+/// The three way icons of one app, lit when the way exists.
+private struct WaysIcons: View {
+    var app: AppAccess
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(AppAccess.Way.allCases, id: \.self) { way in
+                Image.decorative(way.icon, size: Theme.iconCompact)
+                    .foregroundStyle(app.has(way) ? Theme.textPrimary : Theme.textUnavailable)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(app.waysDescription)
+        .accessibilityIdentifier("apps.ways.\(app.bundleId)")
+    }
+}
 /// A single-line text field with a label above it.
 struct LabeledField: View {
     var label: String
@@ -184,10 +238,10 @@ private struct ConnectionTile: View {
     }
 }
 
-/// One app: name, bundle id, trust pill; expanded: the four levels and what the chosen one
-/// means.
-private struct AppTrustRow: View {
-    var app: AppTrust
+/// One app: letter tile, name, ways in, trust pill; expanded: the four levels, what the
+/// chosen one means, and what each way in is for this app.
+private struct AppAccessRow: View {
+    var app: AppAccess
     var expanded: Bool
     @Binding var level: TrustLevelOption
     var toggle: () -> Void
@@ -199,36 +253,67 @@ private struct AppTrustRow: View {
                     Text(String(app.name.prefix(1)).uppercased())
                         .font(Theme.rowTitle)
                         .foregroundStyle(Theme.textSoft)
-                        .frame(width: Theme.statusTile, height: Theme.statusTile)
+                        .frame(width: Theme.rowTile, height: Theme.rowTile)
                         .modifier(Bezeled(fill: Theme.raisedHigh, radius: Theme.radiusElement))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(app.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                        Text(app.bundleIdPrefix).font(Theme.monoSmall).foregroundStyle(Theme.textTertiary)
+                        Text(app.bundleId).font(Theme.monoSmall).foregroundStyle(Theme.textTertiary).lineLimit(1)
                     }
                     Spacer(minLength: 8)
-                    TrustPill(level: app.level)
+                    WaysIcons(app: app)
+                    TrustPill(level: app.deniedByCore ? .denied : (app.trust ?? .guarded))
                 }
-                .frame(minHeight: 56)
+                .frame(minHeight: 58)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("apps.row.\(app.bundleIdPrefix)")
+            .accessibilityIdentifier("apps.row.\(app.bundleId)")
             if expanded {
+                if app.deniedByCore {
+                    Text("Jarvis never opens \(app.name): it is on the core's own deny list, whatever the level here says.")
+                        .font(Theme.meta)
+                        .foregroundStyle(Theme.errorText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Picker("Trust level for \(app.name)", selection: $level) {
                     ForEach(TrustLevelOption.allCases) { level in
                         Text(level.title).tag(level)
                     }
                 }
                 .pickerStyle(.segmented)
-                .accessibilityIdentifier("apps.trust.\(app.bundleIdPrefix)")
-                Text(app.level.explanation(app: app.name))
+                .accessibilityIdentifier("apps.trust.\(app.bundleId)")
+                Text(app.trust == nil
+                     ? "No level set yet: Guarded, and Jarvis asks the first time it acts in \(app.name)."
+                     : level.explanation(app: app.name))
                     .font(Theme.meta)
                     .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    wayLine(.screen, app.screen ? "Reads and taps the screen through the runner." : "Closed: the app is denied.")
+                    wayLine(.appActions, app.appActions.isEmpty ? "None in this build." : app.appActions.joined(separator: ", "))
+                    wayLine(.direct, app.directTools.isEmpty ? "None in this build." : app.directTools.joined(separator: ", "))
+                }
+                .padding(Theme.gap)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card(fill: Theme.well, radius: Theme.radiusElement)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("apps.waysDetail.\(app.bundleId)")
             }
         }
-        .padding(.horizontal, Theme.gutter)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .padding(.bottom, expanded ? 10 : 0)
+    }
+
+    private func wayLine(_ way: AppAccess.Way, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Theme.gapSmall) {
+            Image.decorative(way.icon, size: Theme.iconCompact)
+                .foregroundStyle(app.has(way) ? Theme.textPrimary : Theme.textUnavailable)
+            Text(way.title).font(Theme.meta.weight(.semibold)).foregroundStyle(Theme.textSoft)
+            Text(text).font(Theme.meta).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

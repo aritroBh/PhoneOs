@@ -15,18 +15,21 @@ struct JarvisApp: App {
     }
 }
 
-/// The tabs. In playground mode a Playground tab (the QA fixture screens) comes first.
+/// The tabs: Ask · Skills · Workflows · Apps · Control (PLAN §2.7). In playground mode the
+/// Playground tab (the QA fixture screens) comes first and Workflows moves to a row in
+/// Control, so the bar keeps five tabs (a sixth would hide tabs behind "More").
 enum AppTab: Hashable {
-    case playground, ask, activity, apps, rules
+    case playground, ask, skills, workflows, apps, control
 }
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab = LaunchOptions.current.playground ? .playground : .ask
 
     var body: some View {
         // `tabItem` + `tag` (stable since iOS 13) rather than the iOS 18 `Tab` builder, so
-        // the optional Playground tab is a plain `if`.
+        // the optional tabs are plain `if`s.
         TabView(selection: $tab) {
             if model.launch.playground {
                 PlaygroundView()
@@ -36,15 +39,28 @@ struct RootView: View {
             AskView()
                 .tabItem { Label("Ask", systemImage: JarvisIcon.ask.rawValue) }
                 .tag(AppTab.ask)
-            ActivityView()
-                .tabItem { Label("Activity", systemImage: JarvisIcon.clock.rawValue) }
-                .tag(AppTab.activity)
+            SkillsView()
+                .tabItem { Label("Skills", systemImage: JarvisIcon.skills.rawValue) }
+                .tag(AppTab.skills)
+            if !model.launch.playground {
+                WorkflowsView()
+                    .tabItem { Label("Workflows", systemImage: JarvisIcon.workflows.rawValue) }
+                    .tag(AppTab.workflows)
+            }
             AppsView()
                 .tabItem { Label("Apps", systemImage: JarvisIcon.apps.rawValue) }
                 .tag(AppTab.apps)
-            RulesView()
-                .tabItem { Label("Rules", systemImage: JarvisIcon.rules.rawValue) }
-                .tag(AppTab.rules)
+            ControlView()
+                .tabItem { Label("Control", systemImage: JarvisIcon.rules.rawValue) }
+                .tag(AppTab.control)
+        }
+        // Which skill, or the values a skill needs (from Ask or a skill's Run now). The run
+        // starts once the sheet is gone: a full-screen cover cannot start while a sheet is
+        // still being dismissed.
+        .sheet(item: $model.skillChoice, onDismiss: { model.skillSheetDismissed() }) { choice in
+            SkillChoiceSheet(choice: choice)
+                .environmentObject(model)
+                .preferredColorScheme(.dark)
         }
         // The run view covers the tabs (the tab bar is hidden while Jarvis acts).
         .fullScreenCover(isPresented: $model.showingRun) {
@@ -52,7 +68,19 @@ struct RootView: View {
                 .environmentObject(model)
                 .preferredColorScheme(.dark)
         }
-        .ownerPrompts(active: !model.showingRun)
+        .ownerPrompts(active: !model.showingRun && model.awayPhase == .off)
+        // Away mode: the explanation the first time, then the black screen.
+        .fullScreenCover(isPresented: Binding(
+            get: { model.awayPhase != .off && !model.showingRun },
+            set: { presented in if !presented { model.exitAway() } }
+        )) {
+            AwayModeView()
+                .environmentObject(model)
+                .preferredColorScheme(.dark)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            model.sceneBecameActive(phase == .active)
+        }
         .task {
             await model.refresh()
             await model.checkConnections()

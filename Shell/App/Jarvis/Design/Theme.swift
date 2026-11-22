@@ -17,6 +17,8 @@ enum Theme {
     static let textSecondary = Color(hex: 0xA6A6A6)
     static let textTertiary = Color(hex: 0x8F8F8F)
     static let textSoft = Color(hex: 0xC9C9C9)
+    /// A way or option that is not available (the Apps screen's unlit icons).
+    static let textUnavailable = Color(hex: 0x4A4A4E)
 
     // MARK: State
     /// Acting (the only accent).
@@ -46,6 +48,8 @@ enum Theme {
 
     // MARK: Radii (continuous corners)
     static let radiusInner: CGFloat = 6
+    static let radiusSmallTile: CGFloat = 7
+    static let radiusField: CGFloat = 14
     static let radiusElement: CGFloat = 10
     static let radiusButton: CGFloat = 16
     static let radiusCard: CGFloat = 20
@@ -60,6 +64,11 @@ enum Theme {
     static let composerHeight: CGFloat = 56
     static let buttonHeight: CGFloat = 52
     static let statusTile: CGFloat = 32
+    static let rowTile: CGFloat = 36
+    static let skillTile: CGFloat = 40
+    static let heroTile: CGFloat = 56
+    static let appMiniTile: CGFloat = 24
+    static let filterHeight: CGFloat = 36
     static let dot: CGFloat = 8
 
     // MARK: Icon size roles (Astryx iconography)
@@ -81,6 +90,11 @@ enum Theme {
     static let mono = Font.system(size: 12).monospaced()
     static let monoSmall = Font.system(size: 11).monospaced()
     static let sectionLabel = Font.system(size: 13, weight: .semibold)
+    static let skillTitle = Font.system(size: 17, weight: .semibold)
+    static let detailTitle = Font.system(size: 30, weight: .semibold)
+    static let detailTitleTracking: CGFloat = -0.6
+    static let filter = Font.system(size: 14, weight: .semibold)
+    static let awayStatus = Font.system(size: 13, weight: .medium)
 
     // MARK: Motion (ease-out; Reduce Motion disables movement)
     static let fast = Animation.easeOut(duration: 0.125)
