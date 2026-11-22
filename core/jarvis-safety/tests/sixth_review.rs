@@ -12,8 +12,8 @@ mod common;
 
 use common::{app_screen, button, el, label};
 use jarvis_proto::{
-    Action, AppRule, BarNode, CompactScreen, Element, Point, Policy, Rect, RiskCategory, Role,
-    TrustLevel,
+    Action, AppRule, BarNode, CompactScreen, Element, Point, Policy, RawNode, Rect, RiskCategory,
+    Role, TrustLevel,
 };
 use jarvis_safety::{
     control_at, evaluate_from, summarize, summary_for, summary_with, tap_spot, Bar, Covered,
@@ -135,7 +135,10 @@ fn field_values_are_not_quoted_in_summaries() {
             if sum.contains(value) && !sent_ok.contains(&value) {
                 leaks.push(format!("{target}: {name}={value}: {sum}"));
             }
-            assert!(sum.contains(name.trim_end_matches('.')), "{sum}");
+            // Ninth review: a sent field's name is shown with its quotes neutralised (`'` →
+            // `’`) and, holding more than letters, digits and spaces, in single quotes.
+            let shown = name.trim_end_matches('.').replace('\'', "\u{2019}");
+            assert!(sum.contains(&shown), "{sum}");
         }
     }
     // A static text (not a field) with a code / full card number.
@@ -222,9 +225,12 @@ fn typed_text_amounts_and_other_fields() {
     let mut amounts = amounts;
     amounts.elements[4].label = "Remove card".to_owned();
     let sum = summarize(&tap(5), &amounts, None);
+    // Ninth review: a "Remove card" tap does not send, so the form is "The form holds:"
+    // (was "Sends:"), and the amount-named fields come before the rest (was screen order);
+    // deliberate changes.
     assert!(
         sum.contains(
-            "Sends: Amount: \"$4,000.00\"; Tip: \"15\"; Note: \"rent $40\"; Quantity: \"two\""
+            "The form holds: Amount: \"$4,000.00\"; Tip: \"15\"; Quantity: \"two\"; Note: \"rent $40\""
         ),
         "{sum}"
     );
@@ -255,10 +261,17 @@ fn recipient_facts_never_quote_a_field_value() {
         at(button(3, "Pay"), 16.0, 700.0, 361.0, 50.0),
     ]);
     // Seventh review: Pay sends the field, so its whole value is shown under "Sends:" (was
-    // "To (filled)"; deliberate change); the recipient facts still never quote it.
+    // "To (filled)"; deliberate change). Ninth review: a sent field *named* like a
+    // recipient is listed under "To/Account:" with the value it sends, ahead of the other
+    // sent fields, and "Sends:" points there (was `Sends: To: "mallory@example.com"` and
+    // no "To/Account"; deliberate change). Facts read from other elements still never quote
+    // a field's value.
     let sum = summarize(&tap(3), &s, None);
-    assert!(sum.contains("Sends: To: \"mallory@example.com\""), "{sum}");
-    assert!(!sum.contains("To/Account"), "{sum}");
+    assert!(sum.contains("Sends: To (shown above)"), "{sum}");
+    assert!(
+        sum.contains("To/Account: To: \"mallory@example.com\""),
+        "{sum}"
+    );
     // An action that sends nothing still names the field only. Eighth review: every asked
     // tap whose form holds text shows the form (a "Remove card" tap now says `Sends: To:
     // "mallory@example.com"`; deliberate change), so this is checked on a swipe.
@@ -268,7 +281,12 @@ fn recipient_facts_never_quote_a_field_value() {
         at(button(3, "Remove card"), 16.0, 700.0, 361.0, 50.0),
     ]);
     let sum = summary_for(&tap(3), &s, RiskCategory::Delete, ScreenSource::Typed, None);
-    assert!(sum.contains("Sends: To: \"mallory@example.com\""), "{sum}");
+    // Ninth review: an action that does not send says "The form holds:" (was "Sends:";
+    // deliberate change).
+    assert!(
+        sum.contains("The form holds: To: \"mallory@example.com\""),
+        "{sum}"
+    );
     assert!(!sum.contains("To/Account"), "{sum}");
     let swipe = Action::Swipe {
         direction: jarvis_proto::Direction::Left,
@@ -408,6 +426,71 @@ fn bar_tree(bars: &[BarNode]) -> ScreenTree<'_> {
     }
 }
 
+// Ninth review: a bar's precedence needs evidence that what lies under it is page content
+// scrolled under the bar (a page-sized scrollable ancestor; for a bottom bar, before the bar
+// in the tree), which only the raw nodes give. This tree has it:
+//   0 root; 1 window { 2 navigation bar { 3 back }; 4 scroll view { 5, 6, 7 rows }; 8 tab
+//   bar { 9 Home, 10 Search } }.
+// Compact elements as above: [1] back, [2] Home, [3] Search, [4] [5] [6] rows.
+const SCROLLED_SOURCES: [u32; 6] = [3, 9, 10, 5, 6, 7];
+const SCROLLED_PARENTS: [u32; 11] = [u32::MAX, 0, 1, 2, 1, 4, 4, 4, 1, 8, 8];
+const SCROLLED_ENDS: [u32; 11] = [11, 11, 4, 4, 8, 6, 7, 8, 11, 10, 11];
+
+/// The raw nodes of the scrolled tree for screen `s` (its elements by index) and `bars`.
+fn scrolled_nodes(s: &CompactScreen, bars: &[BarNode]) -> Vec<RawNode> {
+    let full = Rect::new(0.0, 0.0, s.size.width, s.size.height);
+    let raw = |node: u32, role: Role, frame: Rect, label: Option<String>| RawNode {
+        node,
+        role,
+        frame,
+        text: label.is_some(),
+        label,
+        keyboard: false,
+    };
+    let mut v = vec![
+        raw(0, Role::Application, full, None),
+        raw(1, Role::Window, full, None),
+        raw(4, Role::ScrollView, full, None),
+    ];
+    for b in bars {
+        v.push(raw(b.node, b.role.clone(), b.frame, None));
+    }
+    for e in &s.elements {
+        let node = SCROLLED_SOURCES[(e.index - 1) as usize];
+        v.push(raw(node, e.role.clone(), e.frame, Some(e.label.clone())));
+    }
+    v.sort_by_key(|n| n.node);
+    v.dedup_by_key(|n| n.node);
+    v
+}
+
+fn scrolled_tree<'a>(bars: &'a [BarNode], nodes: &'a [RawNode]) -> ScreenTree<'a> {
+    ScreenTree {
+        sources: &SCROLLED_SOURCES,
+        parents: &SCROLLED_PARENTS,
+        ends: &SCROLLED_ENDS,
+        bars,
+        nodes,
+        inputs: &[],
+    }
+}
+
+/// The tab bar of the scrolled tree (node 8).
+fn scrolled_tab_bar() -> BarNode {
+    BarNode {
+        node: 8,
+        ..tab_bar()
+    }
+}
+
+/// The navigation bar of the scrolled tree (node 2).
+fn scrolled_nav_bar(role: Role, width: f64) -> BarNode {
+    BarNode {
+        node: 2,
+        ..nav_bar(role, width)
+    }
+}
+
 fn nav_bar(role: Role, width: f64) -> BarNode {
     BarNode {
         node: 1,
@@ -439,6 +522,9 @@ fn search() -> Element {
 /// Rows scrolled under both bars: the back button and the tab-bar buttons are tapped at
 /// their centres (the bars are drawn on top); the rows are tapped in their part outside
 /// the bars. Without the bars (the same frames) the bar controls are contested, as before.
+/// Ninth review: the rows are shown to be page content by the raw tree (a page-sized
+/// scroll view before the tab bar); without that evidence they contest the bar controls
+/// (checked at the end; was: precedence over anything outside the bar).
 #[test]
 fn bar_controls_win_over_rows_scrolled_under_them() {
     let row_top = at(button(4, "Item 1"), 0.0, 40.0, 393.0, 80.0);
@@ -450,8 +536,12 @@ fn bar_controls_win_over_rows_scrolled_under_them() {
         row_top.clone(),
         row_bottom.clone(),
     ]);
-    let bars = [nav_bar(Role::NavigationBar, 393.0), tab_bar()];
-    let tree = bar_tree(&bars);
+    let bars = [
+        scrolled_nav_bar(Role::NavigationBar, 393.0),
+        scrolled_tab_bar(),
+    ];
+    let nodes = scrolled_nodes(&s, &bars);
+    let tree = scrolled_tree(&bars, &nodes);
     for e in [back(), home(), search()] {
         assert_eq!(
             tap_spot(&e, &s, Some(&tree), None),
@@ -487,6 +577,17 @@ fn bar_controls_win_over_rows_scrolled_under_them() {
         })
     );
     assert!(control_at(back().frame.center(), &s, Some(&none)).is_err());
+    // Ninth review: bars, but no raw nodes saying the rows are scrolled page content (the
+    // hand-built tree without a scroll view): the rows contest the bar controls.
+    let old_bars = [nav_bar(Role::NavigationBar, 393.0), tab_bar()];
+    let no_evidence = bar_tree(&old_bars);
+    assert_eq!(
+        tap_spot(&back(), &s, Some(&no_evidence), None),
+        Err(Covered {
+            target: 1,
+            by: CoveredBy::Control(4)
+        })
+    );
 }
 
 /// A control the tree places inside a bar gets the bar's precedence only where the bar is
@@ -560,10 +661,14 @@ fn toolbars_and_narrow_bars_take_no_precedence() {
         (Role::Toolbar, 353.0, false),
         (Role::Other("Toolbar".into()), 393.0, false),
     ] {
-        let bars = [nav_bar(role.clone(), width)];
-        let tree = bar_tree(&bars);
+        let bars = [scrolled_nav_bar(role.clone(), width)];
+        // Ninth review: the row is shown to be scrolled page content (see `scrolled_tree`).
+        let nodes = scrolled_nodes(&s, &bars);
+        let tree = scrolled_tree(&bars, &nodes);
+        let nodes_under = scrolled_nodes(&s_under, &bars);
+        let tree_under = scrolled_tree(&bars, &nodes_under);
         let got = tap_spot(&back(), &s, Some(&tree), None);
-        let got_under = tap_spot(&under, &s_under, Some(&tree), None);
+        let got_under = tap_spot(&under, &s_under, Some(&tree_under), None);
         if precedence {
             assert_eq!(got, Ok(back().frame.center()), "{role:?} {width}");
             assert!(got_under.is_err(), "{role:?} {width}");

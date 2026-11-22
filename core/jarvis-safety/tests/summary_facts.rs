@@ -86,11 +86,18 @@ fn protected_fields_are_listed_by_name_only() {
         ]);
         let sum = summarize(&tap(3), &s, None);
         assert!(!sum.contains(value), "{name}: {sum}");
-        assert!(sum.contains(&format!("{name} (hidden)")), "{name}: {sum}");
+        // Ninth review: a sent field's name holding more than letters, digits and spaces is
+        // shown in single quotes ('One-time code' (hidden)).
+        assert!(
+            sum.contains(&format!("{name} (hidden)"))
+                || sum.contains(&format!("'{name}' (hidden)")),
+            "{name}: {sum}"
+        );
         // Seventh review: where "Continue" sends the form (its category is a sending one
         // here), the ordinary field shows whole (sixth review: "Note (filled)"; deliberate
         // change); where it does not, it is still only named.
-        if sum.contains("Sends:") {
+        // Ninth review: or "The form holds:" for an action that does not send.
+        if sum.contains("Sends:") || sum.contains("The form holds:") {
             assert!(sum.contains("Note: \"dinner\""), "{sum}");
         } else {
             assert!(sum.contains("Note (filled)"), "{sum}");
@@ -280,7 +287,10 @@ fn a_fact_list_without_room_counts_its_entries() {
     );
     // Eighth review: the asked tap shows the form the two typed fields are in, so they are
     // sent fields now (was "Fields: 2 not shown"); with no room the list says how many.
-    assert!(sum.contains("Sends: 2 fields (0 shown)"), "{sum}");
+    // Ninth review: the slot of what is sent has room for one of the two (was "Sends: 2
+    // fields (0 shown)"; deliberate change). It says "Sends:" because the tap is presumed to
+    // submit the text Jarvis typed.
+    assert!(sum.contains("Sends: 2 fields (1 shown): "), "{sum}");
     assert!(sum.chars().count() <= 480, "{sum}");
 }
 

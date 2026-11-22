@@ -67,8 +67,10 @@ pub use evaluate::{
 };
 pub use gate::{changes_state, gate, gate_in, gate_on, Gate, TRUSTED_ALLOWED};
 pub use hit::{
-    control_at, point_is_clear, takes_taps, tap_spot, tap_spot_under, Bar, Covered, CoveredBy,
-    OccluderRule, PointError, GRID as TAP_GRID, OCCLUDER_RULE, SYSTEM_BAR_MIN_WIDTH,
+    control_at, point_is_clear, system_bar, takes_taps, tap_spot, tap_spot_under, Bar, Covered,
+    CoveredBy, Edge, OccluderRule, PointError, GRID as TAP_GRID, OCCLUDER_RULE,
+    PAGE_MIN_BAR_HEIGHTS, PAGE_MIN_WIDTH, SYSTEM_BAR_BOTTOM_REGION, SYSTEM_BAR_MAX_BOTTOM_HEIGHT,
+    SYSTEM_BAR_MAX_TOP_HEIGHT, SYSTEM_BAR_MIN_CAP, SYSTEM_BAR_MIN_WIDTH, SYSTEM_BAR_TOP_REGION,
 };
 pub use phrases::{
     label_risk, AppRule, Phrase, RuleTarget, ACTION_PHRASES, APP_PHRASES, APP_RULES,

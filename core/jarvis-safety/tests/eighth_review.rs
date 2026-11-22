@@ -247,8 +247,10 @@ fn the_summary_keeps_amounts_and_recipients_while_sends_can_give() {
     // (c) gave up characters, saying so: the list is capped, values are cut with a count.
     assert!(sum.contains("Sends: 6 fields ("), "{sum}");
     assert!(sum.contains("more characters not shown)"), "{sum}");
-    // (d) shrank first: the selected options are counted, not quoted.
-    assert!(sum.contains("Selected: 2 options"), "{sum}");
+    // (d) Ninth review: the other facts have a reserved slot of their own (minimum 48,
+    // maximum 160 characters), so the selected options are quoted, shortened (was counted:
+    // "Selected: 2 options", when the other facts shrank first; deliberate change).
+    assert!(sum.contains("Selected: Annual plan with"), "{sum}");
 }
 
 /// Sent fields are listed recipient- and amount-like first, then the ones Jarvis typed,
@@ -282,11 +284,16 @@ fn the_sent_list_puts_recipients_and_typed_fields_first() {
     );
     eprintln!("{sum}");
     assert!(sum.chars().count() <= BOUND, "{sum}");
+    // Ninth review: the fields Jarvis typed come first, then the recipient- and
+    // amount-named ones; a field named like a recipient is listed with its value under
+    // "To/Account:" and "Sends:" points there (was `shown): Recipient: "@mallory"; Gift
+    // message: …`; deliberate change).
     assert!(
         sum.contains("Sends: 22 fields (")
-            && sum.contains(" shown): Recipient: \"@mallory\"; Gift message: \"Happy birthday\""),
+            && sum.contains(" shown): Gift message: \"Happy birthday\"; Recipient (shown above)"),
         "{sum}"
     );
+    assert!(sum.contains("To/Account: Recipient: \"@mallory\""), "{sum}");
     assert!(sum.contains("5,000.00"), "{sum}");
 }
 
@@ -514,9 +521,12 @@ fn return_in_a_form_shows_the_form() {
     };
     let mut s = form(Role::TextField);
     s.cues.return_key = Some("send".to_owned());
+    // Ninth review: the field named like a recipient ("To") is listed under "To/Account:"
+    // with its value and "Sends:" points there (was `Sends: …; To: "@mallory"; …` and no
+    // "To/Account"; deliberate change).
     assert_eq!(
         ret(&s),
-        "Press Return (\"send\") in \"Note\" in Example, which submits the form. Sends: Note: \"thanks\"; To: \"@mallory\"; Amount: \"$5,000.00\". Typed: \"thanks\". Amounts on screen: Amount: $5,000.00"
+        "Press Return (\"send\") in \"Note\" in Example, which submits the form. Sends: Note: \"thanks\"; To (shown above); Amount: \"$5,000.00\". Typed: \"thanks\". Amounts on screen: Amount: $5,000.00. To/Account: To: \"@mallory\""
     );
     // Alone.
     let mut alone = app_screen(vec![label(1, "Chat"), {

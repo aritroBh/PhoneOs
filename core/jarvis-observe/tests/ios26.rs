@@ -675,6 +675,91 @@ fn the_tap_rules_measured_side_by_side() {
     assert_eq!(jarvis_safety::OCCLUDER_RULE, R::LabelledNested);
 }
 
+/// Ninth review: the bar rule measured on the ten fixtures. Every bar the fixtures hold is a
+/// system bar under the bounds (full width, anchored to its edge, of bounded height): the
+/// navigation bars (54 and 106 pt, top edge at y 62), the tab bars (83 pt) and the floating
+/// toolbar (86 pt), both ending at the bottom edge (956). Side by side, per fixture: the
+/// refusals with the rule in force (precedence only over page content scrolled under the
+/// bar), with no bars at all (no precedence, and nothing covered by a bar), and the bar
+/// controls whose own centre needs the page-content exception (contested at the centre by
+/// a node outside the bar that the rule excuses as scrolled page content).
+#[test]
+fn the_bar_rule_measured_on_the_fixtures() {
+    let mut rows = Vec::new();
+    let (mut total_rule, mut total_none, mut total_excused) = (0usize, 0usize, 0usize);
+    for name in FIXTURES {
+        let s = fixture(name);
+        let view = jarvis_observe::compact_view(&s);
+        let tree = jarvis_safety::ScreenTree {
+            sources: &view.sources,
+            parents: &view.parents,
+            ends: &view.ends,
+            bars: &view.bars,
+            nodes: &view.nodes,
+            inputs: &view.inputs,
+        };
+        let none = jarvis_safety::ScreenTree { bars: &[], ..tree };
+        let mut bars = Vec::new();
+        for b in &view.bars {
+            let sys = jarvis_safety::system_bar(b, view.screen.size);
+            assert!(sys.is_some(), "{name}: {b:?} is not a system bar");
+            bars.push(format!(
+                "{:?} {}x{} at y {} ({:?})",
+                b.role,
+                b.frame.width,
+                b.frame.height,
+                b.frame.y,
+                sys.map(|(_, e)| e)
+            ));
+        }
+        let controls: Vec<_> = view
+            .screen
+            .elements
+            .iter()
+            .filter(|e| e.enabled && jarvis_safety::takes_taps(&e.role))
+            .collect();
+        let refused = |t: &jarvis_safety::ScreenTree<'_>| {
+            controls
+                .iter()
+                .filter(|e| jarvis_safety::tap_spot(e, &view.screen, Some(t), None).is_err())
+                .count()
+        };
+        let (with_rule, without) = (refused(&tree), refused(&none));
+        let in_bar = |e: &jarvis_proto::Element| {
+            let src = view.sources[(e.index - 1) as usize];
+            view.bars
+                .iter()
+                .any(|b| b.node < src && src < view.ends[b.node as usize])
+        };
+        let excused = controls
+            .iter()
+            .filter(|e| in_bar(e))
+            .filter(|e| {
+                jarvis_safety::point_is_clear(e.frame.center(), e, &view.screen, Some(&none))
+                    .is_err()
+                    && jarvis_safety::point_is_clear(e.frame.center(), e, &view.screen, Some(&tree))
+                        .is_ok()
+            })
+            .count();
+        total_rule += with_rule;
+        total_none += without;
+        total_excused += excused;
+        rows.push(format!(
+            "{name}: {} controls, refused {with_rule} (no bars: {without}), bar controls \
+             needing the page-content exception {excused}; bars {bars:?}",
+            controls.len()
+        ));
+    }
+    println!("{}", rows.join("\n"));
+    println!("total: refused {total_rule}, no bars {total_none}, excused {total_excused}");
+    // The rule in force refuses exactly the two genuine covers (`KNOWN_REFUSALS`); without
+    // bars the back button and the tab-bar buttons of `long_list_scrolled` are refused
+    // (rows scrolled under them), and the rows under the bars are not.
+    assert_eq!(total_rule, KNOWN_REFUSALS.len());
+    assert_eq!(total_excused, 6, "{}", rows.join("\n"));
+    assert_eq!(total_none, 6, "{}", rows.join("\n"));
+}
+
 /// With the keyboard up every listed control that is not under the `Keyboard` node's own
 /// frame gets a tap point (the keyboard's window and its full-screen containers cover
 /// nothing; the prediction bar covers only its 44 pt).

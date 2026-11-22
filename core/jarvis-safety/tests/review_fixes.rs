@@ -1988,10 +1988,12 @@ fn a_venmo_like_payment_states_who_how_much_and_what_for() {
     ]);
     let sum = summarize(&tap(5), &s, None);
     // Seventh review: Pay sends the form, so both fields show whole (was "Fields: What's it
-    // for? (filled)"; deliberate change).
+    // for? (filled)"; deliberate change). Ninth review: a sent field's name has its quotes
+    // neutralised and is put in single quotes when it holds more than letters, digits and
+    // spaces (was `What's it for?: "…"`; deliberate change).
     assert_eq!(
         sum,
-        "Tap \"Pay\" in Example. Sends: Amount: \"120\"; What's it for?: \"Concert tickets\". Amounts on screen: Amount: 120. To/Account: @alex-smith-42"
+        "Tap \"Pay\" in Example. Sends: Amount: \"120\"; 'What\u{2019}s it for?': \"Concert tickets\". Amounts on screen: Amount: 120. To/Account: @alex-smith-42"
     );
     // Sixth review: the note shows only when Jarvis typed it (was always quoted; deliberate
     // change, see `summary_with`).
@@ -2007,7 +2009,11 @@ fn a_venmo_like_payment_states_who_how_much_and_what_for() {
         None,
         &typed,
     );
-    assert!(sum.contains("What's it for?: \"Concert tickets\""), "{sum}");
+    // Ninth review: the field's name in quotes with its apostrophe neutralised (see above).
+    assert!(
+        sum.contains("'What\u{2019}s it for?': \"Concert tickets\""),
+        "{sum}"
+    );
 }
 
 /// A card list: the account suffix tells the owner which card pays.

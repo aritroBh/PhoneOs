@@ -315,7 +315,18 @@ pub fn evaluate_with(
         // Leaving a denied app stays possible; how it is gated does not depend on it.
         level = app_level(&without_app_denials(policy), &affected_app);
     }
-    let mut category = classify_from(action, screen, tool, source);
+    let mut category = match browser_forward(action, screen, tree) {
+        // Narrowing (b), ninth review: a "Forward" in a system bar that also holds "Back"
+        // is a browser's navigation, read like "Back" (not the send phrase "forward").
+        Some(index) => {
+            let mut nav = screen.clone();
+            if let Some(e) = nav.elements.iter_mut().find(|e| e.index == index) {
+                e.label = "Back".to_owned();
+            }
+            classify_from(action, &nav, tool, source)
+        }
+        None => classify_from(action, screen, tool, source),
+    };
     if presumed_submit(action, screen, tree, typed) {
         category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
     }
@@ -330,6 +341,28 @@ pub fn evaluate_with(
             app: affected_app,
         }),
     }
+}
+
+/// The control a tap or long press names (a `tap_point`'s is resolved by the classifier and
+/// never narrowed) when it is a browser's "Forward" (ninth review, narrowing (b)): its
+/// label is only "Forward" ("Go Forward", "Forward Page") and it sits in a system bar that
+/// also holds a "Back" control. A "Forward" anywhere else (Mail's toolbar, a message's
+/// menu) stays a send phrase.
+fn browser_forward(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> Option<u32> {
+    let (Action::Tap { element } | Action::LongPress { element, .. }) = action else {
+        return None;
+    };
+    let t = screen.get(*element)?;
+    let toks = crate::text::tokens(&t.label);
+    let only_forward = toks.iter().any(|w| w == "forward")
+        && toks
+            .iter()
+            .all(|w| matches!(w.as_str(), "forward" | "go" | "page"));
+    (only_forward && crate::hit::in_bar_with_back(t, screen, tree)).then_some(t.index)
 }
 
 /// `policy` with no app denied, for gating the way out of a denied app.
@@ -400,8 +433,9 @@ fn clean(s: &str, max: usize) -> String {
 }
 
 /// Screen text cannot pose as a summary's fact headings: a colon after the word "screen",
-/// "selected", "account" or "fields" ("Amounts on screen:", "Selected:", "To/Account:",
-/// "Fields:") is dropped.
+/// "selected", "account", "fields", "sends", "holds" or "typed" ("Amounts on screen:",
+/// "Selected:", "To/Account:", "Fields:", "Sends:", "The form holds:", "Typed:"; the last
+/// three since the ninth review) is dropped.
 fn defang(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -416,7 +450,14 @@ fn defang(s: &str) -> String {
                 .rev()
                 .flat_map(char::to_lowercase)
                 .collect();
-            if matches!(word.as_str(), "screen" | "selected" | "account" | "fields") {
+            // The word may be glued to what is before it ("xSends:"): a heading's word at
+            // the end of the letters before the colon is enough (ninth review).
+            if [
+                "screen", "selected", "account", "fields", "sends", "holds", "typed",
+            ]
+            .iter()
+            .any(|h| word.ends_with(h))
+            {
                 continue;
             }
         }
@@ -628,35 +669,6 @@ fn clean_label(s: &str, max: usize) -> String {
     parts.join(" … ")
 }
 
-/// How long the screen-text parts of a summary may be (characters). A summary is built
-/// with the first set of limits whose result fits [`MAX_SUMMARY_CHARS`], shortening in
-/// priority order (eighth review; see `summarize_with`): other facts first, then what is
-/// sent, then amounts and recipients, and the action itself last.
-#[derive(Clone, Copy)]
-struct Limits {
-    /// The target's quoted label.
-    label: usize,
-    /// The row text after "next to".
-    next_to: usize,
-    /// The item text after "under" (0: left out).
-    under: usize,
-    /// The app name.
-    app: usize,
-    /// Each entry of "Amounts on screen" (0: the amount alone).
-    amount_entry: usize,
-    /// Each entry of "To/Account" (0: left out).
-    recipient_entry: usize,
-    /// Each entry of "Selected" (0: only the count).
-    selected_entry: usize,
-    /// Each entry of "Fields" (0: left out).
-    field_entry: usize,
-}
-
-/// `"label"`, or the role and index when the element has no text.
-fn describe(el: &Element) -> String {
-    describe_with(el, MAX_QUOTE_CHARS)
-}
-
 /// `"label"` (at most `max` characters), or the role and index when it has no text.
 fn describe_with(el: &Element, max: usize) -> String {
     let text = [Some(el.label.as_str()), el.placeholder.as_deref()]
@@ -669,11 +681,12 @@ fn describe_with(el: &Element, max: usize) -> String {
     }
 }
 
-/// The element description, or `element N` when it is not on the screen.
-fn describe_index(screen: &CompactScreen, index: u32) -> String {
+/// The element description (at most `max` characters), or `element N` when it is not on
+/// the screen.
+fn describe_index_with(screen: &CompactScreen, index: u32, max: usize) -> String {
     screen
         .get(index)
-        .map_or_else(|| format!("element {index}"), describe)
+        .map_or_else(|| format!("element {index}"), |e| describe_with(e, max))
 }
 
 /// A role in plain words for messages ("button", "text", "text field"; another role's
@@ -878,6 +891,8 @@ struct AmountFact {
     text: String,
     value: f64,
     charge: bool,
+    /// The screen's own total: total wording in a text the app shows (not a field's value).
+    total: bool,
 }
 
 /// Whether `text` has charge wording: a word starting with total, due, pay, charge, bill
@@ -980,9 +995,10 @@ fn max_amount(chars: &[char], ranges: &[(usize, usize)]) -> f64 {
 /// screen, whatever its wording (see `facts_suffix`).
 fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountFact> {
     let mut out: Vec<AmountFact> = Vec::new();
-    let push = |out: &mut Vec<AmountFact>, text: String, value: f64, charge: bool| {
+    let push = |out: &mut Vec<AmountFact>, text: String, value: f64, charge: bool, field: bool| {
         if !out.iter().any(|f| f.text == text) {
             out.push(AmountFact {
+                total: !field && has_total_words(&text),
                 text,
                 value: if value.is_finite() { value } else { -1.0 },
                 charge,
@@ -1025,7 +1041,7 @@ fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountF
                 } else {
                     format!("{name}: {v}")
                 };
-                push(&mut out, text, value, true);
+                push(&mut out, text, value, true, true);
             }
             continue;
         }
@@ -1111,11 +1127,26 @@ fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountF
             row.join(" ")
         };
         let charge = has_charge_words(&text);
-        push(&mut out, text, value, charge);
+        push(&mut out, text, value, charge, false);
     }
-    // Stable: equal keys keep screen order.
-    out.sort_by(|a, b| b.charge.cmp(&a.charge).then(b.value.total_cmp(&a.value)));
+    // Stable: equal keys keep screen order. The screen's own total first (ninth review: a
+    // text with total wording, never a field's value), then the other charges, then the
+    // rest; largest first within each.
+    out.sort_by(|a, b| {
+        b.total
+            .cmp(&a.total)
+            .then(b.charge.cmp(&a.charge))
+            .then(b.value.total_cmp(&a.value))
+    });
     out
+}
+
+/// Whether `text` names the total: a word starting with "total" (not "subtotal"), "due" or
+/// "grand" ("Order total", "Amount due", "Grand total").
+fn has_total_words(text: &str) -> bool {
+    text.split(|c: char| !c.is_alphanumeric())
+        .map(str::to_lowercase)
+        .any(|w| w.starts_with("total") || w == "due" || w == "grand")
 }
 
 /// The texts of the selected or checked options on `screen` other than `target` (tabs and
@@ -1376,6 +1407,52 @@ const REFERENCE_WORDS: &[&str] = &[
     "case",
 ];
 
+/// Headings that introduce who is paid or messaged, lower case ("Pay to: Mallory's Merch
+/// LLC", "To: Alice", "Account: Checking ••••4521").
+const RECIPIENT_HEADINGS: &[&str] = &[
+    "pay to",
+    "paying",
+    "payee",
+    "recipient",
+    "recipients",
+    "send to",
+    "sending to",
+    "transfer to",
+    "to",
+    "account",
+    "beneficiary",
+    "iban",
+];
+
+/// The recipient heading `text` starts with (case-insensitive, whole words), and the rest.
+fn split_recipient_heading(text: &str) -> Option<&str> {
+    let lower = text.trim().to_lowercase();
+    RECIPIENT_HEADINGS.iter().find_map(|h| {
+        let rest = lower.strip_prefix(h)?;
+        if rest.chars().next().is_some_and(char::is_alphanumeric) {
+            return None;
+        }
+        let skip = text.trim().len().checked_sub(rest.len())?;
+        text.trim().get(skip..)
+    })
+}
+
+/// Whether `text` is a recipient heading followed by `:` and a name: "Pay to:
+/// Mallory's Merch LLC", "To: @alex" (ninth review: a merchant's name is a recipient too).
+fn recipient_heading(text: &str) -> bool {
+    split_recipient_heading(text).is_some_and(|rest| {
+        let rest = rest.trim_start();
+        rest.strip_prefix(':')
+            .is_some_and(|a| a.chars().any(char::is_alphanumeric))
+    })
+}
+
+/// Whether `text` is a recipient heading alone ("Pay to", "Recipient:"), whose name is the
+/// text next to or under it.
+fn recipient_heading_alone(text: &str) -> bool {
+    split_recipient_heading(text).is_some_and(|rest| rest.trim().trim_end_matches(':').is_empty())
+}
+
 /// Whether `text` has a word of `table`.
 fn has_word(text: &str, table: &[&str]) -> bool {
     text.split(|c: char| !c.is_alphanumeric())
@@ -1393,22 +1470,43 @@ fn has_word(text: &str, table: &[&str]) -> bool {
 /// are returned: the list shows [`MAX_LISTED_RECIPIENTS`] and counts the rest.
 fn recipient_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<String> {
     let mut ranked: Vec<(u8, bool, f64, usize, String)> = Vec::new();
-    for (k, e) in screen.elements.iter().enumerate().filter(|(_, e)| {
+    let els = &screen.elements;
+    let mut joined: Vec<u32> = Vec::new();
+    for (k, e) in els.iter().enumerate().filter(|(_, e)| {
         !e.secure
             && e.role != Role::Key
             && !credential_like_field(e)
             && !target.is_some_and(|t| t.index == e.index)
     }) {
-        let t = fact_text(e).trim().to_owned();
+        if joined.contains(&e.index) {
+            continue;
+        }
+        let mut t = fact_text(e).trim().to_owned();
+        // A heading alone ("Pay to") with the payee's name next to or right under it
+        // (ninth review): one fact, "Pay to: Mallory's Merch LLC".
+        if e.role == Role::StaticText && recipient_heading_alone(&t) {
+            if let Some(n) = els.get(k.saturating_add(1)).filter(|n| {
+                n.role == Role::StaticText
+                    && !target.is_some_and(|tg| tg.index == n.index)
+                    && !n.label.trim().is_empty()
+                    && (same_row(&n.frame, &e.frame)
+                        || (n.frame.y >= e.frame.max_y() - 1.0
+                            && n.frame.y - e.frame.max_y() <= STACKED_LABEL_GAP))
+            }) {
+                t = format!("{}: {}", t.trim_end_matches(':').trim(), n.label.trim());
+                joined.push(n.index);
+            }
+        }
         if t.is_empty() || has_money(&t) || ranked.iter().any(|(_, _, _, _, x)| *x == t) {
             continue;
         }
+        let heading = recipient_heading(&t);
         let word = t.split_whitespace().any(recipient_word);
         let phone = has_phone_number(&t);
-        if !word && !phone {
+        if !word && !phone && !heading {
             continue;
         }
-        let tier = if has_word(&t, RECIPIENT_WORDS) {
+        let tier = if heading || has_word(&t, RECIPIENT_WORDS) {
             0
         } else if !word && has_word(&t, REFERENCE_WORDS) {
             2
@@ -1474,134 +1572,259 @@ fn fact_list(heading: &str, items: &[String], max: usize, entry: usize) -> Optio
     Some(format!("{heading}: {}{tail}", shown.join("; ")))
 }
 
-/// The facts appended to an in-app summary, in this order (amounts first, so they are the
-/// last screen text to shrink):
-///
-/// - `Amounts on screen: Due today $199.00; Compare at $1,200.00 and 2 more` (every
-///   distinct amount, the charge first, at most [`MAX_LISTED_AMOUNTS`], then always the
-///   count of the rest);
-/// - `To/Account: To account ••••4521; @alex and 2 more` (payments and messages only, ranked
-///   by recipient wording and closeness to the target, at most [`MAX_LISTED_RECIPIENTS`],
-///   then `and N more`);
-/// - `Selected: Annual plan` (at most [`MAX_LISTED_SELECTED`], ranked, then `and N more`);
-/// - `Fields: Message: On my way; Note (filled); Card number (hidden)` (a value only where
-///   the session typed it, see [`field_facts`]; at most [`MAX_LISTED_FIELDS`], then
-///   `and N more`; a protected field by name only).
-///
-/// Empty parts are left out; a part with no room left says how many entries it has
-/// (`Fields: 2 not shown`), so nothing is dropped silently.
-fn facts_suffix(facts: &Facts, limits: Limits) -> Vec<String> {
-    let mut parts = Vec::new();
-    let amounts = &facts.amounts;
-    if !amounts.is_empty() {
-        // The largest amount on the screen is always listed, whatever its wording: it
-        // takes the last listed place when the ranking left it out.
-        let largest = amounts
-            .iter()
-            .enumerate()
-            .fold(None::<(usize, f64)>, |best, (k, f)| match best {
-                Some((_, v)) if v >= f.value => best,
-                _ => Some((k, f.value)),
-            })
-            .map(|(k, _)| k);
-        let mut picked: Vec<&AmountFact> = amounts.iter().take(MAX_LISTED_AMOUNTS).collect();
-        if let Some(k) = largest.filter(|k| *k >= MAX_LISTED_AMOUNTS) {
-            if let (Some(last), Some(big)) = (picked.last_mut(), amounts.get(k)) {
-                *last = big;
-            }
+/// Characters in `s`.
+fn n_chars(s: &str) -> usize {
+    s.chars().count()
+}
+
+/// `s` cut to at most `n` characters, ending in `…` when cut. A last resort for the
+/// release build: every slot renderer fits its allotment by construction (debug builds
+/// assert it, see `fit_slot`).
+fn hard_cut(s: &str, n: usize) -> String {
+    if n_chars(s) <= n {
+        return s.to_owned();
+    }
+    if n == 0 {
+        return String::new();
+    }
+    let mut out: String = s.chars().take(n - 1).collect();
+    out.push('…');
+    out
+}
+
+/// `s`'s first `n` characters, followed by `…` when it is longer.
+fn prefix_cut(s: &str, n: usize) -> String {
+    if n_chars(s) <= n {
+        return s.to_owned();
+    }
+    let mut out: String = s.chars().take(n).collect();
+    out.push('…');
+    out
+}
+
+/// A slot's text within its allotment (see `summarize_with`).
+fn fit_slot(text: String, allot: usize) -> String {
+    debug_assert!(
+        n_chars(&text) <= allot,
+        "a summary slot exceeds its allotment ({} > {allot}): {text}",
+        n_chars(&text)
+    );
+    hard_cut(&text, allot)
+}
+
+/// An amount entry shown as its amount alone: the largest amount in it (`$5,000.00`),
+/// cleaned and bounded.
+fn amount_alone(f: &AmountFact) -> String {
+    let chars: Vec<char> = f.text.chars().collect();
+    let best = amount_ranges(&chars)
+        .into_iter()
+        .map(|(a, b)| {
+            chars
+                .get(a..b)
+                .unwrap_or_default()
+                .iter()
+                .collect::<String>()
+        })
+        .max_by(|x, y| {
+            amount_value(x)
+                .unwrap_or(-1.0)
+                .total_cmp(&amount_value(y).unwrap_or(-1.0))
+        });
+    fact_entry(best.as_deref().unwrap_or(&f.text), MAX_AMOUNT_CHARS)
+}
+
+/// Slot 2 (ninth review): `. Amounts on screen: Total $5,000.00; …; and N more`, within
+/// `budget` characters. The entries are the first [`MAX_LISTED_AMOUNTS`] in rank order
+/// (total wording first, then other charges, then the rest; see `amount_facts`), with the
+/// largest amount on the screen always among them. Shrinking: each entry to 40, 30, 24
+/// characters, then to its amount alone, then fewer entries — never the first (the total)
+/// nor the largest. What is left out is counted (`and N more`). Its minimum (two amounts
+/// alone and the count) fits [`SLOT_AMOUNTS`]'s minimum.
+fn amounts_slot(amounts: &[AmountFact], budget: usize) -> String {
+    if amounts.is_empty() {
+        return String::new();
+    }
+    let largest = amounts
+        .iter()
+        .enumerate()
+        .fold(None::<(usize, f64)>, |best, (k, f)| match best {
+            Some((_, v)) if v >= f.value => best,
+            _ => Some((k, f.value)),
+        })
+        .map_or(0, |(k, _)| k);
+    let mut picked: Vec<usize> = (0..amounts.len().min(MAX_LISTED_AMOUNTS)).collect();
+    if largest >= MAX_LISTED_AMOUNTS {
+        if let Some(last) = picked.last_mut() {
+            *last = largest;
         }
-        let shown: Vec<String> = picked
+    }
+    let render = |idx: &[usize], entry: usize| -> String {
+        let shown: Vec<String> = idx
             .iter()
+            .filter_map(|&k| amounts.get(k))
             .map(|f| {
-                if limits.amount_entry == 0 {
-                    // The amounts alone.
-                    let chars: Vec<char> = f.text.chars().collect();
-                    let tokens: Vec<String> = amount_ranges(&chars)
-                        .iter()
-                        .map(|&(a, b)| {
-                            let t: String = chars.get(a..b).unwrap_or_default().iter().collect();
-                            fact_entry(&t, MAX_AMOUNT_CHARS)
-                        })
-                        .collect();
-                    if tokens.is_empty() {
-                        fact_entry(&f.text, MAX_AMOUNT_CHARS)
-                    } else {
-                        tokens.join(" ")
-                    }
+                if entry == 0 {
+                    amount_alone(f)
                 } else {
-                    fact_entry(&f.text, limits.amount_entry)
+                    fact_entry(&f.text, entry)
                 }
             })
             .collect();
-        let more = amounts.len().saturating_sub(MAX_LISTED_AMOUNTS);
+        let more = amounts.len().saturating_sub(idx.len());
         let tail = if more > 0 {
             format!(" and {more} more")
         } else {
             String::new()
         };
-        parts.push(format!("Amounts on screen: {}{tail}", shown.join("; ")));
-    }
-    parts.extend(fact_list(
-        "To/Account",
-        &facts.recipients,
-        MAX_LISTED_RECIPIENTS,
-        limits.recipient_entry,
-    ));
-    if !facts.selected.is_empty() {
-        if limits.selected_entry == 0 {
-            parts.push(format!("Selected: {} options", facts.selected.len()));
-        } else {
-            parts.extend(fact_list(
-                "Selected",
-                &facts.selected,
-                MAX_LISTED_SELECTED,
-                limits.selected_entry,
-            ));
+        format!(". Amounts on screen: {}{tail}", shown.join("; "))
+    };
+    for entry in [40, 30, 24, 0] {
+        let t = render(&picked, entry);
+        if n_chars(&t) <= budget {
+            return t;
         }
     }
-    parts.extend(fact_list(
-        "Fields",
-        &facts.fields,
-        MAX_LISTED_FIELDS,
-        limits.field_entry,
-    ));
-    parts
+    // Fewer entries, amounts alone: never the first nor the largest.
+    let keep: Vec<usize> = if largest == 0 {
+        vec![0]
+    } else {
+        vec![0, largest]
+    };
+    for k in (keep.len()..picked.len()).rev() {
+        let mut idx: Vec<usize> = picked
+            .iter()
+            .copied()
+            .filter(|i| !keep.contains(i))
+            .take(k.saturating_sub(keep.len()))
+            .collect();
+        idx.extend(&keep);
+        idx.sort_unstable();
+        let t = render(&idx, 0);
+        if n_chars(&t) <= budget {
+            return t;
+        }
+    }
+    render(&keep, 0)
 }
 
-/// The summary of pressing `el` (`verb` "Tap" or "Long-press"): a tap on an on/off switch
-/// says what it will do (`Turn on "Wi-Fi" in Settings`); a control whose row has other
-/// text names it (`Tap "Buy" next to "Socks $5.00" in Shop`); a control under a card's
-/// stacked title names that too (`Tap "Delete order" under "Order #1001, Placed Nov 20"
-/// in Shop`). The screen's facts follow (see `facts_suffix`), never one amount picked by
-/// distance.
-fn press_summary(
-    verb: &str,
+/// Slot 3 (ninth review): `. To/Account: Pay to: Mallory's Merch LLC; To: "@mallory"`,
+/// within `budget` characters: the recipient facts read from the screen first, then the
+/// sent fields named like a recipient (`entries`, already cleaned). At most
+/// [`MAX_LISTED_RECIPIENTS`] entries, each cut from its end (a payee's name starts it) to
+/// 60, then 40 characters, then fewer entries, never fewer than the first at 40; the rest
+/// counted (`and N more`). Returns the text and, per entry, whether it was shown whole.
+fn recipients_slot(entries: &[String], budget: usize) -> (String, Vec<bool>) {
+    let mut whole = vec![false; entries.len()];
+    if entries.is_empty() {
+        return (String::new(), whole);
+    }
+    let render = |k: usize, cap: usize| -> String {
+        let shown: Vec<String> = entries.iter().take(k).map(|e| prefix_cut(e, cap)).collect();
+        let more = entries.len().saturating_sub(k);
+        let tail = if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        };
+        format!(". To/Account: {}{tail}", shown.join("; "))
+    };
+    let most = entries.len().min(MAX_LISTED_RECIPIENTS);
+    let mut steps: Vec<(usize, usize)> = vec![(most, 60), (most, 40)];
+    steps.extend((1..most).rev().map(|k| (k, 40)));
+    let mut chosen = (1, 40);
+    for (k, cap) in steps {
+        if n_chars(&render(k, cap)) <= budget {
+            chosen = (k, cap);
+            break;
+        }
+    }
+    let (k, cap) = chosen;
+    for (w, e) in whole.iter_mut().zip(entries).take(k) {
+        *w = n_chars(e) <= cap;
+    }
+    (render(k, cap), whole)
+}
+
+/// Slot 5 (ninth review): the other facts — the row text after "next to", the item text
+/// after "under" (both drawn inside the action line), `Selected:` and `Fields:` — within
+/// `budget` characters: each part to 40, then 24, then 16 characters, then the lists as
+/// counts (`Selected: 3 options`, `Fields: 2 not shown`). Returns (inline, rest).
+fn other_slot(next_to: &str, under: &str, facts: &Facts, budget: usize) -> (String, String) {
+    const LEVELS: [(usize, usize, usize, usize); 5] = [
+        (MAX_NEIGHBOUR_CHARS, MAX_NEIGHBOUR_CHARS, 40, 40),
+        (24, 30, 24, 24),
+        (16, 24, 16, 0),
+        (12, 12, 0, 0),
+        (0, 0, 0, 0),
+    ];
+    let render = |(n, u, sel, fld): (usize, usize, usize, usize)| -> (String, String) {
+        let mut inline = String::new();
+        if !next_to.is_empty() && n > 0 {
+            inline.push_str(&format!(" next to \"{}\"", clean_label(next_to, n)));
+        }
+        if !under.is_empty() && u > 0 {
+            inline.push_str(&format!(" under \"{}\"", clean_label(under, u)));
+        }
+        let mut rest = String::new();
+        if !facts.selected.is_empty() {
+            let part = if sel == 0 {
+                Some(format!("Selected: {} options", facts.selected.len()))
+            } else {
+                fact_list("Selected", &facts.selected, MAX_LISTED_SELECTED, sel)
+            };
+            if let Some(p) = part {
+                rest.push_str(". ");
+                rest.push_str(&p);
+            }
+        }
+        if let Some(p) = fact_list("Fields", &facts.fields, MAX_LISTED_FIELDS, fld) {
+            rest.push_str(". ");
+            rest.push_str(&p);
+        }
+        (inline, rest)
+    };
+    let mut last = (String::new(), String::new());
+    for l in LEVELS {
+        let (i, r) = render(l);
+        if n_chars(&i) + n_chars(&r) <= budget {
+            return (i, r);
+        }
+        last = (i, r);
+    }
+    // Only the counts are left (the inline texts are gone at the last level): cut them.
+    let (i, r) = last;
+    (i, hard_cut(&r, budget))
+}
+
+/// The row text after "next to" and the item text after "under" of a press on `el`.
+fn press_context(
     el: &Element,
     screen: &CompactScreen,
-    in_app: &str,
-    l: Limits,
     tree: Option<&ScreenTree<'_>>,
-) -> String {
-    let what = describe_with(el, l.label);
+) -> (String, String) {
+    if switch_is_on(el).is_some() {
+        return (String::new(), String::new());
+    }
+    (
+        row_texts(el, screen).join(" "),
+        item_texts(el, screen, tree).join(", "),
+    )
+}
+
+/// The summary of pressing `el` (`verb` "Tap" or "Long-press"), as (head, tail): a tap on
+/// an on/off switch says what it will do (`Turn on "Wi-Fi"`, ` in Settings`); otherwise
+/// `Tap "Buy"` and ` in Shop`. The row and item texts (`next to "Socks $5.00"`, `under
+/// "Order #1001, Placed Nov 20"`) go between them (slot 5); the screen's facts follow (see
+/// `summarize_with`), never one amount picked by distance.
+fn press_summary(verb: &str, el: &Element, in_app: &str, label: usize) -> (String, String) {
+    let what = describe_with(el, label);
     if verb == "Tap" {
         if let Some(on) = switch_is_on(el) {
             let turn = if on { "Turn off" } else { "Turn on" };
-            return format!("{turn} {what}{in_app}");
+            return (format!("{turn} {what}"), in_app.to_owned());
         }
     }
-    let row = row_texts(el, screen).join(" ");
-    let next_to = if row.is_empty() || l.next_to == 0 {
-        String::new()
-    } else {
-        format!(" next to \"{}\"", clean_label(&row, l.next_to))
-    };
-    let item = item_texts(el, screen, tree).join(", ");
-    let under = if item.is_empty() || l.under == 0 {
-        String::new()
-    } else {
-        format!(" under \"{}\"", clean_label(&item, l.under))
-    };
-    format!("{verb} {what}{next_to}{under}{in_app}")
+    (format!("{verb} {what}"), in_app.to_owned())
 }
 
 /// A one-line, human-readable, sanitised description of `action` for a confirmation
@@ -1656,12 +1879,18 @@ pub fn summary_for(
 /// **Eighth review.** A long press and a `tap_point` send like a tap; any asked tap whose
 /// form holds text shows `Sends:`; the form includes its unlisted text inputs (`(not on
 /// screen)`, from [`ScreenTree::inputs`]); Return that submits a form with other fields
-/// says `which submits the form. Sends: …`. Under the bound (480 characters) the summary
-/// keeps, in this priority (`summarize_with`): (a) the action, target and app; (b) the
-/// amounts and recipients (and recipient- or amount-like sent values), never cut while a
-/// sent value can give up characters; (c) the sent values, each cut to 120 characters
-/// first, then the list capped as `Sends: N fields (k shown)`; (d) the other facts. Every
-/// omission is stated in the text.
+/// says `which submits the form. Sends: …`.
+///
+/// **Ninth review: reserved slots.** The summary is composed in one pass from five slots
+/// in priority order, each with a guaranteed minimum and a maximum (`summarize_with`): (1)
+/// the action line; (2) the amounts (the screen's total first, the largest always); (3) the
+/// recipients (read from the whole screen, a merchant after "Pay to:" included, then the
+/// sent fields *named* like a recipient, with their values); (4) what is sent (`Sends:` for
+/// a sending, paying, posting, purchasing, presumed-submit or unverified action, `The form
+/// holds:` for any other; the fields Jarvis typed first, then the recipient- and
+/// amount-named ones, then the rest; names sanitised); (5) the other facts. A slot never
+/// eats into the minimums of the slots after it, says what it leaves out, and the whole is
+/// within the bound by construction.
 pub fn summary_with(
     action: &Action,
     screen: &CompactScreen,
@@ -1712,18 +1941,20 @@ fn with_source(source: ScreenSource, build: impl Fn(usize) -> String) -> String 
     }
 }
 
-/// A field whose whole content an action sends (see [`summary_with`]): its name, where it
-/// is (listed, or not on screen), its cleaned, redacted value (`None`: hidden; empty:
-/// nothing in it), and whether it is recipient- or amount-like (eighth review: kept like
-/// the amounts and recipients, see [`summarize_with`]).
+/// A field whose whole content an action sends (see [`summary_with`]): its name as shown
+/// ([`display_name`]), where it is (listed, or not on screen), its cleaned, redacted value
+/// (`None`: hidden; empty: nothing in it), and whether it is named like a recipient or an
+/// amount, or was typed by Jarvis (its place in `Sends:` and `To/Account:`, ninth review).
 struct SentField {
     name: String,
     note: &'static str,
     value: Option<String>,
-    /// Characters of the value beyond what screen text keeps at all
-    /// ([`crate::sanitize::MAX_SCREEN_TEXT_CHARS`]): counted as not shown.
+    /// Characters of the value beyond what is kept of it at all (the first
+    /// [`crate::sanitize::MAX_SCREEN_TEXT_CHARS`]): counted as not shown.
     beyond: usize,
-    protected: bool,
+    recipient: bool,
+    amount: bool,
+    typed: bool,
 }
 
 /// Longest value of a sent field shown before anything else is shortened (eighth review):
@@ -1766,6 +1997,10 @@ fn tap_sends(el: &Element, category: RiskCategory) -> bool {
 struct Form<'a, 't> {
     listed: Vec<&'a Element>,
     unlisted: Vec<&'t RawInput>,
+    /// The form holds a secure field (left out of `listed` and `unlisted`).
+    has_secure: bool,
+    /// Unlisted inputs beyond the [`MAX_UNLISTED_INPUTS`] examined (counted, not read).
+    unlisted_more: usize,
 }
 
 fn form_of<'a, 't>(
@@ -1794,20 +2029,70 @@ fn form_of<'a, 't>(
                 .filter(|r| t.node_inside(r.node, a))
                 .collect();
             if !inside.is_empty() || !raw.is_empty() {
+                let has_secure = inside.iter().any(|e| is_secure_input(e))
+                    || raw
+                        .iter()
+                        .any(|r| r.secure || r.role == Role::SecureTextField);
+                let mut open: Vec<&RawInput> = raw
+                    .into_iter()
+                    .filter(|r| !r.secure && r.role != Role::SecureTextField)
+                    .collect();
+                let unlisted_more = open.len().saturating_sub(MAX_UNLISTED_INPUTS);
+                open.truncate(MAX_UNLISTED_INPUTS);
                 return Form {
-                    listed: inside.into_iter().filter(|e| !e.secure).collect(),
-                    unlisted: raw.into_iter().filter(|r| !r.secure).collect(),
+                    listed: inside.into_iter().filter(|e| !is_secure_input(e)).collect(),
+                    unlisted: open,
+                    has_secure,
+                    unlisted_more,
                 };
             }
         }
     }
+    let has_secure = inputs.iter().any(|e| is_secure_input(e));
     Form {
-        listed: inputs.into_iter().filter(|e| !e.secure).collect(),
+        listed: inputs.into_iter().filter(|e| !is_secure_input(e)).collect(),
         unlisted: Vec::new(),
+        has_secure,
+        unlisted_more: 0,
     }
 }
 
+/// Whether `e` is a secure field (flag or role).
+fn is_secure_input(e: &Element) -> bool {
+    e.secure || e.role == Role::SecureTextField
+}
+
+/// Most unlisted text inputs of a form that are examined (ninth review: a form with 50,000
+/// hidden inputs costs bounded work; the summary says how many more it holds).
+const MAX_UNLISTED_INPUTS: usize = 200;
+
 impl Form<'_, '_> {
+    /// The names of the form's filled (non-secure) fields, listed or not.
+    fn filled_names(&self) -> impl Iterator<Item = String> + '_ {
+        self.listed
+            .iter()
+            .filter(|e| field_value(e).is_some())
+            .map(|e| {
+                format!(
+                    "{} {}",
+                    field_name(e),
+                    e.placeholder.as_deref().unwrap_or_default()
+                )
+            })
+            .chain(
+                self.unlisted
+                    .iter()
+                    .filter(|r| r.value.as_deref().is_some_and(|v| !v.trim().is_empty()))
+                    .map(|r| {
+                        [&r.label, &r.placeholder, &r.identifier]
+                            .iter()
+                            .filter_map(|x| x.as_deref())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    }),
+            )
+    }
+
     /// Whether any field of the form holds text.
     fn has_filled(&self) -> bool {
         self.listed.iter().any(|e| field_value(e).is_some())
@@ -1823,93 +2108,114 @@ impl Form<'_, '_> {
 }
 
 /// An unlisted raw text input as an element (for the field rules: names, credential-like
-/// names, redaction), with the label-aware redaction applied.
-fn raw_input_element(r: &RawInput) -> Element {
+/// names, redaction), with its value cut to [`MAX_READ_VALUE_CHARS`] before the label-aware
+/// redaction; also its value's whole length.
+fn raw_input_element(r: &RawInput) -> (Element, usize) {
     let label = r
         .label
         .clone()
         .or_else(|| r.placeholder.clone())
         .or_else(|| r.identifier.clone())
         .unwrap_or_default();
+    let len = r.value.as_deref().map_or(0, n_chars);
     let el = Element {
         index: 0,
         role: r.role.clone(),
         label,
-        value: if r.secure { None } else { r.value.clone() },
+        value: if r.secure {
+            None
+        } else {
+            r.value.as_deref().map(read_cap)
+        },
         placeholder: r.placeholder.clone(),
         frame: jarvis_proto::Rect::new(0.0, 0.0, 0.0, 0.0),
         enabled: true,
         focused: false,
         selected: false,
         secure: r.secure,
-        fingerprint: 0,
+        fingerprint: r.fingerprint.unwrap_or(0),
     };
-    crate::redact::redact_element(&el)
+    (crate::redact::redact_element(&el), len)
 }
 
-/// Whether a field `el` says who is paid or messaged (recipient wording in its name, or a
-/// phone number, email, `@handle` or masked account in its value) or holds an amount (an
-/// amount-like name, or money in its value).
-fn recipient_or_amount_field(el: &Element) -> bool {
-    let name = field_name(el);
-    let value = field_value(el).unwrap_or_default();
-    has_word(&name, RECIPIENT_WORDS)
-        || value.split_whitespace().any(recipient_word)
-        || has_phone_number(value)
-        || amount_like_field(el)
-        || has_money(value)
+/// Longest part of a value or label read at all (ninth review): a longer one is cut to it
+/// *before* redaction and classification (then redacted, then cut to the display cap), so
+/// a 2 MB value costs bounded work; what is cut is counted as not shown.
+pub(crate) const MAX_READ_VALUE_CHARS: usize = 2_000;
+
+/// `s` cut to [`MAX_READ_VALUE_CHARS`] characters.
+fn read_cap(s: &str) -> String {
+    if s.len() <= MAX_READ_VALUE_CHARS {
+        return s.to_owned();
+    }
+    s.chars().take(MAX_READ_VALUE_CHARS).collect()
 }
 
-/// `el` as a field being sent (`note` says where it is): hidden when secure or named as a
-/// credential.
-fn sent_field(el: &Element, note: &'static str) -> SentField {
-    let name = field_name(el);
-    let name = if name.is_empty() {
-        "A field".to_owned()
-    } else {
+/// Whether a field is named like who is paid or messaged ("To", "Pay to", "Recipient",
+/// "Account", "IBAN"; ninth review: by its name only, never by the shape of its value — an
+/// email in a "Contact email" field is no payee).
+fn recipient_named(el: &Element) -> bool {
+    has_word(&field_name(el), RECIPIENT_WORDS)
+}
+
+/// Longest field name shown in `Sends:` (ninth review).
+const MAX_FIELD_NAME_CHARS: usize = 40;
+
+/// A field's name as `Sends:` and `To/Account:` show it (ninth review): cleaned like screen
+/// text, `:` and `;` turned into spaces, quotes into `’`, at most
+/// [`MAX_FIELD_NAME_CHARS`] characters, and put in single quotes when it holds anything
+/// but letters, digits and spaces — so a name cannot imitate an entry or Jarvis's wording.
+fn display_name(raw: &str) -> String {
+    let c = clean(raw, MAX_FIELD_NAME_CHARS);
+    let neutral: String = c
+        .chars()
+        .map(|ch| match ch {
+            ':' | ';' => ' ',
+            '"' | '\'' | '`' => '\u{2019}',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    let name = neutral.split_whitespace().collect::<Vec<_>>().join(" ");
+    if name.is_empty() {
+        return "A field".to_owned();
+    }
+    if name.chars().all(|c| c.is_alphanumeric() || c == ' ') {
         name
-    };
-    let hidden = el.secure || credential_like_field(el);
-    let cap = crate::sanitize::MAX_SCREEN_TEXT_CHARS;
-    let beyond = if hidden {
-        0
     } else {
-        field_value(el).map_or(0, |v| v.chars().count().saturating_sub(cap))
-    };
-    let value = if hidden {
-        None
-    } else {
-        Some(field_value(el).map(|v| clean(v, cap)).unwrap_or_default())
-    };
-    SentField {
-        name,
-        note,
-        value,
-        beyond,
-        protected: !hidden && recipient_or_amount_field(el),
+        format!("'{name}'")
     }
 }
 
-/// `: "value"` (its first `keep` characters when it is longer, followed by how many are
-/// not shown), or ` (hidden)` / ` (empty)` when there is nothing to quote.
-fn sent_value(f: &SentField, keep: usize) -> String {
-    match f.value.as_deref() {
-        None => " (hidden)".to_owned(),
-        Some("") => " (empty)".to_owned(),
-        Some(v) => {
-            let n = v.chars().count();
-            if n <= keep && f.beyond == 0 {
-                format!(": \"{v}\"")
-            } else {
-                let head: String = v.chars().take(keep).collect();
-                let left = n.saturating_sub(keep).saturating_add(f.beyond);
-                format!(
-                    ": \"{}…\" ({left} more character{} not shown)",
-                    head.trim_end(),
-                    if left == 1 { "" } else { "s" }
-                )
-            }
-        }
+/// `el` (values already cut to [`MAX_READ_VALUE_CHARS`]) as a field being sent; `len` is
+/// its value's whole length, `note` says where it is: hidden when secure or named as a
+/// credential.
+fn sent_field(el: &Element, note: &'static str, len: usize, typed: bool) -> SentField {
+    let hidden = el.secure || credential_like_field(el);
+    let cap = crate::sanitize::MAX_SCREEN_TEXT_CHARS;
+    let value = if hidden {
+        None
+    } else {
+        Some(
+            field_value(el)
+                .map(|v| clean(v, cap).replace(';', ","))
+                .unwrap_or_default(),
+        )
+    };
+    let shown = value.as_deref().map_or(0, n_chars);
+    let beyond = if hidden || shown == 0 {
+        0
+    } else {
+        len.saturating_sub(cap.min(len))
+    };
+    SentField {
+        name: display_name(&field_name(el)),
+        note,
+        value,
+        beyond,
+        recipient: !hidden && recipient_named(el),
+        amount: !hidden && amount_like_field(el),
+        typed,
     }
 }
 
@@ -1924,53 +2230,19 @@ enum SendMode {
     ReturnForm,
 }
 
-/// How much of what is sent a summary shows: the first `shown` fields, each value cut to
-/// `keep[i]` characters.
-#[derive(Clone)]
-struct SendShape {
-    keep: Vec<usize>,
-    shown: usize,
-}
-
-/// The part of a summary that says what is sent.
-fn sent_part(sent: &[SentField], shape: &SendShape, mode: SendMode) -> String {
-    let value = |i: usize| {
-        sent.get(i).map_or_else(String::new, |f| {
-            sent_value(f, shape.keep.get(i).copied().unwrap_or(usize::MAX))
-        })
-    };
-    match mode {
-        SendMode::ReturnAlone => format!(", which sends the field's whole content{}", value(0)),
-        SendMode::Tap | SendMode::ReturnForm => {
-            let items: Vec<String> = sent
-                .iter()
-                .take(shape.shown)
-                .enumerate()
-                .map(|(i, f)| {
-                    let name = clean(&f.name, MAX_QUOTE_CHARS);
-                    format!(
-                        "{}{}{}",
-                        name.trim_end_matches(':').trim_end(),
-                        value(i),
-                        f.note
-                    )
-                })
-                .collect();
-            let head = if shape.shown >= sent.len() {
-                "Sends: ".to_owned()
-            } else if shape.shown == 0 {
-                format!("Sends: {} fields (0 shown)", sent.len())
-            } else {
-                format!("Sends: {} fields ({} shown): ", sent.len(), shape.shown)
-            };
-            let lead = if mode == SendMode::ReturnForm {
-                ", which submits the form. "
-            } else {
-                ". "
-            };
-            format!("{lead}{head}{}", items.join("; "))
-        }
-    }
+/// What an action sends (see [`what_is_sent`]).
+struct Sent<'a> {
+    /// In the order `Sends:` lists them: Return's own field, the fields Jarvis typed, the
+    /// recipient- and amount-named ones, the rest.
+    fields: Vec<SentField>,
+    /// How many fields the form holds, the unlisted ones beyond
+    /// [`MAX_UNLISTED_INPUTS`] included.
+    total: usize,
+    /// The listed elements among them (not repeated under `Fields:`).
+    listed: Vec<&'a Element>,
+    mode: SendMode,
+    /// `Sends:` (a sending action) or `The form holds:` (any other asked action).
+    sends: bool,
 }
 
 /// Whether Return in `field` submits (eighth review): a single-line field's Return may
@@ -1985,12 +2257,25 @@ fn submit_return(field: &Element, screen: &CompactScreen) -> bool {
     })
 }
 
+/// Whether the raw input `r` holds what Jarvis typed during the task: its fingerprint is a
+/// typed field's (and it holds text), or its value is exactly a text Jarvis typed.
+fn raw_typed(r: &RawInput, typed: &[TypedText]) -> bool {
+    let Some(v) = r.value.as_deref().map(str::trim).filter(|v| !v.is_empty()) else {
+        return false;
+    };
+    typed.iter().any(|t| {
+        r.fingerprint.is_some_and(|f| f == t.field)
+            || (!t.text.trim().is_empty() && t.text.trim() == v)
+    })
+}
+
 /// What `action` sends, and how the summary says it (see [`summary_with`]): Return sends
 /// its field, or with a submit Return the field and the rest of its form; a tap, long press
 /// or tap point on a control that submits its form by its category or words, or any asked
 /// tap whose form holds text (eighth review), sends the form's text inputs, the listed ones
-/// and the ones not listed (`(not on screen)`). The fields Jarvis typed during the task and
-/// the recipient- and amount-like ones come first.
+/// and the ones not listed (`(not on screen)`). Order: Return's own field, the fields Jarvis
+/// typed during the task (listed or not, ninth review), the recipient- and amount-named
+/// ones, the rest.
 #[allow(clippy::too_many_arguments)]
 fn what_is_sent<'a>(
     action: &Action,
@@ -2001,9 +2286,25 @@ fn what_is_sent<'a>(
     tree: Option<&ScreenTree<'_>>,
     typed: &[TypedText],
     return_only: bool,
-) -> (Vec<SentField>, Vec<&'a Element>, SendMode) {
+) -> Sent<'a> {
+    let none = || Sent {
+        fields: Vec::new(),
+        total: 0,
+        listed: Vec::new(),
+        mode: SendMode::Tap,
+        sends: false,
+    };
     let Some(t) = target else {
-        return (Vec::new(), Vec::new(), SendMode::Tap);
+        return none();
+    };
+    let raw_len = |e: &Element| {
+        raw.get(e.index)
+            .and_then(|r| r.value.as_deref())
+            .map_or(0, n_chars)
+    };
+    let typed_in = |e: &Element| {
+        raw.get(e.index)
+            .is_some_and(|r| typed.iter().any(|x| x.field == r.fingerprint))
     };
     let form = || form_of(t, screen, tree);
     let (form, mode, first) = match action {
@@ -2012,39 +2313,43 @@ fn what_is_sent<'a>(
             if submit_return(t, screen) && !f.is_empty() {
                 (f, SendMode::ReturnForm, Some(t))
             } else {
-                return (vec![sent_field(t, "")], vec![t], SendMode::ReturnAlone);
+                return Sent {
+                    fields: vec![sent_field(t, "", raw_len(t), typed_in(t))],
+                    total: 1,
+                    listed: vec![t],
+                    mode: SendMode::ReturnAlone,
+                    sends: true,
+                };
             }
         }
         Action::Tap { .. } | Action::LongPress { .. } | Action::TapPoint { .. } => {
             // Pressing a field, a switch or a picker sends nothing.
             if is_value_role(&t.role) || is_switch_like(&t.role) || t.role.is_text_input() {
-                return (Vec::new(), Vec::new(), SendMode::Tap);
+                return none();
             }
             let f = form();
             if !(tap_sends(t, category) || f.has_filled()) {
-                return (Vec::new(), Vec::new(), SendMode::Tap);
+                return none();
             }
             (f, SendMode::Tap, None)
         }
-        _ => return (Vec::new(), Vec::new(), SendMode::Tap),
+        _ => return none(),
     };
-    let typed_in = |e: &Element| {
-        raw.get(e.index)
-            .is_some_and(|r| typed.iter().any(|x| x.field == r.fingerprint))
-    };
-    // (rank, position, field)
-    let mut ranked: Vec<(u8, usize, SentField)> = Vec::new();
-    let mut listed: Vec<&Element> = Vec::new();
-    for (k, e) in form.listed.iter().enumerate() {
-        let f = sent_field(e, "");
-        let rank = if f.protected {
-            0
-        } else if typed_in(e) {
+    // (rank, position, field): typed 0, recipient- or amount-named 1, the rest 2.
+    let rank = |f: &SentField| {
+        if f.typed {
+            0u8
+        } else if f.recipient || f.amount {
             1
         } else {
             2
-        };
-        ranked.push((rank, k, f));
+        }
+    };
+    let mut ranked: Vec<(u8, usize, SentField)> = Vec::new();
+    let mut listed: Vec<&Element> = Vec::new();
+    for (k, e) in form.listed.iter().enumerate() {
+        let f = sent_field(e, "", raw_len(e), typed_in(e));
+        ranked.push((rank(&f), k, f));
         listed.push(e);
     }
     let base = ranked.len();
@@ -2054,18 +2359,168 @@ fn what_is_sent<'a>(
         } else {
             " (not on screen)"
         };
-        let f = sent_field(&raw_input_element(r), note);
-        let rank = if f.protected { 0 } else { 2 };
-        ranked.push((rank, base + k, f));
+        let (el, len) = raw_input_element(r);
+        let f = sent_field(&el, note, len, raw_typed(r, typed));
+        ranked.push((rank(&f), base + k, f));
     }
     ranked.sort_by_key(|(rank, k, _)| (*rank, *k));
-    let mut sent: Vec<SentField> = Vec::new();
+    let mut fields: Vec<SentField> = Vec::new();
     if let Some(field) = first {
-        sent.push(sent_field(field, ""));
+        fields.push(sent_field(field, "", raw_len(field), typed_in(field)));
         listed.push(field);
     }
-    sent.extend(ranked.into_iter().map(|(_, _, f)| f));
-    (sent, listed, mode)
+    fields.extend(ranked.into_iter().map(|(_, _, f)| f));
+    let total = fields.len().saturating_add(form.unlisted_more);
+    let sends = mode != SendMode::Tap
+        || tap_sends(t, category)
+        || matches!(category, RiskCategory::Unverified);
+    Sent {
+        fields,
+        total,
+        listed,
+        mode,
+        sends,
+    }
+}
+
+/// One field of `Sends:` with its value cut to `cap` characters (0: the value is not
+/// quoted, only how long it is), or `Name (shown above)` when its value is under
+/// `To/Account:` (`above`).
+fn sent_item(f: &SentField, cap: usize, above: bool) -> String {
+    let name = &f.name;
+    if above {
+        return format!("{name} (shown above){}", f.note);
+    }
+    let value = match f.value.as_deref() {
+        None => " (hidden)".to_owned(),
+        Some("") => " (empty)".to_owned(),
+        Some(v) => {
+            let n = n_chars(v);
+            if n <= cap && f.beyond == 0 {
+                format!(": \"{v}\"")
+            } else if cap == 0 {
+                let left = n.saturating_add(f.beyond);
+                format!(" (filled, {left} character{} not shown)", plural(left))
+            } else {
+                let head: String = v.chars().take(cap).collect();
+                let left = n.saturating_sub(cap.min(n)).saturating_add(f.beyond);
+                format!(
+                    ": \"{}…\" ({left} more character{} not shown)",
+                    head.trim_end(),
+                    plural(left)
+                )
+            }
+        }
+    };
+    format!("{name}{value}{}", f.note)
+}
+
+/// `"s"` unless `n` is 1.
+fn plural(n: usize) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+/// The largest `v` in `lo..=hi` for which `fits(v)` holds (`fits` is monotone: true up to
+/// some value), or `None` when it fails at `lo`.
+fn largest_fitting(lo: usize, hi: usize, mut fits: impl FnMut(usize) -> bool) -> Option<usize> {
+    if hi < lo || !fits(lo) {
+        return None;
+    }
+    let (mut ok, mut bad) = (lo, hi.saturating_add(1));
+    while bad - ok > 1 {
+        let mid = ok + (bad - ok) / 2;
+        if fits(mid) {
+            ok = mid;
+        } else {
+            bad = mid;
+        }
+    }
+    Some(ok)
+}
+
+/// Slot 4 (ninth review): what is sent, within `budget` characters. `Sends:` for a
+/// sending action, `The form holds:` for any other; Return alone says `, which sends the
+/// field's whole content: "…"`. Each value is shown up to [`MAX_SENT_VALUE_CHARS`]; to fit,
+/// the values are cut to a common length (down to 24), then the list is cut from its end
+/// (`Sends: N fields (k shown): …`), then the values are left out (`(filled, N characters
+/// not shown)`), then only the count stays. `above[i]`: field `i` is shown under
+/// `To/Account:`. Every cut is stated.
+fn sends_slot(sent: &Sent<'_>, above: &[bool], budget: usize) -> String {
+    let fields = &sent.fields;
+    if fields.is_empty() && sent.total == 0 {
+        return String::new();
+    }
+    let is_above = |i: usize| above.get(i).copied().unwrap_or(false);
+    if sent.mode == SendMode::ReturnAlone {
+        let render = |cap: usize| -> String {
+            match fields.first() {
+                Some(f) => {
+                    let item = sent_item(f, cap, false);
+                    let rest = item.get(f.name.len()..).unwrap_or_default();
+                    format!(", which sends the field's whole content{rest}")
+                }
+                None => ", which sends the field's whole content".to_owned(),
+            }
+        };
+        if let Some(cap) =
+            largest_fitting(1, MAX_SENT_VALUE_CHARS, |c| n_chars(&render(c)) <= budget)
+        {
+            return render(cap);
+        }
+        // No room for any of the value: how long it is.
+        let left = fields.first().map_or(0, |f| {
+            f.value
+                .as_deref()
+                .map_or(0, n_chars)
+                .saturating_add(f.beyond)
+        });
+        return format!(
+            ", which sends the field's whole content ({left} character{} not shown)",
+            plural(left)
+        );
+    }
+    let prefix = if sent.mode == SendMode::ReturnForm {
+        ", which submits the form. "
+    } else {
+        ". "
+    };
+    let word = if sent.sends || sent.mode == SendMode::ReturnForm {
+        "Sends"
+    } else {
+        "The form holds"
+    };
+    let render = |k: usize, cap: usize| -> String {
+        let items: Vec<String> = fields
+            .iter()
+            .take(k)
+            .enumerate()
+            .map(|(i, f)| sent_item(f, cap, is_above(i)))
+            .collect();
+        let head = if k >= sent.total {
+            format!("{prefix}{word}: ")
+        } else if k == 0 {
+            format!("{prefix}{word}: {} fields (0 shown)", sent.total)
+        } else {
+            format!("{prefix}{word}: {} fields ({k} shown): ", sent.total)
+        };
+        format!("{head}{}", items.join("; "))
+    };
+    let all = fields.len();
+    let fits = |k: usize, cap: usize| n_chars(&render(k, cap)) <= budget;
+    if let Some(cap) = largest_fitting(24, MAX_SENT_VALUE_CHARS, |c| fits(all, c)) {
+        return render(all, cap);
+    }
+    if let Some(k) = largest_fitting(1, all, |k| fits(k, 24)) {
+        return render(k, 24);
+    }
+    if let Some(k) = largest_fitting(1, all, |k| fits(k, 0)) {
+        return render(k, 0);
+    }
+    render(0, 0)
 }
 
 /// Whether the session's typing in this task makes a tap `action` a presumed submit
@@ -2075,8 +2530,15 @@ fn what_is_sent<'a>(
 /// else: not a text input, switch, slider, picker, stepper or tab, not in a tab bar, and
 /// not labelled like cancel, close, back, clear, emoji, dictation, attach, add, photo,
 /// camera, keyboard switch, formatting, expand/collapse or show/hide password
-/// ([`NOT_SUBMIT_WORDS`]). Taps, long presses and tap points (their riskiest control); not
-/// on the home screen.
+/// ([`NOT_SUBMIT_WORDS`]; "forgot" since the ninth review). Taps, long presses and tap
+/// points (their riskiest control); not on the home screen.
+///
+/// **Ninth review.** The typed field is found among the form's unlisted inputs too (a field
+/// scrolled out of the list: by the fingerprint compaction gave it, or by the text Jarvis
+/// typed), at most [`MAX_UNLISTED_INPUTS`] of them. Narrowing (a): in a login form (it
+/// holds a secure field, and every filled non-secure field is named like an account —
+/// email, username, user, login, ID, account, phone, mobile) a tap is not presumed to send
+/// what was typed; its own label is still classified.
 pub fn presumed_submit(
     action: &Action,
     screen: &CompactScreen,
@@ -2111,21 +2573,58 @@ pub fn presumed_submit(
             return false;
         }
     }
-    form_of(t, screen, tree).listed.iter().any(|e| {
-        let search = e.role == Role::SearchField
-            || has_word(&field_name(e), &["search"])
-            || has_word(e.placeholder.as_deref().unwrap_or_default(), &["search"]);
-        !search
+    let form = form_of(t, screen, tree);
+    // Narrowing (a), ninth review: a login form (a secure field, and only email or
+    // username fields filled besides) is not presumed submitted by what Jarvis typed in the
+    // email field; the target's own label is still classified, and typing the password is
+    // handed to the owner as before.
+    if form.has_secure && form.filled_names().all(|n| login_name(&n)) {
+        return false;
+    }
+    let search_named = |role: &Role, name: &str, placeholder: Option<&str>| {
+        *role == Role::SearchField
+            || has_word(name, &["search"])
+            || has_word(placeholder.unwrap_or_default(), &["search"])
+    };
+    let listed = form.listed.iter().any(|e| {
+        !search_named(&e.role, &field_name(e), e.placeholder.as_deref())
             && !e.secure
             && field_value(e).is_some()
             && typed.iter().any(|x| x.field == e.fingerprint)
-    })
+    });
+    // Ninth review: the typed field may have scrolled out of the list; it is still in the
+    // form's unlisted inputs, found by its fingerprint or by the text Jarvis typed.
+    listed
+        || form.unlisted.iter().any(|r| {
+            let name = r
+                .label
+                .as_deref()
+                .or(r.placeholder.as_deref())
+                .or(r.identifier.as_deref())
+                .unwrap_or_default();
+            !search_named(&r.role, name, r.placeholder.as_deref())
+                && !r.secure
+                && raw_typed(r, typed)
+        })
+}
+
+/// Field names of a login form's account field (narrowing (a), ninth review): email,
+/// username, user, login, Apple ID, account, phone or mobile number.
+const LOGIN_NAME_WORDS: &[&str] = &[
+    "email", "mail", "username", "user", "login", "id", "account", "phone", "mobile",
+];
+
+/// Whether a field name reads like a login's account field ([`LOGIN_NAME_WORDS`]).
+fn login_name(name: &str) -> bool {
+    let lower = name.to_lowercase().replace(['-', '_'], "");
+    has_word(&lower, LOGIN_NAME_WORDS) || lower.contains("email") || lower.contains("username")
 }
 
 /// Words of a control next to a composer that clearly do not submit it (see
 /// [`presumed_submit`]); SF Symbol names split into these words too (`xmark.circle`,
 /// `face.smiling`, `paperclip`, `mic.fill`).
 const NOT_SUBMIT_WORDS: &[&str] = &[
+    "forgot",
     "cancel",
     "close",
     "back",
@@ -2177,57 +2676,60 @@ fn not_submit_label(label: &str) -> bool {
         .any(|w| NOT_SUBMIT_WORDS.contains(&w.as_str()))
 }
 
-/// The steps a summary is shortened by, in priority order (eighth review), lowest first:
-/// (d) other facts, (c) what is sent, (b) amounts and recipients, (a) the action itself.
-/// `next_to`, `under`, `selected_entry` and `field_entry` (d).
-const D_LEVELS: [(usize, usize, usize, usize); 4] = [
-    (MAX_NEIGHBOUR_CHARS, MAX_NEIGHBOUR_CHARS, 40, 40),
-    (24, 30, 24, 24),
-    (16, 24, 16, 0),
-    (0, 0, 0, 0),
-];
-/// `amount_entry` and `recipient_entry` (b).
-const B_LEVELS: [(usize, usize); 5] = [(40, 40), (30, 30), (24, 24), (0, 20), (0, 0)];
-/// `label` and `app` (a).
-const A_LEVELS: [(usize, usize); 4] = [
-    (MAX_QUOTE_CHARS, MAX_QUOTE_CHARS),
-    (40, 30),
-    (30, 24),
-    (24, 20),
-];
+/// The summary's reserved slots (ninth review), in priority order, each as (minimum,
+/// maximum) characters of a [`MAX_SUMMARY_CHARS`] summary: (1) the action line — verb,
+/// target, app, and Return's `Typed:`; (2) the amounts; (3) the recipients; (4) what is
+/// sent; (5) the other facts (`next to`, `under`, `Selected:`, `Fields:`). See
+/// `summarize_with`.
+const SLOT_ACTION: (usize, usize) = (92, 220);
+/// Slot 2, the amounts: the total and the largest amount alone always fit the minimum.
+const SLOT_AMOUNTS: (usize, usize) = (90, 200);
+/// Slot 3, the recipients: the first at 40 characters always fits the minimum.
+const SLOT_RECIPIENTS: (usize, usize) = (72, 160);
+/// Slot 4, what is sent: the count always fits the minimum; no maximum of its own.
+const SLOT_SENDS: (usize, usize) = (76, usize::MAX);
+/// Slot 5, the other facts: their counts fit the minimum.
+const SLOT_OTHER: (usize, usize) = (48, 160);
 
-/// The limits of one step.
-fn limits(a: (usize, usize), b: (usize, usize), d: (usize, usize, usize, usize)) -> Limits {
-    Limits {
-        label: a.0,
-        app: a.1,
-        amount_entry: b.0,
-        recipient_entry: b.1,
-        next_to: d.0,
-        under: d.1,
-        selected_entry: d.2,
-        field_entry: d.3,
+/// `raw` with every label, value and placeholder cut to [`MAX_READ_VALUE_CHARS`] (before
+/// redaction; ninth review).
+fn read_capped(raw: &CompactScreen) -> CompactScreen {
+    let long = |s: &str| s.len() > MAX_READ_VALUE_CHARS;
+    if !raw.elements.iter().any(|e| {
+        long(&e.label)
+            || e.value.as_deref().is_some_and(long)
+            || e.placeholder.as_deref().is_some_and(long)
+    }) {
+        return raw.clone();
+    }
+    let mut out = raw.clone();
+    for e in &mut out.elements {
+        e.label = read_cap(&e.label);
+        e.value = e.value.as_deref().map(read_cap);
+        e.placeholder = e.placeholder.as_deref().map(read_cap);
+    }
+    out
+}
+
+/// A sent field as a `To/Account:` entry: `Name: "value"`.
+fn recipient_entry(f: &SentField) -> String {
+    match f.value.as_deref() {
+        None => format!("{} (hidden){}", f.name, f.note),
+        Some("") => format!("{} (empty){}", f.name, f.note),
+        Some(v) => format!("{}: \"{v}\"{}", f.name, f.note),
     }
 }
 
-/// The largest `v` in `lo..=hi` for which `fits(v)` holds (`fits` is monotone: true up to
-/// some value), or `None` when it fails at `lo`.
-fn largest_fitting(lo: usize, hi: usize, mut fits: impl FnMut(usize) -> bool) -> Option<usize> {
-    if hi < lo || !fits(lo) {
-        return None;
-    }
-    let (mut ok, mut bad) = (lo, hi.saturating_add(1));
-    while bad - ok > 1 {
-        let mid = ok + (bad - ok) / 2;
-        if fits(mid) {
-            ok = mid;
-        } else {
-            bad = mid;
-        }
-    }
-    Some(ok)
-}
-
+/// How a summary is composed (ninth review: reserved slots, one pass). Walking the slots in
+/// priority order — (1) the action, (2) the amounts, (3) the recipients, (4) what is sent,
+/// (5) the other facts — each slot gets up to its maximum but never the summed minimums of
+/// the present slots after it; what a slot leaves unused flows to the later ones. Each slot
+/// renders within its allotment, saying what it leaves out (`and N more`, `N fields (k
+/// shown)`, `(N more characters not shown)`), so no slot is ever dropped silently and the
+/// whole is within the bound by construction (asserted in debug builds; a release build
+/// cuts a slot that would not fit to its allotment, never another slot). The text keeps
+/// the reading order: the action line (with `next to`/`under`), what is sent, `Typed:`, the
+/// amounts, the recipients, `Selected:`, `Fields:`.
 #[allow(clippy::too_many_lines)]
 fn summarize_with(
     action: &Action,
@@ -2238,8 +2740,9 @@ fn summarize_with(
     return_only: bool,
     max: usize,
 ) -> String {
-    // Facts and quoted labels come from the prompt's label-aware redaction.
-    let redacted = redact_screen(raw);
+    // Facts and quoted labels come from the prompt's label-aware redaction, of values cut
+    // to a bounded length first (ninth review).
+    let redacted = redact_screen(&read_capped(raw));
     let screen = &redacted;
     // Actions in the foreground app state the screen's facts after the action itself.
     let target = match action {
@@ -2253,9 +2756,7 @@ fn summarize_with(
         Action::TapPoint { x, y } => crate::classify::tap_point(*x, *y, screen).1,
         _ => None,
     };
-    // What the action sends (seventh and eighth reviews), each value shown whole up to
-    // its cap.
-    let (sent, sent_fields, mode) = what_is_sent(
+    let mut sent = what_is_sent(
         action,
         target,
         screen,
@@ -2265,13 +2766,14 @@ fn summarize_with(
         typed,
         return_only,
     );
+    // A tap presumed to submit what Jarvis typed sends, whatever its category says.
+    sent.sends |= presumed_submit(action, raw, tree, typed);
     let with_facts = uses_foreground_app(action) && !matches!(action, Action::Look);
+    let pays = matches!(
+        category,
+        RiskCategory::Payment | RiskCategory::SendMessage | RiskCategory::Purchase
+    );
     let facts = if with_facts {
-        let pays = matches!(
-            category,
-            RiskCategory::Payment | RiskCategory::SendMessage | RiskCategory::Purchase
-        );
-        let fields = field_facts(screen, raw, target, typed, &sent_fields);
         Facts {
             amounts: amount_facts(screen, target),
             recipients: if pays {
@@ -2280,7 +2782,7 @@ fn summarize_with(
                 Vec::new()
             },
             selected: selected_facts(screen, target),
-            fields,
+            fields: field_facts(screen, raw, target, typed, &sent.listed),
         }
     } else {
         Facts {
@@ -2290,96 +2792,134 @@ fn summarize_with(
             fields: Vec::new(),
         }
     };
-    // What was typed, beside the content Return sends.
-    let typed_part = match action {
-        Action::Type { text, .. } if return_only => {
-            Some(format!("Typed: {}", typed_words(text, category, target)))
-        }
-        _ => None,
-    };
-    let build = |l: Limits, shape: &SendShape| -> String {
-        let mut line = action_line(action, screen, category, l, tree, return_only);
-        if !sent.is_empty() {
-            line.push_str(&sent_part(&sent, shape, mode));
-        }
-        let mut parts = vec![line];
-        parts.extend(typed_part.clone());
-        parts.extend(facts_suffix(&facts, l));
-        parts.join(". ")
-    };
-    let fits = |s: &str| s.chars().count() <= max;
-    let n = sent.len();
-    let lens: Vec<usize> = sent
+    // `To/Account:` entries: the recipients read from the screen, then the sent fields
+    // named like a recipient.
+    let cap = crate::sanitize::MAX_SCREEN_TEXT_CHARS;
+    let mut entries: Vec<String> = facts
+        .recipients
         .iter()
-        .map(|f| f.value.as_deref().map_or(0, |v| v.chars().count()))
+        .map(|t| clean(t, cap).replace(';', ","))
         .collect();
-    // The list never drops a protected field (recipients and amounts), nor Return's own
-    // field (first); they come first (see `what_is_sent`).
-    let protected = sent
-        .iter()
-        .rposition(|f| f.protected)
-        .map_or(0, |i| i + 1)
-        .max(usize::from(mode == SendMode::ReturnForm).min(n));
-    let shape = |cap: usize, guard: usize, shown: usize| SendShape {
-        // Protected values keep up to `guard`, the others up to `cap`.
-        keep: sent
-            .iter()
-            .zip(&lens)
-            .map(|(f, len)| (*len).min(if f.protected { guard } else { cap }))
-            .collect(),
-        shown,
+    let mut entry_field: Vec<Option<usize>> = vec![None; entries.len()];
+    if pays {
+        for (i, f) in sent.fields.iter().enumerate().filter(|(_, f)| f.recipient) {
+            entries.push(recipient_entry(f));
+            entry_field.push(Some(i));
+        }
+    }
+    let (next_to, under) = match (action, target) {
+        (Action::Tap { .. } | Action::LongPress { .. }, Some(t)) => press_context(t, screen, tree),
+        _ => (String::new(), String::new()),
     };
-    let full = shape(MAX_SENT_VALUE_CHARS, MAX_SENT_VALUE_CHARS, n);
-    let (a0, b0) = (A_LEVELS[0], B_LEVELS[0]);
-    // (d): the other facts shrink first.
-    for d in D_LEVELS {
-        let line = build(limits(a0, b0, d), &full);
-        if fits(&line) {
-            return finish_summary(&line, max);
+    let other = !(next_to.is_empty()
+        && under.is_empty()
+        && facts.selected.is_empty()
+        && facts.fields.is_empty());
+    let present = [
+        true,
+        !facts.amounts.is_empty(),
+        !entries.is_empty(),
+        !sent.fields.is_empty(),
+        other,
+    ];
+    let bounds = [
+        SLOT_ACTION,
+        SLOT_AMOUNTS,
+        SLOT_RECIPIENTS,
+        SLOT_SENDS,
+        SLOT_OTHER,
+    ];
+    let slots = Slots::new(present, bounds, max);
+    let mut room = max;
+    // (1) The action.
+    let a1 = slots.allot(0, room);
+    let (head, tail, typed_part) = action_slot(action, screen, category, return_only, a1);
+    room = room.saturating_sub(n_chars(&head) + n_chars(&tail) + n_chars(&typed_part));
+    // (2) The amounts.
+    let a2 = slots.allot(1, room);
+    let amounts = fit_slot(amounts_slot(&facts.amounts, a2), a2);
+    room = room.saturating_sub(n_chars(&amounts));
+    // (3) The recipients.
+    let a3 = slots.allot(2, room);
+    let (recipients, whole) = recipients_slot(&entries, a3);
+    let recipients = fit_slot(recipients, a3);
+    room = room.saturating_sub(n_chars(&recipients));
+    let mut above = vec![false; sent.fields.len()];
+    for (k, f) in entry_field.iter().enumerate() {
+        if let (Some(i), true) = (f, whole.get(k).copied().unwrap_or(false)) {
+            if let Some(a) = above.get_mut(*i) {
+                *a = true;
+            }
         }
     }
-    let d_last = D_LEVELS[3];
-    let l_c = limits(a0, b0, d_last);
-    // (c): what is sent gives up characters: the other values to a common share (down to
-    // 24), then fields from the end of the list (never the protected ones), then the
-    // remaining values to nothing.
-    if n > 0 {
-        let at = |cap: usize, shown: usize| build(l_c, &shape(cap, MAX_SENT_VALUE_CHARS, shown));
-        if let Some(cap) = largest_fitting(24, MAX_SENT_VALUE_CHARS, |c| fits(&at(c, n))) {
-            return finish_summary(&at(cap, n), max);
-        }
-        if let Some(shown) = largest_fitting(protected, n, |k| fits(&at(24, k))) {
-            return finish_summary(&at(24, shown), max);
-        }
-        if let Some(cap) = largest_fitting(0, 24, |c| fits(&at(c, protected))) {
-            return finish_summary(&at(cap, protected), max);
-        }
-    }
-    // (b): amounts and recipients (and the protected sent values) give up characters.
-    let rest = shape(0, MAX_SENT_VALUE_CHARS, protected);
-    for b in B_LEVELS {
-        let line = build(limits(a0, b, d_last), &rest);
-        if fits(&line) {
-            return finish_summary(&line, max);
-        }
-    }
-    let b_last = B_LEVELS[4];
-    if protected > 0 {
-        let at = |guard: usize| build(limits(a0, b_last, d_last), &shape(0, guard, protected));
-        if let Some(guard) = largest_fitting(0, MAX_SENT_VALUE_CHARS, |g| fits(&at(g))) {
-            return finish_summary(&at(guard), max);
-        }
-    }
-    // (a): the action itself, last.
-    let none = shape(0, 0, 0);
-    let mut line = String::new();
-    for a in A_LEVELS {
-        line = build(limits(a, b_last, d_last), &none);
-        if fits(&line) {
-            break;
-        }
-    }
+    // (4) What is sent.
+    let a4 = slots.allot(3, room);
+    let sends = fit_slot(sends_slot(&sent, &above, a4), a4);
+    room = room.saturating_sub(n_chars(&sends));
+    // (5) The other facts.
+    let a5 = slots.allot(4, room);
+    let (inline, rest) = other_slot(&next_to, &under, &facts, a5);
+    let (inline, rest) = if n_chars(&inline) + n_chars(&rest) <= a5 {
+        (inline, rest)
+    } else {
+        (String::new(), fit_slot(rest, a5))
+    };
+    let line = format!("{head}{inline}{tail}{sends}{typed_part}{amounts}{recipients}{rest}");
     finish_summary(&line, max)
+}
+
+/// The reserved slots of one summary (see `summarize_with`).
+struct Slots {
+    present: [bool; 5],
+    mins: [usize; 5],
+    maxs: [usize; 5],
+}
+
+impl Slots {
+    /// Slots for a summary of `max` characters: an empty slot reserves nothing; when the
+    /// minimums of the present slots exceed `max` (never for the 480 bound, even behind the
+    /// runner-text warning) they are scaled down in proportion; the action alone may use the
+    /// whole bound.
+    fn new(present: [bool; 5], bounds: [(usize, usize); 5], max: usize) -> Slots {
+        let mut mins = [0usize; 5];
+        let mut maxs = [0usize; 5];
+        for (i, (p, (lo, hi))) in present.iter().zip(bounds).enumerate() {
+            if let (Some(m), Some(x)) = (mins.get_mut(i), maxs.get_mut(i)) {
+                *m = if *p { lo } else { 0 };
+                *x = hi;
+            }
+        }
+        let sum: usize = mins.iter().sum();
+        if sum > max && sum > 0 {
+            for m in &mut mins {
+                *m = m.saturating_mul(max) / sum;
+            }
+        }
+        if present.iter().skip(1).all(|p| !p) {
+            if let Some(m) = maxs.first_mut() {
+                *m = max;
+            }
+        }
+        Slots {
+            present,
+            mins,
+            maxs,
+        }
+    }
+
+    /// The allotment of slot `i` when `room` characters are left: up to its maximum, never
+    /// into the minimums of the present slots after it.
+    fn allot(&self, i: usize, room: usize) -> usize {
+        if !self.present.get(i).copied().unwrap_or(false) {
+            return 0;
+        }
+        let reserve: usize = self.mins.iter().skip(i + 1).sum();
+        self.maxs
+            .get(i)
+            .copied()
+            .unwrap_or(0)
+            .min(room.saturating_sub(reserve))
+    }
 }
 
 /// The final sanitising pass over a composed summary. The composition always fits the
@@ -2393,41 +2933,91 @@ fn finish_summary(line: &str, max: usize) -> String {
     sanitize_screen_text_with_limit(line, max)
 }
 
-/// What was typed, as a summary says it: quoted, or "a secret (N characters)".
-fn typed_words(text: &str, category: RiskCategory, target: Option<&Element>) -> String {
+/// What was typed, as a summary says it: quoted (at most `cap` characters), or "a secret
+/// (N characters)".
+fn typed_words(text: &str, category: RiskCategory, target: Option<&Element>, cap: usize) -> String {
     let secret = category == RiskCategory::Credential
         || contains_secret(text)
         || target.is_some_and(|t| t.secure);
     if secret {
         format!("a secret ({} characters)", text.chars().count())
     } else {
-        format!("\"{}\"", clean(text, MAX_QUOTE_CHARS))
+        format!("\"{}\"", clean(text, cap))
     }
 }
 
-/// What `action` does, without the screen's facts.
+/// Slot 1: the action line as (head, tail, typed) within `budget` characters, the target's
+/// label, the app's name and Return's typed text quoted at 60, then 40/30/40, 30/24/30,
+/// 24/20/24 and 16/12/16 characters. `next to`/`under` (slot 5) go between head and tail.
+fn action_slot(
+    action: &Action,
+    screen: &CompactScreen,
+    category: RiskCategory,
+    return_only: bool,
+    budget: usize,
+) -> (String, String, String) {
+    const LEVELS: [(usize, usize, usize); 5] = [
+        (MAX_QUOTE_CHARS, MAX_QUOTE_CHARS, MAX_QUOTE_CHARS),
+        (40, 30, 40),
+        (30, 24, 30),
+        (24, 20, 24),
+        (16, 12, 16),
+    ];
+    let typed_part = |cap: usize| match action {
+        Action::Type { element, text, .. } if return_only => format!(
+            ". Typed: {}",
+            typed_words(text, category, type_target(*element, screen), cap)
+        ),
+        _ => String::new(),
+    };
+    let mut last = (String::new(), String::new(), String::new());
+    for (label, app, typed) in LEVELS {
+        let (h, t) = action_line(action, screen, category, label, app, return_only);
+        let ty = typed_part(typed);
+        if n_chars(&h) + n_chars(&t) + n_chars(&ty) <= budget {
+            return (h, t, ty);
+        }
+        last = (h, t, ty);
+    }
+    let (h, t, ty) = last;
+    let room = budget.saturating_sub(n_chars(&t) + n_chars(&ty));
+    if room >= 16 {
+        (hard_cut(&h, room), t, ty)
+    } else {
+        (
+            hard_cut(&format!("{h}{t}{ty}"), budget),
+            String::new(),
+            String::new(),
+        )
+    }
+}
+
+/// What `action` does, without the screen's facts, as (head, tail): the tail is ` in App`
+/// for actions in the foreground app (`next to`/`under` go between them), empty otherwise.
+/// The target's label is quoted at most `label` characters, the app's name `app`.
 fn action_line(
     action: &Action,
     screen: &CompactScreen,
     category: RiskCategory,
-    l: Limits,
-    tree: Option<&ScreenTree<'_>>,
+    label: usize,
+    app: usize,
     return_only: bool,
-) -> String {
+) -> (String, String) {
     let app_name = screen
         .app_name
         .as_deref()
         .filter(|n| !n.trim().is_empty())
         .unwrap_or(&screen.app_bundle_id);
-    let in_app = format!(" in {}", clean(app_name, l.app));
+    let in_app = format!(" in {}", clean(app_name, app));
+    let whole = |s: String| (s, String::new());
     match action {
         Action::Tap { element } => match screen.get(*element) {
-            Some(el) => press_summary("Tap", el, screen, &in_app, l, tree),
-            None => format!("Tap element {element}{in_app}"),
+            Some(el) => press_summary("Tap", el, &in_app, label),
+            None => (format!("Tap element {element}"), in_app),
         },
         Action::LongPress { element, .. } => match screen.get(*element) {
-            Some(el) => press_summary("Long-press", el, screen, &in_app, l, tree),
-            None => format!("Long-press element {element}{in_app}"),
+            Some(el) => press_summary("Long-press", el, &in_app, label),
+            None => (format!("Long-press element {element}"), in_app),
         },
         Action::Type {
             element,
@@ -2435,10 +3025,10 @@ fn action_line(
             submit,
         } => {
             let target = type_target(*element, screen);
-            let what = typed_words(text, category, target);
+            let what = typed_words(text, category, target, label);
             let into = target.map_or_else(
                 || "the focused field".to_owned(),
-                |t| describe_with(t, l.label),
+                |t| describe_with(t, label),
             );
             if return_only {
                 let key = screen
@@ -2450,39 +3040,51 @@ fn action_line(
                     .map(|k| format!(" (\"{k}\")"))
                     .unwrap_or_default();
                 // What it sends (the field's whole content) and what was typed follow.
-                return format!("Press Return{key} in {into}{in_app}");
+                return (format!("Press Return{key} in {into}"), in_app);
             }
             let ret = if *submit { " and press Return" } else { "" };
-            format!("Type {what} into {into}{ret}{in_app}")
+            (format!("Type {what} into {into}{ret}"), in_app)
         }
-        Action::Clear { element } => format!("Clear {}{in_app}", describe_index(screen, *element)),
+        Action::Clear { element } => (
+            format!("Clear {}", describe_index_with(screen, *element, label)),
+            in_app,
+        ),
         Action::Scroll { direction, element } => match element {
-            Some(i) => format!(
-                "Scroll {direction:?} in {}{in_app}",
-                describe_index(screen, *i)
+            Some(i) => (
+                format!(
+                    "Scroll {direction:?} in {}",
+                    describe_index_with(screen, *i, label)
+                ),
+                in_app,
             ),
-            None => format!("Scroll {direction:?}{in_app}"),
+            None => (format!("Scroll {direction:?}"), in_app),
         },
         Action::Swipe { direction, element } => match element {
-            Some(i) => format!(
-                "Swipe {direction:?} on {}{in_app}",
-                describe_index(screen, *i)
+            Some(i) => (
+                format!(
+                    "Swipe {direction:?} on {}",
+                    describe_index_with(screen, *i, label)
+                ),
+                in_app,
             ),
-            None => format!("Swipe {direction:?}{in_app}"),
+            None => (format!("Swipe {direction:?}"), in_app),
         },
         Action::TapPoint { x, y } => {
             // The element that decided the risk: the riskiest pressable one under the
             // point, never a decorative text inside it.
             let on = crate::classify::tap_point(*x, *y, screen)
                 .1
-                .map(|e| format!(" on {}", describe_with(e, l.label)))
+                .map(|e| format!(" on {}", describe_with(e, label)))
                 .unwrap_or_default();
-            format!("Tap at ({:.0}%, {:.0}%){on}{in_app}", x * 100.0, y * 100.0)
+            (
+                format!("Tap at ({:.0}%, {:.0}%){on}", x * 100.0, y * 100.0),
+                in_app,
+            )
         }
-        Action::PressHome => "Go to the Home Screen".to_owned(),
-        Action::OpenApp { app } => format!("Open {}", clean(app, MAX_QUOTE_CHARS)),
-        Action::OpenUrl { url } => format!("Open {}", clean(url, 120)),
-        Action::Wait { ms } => format!("Wait {ms} ms"),
+        Action::PressHome => whole("Go to the Home Screen".to_owned()),
+        Action::OpenApp { app } => whole(format!("Open {}", clean(app, MAX_QUOTE_CHARS))),
+        Action::OpenUrl { url } => whole(format!("Open {}", clean(url, 120))),
+        Action::Wait { ms } => whole(format!("Wait {ms} ms")),
         Action::CallTool { name, args } => {
             let mut parts = Vec::new();
             if let Some(map) = args.as_object() {
@@ -2495,18 +3097,18 @@ fn action_line(
                 }
             }
             if parts.is_empty() {
-                format!("Run {}", clean(name, MAX_QUOTE_CHARS))
+                whole(format!("Run {}", clean(name, MAX_QUOTE_CHARS)))
             } else {
-                format!(
+                whole(format!(
                     "Run {} ({})",
                     clean(name, MAX_QUOTE_CHARS),
                     parts.join(", ")
-                )
+                ))
             }
         }
-        Action::AskUser { question } => format!("Ask: {}", clean(question, 120)),
-        Action::Look => format!("Take a screenshot{in_app}"),
-        Action::Done { summary } => format!("Finish: {}", clean(summary, 120)),
-        Action::Fail { reason } => format!("Give up: {}", clean(reason, 120)),
+        Action::AskUser { question } => whole(format!("Ask: {}", clean(question, 120))),
+        Action::Look => ("Take a screenshot".to_owned(), in_app),
+        Action::Done { summary } => whole(format!("Finish: {}", clean(summary, 120))),
+        Action::Fail { reason } => whole(format!("Give up: {}", clean(reason, 120))),
     }
 }

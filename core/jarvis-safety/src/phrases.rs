@@ -1024,11 +1024,43 @@ pub(crate) fn sf_symbol_risk(label: &str) -> Option<RiskCategory> {
         .iter()
         .filter(|(name, _)| {
             l == *name
-                || l.strip_prefix(name)
-                    .is_some_and(|rest| rest.starts_with('.'))
+                || l.strip_prefix(name).is_some_and(|rest| {
+                    rest.strip_prefix('.')
+                        .is_some_and(|rest| continues_symbol(name, rest))
+                })
         })
         .max_by_key(|(name, _)| name.len());
     Some(best.map_or(RiskCategory::None, |(_, c)| *c))
+}
+
+/// Direction words: a symbol entry ending in one names that direction only.
+const SYMBOL_DIRECTIONS: &[&str] = &["up", "down", "left", "right", "forward", "backward"];
+/// Style components that keep a symbol's meaning (`arrow.up.circle.fill`).
+const SYMBOL_STYLES: &[&str] = &[
+    "fill",
+    "circle",
+    "square",
+    "rectangle",
+    "app",
+    "badge",
+    "inverse",
+    "rtl",
+    "ltr",
+];
+
+/// Whether the dotted components `rest` may continue the symbol entry `name` (ninth
+/// review, narrowing (c): whole components): after an entry ending in a direction
+/// (`arrow.up`) only style components (`circle`, `fill`, …) follow, so `arrow.up` does not
+/// match `arrow.up.right`, `arrow.up.forward` or `arrow.up.arrow.down`; any other entry
+/// (`trash`, `phone`) is continued by anything (`trash.fill`, `phone.arrow.up.right`).
+fn continues_symbol(name: &str, rest: &str) -> bool {
+    let directional = name
+        .rsplit('.')
+        .next()
+        .is_some_and(|last| SYMBOL_DIRECTIONS.contains(&last));
+    !rest.is_empty()
+        && rest.split('.').all(|c| !c.is_empty())
+        && (!directional || rest.split('.').all(|c| SYMBOL_STYLES.contains(&c)))
 }
 
 /// The category the action phrase table assigns to `label` on its own, without screen

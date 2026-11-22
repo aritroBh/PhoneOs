@@ -30,6 +30,15 @@
 //! of subtree are the keyboard for the tap-point rule (`CompactView::nodes`); the keyboard
 //! window's other nodes (its full-screen containers) are not.
 //!
+//! **Only inside the root's frame (ninth review).** The reduced hashing covers a node of
+//! such a subtree only when its frame lies inside the subtree root's own frame (1 pt
+//! tolerance; only the part of its frame on screen counts, so a node with nothing on screen
+//! draws nothing and counts as inside). Any node of
+//! the subtree reaching outside it is **ordinary content**: hashed fully, listed, and
+//! contesting taps like any node (an app's accessory view can carry the identifier
+//! `SystemInputAssistantView` and draw a control over the app's Send button). The test is
+//! per node: an escaped node's children inside the root's frame stay reduced.
+//!
 //! # Shown
 //!
 //! A node is shown when no ancestor (nor itself) is pruned (hidden with a real frame, see
@@ -196,11 +205,76 @@ fn is_web(role: &Role) -> bool {
     }
 }
 
+/// How far (points) a node of a keyboard or input-assistant subtree may reach outside the
+/// subtree root's frame and still count as inside it.
+const QUIET_TOLERANCE: f64 = 1.0;
+
+/// Whether the on-screen part of `inner` (clipped to `bounds`, unless they are empty) lies
+/// inside `outer` (within [`QUIET_TOLERANCE`]); a frame with nothing on screen draws
+/// nothing and counts as inside (a prediction bar's candidates scrolled off the edge).
+fn quiet_inside(outer: &Rect, inner: &Rect, bounds: &Rect) -> bool {
+    let inner = if inner.is_empty() {
+        None
+    } else if bounds.is_empty() {
+        Some(*inner)
+    } else {
+        inner.intersection(bounds)
+    };
+    let Some(inner) = inner.filter(|f| !f.is_empty()) else {
+        return true;
+    };
+    inner.x >= outer.x - QUIET_TOLERANCE
+        && inner.y >= outer.y - QUIET_TOLERANCE
+        && inner.max_x() <= outer.max_x() + QUIET_TOLERANCE
+        && inner.max_y() <= outer.max_y() + QUIET_TOLERANCE
+}
+
+/// Every node whose text is left out (see the module docs, *Keyboard*): the nodes of the
+/// quiet subtrees (`roots`) that lie inside their outermost root's frame, with their kind
+/// (a keyboard inside the assistant is still a keyboard). Nodes reaching outside are left
+/// out of the map: they are ordinary content.
+fn quiet_nodes(
+    screen: &Screen,
+    roots: &HashMap<usize, Quiet>,
+    excluded: &HashSet<usize>,
+) -> HashMap<usize, Quiet> {
+    let mut out = HashMap::new();
+    if roots.is_empty() {
+        return out;
+    }
+    let bounds = screen.bounds();
+    // (node, inherited kind, outermost root frame)
+    let mut stack: Vec<(&UiNode, Quiet, Option<Rect>)> = vec![(&screen.root, Quiet::No, None)];
+    while let Some((n, kind, clip)) = stack.pop() {
+        if excluded.contains(&addr(n)) {
+            continue;
+        }
+        let (kind, clip) = match roots.get(&addr(n)) {
+            Some(q) => {
+                let k = if kind == Quiet::Keyboard { kind } else { *q };
+                (k, clip.or(Some(n.frame)))
+            }
+            None => (kind, clip),
+        };
+        if kind != Quiet::No {
+            let root = roots.contains_key(&addr(n));
+            if root || clip.is_some_and(|c| quiet_inside(&c, &n.frame, &bounds)) {
+                out.insert(addr(n), kind);
+            }
+        }
+        stack.extend(n.children.iter().rev().map(|c| (c, kind, clip)));
+    }
+    out
+}
+
 /// One screen as both the digest and compaction read it (see the module docs).
 pub(crate) struct Layout<'a> {
     excluded: HashSet<usize>,
     /// Roots of the subtrees whose text is not hashed (keyboards, the input assistant).
     quiet: HashMap<usize, Quiet>,
+    /// Every node whose text is not hashed: the quiet subtrees' nodes inside their root's
+    /// frame (ninth review; see the module docs).
+    quiet_nodes: HashMap<usize, Quiet>,
     /// The topmost shown Alert/Sheet (last in document order), outside excluded subtrees.
     pub alert: Option<&'a UiNode>,
     /// The first shown keyboard: its frame occludes, its Return key is a cue.
@@ -237,9 +311,11 @@ impl<'a> Layout<'a> {
             keyboard.map(|k| k.frame)
         };
         let quiet = keyboard_parts(screen, &excluded);
+        let quiet_nodes = quiet_nodes(screen, &quiet, &excluded);
         Layout {
             excluded,
             quiet,
+            quiet_nodes,
             alert,
             keyboard,
             bounds: screen.bounds(),
@@ -258,6 +334,25 @@ impl<'a> Layout<'a> {
             return None;
         }
         self.quiet.get(&addr(node)).copied()
+    }
+
+    /// How much of `node`'s own text is hashed (and so may be listed): [`Quiet::No`] for
+    /// ordinary content, including a node of a quiet subtree that reaches outside its
+    /// root's frame (ninth review).
+    pub fn quiet_of(&self, node: &UiNode) -> Quiet {
+        if self.quiet_nodes.is_empty() {
+            return Quiet::No;
+        }
+        self.quiet_nodes
+            .get(&addr(node))
+            .copied()
+            .unwrap_or(Quiet::No)
+    }
+
+    /// Whether `node`'s own text is left out (see [`Layout::quiet_of`]): it is never
+    /// listed nor read, but its children may be ordinary content.
+    pub fn is_quiet(&self, node: &UiNode) -> bool {
+        self.quiet_of(node) != Quiet::No
     }
 
     /// `frame` clipped to the screen (`None` when nothing of it is on screen): where a
@@ -306,7 +401,6 @@ impl<'a> Layout<'a> {
             /// An ancestor is pruned or past the cap.
             hidden_above: bool,
             in_scope: bool,
-            quiet: Quiet,
             quiet_clip: Option<Rect>,
             in_content: bool,
         }
@@ -315,7 +409,6 @@ impl<'a> Layout<'a> {
             depth: 0,
             hidden_above: false,
             in_scope: self.alert.is_none(),
-            quiet: Quiet::No,
             quiet_clip: None,
             in_content: false,
         }];
@@ -329,16 +422,14 @@ impl<'a> Layout<'a> {
                 || usize::try_from(fr.depth).is_ok_and(|d| d > MAX_DEPTH);
             let in_scope = fr.in_scope || self.alert.is_some_and(|a| std::ptr::eq(a, node));
             let shown = !cut && in_scope && self.shown_frame(node.frame).is_some();
-            // A keyboard inside the assistant is still a keyboard.
-            let quiet = match (fr.quiet, self.quiet_root(node)) {
-                (Quiet::Keyboard, _) => Quiet::Keyboard,
-                (_, Some(q)) => q,
-                (q, None) => q,
-            };
-            // The outermost quiet root clips its subtree.
-            let quiet_clip = fr
+            // The node's own text: reduced only inside its quiet root's frame (ninth review).
+            let quiet = self.quiet_of(node);
+            // The outermost quiet root clips the subtree's quiet nodes; an escaped node is
+            // drawn where its frame says.
+            let sub_clip = fr
                 .quiet_clip
                 .or_else(|| self.quiet_root(node).map(|_| node.frame));
+            let quiet_clip = sub_clip.filter(|_| quiet != Quiet::No);
             f(
                 node,
                 Visit {
@@ -358,8 +449,7 @@ impl<'a> Layout<'a> {
                 depth: child,
                 hidden_above: cut,
                 in_scope,
-                quiet,
-                quiet_clip,
+                quiet_clip: sub_clip,
                 in_content,
             }));
         }

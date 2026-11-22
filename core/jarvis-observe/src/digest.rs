@@ -39,7 +39,11 @@
 //! everything in it (a tap point inside it is refused whatever it holds). Compaction never lists anything in
 //! those subtrees, and never reads their text for cues, summaries or classifier context
 //! (*not fully hashed ⇒ not in the compact screen*). An app's own accessory bar next to the
-//! keyboard is ordinary content: hashed whole and listed.
+//! keyboard is ordinary content: hashed whole and listed. **Ninth review:** the reduced
+//! hashing covers only the nodes of those subtrees whose on-screen frame lies inside the
+//! subtree root's own frame; a node reaching outside it (an accessory view carrying the
+//! assistant's identifier and drawing a control over the app's Send button) is ordinary
+//! content — hashed whole, listed and contesting taps (see `crate::layout`).
 //!
 //! Not part of it:
 //!

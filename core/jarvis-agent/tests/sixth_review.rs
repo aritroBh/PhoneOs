@@ -237,11 +237,15 @@ fn nested_controls_are_tapped_normally() {
 }
 
 /// A list scrolled under the navigation bar: `Item 1` lies under the back button, `Item 0`
-/// wholly under the bar.
+/// wholly under the bar. Ninth review: the rows are in a page-sized scroll view (the bar's
+/// precedence is for page content scrolled under it, which only a scrollable ancestor
+/// shows; was: the rows straight in the window).
 fn scrolled_under_bar() -> Screen {
     scr(vec![
-        node(Role::Button, "Item 1", rect(0.0, 40.0, 393.0, 80.0)),
-        node(Role::Button, "Item 0", rect(100.0, 62.0, 200.0, 38.0)),
+        UiNode::new(Role::ScrollView, rect(0.0, 0.0, 393.0, 852.0)).with_children(vec![
+            node(Role::Button, "Item 1", rect(0.0, 40.0, 393.0, 80.0)),
+            node(Role::Button, "Item 0", rect(100.0, 62.0, 200.0, 38.0)),
+        ]),
         UiNode::new(Role::NavigationBar, rect(0.0, 59.0, 393.0, 44.0))
             .with_identifier("Inbox")
             .with_children(vec![node(

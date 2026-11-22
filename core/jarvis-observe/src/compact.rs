@@ -31,6 +31,15 @@
 //! an inner control sticking out, or an inner control with its own different label (a card
 //! `Button "Product"` around a `Button "Add"`) leave the wrapper's frame alone. Cells are not
 //! refined: a Cell's frame is the row, and a Cell inside a Cell is a sub-row.
+//!
+//! Ninth review: a step is taken only when the wrapper shows no labelled content (static
+//! texts, labelled images) outside the inner control's frame, or the inner control covers at
+//! least 80 % of the wrapper's area. A card `Button "Wool socks"` showing its title and
+//! price beside an unlabelled trash button is the card (the trash button then contests the
+//! card's tap point as a control nested in it). A refined element's label also carries the
+//! labels and image names drawn inside the inner control's frame that it does not already
+//! say (`Wool socks, trash`): the tap lands there, so that is what classification and the
+//! owner's question read.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ptr;
@@ -217,7 +226,7 @@ impl<'a> Summaries<'a> {
         while let Some((node, depth, in_inter, start, exit)) = stack.pop() {
             if exit {
                 let k = kind(node);
-                if matches!(k, Kind::Control | Kind::Mergeable) {
+                if matches!(k, Kind::Control | Kind::Input | Kind::Mergeable) {
                     s.spans.insert(
                         addr(node),
                         Span {
@@ -230,11 +239,19 @@ impl<'a> Summaries<'a> {
                 }
                 continue;
             }
-            if !is_live(node)
-                || depth > MAX_DEPTH
-                || layout.is_excluded(node)
-                || layout.quiet_root(node).is_some()
-            {
+            if is_pruned(node) || depth > MAX_DEPTH || layout.is_excluded(node) {
+                continue;
+            }
+            if layout.is_quiet(node) {
+                // Its text is not hashed: never read. Its children may be ordinary content
+                // (ninth review: a node reaching outside the keyboard's or the prediction
+                // bar's frame).
+                for c in node.children.iter().rev() {
+                    stack.push((c, depth + 1, in_inter, Span::default(), false));
+                }
+                continue;
+            }
+            if !is_live(node) {
                 continue;
             }
             let label = non_empty(&node.label).or_else(|| shown_value(node));
@@ -274,6 +291,15 @@ impl<'a> Summaries<'a> {
         )
     }
 
+    /// The labelled texts and images of the span (frames and words), in document order.
+    fn labelled(&self, sp: Span) -> impl Iterator<Item = &(Rect, String)> {
+        self.texts
+            .get(sp.t0..sp.t1)
+            .unwrap_or_default()
+            .iter()
+            .chain(self.images.get(sp.g0..sp.g1).unwrap_or_default())
+    }
+
     /// Texts in the span in reading order, joined; falls back to labelled images. At most
     /// [`MAX_MERGED_PARTS`] parts, then a trailing `…` marks that more text exists.
     fn merged_text(&self, sp: Span) -> String {
@@ -306,6 +332,10 @@ impl<'a> Summaries<'a> {
 /// one level down when the node is only a wrapper around it (see [`Target::of`]).
 struct Target {
     frame: Rect,
+    /// When the target was refined to an inner control: the labels and image names of the
+    /// wrapper's subtree drawn inside the inner control's frame (ninth review: what the tap
+    /// lands on says what it does; an unlabelled trash button inside a labelled wrapper).
+    extra: Vec<String>,
     /// Label of the inner control, used when the wrapper has none.
     label: Option<String>,
     value: Option<String>,
@@ -345,14 +375,10 @@ fn single_nested<'a>(node: &'a UiNode, layout: &Layout<'_>) -> Option<&'a UiNode
     let mut found: Option<&'a UiNode> = None;
     let mut stack: Vec<(&'a UiNode, usize)> = node.children.iter().rev().map(|c| (c, 1)).collect();
     while let Some((n, depth)) = stack.pop() {
-        if is_pruned(n)
-            || depth > MAX_DEPTH
-            || layout.is_excluded(n)
-            || layout.quiet_root(n).is_some()
-        {
+        if is_pruned(n) || depth > MAX_DEPTH || layout.is_excluded(n) {
             continue;
         }
-        if n.role == node.role && !n.frame.is_empty() {
+        if n.role == node.role && !n.frame.is_empty() && !layout.is_quiet(n) {
             if found.is_some() {
                 return None;
             }
@@ -364,6 +390,10 @@ fn single_nested<'a>(node: &'a UiNode, layout: &Layout<'_>) -> Option<&'a UiNode
     found
 }
 
+/// Least share of a wrapper's area an inner control must cover to be refined to even when
+/// the wrapper shows labelled content outside it (ninth review).
+const REFINE_MIN_COVER: f64 = 0.8;
+
 impl Target {
     /// The node itself, unless it wraps a single, fully contained control of the same role that
     /// is compatible with it. SwiftUI reports a `Toggle` as `Switch "Show tips" {{20, 168},
@@ -371,8 +401,17 @@ impl Target {
     /// only a tap on the inner one toggles. The target then takes the innermost frame; label
     /// and value stay the outer node's (the inner values are used where the outer has none).
     /// The chain is followed while each step stays unambiguous.
-    fn of(node: &UiNode, layout: &Layout<'_>) -> Target {
+    ///
+    /// **Ninth review.** A step is taken only when the wrapper shows no labelled content
+    /// (static texts, labelled images) outside the inner control's frame, or the inner
+    /// control covers at least [`REFINE_MIN_COVER`] of the wrapper's area: a card `Button
+    /// "Wool socks"` showing its title and price beside an unlabelled trash button is the
+    /// card, not the trash button (the trash button then contests the card's tap point as a
+    /// nested control). When refined, the labels and image names drawn inside the inner
+    /// frame are kept in [`Target::extra`] for the element's label.
+    fn of(node: &UiNode, layout: &Layout<'_>, sums: &Summaries<'_>) -> Target {
         let mut t = Target {
+            extra: Vec::new(),
             frame: node.frame,
             label: None,
             value: None,
@@ -391,6 +430,14 @@ impl Target {
             if !same_control(node, inner) || !contains_rect(&current.frame, &inner.frame) {
                 break;
             }
+            let covers = current.frame.area() > 0.0
+                && inner.frame.area() >= REFINE_MIN_COVER * current.frame.area();
+            let content_outside = sums
+                .labelled(sums.span(current))
+                .any(|(f, _)| !contains_rect(&inner.frame, f));
+            if !covers && content_outside {
+                break;
+            }
             t.frame = inner.frame;
             t.label = t.label.or_else(|| non_empty(&inner.label));
             t.value = t.value.or_else(|| shown_value(inner));
@@ -400,8 +447,34 @@ impl Target {
             t.selected |= inner.selected;
             current = inner;
         }
+        if !std::ptr::eq(current, node) {
+            let f = t.frame;
+            let mut seen: BTreeSet<String> = BTreeSet::new();
+            for (r, w) in sums.labelled(sums.span(node)) {
+                let c = r.center();
+                let inside = c.x >= f.x && c.x <= f.max_x() && c.y >= f.y && c.y <= f.max_y();
+                if inside && t.extra.len() < MAX_MERGED_PARTS && seen.insert(w.to_lowercase()) {
+                    t.extra.push(w.clone());
+                }
+            }
+        }
         t
     }
+}
+
+/// `label` with the words of a refined target's inner control ([`Target::extra`]) that it
+/// does not already say appended (`Wool socks, trash`).
+fn with_inner_words(label: String, extra: &[String]) -> String {
+    let mut out = label;
+    for w in extra {
+        if !out.to_lowercase().contains(&w.to_lowercase()) {
+            if !out.is_empty() {
+                out.push_str(", ");
+            }
+            out.push_str(w);
+        }
+    }
+    out
 }
 
 #[derive(Clone)]
@@ -431,11 +504,19 @@ struct Walker<'a> {
 
 impl<'a> Walker<'a> {
     fn walk(&mut self, node: &'a UiNode, st: &State) {
-        if is_pruned(node)
-            || st.depth > MAX_DEPTH
-            || self.layout.is_excluded(node)
-            || self.layout.quiet_root(node).is_some()
-        {
+        if is_pruned(node) || st.depth > MAX_DEPTH || self.layout.is_excluded(node) {
+            return;
+        }
+        if self.layout.is_quiet(node) {
+            // Keyboard or prediction-bar text: never listed. A child reaching outside the
+            // subtree root's frame is ordinary content (ninth review).
+            let child = State {
+                depth: st.depth + 1,
+                ..st.clone()
+            };
+            for c in &node.children {
+                self.walk(c, &child);
+            }
             return;
         }
         let id = self.next_id;
@@ -454,7 +535,7 @@ impl<'a> Walker<'a> {
                 self.descend(node, id, &inner);
             }
             Kind::Input => {
-                let target = Target::of(node, self.layout);
+                let target = Target::of(node, self.layout, &self.sums);
                 let label = non_empty(&node.label)
                     .or_else(|| non_empty(&node.placeholder))
                     .or_else(|| target.label.clone())
@@ -465,7 +546,7 @@ impl<'a> Walker<'a> {
                 self.push(node, label, &st, Some(target));
             }
             Kind::Control => {
-                let target = Target::of(node, self.layout);
+                let target = Target::of(node, self.layout, &self.sums);
                 let label = non_empty(&node.label)
                     .or_else(|| target.label.clone())
                     .or_else(|| {
@@ -474,6 +555,7 @@ impl<'a> Walker<'a> {
                     .or_else(|| st.inherit.clone())
                     .or_else(|| non_empty(&node.identifier))
                     .unwrap_or_default();
+                let label = with_inner_words(label, &target.extra);
                 self.push(node, label, &st, Some(target));
             }
             Kind::Text => {
@@ -734,6 +816,13 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         context: Rc::from(""),
     };
     walker.walk(&screen.root, &start);
+    // Every reached node's fingerprint, listed or not (an input scrolled out of view keeps
+    // the fingerprint it had while listed).
+    let prints: BTreeMap<u32, u64> = walker
+        .cands
+        .iter()
+        .map(|c| (c.source, c.fingerprint))
+        .collect();
 
     let mut bars = Vec::new();
     let mut nodes = Vec::new();
@@ -754,6 +843,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
                 placeholder,
                 secure: is_secure(node),
                 on_screen: v.live && layout.on_screen(node.frame).is_some(),
+                fingerprint: prints.get(&i).copied(),
             });
         }
         if v.live {
@@ -919,11 +1009,11 @@ fn cues(root: &UiNode, bounds: Rect, layout: &Layout<'_>) -> ScreenCues {
     let mut out = ScreenCues::default();
     let mut stack: Vec<(&UiNode, usize)> = vec![(root, 0)];
     while let Some((n, depth)) = stack.pop() {
-        if is_pruned(n)
-            || depth > MAX_DEPTH
-            || layout.is_excluded(n)
-            || layout.quiet_root(n).is_some()
-        {
+        if is_pruned(n) || depth > MAX_DEPTH || layout.is_excluded(n) {
+            continue;
+        }
+        if layout.is_quiet(n) {
+            stack.extend(n.children.iter().rev().map(|c| (c, depth + 1)));
             continue;
         }
         let on_screen = !n.frame.is_empty() && (bounds.is_empty() || n.frame.intersects(&bounds));

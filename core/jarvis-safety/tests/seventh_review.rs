@@ -126,7 +126,9 @@ fn amounts_list_grouped_formats_and_not_long_digit_runs() {
             ScreenSource::Typed,
             None,
         );
-        assert!(sum.contains("Sends: Amount: \""), "{v}: {sum}");
+        // Ninth review: a tap that does not send says "The form holds:" (was "Sends:";
+        // deliberate change).
+        assert!(sum.contains("The form holds: Amount: \""), "{v}: {sum}");
         assert!(!sum.contains("4111 1111"), "{v}: {sum}");
         if shown {
             assert!(

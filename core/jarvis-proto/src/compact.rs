@@ -126,7 +126,8 @@ pub struct RawNode {
     pub text: bool,
     /// It is part of the keyboard: the `Keyboard` node or inside it, or inside the input
     /// assistant (prediction bar) next to it (see `jarvis_observe`'s layout docs). The
-    /// keyboard window's other nodes are not.
+    /// keyboard window's other nodes are not, nor (ninth review) a node of those subtrees
+    /// reaching outside the subtree root's frame: that is ordinary content.
     pub keyboard: bool,
 }
 
@@ -155,6 +156,11 @@ pub struct RawInput {
     pub secure: bool,
     /// Some part of it is drawn on screen (no pruned ancestor, frame on screen).
     pub on_screen: bool,
+    /// The fingerprint compaction gives it (the one a listed element of it has, the same
+    /// whether or not it is listed now), when compaction reached it (ninth review: what
+    /// Jarvis typed into a field is still known once the field scrolls away).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<u64>,
 }
 
 impl std::fmt::Debug for RawInput {

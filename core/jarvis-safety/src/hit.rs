@@ -22,11 +22,16 @@
 //!    the target's own refined inner control: a descendant of the same role whose frame
 //!    holds the target's listed frame (1 pt tolerance) and whose label is compatible with
 //!    the target's (absent, or equal ignoring case), which is how compaction refines a
-//!    wrapper to the control inside it (`jarvis_observe`'s `Target::of`). Only controls of
-//!    the target's own subtree contest; its labelled content and its other nodes never do;
+//!    wrapper to the control inside it (`jarvis_observe`'s `Target::of`; since the ninth
+//!    review only when the wrapper shows no labelled content outside the inner control or
+//!    the inner control covers at least 80 % of it, and the refined element's label then
+//!    carries the inner control's labels and icon names, so the exempt control is
+//!    classified and named in the question). Only controls of the target's own subtree
+//!    contest; its labelled content and its other nodes never do;
 //! 2. it is part of the **keyboard**: the `Keyboard` node or its subtree, or the input
 //!    assistant's (prediction bar) subtree, each clipped to its subtree root's frame, in
-//!    either order; not the keyboard window's containers;
+//!    either order; not the keyboard window's containers; a node of those subtrees reaching
+//!    outside the root's frame is ordinary content (ninth review) and contests by (1) or (3);
 //! 3. it is **labelled content drawn later**: not a control, with a non-empty label or
 //!    value, after the target's subtree in document order, not inside the target, and not
 //!    a container role (window, application, scroll, table, collection and web views, bars,
@@ -35,14 +40,29 @@
 //! Nothing else contests: unlabelled `Other` nodes, windows, scroll/table/collection/web
 //! views, unlabelled cells and bars never cover a point by themselves.
 //!
-//! * **Bar precedence.** iOS draws navigation, tab and bottom tool bars above scrolling
-//!   content. A *system bar* is a raw `NavigationBar`, `TabBar` or (eighth review)
-//!   `Toolbar` node with no web-view, scroll-view, table or collection ancestor (WebKit reports an ARIA `tablist` as a tab bar; compaction
-//!   does not list those, see `jarvis_observe::CompactView::bars`) whose shown frame spans at
-//!   least [`SYSTEM_BAR_MIN_WIDTH`] of the screen's width, on a typed tree (the session passes
-//!   no bars for runner text). For a target inside a system bar, at points inside the bar's
-//!   frame, only nodes inside that same bar (and the keyboard) contest. For any other
-//!   target, every point inside any system bar is unusable (the bar would take the touch).
+//! * **Bar precedence** (ninth review). iOS draws navigation, tab and bottom tool bars
+//!   above the page content that scrolls under them, and that is the one thing a bar's
+//!   precedence is for. A *system bar* is a raw `NavigationBar`, `TabBar` or `Toolbar` node
+//!   with no web-view, scroll-view, table or collection ancestor (WebKit reports an ARIA
+//!   `tablist` as a tab bar; compaction does not list those, see
+//!   `jarvis_observe::CompactView::bars`), on a typed tree (the session passes no bars for
+//!   runner text), whose shown frame is full width ([`SYSTEM_BAR_MIN_WIDTH`]), anchored to
+//!   the top ([`SYSTEM_BAR_TOP_REGION`]) or bottom ([`SYSTEM_BAR_BOTTOM_REGION`]) edge
+//!   region and of bounded height ([`SYSTEM_BAR_MAX_TOP_HEIGHT`],
+//!   [`SYSTEM_BAR_MAX_BOTTOM_HEIGHT`], never below [`SYSTEM_BAR_MIN_CAP`]; [`system_bar`]).
+//!   For a target T inside system bar B, at a point inside B's frame, a node N outside B
+//!   that would contest the point is ignored **only if** it is page content scrolled under
+//!   B: N has a scrollable ancestor (scroll, table, collection or web view) that is
+//!   page-sized on screen (at least [`PAGE_MIN_WIDTH`] of the screen's width and
+//!   [`PAGE_MIN_BAR_HEIGHTS`] times B's height tall); N has no modal-container ancestor
+//!   (alert, sheet, action sheet, popover, menu, dialog) and is not in a later top-level
+//!   window than B; and for a bottom bar that scrollable ancestor comes before B in the
+//!   tree (a navigation bar at the top accepts either order: SwiftUI lists the bar first).
+//!   Everything else — the bar's own nodes, the keyboard, a menu or banner drawn over the
+//!   bar — contests as for any target (the eighth review let everything outside the bar
+//!   give way, so a menu's "Delete" over the toolbar's "Compose" took the tap). For any
+//!   target outside a system bar, every point inside the bar is unusable (the bar would
+//!   take the touch).
 //! * The default point (the centre, or the action's own preferred point) is tried first,
 //!   then a fixed 5 × 5 grid of inset points of the target's frame ([`GRID`]: fractions
 //!   1/6 … 5/6 in each axis, nearest the centre first); the first usable one is used.
@@ -106,8 +126,38 @@ pub const GRID: [(f64, f64); 25] = {
     ]
 };
 
-/// Least share of the screen's width a `NavigationBar`/`TabBar` spans to be a system bar.
+/// Least share of the screen's width a `NavigationBar`/`TabBar`/`Toolbar` spans to be a
+/// system bar.
 pub const SYSTEM_BAR_MIN_WIDTH: f64 = 0.9;
+/// A top bar's top edge lies within this share of the screen's height from the top (iOS 26
+/// fixtures: navigation bars at y 62 of 956, 6.5 %).
+pub const SYSTEM_BAR_TOP_REGION: f64 = 0.15;
+/// A bottom bar's bottom edge lies within this share of the screen's height from the
+/// bottom (fixtures: the tab bar and the floating toolbar end at 956 of 956).
+pub const SYSTEM_BAR_BOTTOM_REGION: f64 = 0.1;
+/// Tallest top bar, as a share of the screen's height, at least [`SYSTEM_BAR_MIN_CAP`]
+/// points (fixtures: large-title navigation bars 106 pt of 956, 11 %; standard 54 pt).
+pub const SYSTEM_BAR_MAX_TOP_HEIGHT: f64 = 0.2;
+/// Tallest bottom bar, as a share of the screen's height, at least [`SYSTEM_BAR_MIN_CAP`]
+/// points (fixtures: tab bar 83 pt, floating toolbar 86 pt of 956, 9 %).
+pub const SYSTEM_BAR_MAX_BOTTOM_HEIGHT: f64 = 0.15;
+/// The height cap is never below this many points (a landscape phone is 440 pt high).
+pub const SYSTEM_BAR_MIN_CAP: f64 = 100.0;
+/// Page content under a bar sits in a scrollable container at least this share of the
+/// screen's width wide...
+pub const PAGE_MIN_WIDTH: f64 = 0.9;
+/// ...and at least this many times the bar's height tall.
+pub const PAGE_MIN_BAR_HEIGHTS: f64 = 2.0;
+
+/// Which screen edge a system bar is anchored to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edge {
+    /// The top (navigation bars): page content may come before or after it in the tree
+    /// (SwiftUI lists the bar before its content).
+    Top,
+    /// The bottom (tab bars, bottom toolbars): page content comes before it.
+    Bottom,
+}
 
 /// A system bar (see the module docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,38 +312,175 @@ fn related(a: &Element, b: &Element, tree: Option<&ScreenTree<'_>>) -> bool {
     }
 }
 
-/// The system bar `b` is, if it is one on a screen `width` points wide.
-fn system_bar(b: &BarNode, width: f64) -> Option<Bar> {
+/// The system bar `b` is, and the edge it is anchored to, if it is one on a screen of
+/// `size` (ninth review): full width ([`SYSTEM_BAR_MIN_WIDTH`]), anchored to the top or the
+/// bottom edge region ([`SYSTEM_BAR_TOP_REGION`], [`SYSTEM_BAR_BOTTOM_REGION`]) and of
+/// bounded height ([`SYSTEM_BAR_MAX_TOP_HEIGHT`], [`SYSTEM_BAR_MAX_BOTTOM_HEIGHT`], never
+/// below [`SYSTEM_BAR_MIN_CAP`]). A full-screen `Toolbar` is no bar. (Bars inside page
+/// content are never in [`ScreenTree::bars`].)
+pub fn system_bar(b: &BarNode, size: jarvis_proto::Size) -> Option<(Bar, Edge)> {
     let kind = match b.role {
         Role::NavigationBar => Bar::Navigation,
         Role::TabBar => Bar::Tab,
         Role::Toolbar => Bar::Tool,
         _ => return None,
     };
-    (width > 0.0 && b.frame.width >= SYSTEM_BAR_MIN_WIDTH * width).then_some(kind)
+    let (w, h) = (size.width, size.height);
+    if !(w > 0.0 && h > 0.0 && b.frame.width >= SYSTEM_BAR_MIN_WIDTH * w) {
+        return None;
+    }
+    let f = b.frame;
+    let top = f.y <= SYSTEM_BAR_TOP_REGION * h
+        && f.height <= (SYSTEM_BAR_MAX_TOP_HEIGHT * h).max(SYSTEM_BAR_MIN_CAP);
+    let bottom = f.max_y() >= (1.0 - SYSTEM_BAR_BOTTOM_REGION) * h
+        && f.height <= (SYSTEM_BAR_MAX_BOTTOM_HEIGHT * h).max(SYSTEM_BAR_MIN_CAP);
+    match (top, bottom) {
+        (true, false) => Some((kind, Edge::Top)),
+        (false, true) => Some((kind, Edge::Bottom)),
+        (true, true) if f.center().y < h / 2.0 => Some((kind, Edge::Top)),
+        (true, true) => Some((kind, Edge::Bottom)),
+        (false, false) => None,
+    }
 }
 
-/// The system bars of `screen` (none without a tree), with their kinds.
+/// The system bars of `screen` (none without a tree), with their kinds and edges.
 fn system_bars<'t>(
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'t>>,
-) -> impl Iterator<Item = (&'t BarNode, Bar)> {
-    let width = screen.size.width;
+) -> impl Iterator<Item = (&'t BarNode, Bar, Edge)> {
+    let size = screen.size;
     tree.map_or(&[][..], |t| t.bars)
         .iter()
-        .filter_map(move |b| system_bar(b, width).map(|k| (b, k)))
+        .filter_map(move |b| system_bar(b, size).map(|(k, e)| (b, k, e)))
 }
 
-/// The system bar `el` is inside, if any.
+/// The system bar `el` is inside, if any, with its edge.
 fn bar_of<'t>(
     el: &Element,
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'t>>,
-) -> Option<&'t BarNode> {
+) -> Option<(&'t BarNode, Edge)> {
     let t = tree?;
     system_bars(screen, tree)
-        .map(|(b, _)| b)
-        .find(|b| t.inside(el, b.node))
+        .map(|(b, _, e)| (b, e))
+        .find(|(b, _)| t.inside(el, b.node))
+}
+
+/// Whether `el` sits in a system bar that also holds a listed control labelled "Back" (a
+/// browser's navigation bar; ninth review: its "Forward" is navigation, not a send).
+pub(crate) fn in_bar_with_back(
+    el: &Element,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> bool {
+    let (Some(t), Some((b, _))) = (tree, bar_of(el, screen, tree)) else {
+        return false;
+    };
+    screen.elements.iter().any(|e| {
+        e.index != el.index
+            && takes_taps(&e.role)
+            && t.inside(e, b.node)
+            && crate::text::tokens(&e.label).iter().any(|w| w == "back")
+    })
+}
+
+/// The drawn raw node with index `i`, if it is drawn (nodes are in node order).
+fn raw_node<'t>(tree: &ScreenTree<'t>, i: u32) -> Option<&'t RawNode> {
+    tree.nodes
+        .binary_search_by(|n| n.node.cmp(&i))
+        .ok()
+        .and_then(|k| tree.nodes.get(k))
+}
+
+/// Normalised `Other` role name (letters and digits, lower case).
+fn other_name(role: &Role) -> Option<String> {
+    match role {
+        Role::Other(name) => Some(
+            name.chars()
+                .filter(|c| c.is_alphanumeric())
+                .flat_map(char::to_lowercase)
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+/// Scroll views, tables, collection views and web views: what page content scrolls in.
+fn is_scroller(role: &Role) -> bool {
+    match role {
+        Role::ScrollView | Role::Table | Role::CollectionView | Role::WebView => true,
+        _ => other_name(role).is_some_and(|n| {
+            matches!(
+                n.as_str(),
+                "scrollview" | "table" | "tableview" | "collectionview" | "webview"
+            )
+        }),
+    }
+}
+
+/// Modal containers: alerts, sheets, action sheets, popovers, menus, dialogs (whatever the
+/// tree types have for them; `MenuItem`/`MenuButton` are controls, not containers).
+fn is_modal(role: &Role) -> bool {
+    match role {
+        Role::Alert | Role::Sheet => true,
+        _ => other_name(role).is_some_and(|n| {
+            ["alert", "sheet", "popover", "menu", "dialog", "modal"]
+                .iter()
+                .any(|k| n.contains(k))
+                && !["menuitem", "menubutton", "menubaritem"]
+                    .iter()
+                    .any(|k| n.contains(k))
+        }),
+    }
+}
+
+/// Whether raw node `n`, which contests a point inside system bar `bar` (anchored to
+/// `edge`), is page content scrolled under the bar, the one thing a bar's precedence is
+/// for (ninth review): `n` has a scrollable ancestor that is page-sized on screen (at least
+/// [`PAGE_MIN_WIDTH`] of the screen's width, and [`PAGE_MIN_BAR_HEIGHTS`] times the bar's
+/// height tall); `n` has no modal-container ancestor and is not in a later top-level window
+/// than the bar; and for a bottom bar that scrollable container comes before the bar in
+/// document order (for a top bar either order). Everything else drawn over the bar — a
+/// menu, a sheet, a banner, a popover — contests like over any target.
+fn scrolled_under(
+    n: u32,
+    bar: &BarNode,
+    edge: Edge,
+    screen: &CompactScreen,
+    tree: &ScreenTree<'_>,
+) -> bool {
+    if top_path(n, tree).0 > top_path(bar.node, tree).0 {
+        return false;
+    }
+    let mut page = false;
+    let mut at = n;
+    let mut steps = 0usize;
+    while let Some(p) = usize::try_from(at)
+        .ok()
+        .and_then(|i| tree.parents.get(i))
+        .copied()
+        .filter(|p| *p != u32::MAX)
+    {
+        steps += 1;
+        if steps > tree.parents.len() {
+            return false;
+        }
+        at = p;
+        let Some(r) = raw_node(tree, p) else {
+            continue;
+        };
+        if is_modal(&r.role) {
+            return false;
+        }
+        if is_scroller(&r.role)
+            && r.frame.width >= PAGE_MIN_WIDTH * screen.size.width
+            && r.frame.height >= PAGE_MIN_BAR_HEIGHTS * bar.frame.height
+            && (edge == Edge::Top || (p < bar.node && !tree.node_inside(bar.node, p)))
+        {
+            page = true;
+        }
+    }
+    page
 }
 
 /// Roles that never contest a point by themselves (containers): windows, the app, scroll,
@@ -463,19 +650,27 @@ fn blocker(
 ) -> Option<CoveredBy> {
     // Precedence holds only where the bar is drawn: a control the tree puts inside a bar but
     // that lies outside the bar's frame at `p` is ordinary content there.
-    let home = bar_of(target, screen, tree).filter(|h| h.frame.contains(p));
+    let home = bar_of(target, screen, tree).filter(|(h, _)| h.frame.contains(p));
     if home.is_none() {
-        if let Some((_, kind)) = system_bars(screen, tree).find(|(b, _)| b.frame.contains(p)) {
+        if let Some((_, kind, _)) = system_bars(screen, tree).find(|(b, _, _)| b.frame.contains(p))
+        {
             return Some(CoveredBy::Bar(kind));
         }
     }
+    // Inside its bar, a target gives way to everything but page content scrolled under the
+    // bar (ninth review): the bar's own nodes, the keyboard, overlays drawn over the bar.
+    let yields = |n: u32, t: &ScreenTree<'_>| {
+        home.is_none_or(|(h, edge)| {
+            t.node_inside(n, h.node) || !scrolled_under(n, h, edge, screen, t)
+        })
+    };
     if let Some(t) = tree.filter(|t| !t.nodes.is_empty() && rule != OccluderRule::V0) {
         let own = t.source(target);
         return t
             .nodes
             .iter()
             .filter(|n| n.frame.contains(p) && contests(n, target, own, t, rule))
-            .filter(|n| n.keyboard || home.is_none_or(|h| t.node_inside(n.node, h.node)))
+            .filter(|n| n.keyboard || yields(n.node, t))
             .min_by(|a, b| {
                 b.keyboard
                     .cmp(&a.keyboard)
@@ -493,7 +688,7 @@ fn blocker(
                 && takes_taps(&e.role)
                 && e.frame.contains(p)
                 && !related(target, e, tree)
-                && home.is_none_or(|h| tree.is_some_and(|t| t.inside(e, h.node)))
+                && tree.is_none_or(|t| t.source(e).is_none_or(|n| yields(n, t)))
         })
         .map(|e| CoveredBy::Control(e.index))
 }
@@ -581,7 +776,7 @@ pub fn control_at<'a>(
         return Err(PointError::Keyboard);
     }
     let over = system_bars(screen, tree)
-        .map(|(b, _)| b)
+        .map(|(b, _, _)| b)
         .find(|b| b.frame.contains(p));
     let Some(smallest) = screen
         .elements
