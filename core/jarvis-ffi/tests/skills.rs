@@ -43,6 +43,7 @@ fn text_skill() -> Skill {
         updated_ms: 1,
         runs: 0,
         last_run_ms: None,
+        tools: vec![],
     }
 }
 
@@ -145,6 +146,7 @@ fn a_confined_skill_session_refuses_to_open_another_app() {
         apps: vec![SETTINGS.into()],
         confine_to_apps: true,
         args: HashMap::new(),
+        tools: vec![],
     });
     let s = JarvisSession::new(config, task(), String::new()).unwrap();
     assert!(matches!(s.step(1, Event::Start), Effect::Observe { .. }));
@@ -155,6 +157,7 @@ fn a_confined_skill_session_refuses_to_open_another_app() {
             observation: ScreenObservation {
                 screen: settings_screen(),
                 screenshot: None,
+                device_locked: false,
             },
         },
     ) else {
@@ -194,4 +197,155 @@ fn a_confined_skill_session_refuses_to_open_another_app() {
 #[test]
 fn default_session_config_has_no_skill() {
     assert!(api::default_session_config().unwrap().skill.is_none());
+}
+
+fn args(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+    pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect()
+}
+
+/// Review finding f1: an unloadable skill survives a save through the bridge.
+#[test]
+fn f1_unloadable_skills_survive_to_json() {
+    let json = r#"{"schema_version":1,"skills":[
+      {"id":"good","name":"Good","apps":["com.x"],"confine_to_apps":true},
+      {"id":"damaged","name":"Owner relies on this","apps":["com.y"],"confine_to_apps":true,
+       "triggers":["go"],"runs":-1}]}"#;
+    let s = JarvisSkills::new(json.into()).unwrap();
+    assert!(s.has_load_issues().unwrap());
+    assert!(s.load_issues().unwrap()[0].contains("\"damaged\" (Owner relies on this)"));
+    let s2 = JarvisSkills::new(s.to_json().unwrap()).unwrap();
+    assert!(s2.has_load_issues().unwrap(), "still reported after a save");
+    assert!(s2.to_json().unwrap().contains("Owner relies on this"));
+    assert_eq!(s2.list().unwrap().len(), 1);
+    assert!(
+        s2.remove("damaged".into()).unwrap(),
+        "the owner can discard it"
+    );
+    assert!(!s2.to_json().unwrap().contains("Owner relies on this"));
+}
+
+/// Review finding f2: a stale or forged match is rechecked against the current skill.
+#[test]
+fn f2_context_for_match_rechecks_the_skill() {
+    let s = JarvisSkills::new(String::new()).unwrap();
+    s.upsert(text_skill()).unwrap();
+    let m = s
+        .match_task("text mom hello".into())
+        .unwrap()
+        .matches
+        .remove(0);
+    assert!(m.exact);
+    // A new required parameter: the old match no longer fills it.
+    let mut k = text_skill();
+    k.params.push(SkillParam {
+        name: "when".into(),
+        description: String::new(),
+        required: true,
+    });
+    k.triggers = vec!["text {contact} {message} at {when}".into()];
+    s.upsert(k).unwrap();
+    let e = s.context_for_match(m.clone()).unwrap_err();
+    assert!(
+        matches!(&e, JarvisError::InvalidSkill { message } if message.contains("needs when")),
+        "{e:?}"
+    );
+    // Disabled, unknown, undeclared, over-long: all refused.
+    let mut off = text_skill();
+    off.enabled = false;
+    s.upsert(off).unwrap();
+    assert!(s.context_for_match(m.clone()).is_err());
+    let mut forged = m.clone();
+    forged.skill_id = "nope".into();
+    assert!(s.context_for_match(forged).is_err());
+    s.upsert(text_skill()).unwrap();
+    assert!(s.context_for_match(m.clone()).is_ok());
+    let mut forged = m.clone();
+    forged.args.insert("evil".into(), "x".into());
+    assert!(s.context_for_match(forged).is_err());
+    let mut forged = m.clone();
+    forged.args.insert("contact".into(), "x".repeat(501));
+    assert!(s.context_for_match(forged).is_err());
+    // Values are cleaned, not trusted verbatim.
+    let mut padded = m;
+    padded
+        .args
+        .insert("contact".into(), " Mo\u{200B}m\n".into());
+    assert_eq!(s.context_for_match(padded).unwrap().args["contact"], "Mom");
+}
+
+/// Review finding f5: a long captured value reaches the session whole.
+#[test]
+fn f5_long_values_are_not_cut() {
+    let s = JarvisSkills::new(String::new()).unwrap();
+    s.upsert(text_skill()).unwrap();
+    let msg = "word ".repeat(90);
+    let m = s
+        .match_task(format!("text mom {msg}"))
+        .unwrap()
+        .matches
+        .remove(0);
+    assert_eq!(m.args["message"], msg.trim());
+    let c = s.context_for_match(m).unwrap();
+    assert_eq!(c.args["message"], msg.trim());
+    let t = s
+        .task_text(
+            "text-someone".into(),
+            args(&[("contact", "mom"), ("message", msg.trim())]),
+        )
+        .unwrap();
+    assert!(t.ends_with(msg.trim()));
+}
+
+#[test]
+fn match_result_says_when_the_owner_must_choose() {
+    let s = JarvisSkills::new(String::new()).unwrap();
+    let mut lights = text_skill();
+    lights.id = "lights".into();
+    lights.triggers = vec!["turn on the living room lights tonight".into()];
+    lights.params = vec![];
+    s.upsert(lights).unwrap();
+    let exact = s
+        .match_task("turn on the living room lights tonight".into())
+        .unwrap();
+    assert!(exact.matches[0].exact && !exact.needs_owner_choice);
+    let loose = s
+        .match_task("turn on living room lights tonight now".into())
+        .unwrap();
+    assert!(!loose.matches[0].exact && loose.needs_owner_choice && !loose.ambiguous);
+    assert!(s
+        .match_task("turn off the living room lights tonight".into())
+        .unwrap()
+        .matches
+        .is_empty());
+    // kind is kept on update and changed explicitly.
+    let mut k = s.get("lights".into()).unwrap().unwrap();
+    k.kind = SkillKind::BuiltIn;
+    s.upsert(k).unwrap();
+    assert_eq!(
+        s.get("lights".into()).unwrap().unwrap().kind,
+        SkillKind::Written
+    );
+    s.set_kind("lights".into(), SkillKind::BuiltIn, 9).unwrap();
+    assert_eq!(
+        s.get("lights".into()).unwrap().unwrap().kind,
+        SkillKind::BuiltIn
+    );
+}
+
+#[test]
+fn a_confined_skill_with_an_allow_listed_tool_carries_it_over_the_bridge() {
+    let s = JarvisSkills::new(String::new()).unwrap();
+    let mut k = text_skill();
+    k.tools = vec!["open_link".into()];
+    s.upsert(k).unwrap();
+    let c = s
+        .context(
+            "text-someone".into(),
+            args(&[("contact", "mom"), ("message", "hi")]),
+        )
+        .unwrap();
+    assert_eq!(c.tools, vec!["open_link".to_owned()]);
 }

@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 /// The skill a session runs under: the owner's own guidance for the task, the apps it works
 /// in and the arguments captured from the request.
 ///
-/// A skill can only narrow what a session may do: with `confine_to_apps` the session refuses
-/// actions outside `apps` (SpringBoard stays reachable for navigation). It never grants
+/// A skill can only narrow what a session may do: with `confine_to_apps` the session acts
+/// only inside `apps` (from the home screen it may only go home, wait, or open one of
+/// `apps`) and calls only tools that act in `apps` or are named in `tools`. It never grants
 /// trust, skips a confirmation or suppresses first-use approval; every gate of the
 /// session's `Policy` still applies.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -29,6 +30,9 @@ pub struct SkillContext {
     pub apps: Vec<String>,
     /// Refuse actions that would act outside `apps`.
     pub confine_to_apps: bool,
+    /// Tools that declare no app but that a confined skill may still call, by exact name.
+    /// Empty (the default) means a confined skill calls only tools that act in `apps`.
+    pub tools: Vec<String>,
     /// Parameter values captured from the request (`{contact}` -> `mom`).
     pub args: BTreeMap<String, String>,
 }

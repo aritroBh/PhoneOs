@@ -133,6 +133,7 @@ fn progress_reports_phase_step_and_app() {
             observation: ScreenObservation {
                 screen: settings_screen(),
                 screenshot: None,
+                device_locked: false,
             },
         },
     );
@@ -283,6 +284,7 @@ fn a_driver_and_a_progress_poller_on_two_threads_do_not_interfere() {
                     observation: ScreenObservation {
                         screen: settings_screen(),
                         screenshot: None,
+                        device_locked: false,
                     },
                 },
                 _ => Event::ObservedRunnerText {
@@ -310,6 +312,7 @@ fn a_driver_and_a_progress_poller_on_two_threads_do_not_interfere() {
                     result: RunnerResult {
                         ok: true,
                         error: None,
+                        failure: None,
                     },
                 }
             }
@@ -376,6 +379,7 @@ fn a_declined_first_use_blocks_through_the_bridge() {
         observation: ScreenObservation {
             screen: settings_screen(),
             screenshot: None,
+            device_locked: false,
         },
     };
     let tap_row = |user: &str| {
@@ -414,4 +418,114 @@ fn a_declined_first_use_blocks_through_the_bridge() {
     );
     let memory: serde_json::Value = serde_json::from_str(&session.finish().unwrap()).unwrap();
     assert_eq!(memory["approved_apps"], serde_json::json!([]));
+}
+
+#[test]
+fn a_locked_phone_waits_resumes_by_observing_and_can_time_out() {
+    let mut c = config();
+    c.policy.max_locked_wait_ms = 120_000;
+    let session = JarvisSession::new(c.clone(), task(), String::new()).unwrap();
+    session.step(1, Event::Start);
+    // The device path reports the lock on the runner snapshot.
+    let mut locked = snapshot(String::new());
+    locked.device_locked = true;
+    let effect = session.step(2, Event::ObservedRunnerText { snapshot: locked });
+    assert!(
+        matches!(&effect, Effect::AwaitUnlock { waited_ms: 0, reason } if reason.contains("Unlock")),
+        "{effect:?}"
+    );
+    assert_eq!(
+        session.last_observation_issue().unwrap(),
+        None,
+        "an empty lock-screen tree is not a parse issue"
+    );
+    let p = session.progress().unwrap();
+    assert!(p.waiting_for_unlock);
+    assert_eq!(p.phase, Phase::WaitingForUnlock);
+    assert!(matches!(
+        session.step(60_002, Event::Tick),
+        Effect::AwaitUnlock {
+            waited_ms: 60_000,
+            ..
+        }
+    ));
+    assert_eq!(session.progress().unwrap().locked_wait_ms, 60_000);
+    assert!(matches!(
+        session.step(70_000, Event::DeviceUnlocked),
+        Effect::Observe { screenshot: false }
+    ));
+    // An observation that failed is asked for again.
+    assert!(matches!(
+        session.step(
+            70_001,
+            Event::ObserveFailed {
+                reason: "timeout".to_owned()
+            }
+        ),
+        Effect::Observe { screenshot: false }
+    ));
+    let effect = session.step(
+        70_002,
+        Event::Observed {
+            observation: ScreenObservation {
+                screen: settings_screen(),
+                screenshot: None,
+                device_locked: false,
+            },
+        },
+    );
+    assert!(matches!(effect, Effect::Infer { .. }), "{effect:?}");
+    assert_eq!(session.progress().unwrap().locked_total_ms, 69_998);
+
+    // A command refused as locked, then the wait runs out.
+    let session = JarvisSession::new(c, task(), String::new()).unwrap();
+    session.step(1, Event::Start);
+    let Effect::Infer { request } = session.step(
+        2,
+        Event::Observed {
+            observation: ScreenObservation {
+                screen: settings_screen(),
+                screenshot: None,
+                device_locked: false,
+            },
+        },
+    ) else {
+        panic!()
+    };
+    let i = index_in_prompt(&request.user, "Cell", "Wi-Fi, HomeNet").unwrap();
+    let effect = session.step(
+        3,
+        Event::ModelOutput {
+            output: ModelOutput {
+                text: format!(r#"{{"action":"tap","element":{i}}}"#),
+            },
+        },
+    );
+    // First use of Settings: approve, then the tap is refused.
+    assert!(matches!(effect, Effect::Confirm { .. }), "{effect:?}");
+    assert!(matches!(
+        session.step(4, Event::UserDecision { approved: true }),
+        Effect::Act { .. }
+    ));
+    let refused = RunnerResult {
+        ok: false,
+        error: Some("screen_locked".to_owned()),
+        failure: Some(RunnerFailure::DeviceLocked),
+    };
+    assert!(matches!(
+        session.step(5, Event::ActResult { result: refused }),
+        Effect::AwaitUnlock { .. }
+    ));
+    let Effect::Finished { outcome } = session.step(200_000, Event::Tick) else {
+        panic!()
+    };
+    assert_eq!(outcome.status, OutcomeStatus::Interrupted);
+    assert!(
+        outcome.summary.contains("stayed locked"),
+        "{}",
+        outcome.summary
+    );
+    let memory = session.finish().unwrap();
+    assert!(memory.contains(r#""outcome":"interrupted""#), "{memory}");
+    assert!(memory.contains(r#""lock_waits":1"#), "{memory}");
 }

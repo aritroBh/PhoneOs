@@ -12,6 +12,7 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 
 use common::*;
+use jarvis_proto::OutcomeStatus;
 use jarvis_skills::schedule::{MINUTES_PER_DAY, MINUTES_PER_WEEK};
 use jarvis_skills::{
     is_due, minutes_since_last, minutes_until_next, Awaiting, Condition, OnFailure, RunError,
@@ -66,13 +67,43 @@ fn finished(e: &WorkflowEffect) -> &WorkflowOutcome {
     }
 }
 
-fn ok(run: &mut WorkflowRun, now: u64, ev: WorkflowEvent) -> WorkflowEffect {
+/// A run plus the skill store it reads at each step.
+struct R {
+    run: WorkflowRun,
+    skills: jarvis_skills::SkillStore,
+}
+
+impl R {
+    fn new(w: Workflow, skills: &jarvis_skills::SkillStore, limits: RunLimits) -> R {
+        R {
+            run: WorkflowRun::new(w, limits),
+            skills: skills.clone(),
+        }
+    }
+
+    fn step(&mut self, now: u64, ev: WorkflowEvent) -> Result<WorkflowEffect, RunError> {
+        self.run.step(now, ev, &self.skills)
+    }
+}
+
+impl std::ops::Deref for R {
+    type Target = WorkflowRun;
+    fn deref(&self) -> &WorkflowRun {
+        &self.run
+    }
+}
+
+fn ok(run: &mut R, now: u64, ev: WorkflowEvent) -> WorkflowEffect {
     run.step(now, ev).unwrap()
 }
 
 fn session_done(success: bool, summary: &str) -> WorkflowEvent {
     WorkflowEvent::SessionFinished {
-        success,
+        status: if success {
+            OutcomeStatus::Success
+        } else {
+            OutcomeStatus::Failed
+        },
         summary: summary.into(),
     }
 }
@@ -87,7 +118,7 @@ fn yes() -> WorkflowEvent {
 #[test]
 fn a_full_run_emits_each_effect_in_order() {
     let skills = store_with(vec![text_skill()]);
-    let mut run = WorkflowRun::new(leaving_work(), &skills, RunLimits::default());
+    let mut run = R::new(leaving_work(), &skills, RunLimits::default());
     assert_eq!(run.awaiting(), Awaiting::Start);
     assert_eq!(
         ok(&mut run, 1_000, WorkflowEvent::Start),
@@ -146,7 +177,7 @@ fn a_full_run_emits_each_effect_in_order() {
 #[test]
 fn stop_unless_stops_when_the_condition_fails() {
     let skills = store_with(vec![text_skill()]);
-    let mut run = WorkflowRun::new(leaving_work(), &skills, RunLimits::default());
+    let mut run = R::new(leaving_work(), &skills, RunLimits::default());
     ok(&mut run, 0, WorkflowEvent::Start);
     let e = ok(
         &mut run,
@@ -184,13 +215,13 @@ fn summary_condition_is_case_insensitive() {
         ..Workflow::default()
     };
     let skills = store_with(vec![]);
-    let mut run = WorkflowRun::new(wf.clone(), &skills, RunLimits::default());
+    let mut run = R::new(wf.clone(), &skills, RunLimits::default());
     ok(&mut run, 0, WorkflowEvent::Start);
     assert!(matches!(
         ok(&mut run, 1, session_done(true, "RAIN expected at 4pm")),
         WorkflowEffect::Notify { .. }
     ));
-    let mut run = WorkflowRun::new(wf, &skills, RunLimits::default());
+    let mut run = R::new(wf, &skills, RunLimits::default());
     ok(&mut run, 0, WorkflowEvent::Start);
     let e = ok(&mut run, 1, session_done(true, "Sunny all day"));
     assert_eq!(finished(&e).status, WorkflowStatus::Stopped);
@@ -213,7 +244,7 @@ fn a_failed_session_stops_or_continues_per_on_failure() {
         ..Workflow::default()
     };
     let skills = store_with(vec![]);
-    let mut run = WorkflowRun::new(wf(OnFailure::Stop), &skills, RunLimits::default());
+    let mut run = R::new(wf(OnFailure::Stop), &skills, RunLimits::default());
     ok(&mut run, 0, WorkflowEvent::Start);
     let e = ok(
         &mut run,
@@ -226,7 +257,7 @@ fn a_failed_session_stops_or_continues_per_on_failure() {
     assert_eq!(o.steps_run, 1);
     assert!(o.summary.contains("declined"), "{}", o.summary);
 
-    let mut run = WorkflowRun::new(wf(OnFailure::Continue), &skills, RunLimits::default());
+    let mut run = R::new(wf(OnFailure::Continue), &skills, RunLimits::default());
     ok(&mut run, 0, WorkflowEvent::Start);
     assert!(matches!(
         ok(&mut run, 1, session_done(false, "")),
@@ -263,7 +294,7 @@ fn missing_disabled_or_underfilled_skills_fail_their_step_with_a_reason() {
             }],
             ..Workflow::default()
         };
-        let mut run = WorkflowRun::new(wf, &skills, RunLimits::default());
+        let mut run = R::new(wf, &skills, RunLimits::default());
         let e = ok(&mut run, 0, WorkflowEvent::Start);
         let o = finished(&e);
         assert_eq!(o.status, WorkflowStatus::Failed, "{skill_id}");
@@ -275,7 +306,7 @@ fn missing_disabled_or_underfilled_skills_fail_their_step_with_a_reason() {
 #[test]
 fn unexpected_events_are_typed_errors_that_leave_the_run_unchanged() {
     let skills = store_with(vec![text_skill()]);
-    let mut run = WorkflowRun::new(leaving_work(), &skills, RunLimits::default());
+    let mut run = R::new(leaving_work(), &skills, RunLimits::default());
     assert_eq!(
         run.step(0, WorkflowEvent::WaitElapsed),
         Err(RunError::UnexpectedEvent {
@@ -310,11 +341,11 @@ fn unexpected_events_are_typed_errors_that_leave_the_run_unchanged() {
 #[test]
 fn cancel_is_honoured_everywhere() {
     let skills = store_with(vec![text_skill()]);
-    let mut before = WorkflowRun::new(leaving_work(), &skills, RunLimits::default());
+    let mut before = R::new(leaving_work(), &skills, RunLimits::default());
     let e = ok(&mut before, 0, WorkflowEvent::Cancel);
     assert_eq!(finished(&e).status, WorkflowStatus::Cancelled);
     assert_eq!(finished(&e).steps_run, 0);
-    let mut during = WorkflowRun::new(leaving_work(), &skills, RunLimits::default());
+    let mut during = R::new(leaving_work(), &skills, RunLimits::default());
     ok(&mut during, 0, WorkflowEvent::Start);
     ok(&mut during, 1, yes());
     let e = ok(&mut during, 2, WorkflowEvent::Cancel);
@@ -329,7 +360,7 @@ fn limits_bound_steps_time_and_waits() {
         max_steps: 3,
         ..RunLimits::default()
     };
-    let mut run = WorkflowRun::new(leaving_work(), &skills, tight);
+    let mut run = R::new(leaving_work(), &skills, tight);
     let e = ok(&mut run, 0, WorkflowEvent::Start);
     assert_eq!(finished(&e).status, WorkflowStatus::Failed);
     assert!(finished(&e).summary.contains("more than 3 steps"));
@@ -338,7 +369,7 @@ fn limits_bound_steps_time_and_waits() {
         max_wait_ms: 30_000,
         ..RunLimits::default()
     };
-    let mut run = WorkflowRun::new(leaving_work(), &skills, short_wait);
+    let mut run = R::new(leaving_work(), &skills, short_wait);
     ok(&mut run, 0, WorkflowEvent::Start);
     ok(&mut run, 1, yes());
     ok(&mut run, 2, session_done(true, "Sent"));
@@ -354,7 +385,7 @@ fn limits_bound_steps_time_and_waits() {
         max_total_ms: 10_000,
         ..RunLimits::default()
     };
-    let mut run = WorkflowRun::new(leaving_work(), &skills, short_total);
+    let mut run = R::new(leaving_work(), &skills, short_total);
     ok(&mut run, 0, WorkflowEvent::Start);
     let e = ok(&mut run, 10_001, yes());
     assert_eq!(finished(&e).status, WorkflowStatus::Failed);
@@ -366,13 +397,13 @@ fn invalid_or_disabled_workflows_fail_at_start() {
     let skills = store_with(vec![]);
     let mut wf = leaving_work();
     wf.enabled = false;
-    let e = WorkflowRun::new(wf, &skills, RunLimits::default()).step(0, WorkflowEvent::Start);
+    let e = R::new(wf, &skills, RunLimits::default()).step(0, WorkflowEvent::Start);
     assert!(finished(&e.unwrap()).summary.contains("disabled"));
     let wf = Workflow {
         id: "Bad".into(),
         ..leaving_work()
     };
-    let e = WorkflowRun::new(wf, &skills, RunLimits::default())
+    let e = R::new(wf, &skills, RunLimits::default())
         .step(0, WorkflowEvent::Start)
         .unwrap();
     assert!(finished(&e).summary.contains("not valid"));
@@ -530,7 +561,19 @@ fn store_crud_json_and_lookups() {
         args: args(&[("contact", "Mom"), ("colour", "red")]),
     };
     let w = WorkflowStore::warnings(&wf, &with_text);
-    assert_eq!(w.len(), 2, "{w:?}");
+    assert_eq!(
+        w,
+        vec!["step 3: the skill \"text-someone\" has no parameter \"colour\"".to_owned()]
+    );
+    wf.steps[2] = Step::RunSkill {
+        skill_id: "text-someone".into(),
+        args: args(&[("contact", "Mom")]),
+    };
+    let w = WorkflowStore::warnings(&wf, &with_text);
+    assert_eq!(
+        w,
+        vec!["step 3: the skill \"text-someone\" needs message".to_owned()]
+    );
 
     // Lookups.
     let names = |v: Vec<&Workflow>| v.iter().map(|w| w.id.clone()).collect::<Vec<_>>();
@@ -544,20 +587,26 @@ fn store_crud_json_and_lookups() {
     assert_eq!(names(s.for_external("left.office")), vec!["leaving-work"]);
     assert_eq!(names(s.for_external(" LEFT.OFFICE ")), vec!["leaving-work"]);
     assert!(s.for_external("arrived.home").is_empty());
-    assert_eq!(names(s.due(Weekday::Mon, 7 * 60 + 30, 1)), vec!["morning"]);
-    assert!(s.due(Weekday::Mon, 7 * 60 + 31, 1).is_empty());
-    assert_eq!(names(s.due(Weekday::Mon, 7 * 60 + 45, 20)), vec!["morning"]);
-    assert!(s.due(Weekday::Sat, 7 * 60 + 30, 1).is_empty());
-    let (next, minutes) = s.next_scheduled(Weekday::Fri, 8 * 60).unwrap();
+    assert_eq!(
+        names(s.due(Weekday::Mon, 7 * 60 + 30, 1).unwrap()),
+        vec!["morning"]
+    );
+    assert!(s.due(Weekday::Mon, 7 * 60 + 31, 1).unwrap().is_empty());
+    assert_eq!(
+        names(s.due(Weekday::Mon, 7 * 60 + 45, 20).unwrap()),
+        vec!["morning"]
+    );
+    assert!(s.due(Weekday::Sat, 7 * 60 + 30, 1).unwrap().is_empty());
+    let (next, minutes) = s.next_scheduled(Weekday::Fri, 8 * 60).unwrap().unwrap();
     assert_eq!(next.id, "morning");
     assert_eq!(minutes, 3 * MINUTES_PER_DAY - 30);
 
     // Disabled workflows are never found.
     let mut off = weekday_morning();
     off.enabled = false;
-    s.update(off).unwrap();
-    assert!(s.due(Weekday::Mon, 7 * 60 + 30, 1).is_empty());
-    assert!(s.next_scheduled(Weekday::Mon, 0).is_none());
+    s.update(off, 10).unwrap();
+    assert!(s.due(Weekday::Mon, 7 * 60 + 30, 1).unwrap().is_empty());
+    assert!(s.next_scheduled(Weekday::Mon, 0).unwrap().is_none());
 
     // Bookkeeping and the snapshot.
     let outcome = WorkflowOutcome {
@@ -577,7 +626,7 @@ fn store_crud_json_and_lookups() {
     renamed.name = "Bed".into();
     renamed.runs = 0;
     renamed.last_outcome = None;
-    s.update(renamed).unwrap();
+    s.update(renamed, 11).unwrap();
     assert_eq!(s.get("bedtime").unwrap().last_outcome, Some(outcome));
     let json = s.to_json().unwrap();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -603,7 +652,19 @@ fn workflow_snapshots_tolerate_unknown_fields_and_reject_corruption() {
     let (s, issues) = WorkflowStore::from_json_with_issues(json).unwrap();
     assert_eq!(s.len(), 1);
     assert_eq!(s.get("w").unwrap().name, "W");
-    assert_eq!(issues.len(), 2, "{issues:?}");
+    assert_eq!(issues.len(), 4, "{issues:?}");
+    assert_eq!(issues[0], "snapshot: unknown field extra ignored");
+    assert_eq!(
+        issues[1],
+        "workflows[0] \"w\" (W): unknown field colour ignored"
+    );
+    assert!(issues[2].starts_with("workflows[1] \"x\" (X): not loaded, kept unchanged"));
+    assert!(s.has_load_issues());
+    // Nothing is lost on save: both unreadable entries come back, and are reported again.
+    let (again, issues2) = WorkflowStore::from_json_with_issues(&s.to_json().unwrap()).unwrap();
+    assert_eq!(again.len(), 1);
+    assert_eq!(issues2.len(), 2, "{issues2:?}");
+    assert!(again.to_json().unwrap().contains("teleport"));
     for bad in ["", "[]", r#"{"workflows":{}}"#, "{"] {
         assert!(WorkflowStore::from_json(bad).is_err(), "{bad:?}");
     }
@@ -659,7 +720,7 @@ fn minutes_until_next_is_the_first_firing_minute_ahead_for_every_start_point() {
         for start in 0..MINUTES_PER_WEEK {
             let weekday = Weekday::ALL[(start / MINUTES_PER_DAY) as usize];
             let mod_day = start % MINUTES_PER_DAY;
-            let d = minutes_until_next(&s, weekday, mod_day);
+            let d = minutes_until_next(&s, weekday, mod_day).unwrap();
             assert!(d < MINUTES_PER_WEEK, "{s:?} at {start}: {d}");
             assert!(
                 fires_at(&s, (start + d) % MINUTES_PER_WEEK),
@@ -672,14 +733,14 @@ fn minutes_until_next_is_the_first_firing_minute_ahead_for_every_start_point() {
                     "{s:?} at {start}: +{e}"
                 );
             }
-            let back = minutes_since_last(&s, weekday, mod_day);
+            let back = minutes_since_last(&s, weekday, mod_day).unwrap();
             assert!(back < MINUTES_PER_WEEK);
             assert!(fires_at(
                 &s,
                 (start + MINUTES_PER_WEEK - back) % MINUTES_PER_WEEK
             ));
             assert_eq!(d == 0, back == 0);
-            assert_eq!(is_due(&s, weekday, mod_day, 1), d == 0);
+            assert_eq!(is_due(&s, weekday, mod_day, 1).unwrap(), d == 0);
         }
     }
 }
@@ -690,20 +751,48 @@ fn next_and_last_are_consistent_across_the_week() {
         // Walking forward d minutes then asking "since last" gives 0, and one minute later 1.
         for start in (0..MINUTES_PER_WEEK).step_by(7) {
             let weekday = Weekday::ALL[(start / MINUTES_PER_DAY) as usize];
-            let d = minutes_until_next(&s, weekday, start % MINUTES_PER_DAY);
+            let d = minutes_until_next(&s, weekday, start % MINUTES_PER_DAY).unwrap();
             let at = (start + d) % MINUTES_PER_WEEK;
             let w2 = Weekday::ALL[(at / MINUTES_PER_DAY) as usize];
-            assert_eq!(minutes_since_last(&s, w2, at % MINUTES_PER_DAY), 0);
+            assert_eq!(minutes_since_last(&s, w2, at % MINUTES_PER_DAY).unwrap(), 0);
             let after = (at + 1) % MINUTES_PER_WEEK;
             let w3 = Weekday::ALL[(after / MINUTES_PER_DAY) as usize];
-            let since = minutes_since_last(&s, w3, after % MINUTES_PER_DAY);
+            let since = minutes_since_last(&s, w3, after % MINUTES_PER_DAY).unwrap();
             assert!(since == 1 || fires_at(&s, after), "{s:?} {after}: {since}");
         }
     }
+}
+
+/// Review finding w8: out-of-range input is a typed error, not a clamp.
+#[test]
+fn out_of_range_schedules_and_times_are_errors() {
     let never = Schedule::default();
-    assert_eq!(minutes_until_next(&never, Weekday::Mon, 0), u32::MAX);
-    assert!(!is_due(&never, Weekday::Mon, 0, 10_000));
-    // Out-of-range minute of day is clamped to 23:59.
+    assert!(matches!(
+        minutes_until_next(&never, Weekday::Mon, 0),
+        Err(SkillError::Schedule(_))
+    ));
+    assert!(is_due(&never, Weekday::Mon, 0, 10_000).is_err());
     let late = &schedules()[1];
-    assert_eq!(minutes_until_next(late, Weekday::Mon, 5_000), 0);
+    assert!(minutes_until_next(late, Weekday::Mon, 1_440).is_err());
+    assert!(minutes_since_last(late, Weekday::Mon, 5_000).is_err());
+    let bad = Schedule {
+        days: [Weekday::Mon].into(),
+        hour: 24,
+        minute: 0,
+    };
+    assert!(minutes_until_next(&bad, Weekday::Mon, 0).is_err());
+    let bad = Schedule {
+        days: [Weekday::Mon].into(),
+        hour: 7,
+        minute: 60,
+    };
+    assert!(minutes_since_last(&bad, Weekday::Mon, 0).is_err());
+    assert_eq!(Weekday::from_index(6).unwrap(), Weekday::Sun);
+    assert!(Weekday::from_index(7).is_err());
+    let mut store = WorkflowStore::new();
+    store.add(weekday_morning()).unwrap();
+    assert!(store.due(Weekday::Mon, 1_440, 1).is_err());
+    assert!(store.next_scheduled(Weekday::Mon, 99_999).is_err());
+    // A window of 0 is never due.
+    assert!(!is_due(&schedules()[0], Weekday::Mon, 0, 0).unwrap());
 }

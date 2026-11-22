@@ -6,6 +6,7 @@ use jarvis_proto::{AppRule, ModelProfile, Policy, PolicyMode, SessionConfig, Tas
 
 use crate::driver::{run_with, RunOptions, RunReport};
 use crate::error::SimError;
+use crate::faults::Faults;
 use crate::human::Human;
 use crate::model::Model;
 use crate::phone::{ClockCosts, ObserveMode, SimPhone};
@@ -35,6 +36,10 @@ pub struct RunSetup {
     pub app_rules: Vec<AppRule>,
     /// Bundle ids approved in memory before the run (no first-use prompt for them).
     pub approved_apps: Vec<String>,
+    /// Overrides the policy's limit on waiting for an unlock (simulated milliseconds).
+    pub max_locked_wait_ms: Option<u64>,
+    /// Faults injected into the phone (locks, failing observations, dropped characters).
+    pub faults: Faults,
 }
 
 impl Default for RunSetup {
@@ -51,6 +56,8 @@ impl Default for RunSetup {
             first_use_approval: Policy::default().first_use_approval,
             app_rules: Vec::new(),
             approved_apps: Vec::new(),
+            max_locked_wait_ms: None,
+            faults: Faults::default(),
         }
     }
 }
@@ -71,6 +78,9 @@ impl RunSetup {
         if let Some(ms) = self.max_duration_ms {
             policy.max_duration_ms = ms;
         }
+        if let Some(ms) = self.max_locked_wait_ms {
+            policy.max_locked_wait_ms = ms;
+        }
         SessionConfig {
             policy,
             tools: Vec::new(),
@@ -90,6 +100,7 @@ impl RunSetup {
         let mut phone = SimPhone::new()?;
         phone.set_mode(self.mode);
         phone.set_costs(self.costs);
+        phone.set_faults(self.faults.clone());
         phone.launch(start_app)?;
         Ok(phone)
     }

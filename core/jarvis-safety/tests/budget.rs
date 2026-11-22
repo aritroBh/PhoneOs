@@ -101,3 +101,27 @@ fn steps_are_checked_before_time_and_failures() {
     b.record_failure();
     assert_eq!(b.check(100), BudgetVerdict::TimeExceeded);
 }
+
+#[test]
+fn skipped_time_is_not_elapsed_and_refunds_saturate() {
+    let mut b = Budget::new(&policy(2, 1_000, 4), 0);
+    b.observe(400);
+    // Paused from 400 to 100_400 (the phone was locked).
+    b.skip(100_400);
+    assert_eq!(b.elapsed_ms(100_400), 400);
+    assert_eq!(b.elapsed_ms(100_900), 900);
+    assert_eq!(b.check(101_000), BudgetVerdict::TimeExceeded);
+    // A skip backwards re-anchors without adding or removing time.
+    b.observe(100_500);
+    b.skip(50);
+    assert_eq!(b.elapsed_ms(50), 500);
+
+    b.record_step(60);
+    b.record_step(70);
+    assert_eq!(b.check(70), BudgetVerdict::StepsExceeded);
+    b.refund_step();
+    assert_eq!(b.steps(), 1);
+    b.refund_step();
+    b.refund_step();
+    assert_eq!(b.steps(), 0);
+}

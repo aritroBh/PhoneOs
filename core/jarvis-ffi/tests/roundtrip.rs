@@ -227,6 +227,10 @@ fn event_variant(e: &p::Event) -> usize {
         p::Event::UserDecision { .. } => 6,
         p::Event::UserAnswer { .. } => 7,
         p::Event::Cancel => 8,
+        p::Event::DeviceLocked => 9,
+        p::Event::DeviceUnlocked => 10,
+        p::Event::Tick => 11,
+        p::Event::ObserveFailed { .. } => 12,
     }
 }
 
@@ -236,6 +240,7 @@ fn status_variant(s: &p::OutcomeStatus) -> usize {
         p::OutcomeStatus::Failed => 1,
         p::OutcomeStatus::Cancelled => 2,
         p::OutcomeStatus::Blocked => 3,
+        p::OutcomeStatus::Interrupted => 4,
     }
 }
 
@@ -248,6 +253,7 @@ fn effect_variant(e: &p::Effect) -> usize {
         p::Effect::Confirm(_) => 4,
         p::Effect::AskUser { .. } => 5,
         p::Effect::Finished(_) => 6,
+        p::Effect::AwaitUnlock { .. } => 7,
     }
 }
 
@@ -261,6 +267,7 @@ fn phase_variant(ph: &p::Phase) -> usize {
         p::Phase::CallingTool => 5,
         p::Phase::WaitingForUser => 6,
         p::Phase::Finished => 7,
+        p::Phase::WaitingForUnlock => 8,
     }
 }
 
@@ -508,6 +515,7 @@ fn outcomes() -> Vec<p::Outcome> {
         p::OutcomeStatus::Failed,
         p::OutcomeStatus::Cancelled,
         p::OutcomeStatus::Blocked,
+        p::OutcomeStatus::Interrupted,
     ]
     .into_iter()
     .enumerate()
@@ -547,12 +555,29 @@ fn all_events() -> Vec<p::Event> {
             text: "the one from work".to_owned(),
         },
         p::Event::Cancel,
+        p::Event::ActResult(p::RunnerResult::device_locked()),
+        p::Event::ActResult(p::RunnerResult {
+            ok: false,
+            error: None,
+            failure: Some(p::RunnerFailure::Other),
+        }),
+        p::Event::DeviceLocked,
+        p::Event::DeviceUnlocked,
+        p::Event::Tick,
+        p::Event::ObserveFailed {
+            reason: "snapshot timed out".to_owned(),
+        },
     ];
     for screen in fixture_screens() {
         v.push(p::Event::Observed(fixtures::observation(screen.clone())));
         v.push(p::Event::Observed(p::Observation {
-            screen,
+            screen: screen.clone(),
             screenshot: Some(image()),
+            device_locked: false,
+        }));
+        v.push(p::Event::Observed(p::Observation {
+            device_locked: true,
+            ..fixtures::observation(screen)
         }));
     }
     v
@@ -573,6 +598,10 @@ fn all_effects() -> Vec<p::Effect> {
         }),
         p::Effect::AskUser {
             question: "Which one?".to_owned(),
+        },
+        p::Effect::AwaitUnlock {
+            reason: "Unlock to continue".to_owned(),
+            waited_ms: 61_000,
         },
     ];
     v.extend(model_requests().into_iter().map(p::Effect::Infer));
@@ -640,6 +669,7 @@ fn screens_observations_and_orientations_round_trip() {
         rt::<_, f::ScreenObservation>(p::Observation {
             screen: s,
             screenshot: Some(image()),
+            device_locked: true,
         });
     }
     rt::<_, f::ImageRef>(image());
@@ -681,6 +711,9 @@ fn every_runner_command_and_key_round_trips() {
     }
     rt::<_, f::RunnerResult>(p::RunnerResult::ok());
     rt::<_, f::RunnerResult>(p::RunnerResult::err("nope"));
+    rt::<_, f::RunnerResult>(p::RunnerResult::device_locked());
+    let locked: f::RunnerResult = p::RunnerResult::device_locked().into();
+    assert_eq!(locked.failure, Some(f::RunnerFailure::DeviceLocked));
 }
 
 #[test]
@@ -754,6 +787,7 @@ fn policy_task_and_config_round_trip() {
         max_duration_ms: u64::MAX,
         max_consecutive_failures: 1,
         max_parse_retries: 0,
+        max_locked_wait_ms: 0,
     });
     // Every mode, trust level and category, in every list.
     let modes = [p::PolicyMode::Guarded, p::PolicyMode::StepByStep];
@@ -786,6 +820,7 @@ fn policy_task_and_config_round_trip() {
     assert!(fp.confirm.contains(&f::RiskCategory::Unverified));
     assert!(fp.confirm.contains(&f::RiskCategory::Call));
     assert!(fp.confirm.contains(&f::RiskCategory::FirstUse));
+    assert_eq!(fp.max_locked_wait_ms, 1_800_000);
     rt::<_, f::TaskSpec>(p::TaskSpec::new("id-1", "Text Alex I'm late"));
     rt::<_, f::AppInfo>(p::AppInfo::new("com.apple.MobileSMS", "Messages"));
     rt::<_, f::SessionConfig>(p::SessionConfig::default());
@@ -808,6 +843,7 @@ fn policy_task_and_config_round_trip() {
             instructions: "Use the existing thread.\nKeep it short.".to_owned(),
             apps: vec!["com.apple.MobileSMS".to_owned()],
             confine_to_apps: true,
+            tools: vec!["open_link".to_owned()],
             args: [("contact", "Mom"), ("message", "on my way")]
                 .into_iter()
                 .map(|(k, v)| (k.to_owned(), v.to_owned()))
@@ -819,7 +855,7 @@ fn policy_task_and_config_round_trip() {
 #[test]
 fn every_event_round_trips() {
     let events = all_events();
-    assert_covers(events.iter().map(event_variant), 9, "Event");
+    assert_covers(events.iter().map(event_variant), 13, "Event");
     for e in events {
         let ffi: f::Event = e.clone().into();
         let (back, issue) = f::event_to_proto(ffi.clone());
@@ -831,7 +867,7 @@ fn every_event_round_trips() {
 #[test]
 fn every_effect_outcome_and_confirm_round_trips() {
     let effects = all_effects();
-    assert_covers(effects.iter().map(effect_variant), 7, "Effect");
+    assert_covers(effects.iter().map(effect_variant), 8, "Effect");
     let statuses: Vec<usize> = effects
         .iter()
         .filter_map(|e| match e {
@@ -839,7 +875,7 @@ fn every_effect_outcome_and_confirm_round_trips() {
             _ => None,
         })
         .collect();
-    assert_covers(statuses, 4, "OutcomeStatus");
+    assert_covers(statuses, 5, "OutcomeStatus");
     for e in effects {
         rt_try::<_, f::Effect>(e);
     }
@@ -864,8 +900,9 @@ fn every_phase_and_progress_round_trips() {
         p::Phase::CallingTool,
         p::Phase::WaitingForUser,
         p::Phase::Finished,
+        p::Phase::WaitingForUnlock,
     ];
-    assert_covers(phases.iter().map(phase_variant), 8, "Phase");
+    assert_covers(phases.iter().map(phase_variant), 9, "Phase");
     for (phase, action) in phases.into_iter().zip(all_actions()) {
         rt::<_, f::Phase>(phase);
         rt_try::<_, f::SessionProgress>(p::Progress {
@@ -875,6 +912,9 @@ fn every_phase_and_progress_round_trips() {
             app: Some("com.apple.Preferences".to_owned()),
             model_calls: 7,
             parse_retries: 2,
+            waiting_for_unlock: phase == p::Phase::WaitingForUnlock,
+            locked_wait_ms: 5,
+            locked_total_ms: 50,
         });
     }
     rt_try::<_, f::SessionProgress>(p::Progress::default());

@@ -11,7 +11,7 @@ use jarvis_proto::{
 
 use crate::human::Human;
 use crate::model::Model;
-use crate::phone::{SimPhone, SimSnapshot};
+use crate::phone::{SimObservation, SimPhone, SimSnapshot};
 
 /// Limits and fault injection for one run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +67,17 @@ pub struct RunCounts {
     pub approvals: usize,
     /// Questions asked of the owner.
     pub questions: usize,
+    /// `AwaitUnlock` effects (each one answered by a timer tick or the unlock).
+    pub unlock_waits: usize,
+    /// Times the phone locked.
+    pub locks: usize,
+    /// Runner commands refused because the phone was locked.
+    pub locked_refusals: usize,
+    /// Runner commands carried out after an unlock without a fresh observation first.
+    /// The core's resume rule says this must be 0.
+    pub stale_acts: usize,
+    /// Observations that failed (`ObserveFailed`).
+    pub observe_failures: usize,
 }
 
 /// A confirmation request and the owner's decision.
@@ -76,6 +87,9 @@ pub struct ConfirmRecord {
     pub request: ConfirmRequest,
     /// The decision.
     pub approved: bool,
+    /// The phone locked while this was asked, so no decision was given (`approved` is
+    /// false); the session asks again after the unlock when it is still relevant.
+    pub interrupted: bool,
 }
 
 /// Everything a run produced.
@@ -225,12 +239,64 @@ pub fn run_with(
         let effect = session.step(TimedEvent::new(at_ms, event));
         report.counts.effects += 1;
         let costs = phone.costs();
+        let interrupts = !matches!(effect, Effect::Finished(_) | Effect::AwaitUnlock { .. });
+        if interrupts && phone.lock_at_effect(i) {
+            // The lock notification arrives while this effect is pending: the shell
+            // abandons it and tells the session.
+            report.steps.push(TranscriptStep {
+                n: report.steps.len() + 1,
+                at_ms,
+                effect: effect.name().to_owned(),
+                result: "the phone locked before this was done: device_locked".to_owned(),
+            });
+            if let Effect::Confirm(request) = effect {
+                report.counts.confirmations += 1;
+                report.confirmations.push(ConfirmRecord {
+                    request,
+                    approved: false,
+                    interrupted: true,
+                });
+            }
+            event = Event::DeviceLocked;
+            continue;
+        }
         let (label, result, next) = match effect {
+            Effect::AwaitUnlock { reason, waited_ms } => {
+                report.counts.unlock_waits += 1;
+                let poll = phone.faults().poll_ms();
+                let label = format!("await_unlock (waited {waited_ms} ms): {reason}");
+                if phone.wait_for_unlock(poll) {
+                    (
+                        label,
+                        format!("owner unlocks at {} ms", phone.now_ms()),
+                        Some(Event::DeviceUnlocked),
+                    )
+                } else {
+                    (
+                        label,
+                        format!("still locked at {} ms: tick", phone.now_ms()),
+                        Some(Event::Tick),
+                    )
+                }
+            }
             Effect::Observe { screenshot } => {
                 report.counts.observes += 1;
                 phone.advance(costs.observe_ms);
-                match phone.observe() {
-                    Ok(obs) => {
+                match phone.observe_result() {
+                    Ok(SimObservation::Locked(obs)) => (
+                        "observe".to_owned(),
+                        "the phone is locked: screen_locked".to_owned(),
+                        Some(Event::Observed(obs)),
+                    ),
+                    Ok(SimObservation::Failed(reason)) => {
+                        report.counts.observe_failures += 1;
+                        (
+                            "observe".to_owned(),
+                            format!("FAILED: {reason}"),
+                            Some(Event::ObserveFailed { reason }),
+                        )
+                    }
+                    Ok(SimObservation::Screen(obs)) => {
                         let snap = phone.snapshot();
                         let kb = if obs.screen.keyboard_visible {
                             ", keyboard up"
@@ -335,6 +401,7 @@ pub fn run_with(
                 report.confirmations.push(ConfirmRecord {
                     request: req,
                     approved,
+                    interrupted: false,
                 });
                 (
                     label,
@@ -395,6 +462,9 @@ pub fn run_with(
         }
     }
     report.final_state = phone.snapshot();
+    report.counts.locks = phone.lock_count();
+    report.counts.locked_refusals = phone.locked_refusals();
+    report.counts.stale_acts = phone.stale_acts();
     let progress = session.progress();
     report.counts.parse_retries = usize::try_from(progress.parse_retries).unwrap_or(usize::MAX);
     report.memory = session.into_memory();

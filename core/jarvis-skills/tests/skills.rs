@@ -244,19 +244,22 @@ fn store_crud_keeps_a_stable_order_and_unique_ids() {
     // Updating keeps the bookkeeping, replaces the definition.
     let mut edited = wifi_skill();
     edited.name = "Wi-Fi off now".into();
-    edited.updated_ms = 900;
+    edited.updated_ms = 1;
     edited.runs = 0;
-    s.update(edited).unwrap();
+    s.update(edited, 900).unwrap();
     let w = s.get("wifi-off").unwrap();
     assert_eq!(
         (w.name.as_str(), w.runs, w.last_run_ms, w.updated_ms),
         ("Wi-Fi off now", 2, Some(700), 900)
     );
     assert_eq!(
-        s.update(Skill {
-            id: "nope".into(),
-            ..wifi_skill()
-        }),
+        s.update(
+            Skill {
+                id: "nope".into(),
+                ..wifi_skill()
+            },
+            1
+        ),
         Err(SkillError::NotFound("nope".into()))
     );
     assert_eq!(
@@ -265,19 +268,25 @@ fn store_crud_keeps_a_stable_order_and_unique_ids() {
     );
 
     assert_eq!(
-        s.upsert(Skill {
-            id: "aaa".into(),
-            ..wifi_skill()
-        })
+        s.upsert(
+            Skill {
+                id: "aaa".into(),
+                ..wifi_skill()
+            },
+            5
+        )
         .unwrap(),
         Upsert::Inserted
     );
     assert_eq!(
-        s.upsert(Skill {
-            id: "aaa".into(),
-            name: "A".into(),
-            ..wifi_skill()
-        })
+        s.upsert(
+            Skill {
+                id: "aaa".into(),
+                name: "A".into(),
+                ..wifi_skill()
+            },
+            6
+        )
         .unwrap(),
         Upsert::Updated
     );
@@ -397,25 +406,76 @@ fn a_megabyte_snapshot_is_refused_or_loaded_quickly() {
 }
 
 #[test]
-fn context_carries_declared_args_only() {
+fn context_is_checked_against_the_skill() {
     let skill = text_skill();
-    let ctx = skill.context(args(&[
-        ("contact", " Mom "),
-        ("message", "on my way"),
-        ("evil", "ignored"),
-        ("blank", ""),
-    ]));
+    let ctx = skill
+        .context(args(&[
+            ("contact", " Mom "),
+            ("message", "on\u{200B} my\n way"),
+        ]))
+        .unwrap();
     assert_eq!(ctx.id, "text-someone");
     assert_eq!(ctx.name, "Text someone");
     assert!(ctx.confine_to_apps);
     assert_eq!(ctx.apps, vec![MESSAGES.to_owned()]);
     assert_eq!(
         ctx.args,
-        args(&[("contact", "Mom"), ("message", "on my way")])
+        args(&[("contact", "Mom"), ("message", "on my way")]),
+        "values are cleaned"
     );
     assert_eq!(ctx.instructions, skill.instructions);
-    let long = skill.context(args(&[("contact", &"x".repeat(1000))]));
-    assert_eq!(long.args["contact"].chars().count(), 200);
+    // Review finding f2: undeclared, missing or disabled is an error, never dropped.
+    assert_eq!(
+        skill.context(args(&[
+            ("contact", "Mom"),
+            ("message", "hi"),
+            ("evil", "x")
+        ])),
+        Err(SkillError::UndeclaredArg {
+            skill: "text-someone".into(),
+            arg: "evil".into()
+        })
+    );
+    assert_eq!(
+        skill.context(args(&[("contact", "Mom"), ("message", " \u{200B} ")])),
+        Err(SkillError::MissingParams {
+            skill: "text-someone".into(),
+            params: vec!["message".into()]
+        })
+    );
+    let mut off = text_skill();
+    off.enabled = false;
+    assert_eq!(
+        off.context(args(&[("contact", "Mom"), ("message", "hi")])),
+        Err(SkillError::Disabled("text-someone".into()))
+    );
+}
+
+/// Review finding f5: one cap (500) for matcher and context, and over it is an error.
+#[test]
+fn long_values_are_refused_not_cut() {
+    let skill = text_skill();
+    let at_cap = "x".repeat(jarvis_skills::MAX_ARG_CHARS);
+    let ok = skill
+        .context(args(&[("contact", "Mom"), ("message", &at_cap)]))
+        .unwrap();
+    assert_eq!(ok.args["message"].chars().count(), 500);
+    let over = "x".repeat(jarvis_skills::MAX_ARG_CHARS + 1);
+    assert_eq!(
+        skill.context(args(&[("contact", "Mom"), ("message", &over)])),
+        Err(SkillError::ArgTooLong {
+            arg: "message".into(),
+            max: 500
+        })
+    );
+    // A value captured from the longest matchable request always fits.
+    let s = store_with(vec![text_skill()]);
+    let message = "word ".repeat(97);
+    let m = s.match_task(&format!("text mom {message}"));
+    let captured = &m[0].args["message"];
+    assert_eq!(captured.as_str(), message.trim());
+    let ctx = skill.context(m[0].args.clone()).unwrap();
+    assert_eq!(&ctx.args["message"], captured);
 }
 
 #[test]

@@ -34,6 +34,8 @@ fn parse(snapshot: RunnerSnapshot) -> (p::Screen, Option<p::ImageRef>, Result<us
         keyboard_visible,
         orientation,
         screenshot,
+        // Read by `snapshot_to_observation`; a screen is a screen either way.
+        device_locked: _,
     } = snapshot;
     let size: p::Size = size.into();
     let (root, parsed) = match parse_runner_text(&source) {
@@ -64,6 +66,7 @@ fn empty_root(size: p::Size, app_name: Option<&str>) -> p::UiNode {
 pub(crate) fn snapshot_to_observation(
     snapshot: RunnerSnapshot,
 ) -> (p::Observation, Option<String>) {
+    let device_locked = snapshot.device_locked;
     let (screen, screenshot, parsed) = parse(snapshot);
     let issue = match parsed {
         Ok(0) => None,
@@ -72,7 +75,16 @@ pub(crate) fn snapshot_to_observation(
         )),
         Err(e) => Some(format!("runner text: {e}; observed as an empty screen")),
     };
-    (p::Observation { screen, screenshot }, issue)
+    // A locked snapshot is of the lock screen (often empty): its parse issues are noise.
+    let issue = issue.filter(|_| !device_locked);
+    (
+        p::Observation {
+            screen,
+            screenshot,
+            device_locked,
+        },
+        issue,
+    )
 }
 
 /// Strict variant for `parseRunnerTextToScreen`: no node at all is an error.

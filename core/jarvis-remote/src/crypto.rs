@@ -1,24 +1,36 @@
-//! The key schedule and the authenticated-encryption channel.
+//! The key schedule, the handshake MACs and the authenticated-encryption channel.
 //!
-//! Every primitive is a vetted RustCrypto implementation: HKDF-SHA256 (`hkdf`),
-//! HMAC-SHA256 (`hmac`), ChaCha20-Poly1305 (`chacha20poly1305`) and constant-time
-//! comparison (`subtle`). Nothing here is a custom primitive; this module only fixes the
-//! labels, the inputs and their order. The labels are part of the protocol: changing one
-//! breaks every paired device, which the known-answer test catches.
+//! Every primitive is a vetted RustCrypto or dalek implementation: HKDF-SHA256 (`hkdf`),
+//! HMAC-SHA256 (`hmac`), X25519 (`x25519-dalek`), ChaCha20-Poly1305 (`chacha20poly1305`)
+//! and constant-time comparison (`subtle`). Nothing here is a custom primitive; this module
+//! only fixes the labels, the inputs and their order. The labels are part of the protocol:
+//! changing one breaks every paired device, which the known-answer test catches.
 //!
 //! ```text
-//! pair_key     = HKDF(salt = "jarvis-remote v1 pair", ikm = S).expand("pair-auth", 32)
+//! -- from shell entropy (E: ≥ 32 CSPRNG bytes; c: persisted counter; t: clock) --
+//! S            = HKDF(salt = ENT, ikm = E).expand("pairing-secret", 20)
+//! Np           = HKDF(salt = ENT, ikm = E).expand(lp("phone-nonce", c, t), 32)
+//! ep           = HKDF(salt = ENT, ikm = E).expand(lp("phone-ephemeral", c, t), 32)
+//! Nc, er       = the same with "remote-nonce" / "remote-ephemeral" (no counter, no clock)
+//! -- handshake (Ep = X25519(ep), Er = X25519(er), dh = X25519(ep, Er) = X25519(er, Ep)) --
+//! pair_key     = HKDF(salt = "jarvis-remote v2 pair", ikm = S).expand("pair-auth", 32)
 //! device_id    = HKDF(salt = Np || Nc, ikm = S).expand(lp("device-id"), 16)
-//! device_key   = HKDF(salt = Np || Nc, ikm = S).expand(lp("device-key", device_id, name), 32)
-//! auth_key     = HKDF(salt = "jarvis-remote v1 auth", ikm = device_key).expand("connect-auth", 32)
-//! r2p || p2r   = HKDF(salt = Np || Nc, ikm = device_key).expand(lp("session", device_id), 64)
-//! nonce        = direction (1 byte) || 0 0 0 || counter (u64 BE)
+//! device_key   = HKDF(salt = Np || Nc, ikm = S || dh).expand(lp("device-key", device_id, name), 32)
+//! auth_key     = HKDF(salt = "jarvis-remote v2 auth", ikm = device_key).expand("connect-auth", 32)
+//! r2p || p2r   = HKDF(salt = Np || Nc, ikm = device_key || dh)
+//!                    .expand(lp("session", device_id, Ep, Er), 64)
+//! nonce        = direction (1 byte: 0x52 remote→phone, 0x50 phone→remote) || 0 0 0 || counter (u64 BE)
 //! aad          = version || kind || device_id || counter (u64 BE)
 //! ```
 //!
-//! `lp(..)` is a length-prefixed concatenation (u32 BE length before each part), so no two
-//! different input lists can produce the same bytes. `S` is the pairing secret, `Np`/`Nc`
-//! the phone's and the remote's 32-byte connection nonces.
+//! `ENT` is `"jarvis-remote v2 entropy"`. `lp(..)` is a length-prefixed concatenation
+//! (u32 BE length before each part), so no two different input lists produce the same
+//! bytes. Both ephemeral publics are bound into every handshake MAC, and a
+//! non-contributory (low-order) DH result is rejected.
+//!
+//! Forward secrecy: the session keys depend on `dh`, whose secrets live only for one
+//! handshake and are zeroized on drop. A device key stolen later does not decrypt recorded
+//! sessions; a pairing secret disclosed later does not yield the device key.
 
 use std::fmt;
 
@@ -28,34 +40,78 @@ use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
-use zeroize::Zeroize;
+use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::codec::{DeviceId, Kind, PROTOCOL_VERSION};
 
 /// Length of a connection nonce, in bytes.
 pub const NONCE_LEN: usize = 32;
+/// Length of an X25519 public key, in bytes.
+pub const PUBLIC_LEN: usize = 32;
 /// Length of a handshake MAC (HMAC-SHA256), in bytes.
 pub const MAC_LEN: usize = 32;
 /// Length of the AEAD tag, in bytes.
 pub const TAG_LEN: usize = 16;
 /// Length of the pairing secret, in bytes (160 bits).
 pub const PAIRING_SECRET_LEN: usize = 20;
+/// Least entropy the shell must pass to any entry point, in bytes.
+pub const MIN_ENTROPY_LEN: usize = 32;
+/// Least number of distinct byte values in that entropy (a sanity check, see
+/// [`check_entropy`]).
+pub const MIN_DISTINCT_ENTROPY_BYTES: usize = 16;
 
+/// Salt for everything derived from shell entropy.
+const ENTROPY_SALT: &[u8] = b"jarvis-remote v2 entropy";
 /// Salt for the pairing-authentication key.
-const PAIR_SALT: &[u8] = b"jarvis-remote v1 pair";
+const PAIR_SALT: &[u8] = b"jarvis-remote v2 pair";
 /// Salt for the connect-authentication key.
-const AUTH_SALT: &[u8] = b"jarvis-remote v1 auth";
+const AUTH_SALT: &[u8] = b"jarvis-remote v2 auth";
 
 /// Direction byte in the AEAD nonce: remote to phone.
-const DIR_R2P: u8 = 0x52;
+pub const DIR_R2P: u8 = 0x52;
 /// Direction byte in the AEAD nonce: phone to remote.
-const DIR_P2R: u8 = 0x50;
+pub const DIR_P2R: u8 = 0x50;
 
 /// A failure inside the cryptographic layer. Deliberately carries no detail: callers turn
 /// every variant into the same opaque authentication failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("authentication failed")]
 pub struct CryptoError;
+
+/// Shell entropy was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum EntropyError {
+    /// Fewer than [`MIN_ENTROPY_LEN`] bytes.
+    #[error("entropy too short")]
+    TooShort,
+    /// Fewer than [`MIN_DISTINCT_ENTROPY_BYTES`] distinct byte values (all zero, a
+    /// constant fill, a short repeated pattern).
+    #[error("entropy is not random")]
+    NotRandom,
+}
+
+/// Rejects entropy that is obviously not CSPRNG output.
+///
+/// 32 uniformly random bytes have about 30 distinct values; fewer than 16 has negligible
+/// probability, so this never refuses real randomness. It catches zero buffers, constant
+/// fills and short repeated patterns. It cannot catch a buffer that is random-looking but
+/// reused: the derivations below defend against that separately.
+pub fn check_entropy(entropy: &[u8]) -> Result<(), EntropyError> {
+    if entropy.len() < MIN_ENTROPY_LEN {
+        return Err(EntropyError::TooShort);
+    }
+    let mut seen = [false; 256];
+    for b in entropy {
+        if let Some(s) = seen.get_mut(usize::from(*b)) {
+            *s = true;
+        }
+    }
+    if seen.iter().filter(|s| **s).count() < MIN_DISTINCT_ENTROPY_BYTES {
+        return Err(EntropyError::NotRandom);
+    }
+    Ok(())
+}
 
 /// A 32-byte secret (device key, derived key). Zeroized on drop, compared in constant
 /// time, never printed.
@@ -130,6 +186,109 @@ impl fmt::Debug for PairingSecret {
     }
 }
 
+/// One side's per-connection randomness: a public nonce and an ephemeral X25519 key pair.
+/// The secret is zeroized on drop.
+pub struct Ephemeral {
+    /// The nonce sent in clear.
+    pub nonce: [u8; NONCE_LEN],
+    secret: StaticSecret,
+    /// The public key sent in clear.
+    pub public: [u8; PUBLIC_LEN],
+}
+
+impl fmt::Debug for Ephemeral {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Ephemeral")
+            .field("public", &crate::codec::to_hex(&self.public))
+            .finish_non_exhaustive()
+    }
+}
+
+impl Ephemeral {
+    fn derive(entropy: &[u8], nonce_info: &[u8], secret_info: &[u8]) -> Result<Self, CryptoError> {
+        let hk = Hkdf::<Sha256>::new(Some(ENTROPY_SALT), entropy);
+        let mut nonce = [0u8; NONCE_LEN];
+        hk.expand(nonce_info, &mut nonce).map_err(|_| CryptoError)?;
+        let mut sk = Zeroizing::new([0u8; 32]);
+        hk.expand(secret_info, sk.as_mut())
+            .map_err(|_| CryptoError)?;
+        let secret = StaticSecret::from(*sk);
+        let public = PublicKey::from(&secret).to_bytes();
+        Ok(Self {
+            nonce,
+            secret,
+            public,
+        })
+    }
+
+    /// The phone's randomness for one connection. `counter` (persisted, never repeated)
+    /// and `now_ms` are mixed in, so repeated entropy still yields fresh values.
+    pub fn phone(entropy: &[u8], counter: u64, now_ms: u64) -> Result<Self, CryptoError> {
+        let (c, t) = (counter.to_be_bytes(), now_ms.to_be_bytes());
+        Self::derive(
+            entropy,
+            &lp(&[b"phone-nonce", &c, &t]),
+            &lp(&[b"phone-ephemeral", &c, &t]),
+        )
+    }
+
+    /// The remote's randomness for one connection.
+    pub fn remote(entropy: &[u8]) -> Result<Self, CryptoError> {
+        Self::derive(
+            entropy,
+            &lp(&[b"remote-nonce"]),
+            &lp(&[b"remote-ephemeral"]),
+        )
+    }
+
+    /// X25519 with the peer's public key. Refuses a non-contributory result (the peer sent
+    /// a low-order point, which would make the shared secret predictable).
+    pub fn agree(
+        &self,
+        peer_public: &[u8; PUBLIC_LEN],
+    ) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
+        let shared = self.secret.diffie_hellman(&PublicKey::from(*peer_public));
+        if !shared.was_contributory() {
+            return Err(CryptoError);
+        }
+        Ok(Zeroizing::new(shared.to_bytes()))
+    }
+}
+
+/// The public values of one handshake, bound into every MAC and key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Transcript {
+    /// Phone nonce.
+    pub np: [u8; NONCE_LEN],
+    /// Remote nonce.
+    pub nc: [u8; NONCE_LEN],
+    /// Phone ephemeral public key.
+    pub ep: [u8; PUBLIC_LEN],
+    /// Remote ephemeral public key.
+    pub er: [u8; PUBLIC_LEN],
+}
+
+impl Transcript {
+    fn salt(&self) -> [u8; 2 * NONCE_LEN] {
+        let mut s = [0u8; 2 * NONCE_LEN];
+        for (dst, src) in s.iter_mut().zip(self.np.iter().chain(self.nc.iter())) {
+            *dst = *src;
+        }
+        s
+    }
+}
+
+/// Derives the pairing secret from shell entropy.
+pub fn pairing_secret_from_entropy(entropy: &[u8]) -> Result<PairingSecret, CryptoError> {
+    let mut out = [0u8; PAIRING_SECRET_LEN];
+    Hkdf::<Sha256>::new(Some(ENTROPY_SALT), entropy)
+        .expand(b"pairing-secret", &mut out)
+        .map_err(|_| CryptoError)?;
+    let secret = PairingSecret(out);
+    out.zeroize();
+    Ok(secret)
+}
+
 /// Length-prefixed concatenation: a u32 BE length before every part.
 fn lp(parts: &[&[u8]]) -> Vec<u8> {
     let mut out = Vec::new();
@@ -141,20 +300,21 @@ fn lp(parts: &[&[u8]]) -> Vec<u8> {
     out
 }
 
-fn salt_nonces(np: &[u8; NONCE_LEN], nc: &[u8; NONCE_LEN]) -> [u8; 2 * NONCE_LEN] {
-    let mut s = [0u8; 2 * NONCE_LEN];
-    for (dst, src) in s.iter_mut().zip(np.iter().chain(nc.iter())) {
-        *dst = *src;
-    }
-    s
-}
-
 fn hkdf32(salt: &[u8], ikm: &[u8], info: &[u8]) -> Result<Secret32, CryptoError> {
     let mut out = [0u8; 32];
     Hkdf::<Sha256>::new(Some(salt), ikm)
         .expand(info, &mut out)
         .map_err(|_| CryptoError)?;
-    Ok(Secret32(out))
+    let s = Secret32(out);
+    out.zeroize();
+    Ok(s)
+}
+
+fn concat_secret(a: &[u8], b: &[u8]) -> Zeroizing<Vec<u8>> {
+    let mut v = Zeroizing::new(Vec::with_capacity(a.len() + b.len()));
+    v.extend_from_slice(a);
+    v.extend_from_slice(b);
+    v
 }
 
 fn hmac(key: &Secret32, data: &[u8]) -> Result<[u8; MAC_LEN], CryptoError> {
@@ -176,13 +336,9 @@ pub fn pair_key(secret: &PairingSecret) -> Result<Secret32, CryptoError> {
 }
 
 /// The device id the phone assigns to a newly paired remote.
-pub fn derive_device_id(
-    secret: &PairingSecret,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
-) -> Result<DeviceId, CryptoError> {
+pub fn derive_device_id(secret: &PairingSecret, t: &Transcript) -> Result<DeviceId, CryptoError> {
     let mut out = [0u8; 16];
-    Hkdf::<Sha256>::new(Some(&salt_nonces(np, nc)), secret.as_bytes())
+    Hkdf::<Sha256>::new(Some(&t.salt()), secret.as_bytes())
         .expand(&lp(&[b"device-id"]), &mut out)
         .map_err(|_| CryptoError)?;
     Ok(DeviceId(out))
@@ -191,14 +347,14 @@ pub fn derive_device_id(
 /// The long-term key shared by the phone and one paired remote.
 pub fn derive_device_key(
     secret: &PairingSecret,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
+    dh: &[u8; 32],
+    t: &Transcript,
     device_id: &DeviceId,
     name: &str,
 ) -> Result<Secret32, CryptoError> {
     hkdf32(
-        &salt_nonces(np, nc),
-        secret.as_bytes(),
+        &t.salt(),
+        &concat_secret(secret.as_bytes(), dh),
         &lp(&[b"device-key", &device_id.0, name.as_bytes()]),
     )
 }
@@ -211,13 +367,13 @@ pub fn auth_key(device_key: &Secret32) -> Result<Secret32, CryptoError> {
 /// The per-connection keys `(remote_to_phone, phone_to_remote)`.
 pub fn session_keys(
     device_key: &Secret32,
+    dh: &[u8; 32],
     device_id: &DeviceId,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
+    t: &Transcript,
 ) -> Result<(Secret32, Secret32), CryptoError> {
-    let mut okm = [0u8; 64];
-    Hkdf::<Sha256>::new(Some(&salt_nonces(np, nc)), device_key.as_bytes())
-        .expand(&lp(&[b"session", &device_id.0]), &mut okm)
+    let mut okm = Zeroizing::new([0u8; 64]);
+    Hkdf::<Sha256>::new(Some(&t.salt()), &concat_secret(device_key.as_bytes(), dh))
+        .expand(&lp(&[b"session", &device_id.0, &t.ep, &t.er]), okm.as_mut())
         .map_err(|_| CryptoError)?;
     let mut a = [0u8; 32];
     let mut b = [0u8; 32];
@@ -228,148 +384,125 @@ pub fn session_keys(
             *slot = *byte;
         }
     }
-    okm.zeroize();
-    Ok((Secret32(a), Secret32(b)))
+    let keys = (Secret32(a), Secret32(b));
+    a.zeroize();
+    b.zeroize();
+    Ok(keys)
 }
 
 fn pair_transcript(
     role: &[u8],
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
+    t: &Transcript,
     name: &str,
     device_id: Option<&DeviceId>,
 ) -> Vec<u8> {
     let id: &[u8] = device_id.map_or(&[], |d| &d.0);
     lp(&[
-        b"jarvis-remote v1 pair",
+        b"jarvis-remote v2 pair",
         role,
         &[PROTOCOL_VERSION],
-        np,
-        nc,
+        &t.np,
+        &t.nc,
+        &t.ep,
+        &t.er,
         name.as_bytes(),
         id,
     ])
 }
 
-fn connect_transcript(
-    role: &[u8],
-    device_id: &DeviceId,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
-) -> Vec<u8> {
+fn connect_transcript(role: &[u8], device_id: &DeviceId, t: &Transcript) -> Vec<u8> {
     lp(&[
-        b"jarvis-remote v1 connect",
+        b"jarvis-remote v2 connect",
         role,
         &[PROTOCOL_VERSION],
         &device_id.0,
-        np,
-        nc,
+        &t.np,
+        &t.nc,
+        &t.ep,
+        &t.er,
     ])
 }
 
-/// The remote's pairing proof: it knows the secret, bound to both nonces and its name.
+/// The remote's pairing proof: it knows the secret, bound to the transcript and its name.
 pub fn pair_client_mac(
-    pair_key: &Secret32,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
+    pk: &Secret32,
+    t: &Transcript,
     name: &str,
 ) -> Result<[u8; MAC_LEN], CryptoError> {
-    hmac(pair_key, &pair_transcript(b"remote", np, nc, name, None))
+    hmac(pk, &pair_transcript(b"remote", t, name, None))
 }
 
 /// Checks [`pair_client_mac`] in constant time.
 pub fn verify_pair_client_mac(
-    pair_key: &Secret32,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
+    pk: &Secret32,
+    t: &Transcript,
     name: &str,
     tag: &[u8],
 ) -> Result<(), CryptoError> {
-    hmac_verify(
-        pair_key,
-        &pair_transcript(b"remote", np, nc, name, None),
-        tag,
-    )
+    hmac_verify(pk, &pair_transcript(b"remote", t, name, None), tag)
 }
 
 /// The phone's pairing proof, which also authenticates the assigned device id.
 pub fn pair_phone_mac(
-    pair_key: &Secret32,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
+    pk: &Secret32,
+    t: &Transcript,
     name: &str,
     device_id: &DeviceId,
 ) -> Result<[u8; MAC_LEN], CryptoError> {
-    hmac(
-        pair_key,
-        &pair_transcript(b"phone", np, nc, name, Some(device_id)),
-    )
+    hmac(pk, &pair_transcript(b"phone", t, name, Some(device_id)))
 }
 
 /// Checks [`pair_phone_mac`] in constant time.
 pub fn verify_pair_phone_mac(
-    pair_key: &Secret32,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
+    pk: &Secret32,
+    t: &Transcript,
     name: &str,
     device_id: &DeviceId,
     tag: &[u8],
 ) -> Result<(), CryptoError> {
     hmac_verify(
-        pair_key,
-        &pair_transcript(b"phone", np, nc, name, Some(device_id)),
+        pk,
+        &pair_transcript(b"phone", t, name, Some(device_id)),
         tag,
     )
 }
 
-/// The remote's connect proof (it holds the device key), bound to both nonces.
+/// The remote's connect proof (it holds the device key), bound to the transcript.
 pub fn connect_client_mac(
-    auth_key: &Secret32,
+    ak: &Secret32,
     device_id: &DeviceId,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
+    t: &Transcript,
 ) -> Result<[u8; MAC_LEN], CryptoError> {
-    hmac(auth_key, &connect_transcript(b"remote", device_id, np, nc))
+    hmac(ak, &connect_transcript(b"remote", device_id, t))
 }
 
 /// Checks [`connect_client_mac`] in constant time.
 pub fn verify_connect_client_mac(
-    auth_key: &Secret32,
+    ak: &Secret32,
     device_id: &DeviceId,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
+    t: &Transcript,
     tag: &[u8],
 ) -> Result<(), CryptoError> {
-    hmac_verify(
-        auth_key,
-        &connect_transcript(b"remote", device_id, np, nc),
-        tag,
-    )
+    hmac_verify(ak, &connect_transcript(b"remote", device_id, t), tag)
 }
 
 /// The phone's connect proof (it holds the device key too).
 pub fn connect_phone_mac(
-    auth_key: &Secret32,
+    ak: &Secret32,
     device_id: &DeviceId,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
+    t: &Transcript,
 ) -> Result<[u8; MAC_LEN], CryptoError> {
-    hmac(auth_key, &connect_transcript(b"phone", device_id, np, nc))
+    hmac(ak, &connect_transcript(b"phone", device_id, t))
 }
 
 /// Checks [`connect_phone_mac`] in constant time.
 pub fn verify_connect_phone_mac(
-    auth_key: &Secret32,
+    ak: &Secret32,
     device_id: &DeviceId,
-    np: &[u8; NONCE_LEN],
-    nc: &[u8; NONCE_LEN],
+    t: &Transcript,
     tag: &[u8],
 ) -> Result<(), CryptoError> {
-    hmac_verify(
-        auth_key,
-        &connect_transcript(b"phone", device_id, np, nc),
-        tag,
-    )
+    hmac_verify(ak, &connect_transcript(b"phone", device_id, t), tag)
 }
 
 /// Which side of the connection a [`Channel`] belongs to.
@@ -418,11 +551,11 @@ impl Channel {
     pub fn new(
         side: Side,
         device_key: &Secret32,
+        dh: &[u8; 32],
         device_id: DeviceId,
-        np: &[u8; NONCE_LEN],
-        nc: &[u8; NONCE_LEN],
+        t: &Transcript,
     ) -> Result<Self, CryptoError> {
-        let (r2p, p2r) = session_keys(device_key, &device_id, np, nc)?;
+        let (r2p, p2r) = session_keys(device_key, dh, &device_id, t)?;
         let (send_key, recv_key, send_dir, recv_dir) = match side {
             Side::Phone => (p2r, r2p, DIR_P2R, DIR_R2P),
             Side::Remote => (r2p, p2r, DIR_R2P, DIR_P2R),
@@ -494,7 +627,7 @@ impl Channel {
 
     /// Authenticates and decrypts a data-record body. Accepts only the next expected
     /// counter. Any failure poisons the channel for good.
-    pub fn open(&mut self, body: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    pub fn open(&mut self, body: &[u8]) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
         if self.failed {
             return Err(CryptoError);
         }
@@ -505,11 +638,11 @@ impl Channel {
         result
     }
 
-    fn open_inner(&mut self, body: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    fn open_inner(&mut self, body: &[u8]) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
         let (ctr_bytes, ct) = body.split_at_checked(COUNTER_LEN).ok_or(CryptoError)?;
         let ctr_arr: [u8; COUNTER_LEN] = ctr_bytes.try_into().map_err(|_| CryptoError)?;
         let ctr = u64::from_be_bytes(ctr_arr);
-        // Constant-time is not needed for the counter: it is public.
+        // Constant time is not needed for the counter: it is public.
         if ctr != self.recv_ctr || ct.len() < TAG_LEN || self.recv_ctr == u64::MAX {
             return Err(CryptoError);
         }
@@ -523,6 +656,47 @@ impl Channel {
             )
             .map_err(|_| CryptoError)?;
         self.recv_ctr = ctr.saturating_add(1);
-        Ok(pt)
+        Ok(Zeroizing::new(pt))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entropy_sanity_check() {
+        assert_eq!(check_entropy(&[0u8; 32]), Err(EntropyError::NotRandom));
+        assert_eq!(check_entropy(&[7u8; 64]), Err(EntropyError::NotRandom));
+        let pattern: Vec<u8> = (0..32).map(|i| (i % 4) as u8).collect();
+        assert_eq!(check_entropy(&pattern), Err(EntropyError::NotRandom));
+        assert_eq!(check_entropy(&[1, 2, 3]), Err(EntropyError::TooShort));
+        let ok: Vec<u8> = (0..32u8).map(|i| i.wrapping_mul(37)).collect();
+        assert_eq!(check_entropy(&ok), Ok(()));
+    }
+
+    #[test]
+    fn repeated_entropy_still_gives_fresh_phone_values() {
+        let e: Vec<u8> = (0..32u8).collect();
+        let a = Ephemeral::phone(&e, 1, 5).unwrap();
+        let b = Ephemeral::phone(&e, 2, 5).unwrap();
+        let c = Ephemeral::phone(&e, 1, 6).unwrap();
+        assert_ne!(a.nonce, b.nonce);
+        assert_ne!(a.public, b.public);
+        assert_ne!(a.nonce, c.nonce);
+        // Nothing derived equals the raw entropy or the pairing secret.
+        let s = pairing_secret_from_entropy(&e).unwrap();
+        assert_ne!(&a.nonce[..], &e[..]);
+        assert_ne!(&a.nonce[..20], &s.as_bytes()[..]);
+    }
+
+    #[test]
+    fn low_order_peer_key_is_refused() {
+        let e: Vec<u8> = (0..32u8).collect();
+        let me = Ephemeral::remote(&e).unwrap();
+        assert!(me.agree(&[0u8; 32]).is_err());
+        let mut one = [0u8; 32];
+        one[0] = 1;
+        assert!(me.agree(&one).is_err());
     }
 }

@@ -20,6 +20,8 @@ fn entry(task: &str) -> LogEntry {
         summary: "done".into(),
         started_ms: 1,
         finished_ms: 2,
+        lock_waits: 0,
+        locked_ms: 0,
     }
 }
 

@@ -48,6 +48,12 @@ pub struct LogEntry {
     /// End time in the shell's milliseconds.
     #[serde(default)]
     pub finished_ms: u64,
+    /// Times the phone locked during the task (each one a wait for the owner to unlock).
+    #[serde(default)]
+    pub lock_waits: u32,
+    /// Total time spent waiting for the owner to unlock, in milliseconds.
+    #[serde(default)]
+    pub locked_ms: u64,
 }
 
 impl LogEntry {

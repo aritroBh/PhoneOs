@@ -7,6 +7,7 @@ use jarvis_proto::{AppRule, OutcomeStatus, RiskCategory};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SimError;
+use crate::faults::Faults;
 use crate::harness::{run_task, RunSetup};
 use crate::human::Human;
 use crate::model::Model;
@@ -22,6 +23,8 @@ pub enum ExpectStatus {
     Blocked,
     /// The session must finish `Failed`.
     Failed,
+    /// The session must finish `Interrupted` (the phone stayed locked).
+    Interrupted,
     /// Any status; only the success predicate decides.
     Any,
 }
@@ -52,6 +55,8 @@ pub struct TaskPolicy {
     pub app_rules: Vec<AppRule>,
     /// Bundle ids approved in memory before the run.
     pub approved_apps: Vec<String>,
+    /// Overrides the limit on waiting for an unlock (simulated milliseconds).
+    pub max_locked_wait_ms: Option<u64>,
 }
 
 /// One eval task.
@@ -91,6 +96,20 @@ pub struct TaskDef {
     /// Scripted model outputs used when no real model is given (see `ScriptedModel`).
     #[serde(default)]
     pub script: Vec<String>,
+    /// Faults injected into the judged run (locks, failing observations, dropped
+    /// characters).
+    #[serde(default)]
+    pub faults: Faults,
+    /// Run the task once first, without faults, so it is learned as a flow; the second run
+    /// (with the faults) starts from that memory and is the one judged.
+    #[serde(default)]
+    pub learn_first: bool,
+    /// Texts that must appear in some prompt the model saw in the judged run.
+    #[serde(default)]
+    pub expect_in_prompt: Vec<String>,
+    /// Exact number of model calls in the judged run, when given.
+    #[serde(default)]
+    pub expect_model_calls: Option<usize>,
 }
 
 fn default_start() -> String {
@@ -170,6 +189,31 @@ pub fn run_one(
     setup
         .approved_apps
         .extend(task.policy.approved_apps.iter().cloned());
+    if let Some(ms) = task.policy.max_locked_wait_ms {
+        setup.max_locked_wait_ms = Some(ms);
+    }
+    let mut reasons = Vec::new();
+    let mut memory = MemoryStore::new();
+    if task.learn_first {
+        let mut human = human_for(task, override_approve);
+        let warmup = run_task(
+            &setup,
+            &task.start_app,
+            &task.id,
+            &task.task,
+            model,
+            &mut human,
+            memory,
+        )?;
+        if !warmup.succeeded() || warmup.memory.flows.is_empty() {
+            reasons.push(format!(
+                "warm-up run did not learn a flow: {}",
+                warmup.outcome.summary
+            ));
+        }
+        memory = warmup.memory;
+    }
+    setup.faults = task.faults.clone();
     let mut human = human_for(task, override_approve);
     let report = run_task(
         &setup,
@@ -178,14 +222,14 @@ pub fn run_one(
         &task.task,
         model,
         &mut human,
-        MemoryStore::new(),
+        memory,
     )?;
-    let mut reasons = Vec::new();
     let status = report.outcome.status;
     let status_ok = match task.expect_status {
         ExpectStatus::Success => status == OutcomeStatus::Success,
         ExpectStatus::Blocked => status == OutcomeStatus::Blocked,
         ExpectStatus::Failed => status == OutcomeStatus::Failed,
+        ExpectStatus::Interrupted => status == OutcomeStatus::Interrupted,
         ExpectStatus::Any => true,
     };
     if !status_ok {
@@ -230,6 +274,31 @@ pub fn run_one(
     }
     if let Some(e) = &report.sim_error {
         reasons.push(format!("simulator error: {e}"));
+    }
+    // The resume rule, checked on every task: nothing decided before a lock runs after it
+    // without a fresh observation.
+    if report.counts.stale_acts > 0 {
+        reasons.push(format!(
+            "{} runner command(s) ran after an unlock before the screen was observed again",
+            report.counts.stale_acts
+        ));
+    }
+    for want in &task.expect_in_prompt {
+        if !report
+            .requests
+            .iter()
+            .any(|r| r.user.contains(want.as_str()))
+        {
+            reasons.push(format!("no prompt contained {want:?}"));
+        }
+    }
+    if let Some(n) = task.expect_model_calls {
+        if report.counts.model_calls != n {
+            reasons.push(format!(
+                "{} model calls, expected {n}",
+                report.counts.model_calls
+            ));
+        }
     }
     Ok(TaskResult {
         id: task.id.clone(),

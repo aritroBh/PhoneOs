@@ -2,12 +2,12 @@
 //! a time, like the agent's `Session`.
 //!
 //! ```text
-//! run.step(now, Start)                      -> StartSession { task, skill }
+//! run.step(now, Start, &skills)                   -> StartSession { task, skill }
 //! (shell runs an ordinary agent session under the owner's Policy)
-//! run.step(now, SessionFinished { .. })     -> AskOwner { question }
-//! run.step(now, OwnerAnswered { yes, .. })  -> Notify { text }
-//! run.step(now, Notified)                   -> Wait { until_ms }
-//! run.step(now, WaitElapsed)                -> Finished { outcome }
+//! run.step(now, SessionFinished { .. }, &skills)  -> AskOwner { question }
+//! run.step(now, OwnerAnswered { yes, .. }, &skills) -> Notify { text }
+//! run.step(now, Notified, &skills)                -> Wait { until_ms }
+//! run.step(now, WaitElapsed, &skills)             -> Finished { outcome }
 //! ```
 //!
 //! # Policy
@@ -25,23 +25,38 @@
 //! right answer), never panics. `WaitElapsed` before `until_ms` repeats the `Wait`. Once
 //! finished, every event returns the same `Finished` effect.
 //!
-//! # Limits
+//! # Sessions and failures
 //!
-//! [`RunLimits`] caps the steps a run may have, the total time from `Start` (checked on
-//! every event; a session answered after the deadline still finishes the run `Failed`)
-//! and any single wait. A `RunSkill` whose skill is missing, disabled or lacks a required
-//! argument fails that step with a reason; `on_failure` decides what happens next.
+//! `SessionFinished` carries the session's `OutcomeStatus`. `Success` moves on; `Failed`
+//! is an ordinary failure that `on_failure` decides about; `Blocked` (safety refused or the
+//! owner declined), `Cancelled` and `Interrupted` (the phone stayed locked) end the run
+//! with the status of the same name whatever `on_failure` says.
+//!
+//! # Skills
+//!
+//! Each `RunSkill` step resolves its skill in the store passed to `step` when that step
+//! starts, so a skill the owner disabled, removed or tightened mid-run takes effect. A
+//! missing or disabled skill, an argument it does not declare or a required one left empty
+//! fails that step with a reason (an ordinary failure).
+//!
+//! # Time and limits
+//!
+//! The run keeps the highest clock it has been given and measures with it, so a clock that
+//! jumps backwards cannot extend a wait's deadline or the total budget. [`RunLimits`] caps
+//! the steps a run may have, the total time from `Start` (checked on every answering
+//! event; a session answered after the deadline still finishes the run `Failed`) and any
+//! single wait.
 
 use std::collections::BTreeMap;
 
-use jarvis_proto::SkillContext;
+use jarvis_proto::{OutcomeStatus, SkillContext};
 use serde::{Deserialize, Serialize};
 
-use crate::skill::{Skill, MAX_ARG_CHARS};
 use crate::store::SkillStore;
 use crate::text::truncate_chars;
 use crate::workflow::{
-    Condition, OnFailure, Step, Workflow, WorkflowOutcome, WorkflowStatus, MAX_WORKFLOW_STEPS,
+    Condition, OnFailure, Step, Workflow, WorkflowOutcome, WorkflowStatus, MAX_WAIT_STEP_MS,
+    MAX_WORKFLOW_STEPS,
 };
 
 /// Longest summary kept from a session or put in an outcome, in characters.
@@ -60,12 +75,12 @@ pub struct RunLimits {
 }
 
 impl Default for RunLimits {
-    /// 24 steps, one hour in total, 15 minutes per wait.
+    /// 24 steps, one hour in total, [`MAX_WAIT_STEP_MS`] (30 minutes) per wait.
     fn default() -> Self {
         Self {
             max_steps: 24,
             max_total_ms: 3_600_000,
-            max_wait_ms: 900_000,
+            max_wait_ms: MAX_WAIT_STEP_MS,
         }
     }
 }
@@ -76,10 +91,10 @@ impl Default for RunLimits {
 pub enum WorkflowEvent {
     /// Begin.
     Start,
-    /// The session from `StartSession` ended (`success` is its `Success` status).
+    /// The session from `StartSession` ended.
     SessionFinished {
-        /// Whether the session's outcome was `Success`.
-        success: bool,
+        /// The session's outcome status.
+        status: OutcomeStatus,
         /// Its summary.
         summary: String,
     },
@@ -205,43 +220,34 @@ enum State {
 #[derive(Debug, Clone)]
 pub struct WorkflowRun {
     workflow: Workflow,
-    /// The skills the workflow's `RunSkill` steps name, as they were when the run was
-    /// created (missing ones are absent).
-    skills: BTreeMap<String, Skill>,
     limits: RunLimits,
     state: State,
     started_ms: u64,
+    /// The highest clock seen.
+    clock_ms: u64,
     steps_run: u32,
     failed_step: Option<u32>,
     failures: u32,
-    last_session: Option<(bool, String)>,
+    /// The last result (see `Condition`): success and summary.
+    last_result: Option<(bool, String)>,
     last_answer: Option<bool>,
     last_effect: Option<WorkflowEffect>,
 }
 
 impl WorkflowRun {
-    /// A run of `workflow`, resolving its skills from `skills` now. Nothing happens until
-    /// `step(Start)`. An invalid or disabled workflow finishes `Failed` at `Start`.
-    pub fn new(workflow: Workflow, skills: &SkillStore, limits: RunLimits) -> WorkflowRun {
-        let resolved = workflow
-            .steps
-            .iter()
-            .filter_map(|s| match s {
-                Step::RunSkill { skill_id, .. } => skills.get(skill_id),
-                _ => None,
-            })
-            .map(|s| (s.id.clone(), s.clone()))
-            .collect();
+    /// A run of `workflow`. Nothing happens until `step(Start)`. An invalid or disabled
+    /// workflow finishes `Failed` at `Start`.
+    pub fn new(workflow: Workflow, limits: RunLimits) -> WorkflowRun {
         WorkflowRun {
             workflow,
-            skills: resolved,
             limits,
             state: State::Idle,
             started_ms: 0,
+            clock_ms: 0,
             steps_run: 0,
             failed_step: None,
             failures: 0,
-            last_session: None,
+            last_result: None,
             last_answer: None,
             last_effect: None,
         }
@@ -289,9 +295,15 @@ impl WorkflowRun {
     }
 
     /// Feeds one event; returns the next effect, or a protocol error that leaves the run
-    /// unchanged.
-    pub fn step(&mut self, now_ms: u64, event: WorkflowEvent) -> Result<WorkflowEffect, RunError> {
-        let effect = self.dispatch(now_ms, event)?;
+    /// unchanged. `skills` is the store as it is now: a `RunSkill` step that starts during
+    /// this call resolves its skill there.
+    pub fn step(
+        &mut self,
+        now_ms: u64,
+        event: WorkflowEvent,
+        skills: &SkillStore,
+    ) -> Result<WorkflowEffect, RunError> {
+        let effect = self.dispatch(now_ms, event, skills)?;
         self.last_effect = Some(effect.clone());
         Ok(effect)
     }
@@ -303,7 +315,12 @@ impl WorkflowRun {
         }
     }
 
-    fn dispatch(&mut self, now: u64, event: WorkflowEvent) -> Result<WorkflowEffect, RunError> {
+    fn dispatch(
+        &mut self,
+        now: u64,
+        event: WorkflowEvent,
+        skills: &SkillStore,
+    ) -> Result<WorkflowEffect, RunError> {
         if let State::Finished(o) = &self.state {
             return Ok(WorkflowEffect::Finished { outcome: o.clone() });
         }
@@ -321,38 +338,65 @@ impl WorkflowRun {
         if !answers {
             return Err(self.unexpected(&event));
         }
+        // From here on the event is accepted: the clock only moves forwards.
+        self.clock_ms = self.clock_ms.max(now);
+        let now = self.clock_ms;
         if self.state != State::Idle && self.over_time(now) {
             return Ok(self.finish(WorkflowStatus::Failed, "The workflow ran out of time."));
         }
         match (self.state.clone(), event) {
-            (State::Idle, WorkflowEvent::Start) => Ok(self.start(now)),
-            (State::Session { step }, WorkflowEvent::SessionFinished { success, summary }) => {
+            (State::Idle, WorkflowEvent::Start) => Ok(self.start(now, skills)),
+            (State::Session { step }, WorkflowEvent::SessionFinished { status, summary }) => {
                 let summary = truncate_chars(summary.trim(), MAX_SUMMARY_CHARS).to_owned();
-                self.last_session = Some((success, summary.clone()));
-                if success {
-                    Ok(self.advance(now, step + 1))
-                } else {
-                    let reason = if summary.is_empty() {
-                        "the task did not succeed".to_owned()
-                    } else {
-                        summary
-                    };
-                    Ok(self.step_failed(now, step, &reason))
-                }
+                Ok(self.session_finished(now, step, status, summary, skills))
             }
             (State::Answer { step }, WorkflowEvent::OwnerAnswered { yes, .. }) => {
                 self.last_answer = Some(yes);
-                Ok(self.advance(now, step + 1))
+                Ok(self.advance(now, step + 1, skills))
             }
-            (State::Notified { step }, WorkflowEvent::Notified) => Ok(self.advance(now, step + 1)),
+            (State::Notified { step }, WorkflowEvent::Notified) => {
+                Ok(self.advance(now, step + 1, skills))
+            }
             (State::Waiting { step, until_ms }, WorkflowEvent::WaitElapsed) => {
                 if now < until_ms {
                     Ok(WorkflowEffect::Wait { until_ms })
                 } else {
-                    Ok(self.advance(now, step + 1))
+                    Ok(self.advance(now, step + 1, skills))
                 }
             }
             (_, other) => Err(self.unexpected(&other)),
+        }
+    }
+
+    fn session_finished(
+        &mut self,
+        now: u64,
+        step: usize,
+        status: OutcomeStatus,
+        summary: String,
+        skills: &SkillStore,
+    ) -> WorkflowEffect {
+        let ok = status == OutcomeStatus::Success;
+        self.last_result = Some((ok, summary.clone()));
+        let reason = if summary.is_empty() {
+            "the task did not succeed".to_owned()
+        } else {
+            summary
+        };
+        let n = step + 1;
+        let stop = |run: &mut Self, status: WorkflowStatus, what: &str| {
+            run.record_failure(step);
+            let s = format!("Step {n} {what}: {reason}");
+            run.finish(status, &s)
+        };
+        match status {
+            OutcomeStatus::Success => self.advance(now, n, skills),
+            OutcomeStatus::Failed => self.step_failed(now, step, &reason, skills),
+            OutcomeStatus::Blocked => stop(self, WorkflowStatus::Blocked, "was blocked"),
+            OutcomeStatus::Cancelled => stop(self, WorkflowStatus::Cancelled, "was cancelled"),
+            OutcomeStatus::Interrupted => {
+                stop(self, WorkflowStatus::Interrupted, "was interrupted")
+            }
         }
     }
 
@@ -360,7 +404,7 @@ impl WorkflowRun {
         now.saturating_sub(self.started_ms) > self.limits.max_total_ms
     }
 
-    fn start(&mut self, now: u64) -> WorkflowEffect {
+    fn start(&mut self, now: u64, skills: &SkillStore) -> WorkflowEffect {
         self.started_ms = now;
         if !self.workflow.enabled {
             return self.finish(WorkflowStatus::Failed, "The workflow is disabled.");
@@ -380,26 +424,23 @@ impl WorkflowRun {
                 &format!("The workflow has more than {cap} steps."),
             );
         }
-        self.advance(now, 0)
+        self.advance(now, 0, skills)
     }
 
     /// Runs steps from `index` until one needs the shell (or the run ends).
-    fn advance(&mut self, now: u64, mut index: usize) -> WorkflowEffect {
+    fn advance(&mut self, now: u64, mut index: usize, skills: &SkillStore) -> WorkflowEffect {
         loop {
             let Some(step) = self.workflow.steps.get(index).cloned() else {
                 return self.complete();
             };
             self.steps_run = self.steps_run.saturating_add(1);
-            match step {
-                Step::RunSkill { skill_id, args } => match self.skill_session(&skill_id, args) {
+            let failure = match step {
+                Step::RunSkill { skill_id, args } => match skill_session(skills, &skill_id, args) {
                     Ok(effect) => {
                         self.state = State::Session { step: index };
                         return effect;
                     }
-                    Err(reason) => match self.fail_step(index, &reason) {
-                        Some(done) => return done,
-                        None => index += 1,
-                    },
+                    Err(reason) => reason,
                 },
                 Step::RunTask { text } => {
                     self.state = State::Session { step: index };
@@ -419,90 +460,67 @@ impl WorkflowRun {
                 Step::Wait { ms } => {
                     let until_ms = now.saturating_add(ms);
                     let deadline = self.started_ms.saturating_add(self.limits.max_total_ms);
-                    let reason = if ms > self.limits.max_wait_ms {
-                        Some(format!(
+                    if ms > self.limits.max_wait_ms {
+                        format!(
                             "a wait of {ms} ms is longer than the {} ms allowed",
                             self.limits.max_wait_ms
-                        ))
+                        )
                     } else if until_ms > deadline {
-                        Some("the wait would run past the workflow's time budget".to_owned())
+                        "the wait would run past the workflow's time budget".to_owned()
                     } else {
-                        None
-                    };
-                    match reason {
-                        None => {
-                            self.state = State::Waiting {
-                                step: index,
-                                until_ms,
-                            };
-                            return WorkflowEffect::Wait { until_ms };
-                        }
-                        Some(r) => match self.fail_step(index, &r) {
-                            Some(done) => return done,
-                            None => index += 1,
-                        },
+                        self.state = State::Waiting {
+                            step: index,
+                            until_ms,
+                        };
+                        return WorkflowEffect::Wait { until_ms };
                     }
                 }
                 Step::StopUnless { condition } => {
                     if self.holds(&condition) {
                         index += 1;
-                    } else {
-                        let summary = format!(
-                            "Stopped at step {}: {} did not hold.",
-                            index + 1,
-                            describe_condition(&condition)
-                        );
-                        return self.finish(WorkflowStatus::Stopped, &summary);
+                        continue;
                     }
+                    let summary = format!(
+                        "Stopped at step {}: {} did not hold.",
+                        index + 1,
+                        describe_condition(&condition)
+                    );
+                    return self.finish(WorkflowStatus::Stopped, &summary);
                 }
+            };
+            // A step that failed without a session is the last result too.
+            self.last_result = Some((false, failure.clone()));
+            match self.fail_step(index, &failure) {
+                Some(done) => return done,
+                None => index += 1,
             }
         }
     }
 
-    /// The `StartSession` for a skill step, or why it cannot run.
-    fn skill_session(
-        &self,
-        skill_id: &str,
-        args: BTreeMap<String, String>,
-    ) -> Result<WorkflowEffect, String> {
-        let skill = self
-            .skills
-            .get(skill_id)
-            .ok_or_else(|| format!("the skill \"{skill_id}\" does not exist"))?;
-        if !skill.enabled {
-            return Err(format!("the skill \"{}\" is disabled", skill.name));
-        }
-        let args = skill.declared_args(args);
-        let missing = skill.missing_params(&args);
-        if !missing.is_empty() {
-            return Err(format!(
-                "the skill \"{}\" needs {}",
-                skill.name,
-                missing.join(", ")
-            ));
-        }
-        let task = skill.task_text(&args);
-        Ok(WorkflowEffect::StartSession {
-            task: truncate_chars(&task, MAX_ARG_CHARS * 4).to_owned(),
-            skill: Some(skill.context(args)),
-        })
-    }
-
-    /// Records a failed step after the shell answered it, then stops or continues.
-    fn step_failed(&mut self, now: u64, index: usize, reason: &str) -> WorkflowEffect {
+    /// Records a failed session step, then stops or continues.
+    fn step_failed(
+        &mut self,
+        now: u64,
+        index: usize,
+        reason: &str,
+        skills: &SkillStore,
+    ) -> WorkflowEffect {
         match self.fail_step(index, reason) {
             Some(done) => done,
-            None => self.advance(now, index + 1),
+            None => self.advance(now, index + 1, skills),
         }
     }
 
-    /// Records a failure; returns the `Finished` effect when the run stops.
-    fn fail_step(&mut self, index: usize, reason: &str) -> Option<WorkflowEffect> {
+    fn record_failure(&mut self, index: usize) {
         self.failures = self.failures.saturating_add(1);
-        let i = u32::try_from(index).unwrap_or(u32::MAX);
         if self.failed_step.is_none() {
-            self.failed_step = Some(i);
+            self.failed_step = Some(u32::try_from(index).unwrap_or(u32::MAX));
         }
+    }
+
+    /// Records an ordinary failure; returns the `Finished` effect when the run stops.
+    fn fail_step(&mut self, index: usize, reason: &str) -> Option<WorkflowEffect> {
+        self.record_failure(index);
         match self.workflow.on_failure {
             OnFailure::Stop => {
                 let summary = format!("Step {} failed: {reason}.", index + 1);
@@ -514,12 +532,12 @@ impl WorkflowRun {
 
     fn holds(&self, condition: &Condition) -> bool {
         match condition {
-            Condition::LastSucceeded => self.last_session.as_ref().is_some_and(|(ok, _)| *ok),
+            Condition::LastSucceeded => self.last_result.as_ref().is_some_and(|(ok, _)| *ok),
             Condition::LastSummaryContains { text } => {
                 let needle = text.trim().to_lowercase();
                 !needle.is_empty()
                     && self
-                        .last_session
+                        .last_result
                         .as_ref()
                         .is_some_and(|(_, s)| s.to_lowercase().contains(&needle))
             }
@@ -536,7 +554,7 @@ impl WorkflowRun {
             );
             self.finish(WorkflowStatus::CompletedWithFailures, &summary)
         } else {
-            let summary = match &self.last_session {
+            let summary = match &self.last_result {
                 Some((_, s)) if !s.is_empty() => format!("Done. {s}"),
                 _ => "Done.".to_owned(),
             };
@@ -556,9 +574,27 @@ impl WorkflowRun {
     }
 }
 
+/// The `StartSession` for a skill step, resolved against the store as it is now, or why
+/// it cannot run.
+fn skill_session(
+    skills: &SkillStore,
+    skill_id: &str,
+    args: BTreeMap<String, String>,
+) -> Result<WorkflowEffect, String> {
+    let skill = skills
+        .get(skill_id)
+        .ok_or_else(|| format!("the skill \"{skill_id}\" does not exist"))?;
+    let context = skill.context(args).map_err(|e| e.to_string())?;
+    let task = skill.task_text(&context.args);
+    Ok(WorkflowEffect::StartSession {
+        task,
+        skill: Some(context),
+    })
+}
+
 fn describe_condition(c: &Condition) -> String {
     match c {
-        Condition::LastSucceeded => "\"the last task succeeded\"".to_owned(),
+        Condition::LastSucceeded => "\"the last step succeeded\"".to_owned(),
         Condition::LastSummaryContains { text } => {
             format!("\"the last result mentions {}\"", truncate_chars(text, 60))
         }

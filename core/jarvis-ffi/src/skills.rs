@@ -17,7 +17,7 @@ use jarvis_skills::{Ambiguity, SkillError, SkillStore, Upsert};
 
 use crate::error::JarvisError;
 use crate::guard::guarded;
-use crate::types::{Skill, SkillContext, SkillMatch, SkillMatchResult};
+use crate::types::{Skill, SkillContext, SkillKind, SkillMatch, SkillMatchResult};
 
 struct Inner {
     store: SkillStore,
@@ -85,9 +85,16 @@ impl JarvisSkills {
         guarded("JarvisSkills.init", || Self::from_json(&json).map(Arc::new))
     }
 
-    /// One line per skill skipped when the snapshot was loaded.
+    /// What loading reported: one line per ignored unknown field and per skill that could
+    /// not be loaded. Unloadable skills are kept unchanged and written back by `toJson()`,
+    /// so nothing is lost; show these to the owner.
     pub fn load_issues(&self) -> Result<Vec<String>, JarvisError> {
         self.with("load_issues", |i| Ok(i.issues.clone()))
+    }
+
+    /// Whether `loadIssues()` is non-empty.
+    pub fn has_load_issues(&self) -> Result<bool, JarvisError> {
+        self.with("has_load_issues", |i| Ok(!i.issues.is_empty()))
     }
 
     /// The versioned snapshot to persist.
@@ -107,21 +114,36 @@ impl JarvisSkills {
         self.with("get", |i| Ok(i.store.get(&id).cloned().map(Into::into)))
     }
 
-    /// Adds or replaces a skill (an update keeps the stored `createdMs`, `runs` and
-    /// `lastRunMs`). Returns true when it was new. Invalid skills throw
-    /// `JarvisError.invalidSkill` with the reason.
+    /// Adds or replaces a skill. The skill's `updatedMs` is taken as the current time: a
+    /// new skill gets it as `createdMs` too; an update keeps the stored `kind`, `createdMs`,
+    /// `runs` and `lastRunMs` (change `kind` with `setKind`). Returns true when it was new.
+    /// Invalid skills throw `JarvisError.invalidSkill` with the reason.
     pub fn upsert(&self, skill: Skill) -> Result<bool, JarvisError> {
         self.with("upsert", |i| {
+            let now_ms = skill.updated_ms;
             i.store
-                .upsert(skill.into())
+                .upsert(skill.into(), now_ms)
                 .map(|u| u == Upsert::Inserted)
                 .map_err(skill_error)
         })
     }
 
-    /// Removes a skill; false when there was none.
+    /// Changes where a skill is recorded as coming from.
+    pub fn set_kind(&self, id: String, kind: SkillKind, now_ms: u64) -> Result<(), JarvisError> {
+        self.with("set_kind", |i| {
+            i.store
+                .set_kind(&id, kind.into(), now_ms)
+                .map_err(skill_error)
+        })
+    }
+
+    /// Removes a skill, or an unloadable entry kept with that id; false when there was
+    /// neither.
     pub fn remove(&self, id: String) -> Result<bool, JarvisError> {
-        self.with("remove", |i| Ok(i.store.remove(&id).is_some()))
+        self.with("remove", |i| {
+            let damaged = i.store.discard_damaged(&id);
+            Ok(i.store.remove(&id).is_some() || damaged)
+        })
     }
 
     /// Records a run of the skill at `nowMs`.
@@ -138,13 +160,17 @@ impl JarvisSkills {
             let matches = i.store.match_task(&text);
             Ok(SkillMatchResult {
                 ambiguous: matches.is_ambiguous(),
+                needs_owner_choice: matches.needs_owner_choice(),
                 matches: matches.into_iter().map(Into::into).collect(),
             })
         })
     }
 
-    /// The `SessionConfig.skill` value for running skill `skillId` with `args` (undeclared
-    /// arguments are dropped).
+    /// The `SessionConfig.skill` value for running skill `skillId` with `args`, checked
+    /// against the skill as it is now. Throws `JarvisError.invalidSkill` for an unknown or
+    /// disabled skill, an argument the skill does not declare, a required one left empty,
+    /// or a value longer than 500 characters. Values are cleaned (invisible and control
+    /// characters removed, whitespace collapsed), never cut.
     pub fn context(
         &self,
         skill_id: String,
@@ -155,17 +181,23 @@ impl JarvisSkills {
                 .store
                 .get(&skill_id)
                 .ok_or_else(|| skill_error(SkillError::NotFound(skill_id.clone())))?;
-            Ok(skill.context(to_btree(args)).into())
+            skill
+                .context(to_btree(args))
+                .map(Into::into)
+                .map_err(skill_error)
         })
     }
 
-    /// The `SessionConfig.skill` value for a match from `matchTask`.
+    /// The `SessionConfig.skill` value for a match from `matchTask`, rechecked like
+    /// `context(skillId:args:)`: a match made before the owner edited, disabled or removed
+    /// the skill, or a hand-made one, is refused rather than trusted.
     pub fn context_for_match(&self, m: SkillMatch) -> Result<SkillContext, JarvisError> {
         self.context(m.skill_id, m.args)
     }
 
     /// A task text for running the skill with `args` without the owner's words (e.g. from
-    /// a workflow): its first trigger the arguments fill, else its name.
+    /// a workflow): its first trigger the arguments fill, else its name. The arguments are
+    /// checked and cleaned like `context(skillId:args:)`.
     pub fn task_text(
         &self,
         skill_id: String,
@@ -176,7 +208,8 @@ impl JarvisSkills {
                 .store
                 .get(&skill_id)
                 .ok_or_else(|| skill_error(SkillError::NotFound(skill_id.clone())))?;
-            Ok(skill.task_text(&to_btree(args)))
+            let args = skill.checked_args(to_btree(args)).map_err(skill_error)?;
+            Ok(skill.task_text(&args))
         })
     }
 

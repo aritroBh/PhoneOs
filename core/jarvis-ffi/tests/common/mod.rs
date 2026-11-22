@@ -152,6 +152,7 @@ pub fn snapshot(source: String) -> RunnerSnapshot {
         keyboard_visible: false,
         orientation: Orientation::Portrait,
         screenshot: None,
+        device_locked: false,
     }
 }
 
@@ -242,6 +243,7 @@ pub fn drive_with(
                         observation: ScreenObservation {
                             screen: settings_screen(),
                             screenshot: None,
+                            device_locked: false,
                         },
                     }
                 }
@@ -285,6 +287,7 @@ pub fn drive_with(
                     result: RunnerResult {
                         ok: true,
                         error: None,
+                        failure: None,
                     },
                 }
             }
@@ -295,6 +298,7 @@ pub fn drive_with(
             }
             Effect::CallTool { call } => panic!("unexpected tool call {call:?}"),
             Effect::AskUser { question } => panic!("unexpected question {question:?}"),
+            Effect::AwaitUnlock { reason, .. } => panic!("unexpected wait for unlock: {reason}"),
             Effect::Finished { outcome } => {
                 run.outcome = Some(outcome);
                 run.final_page = Some(page);

@@ -1,0 +1,26 @@
+{
+  "id": "lock_mid_task",
+  "task": "Turn off Wi-Fi",
+  "start_app": "settings",
+  "success": "settings.wifi == false && phone.locked == false",
+  "expect_confirm": [
+    "first_use",
+    "system_setting"
+  ],
+  "expect_confirm_count": 3,
+  "expect_in_prompt": [
+    "not done: the phone locked first"
+  ],
+  "max_steps": 12,
+  "faults": {
+    "locks": [
+      { "before_act": 1, "unlock_after_ms": 120000 }
+    ]
+  },
+  "script": [
+    "{\"thought\":\"open Wi-Fi\",\"action\":\"tap\",\"element\":\"@Cell:Wi-Fi\"}",
+    "{\"thought\":\"switch it off\",\"action\":\"tap\",\"element\":\"@Switch:Wi-Fi\"}",
+    "{\"thought\":\"the phone was locked, switch it off now\",\"action\":\"tap\",\"element\":\"@Switch:Wi-Fi\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Wi-Fi is off\"}"
+  ]
+}

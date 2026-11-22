@@ -30,6 +30,7 @@ fn settings_skill() -> SkillContext {
         apps: vec![SETTINGS_BUNDLE_ID.into()],
         confine_to_apps: true,
         args: BTreeMap::new(),
+        tools: Vec::new(),
     }
 }
 
@@ -109,6 +110,7 @@ fn skill_prompt_snapshot() {
         apps: vec!["com.apple.MobileSMS".into()],
         confine_to_apps: true,
         args: BTreeMap::new(),
+        tools: Vec::new(),
     };
     skill.args.insert("contact".into(), "Mom".into());
     skill
@@ -225,8 +227,11 @@ fn acting_in_a_foreign_foreground_app_is_refused() {
 }
 
 #[test]
-fn navigation_through_home_into_a_skill_app_works_and_still_confirms() {
+fn from_home_only_open_app_into_a_skill_app_works_and_it_still_confirms() {
+    // Tapping the Settings icon on the home screen is refused (review finding c1);
+    // open_app into the skill's own app works, and the usual prompts still come.
     let home_tap = tap(&home_screen(), "Settings");
+    let open = r#"{"action":"open_app","app":"Settings"}"#;
     let wifi_tap = tap(&jarvis_proto::fixtures::settings_screen(), "Wi-Fi, HomeNet");
     let switch = tap_switch();
     let r = run(
@@ -234,13 +239,23 @@ fn navigation_through_home_into_a_skill_app_works_and_still_confirms() {
         "Turn off Wi-Fi",
         MemoryStore::new(),
         phone(home_screen()),
-        Script::model(&[&home_tap, &wifi_tap, &switch, DONE]).decisions(&[true, true]),
+        Script::model(&[&home_tap, open, &wifi_tap, &switch, DONE]).decisions(&[true, true]),
     );
     assert_eq!(
         r.outcome.status,
         OutcomeStatus::Success,
         "{}",
         r.outcome.summary
+    );
+    assert!(r.requests[1]
+        .user
+        .contains("does not act on the home screen"));
+    assert_eq!(
+        r.acts.first(),
+        Some(&RunnerCommand::LaunchApp {
+            bundle_id: SETTINGS_BUNDLE_ID.into()
+        }),
+        "the icon tap never ran"
     );
     // A skill never suppresses first-use approval or a risk confirmation.
     let cats: Vec<RiskCategory> = r.confirms.iter().map(|c| c.category).collect();
@@ -249,6 +264,166 @@ fn navigation_through_home_into_a_skill_app_works_and_still_confirms() {
         vec![RiskCategory::FirstUse, RiskCategory::SystemSetting]
     );
     assert_eq!(r.screen, wifi_screen(false));
+}
+
+/// Review finding c1: a home-screen icon of another app cannot be tapped.
+#[test]
+fn c1_home_screen_icons_of_other_apps_are_refused() {
+    let t = tap(&home_screen(), "Shop");
+    let r = run(
+        with_skill(config(), settings_skill()),
+        "Turn off Wi-Fi",
+        MemoryStore::new(),
+        Phone::new(home_screen(), |cmd, s: &Screen| {
+            if taps(cmd, s, "Shop") {
+                Transition::Go(product_screen())
+            } else {
+                Transition::Stay
+            }
+        }),
+        Script::model(&[
+            &t,
+            r#"{"action":"look"}"#,
+            r#"{"action":"press_home"}"#,
+            DONE,
+        ]),
+    );
+    assert!(
+        !r.acts
+            .iter()
+            .any(|a| matches!(a, RunnerCommand::Tap { .. })),
+        "{:?}",
+        r.acts
+    );
+    assert_eq!(r.screen.app_bundle_id, "com.apple.springboard");
+}
+
+/// Review finding c10: Spotlight on the home screen cannot be typed into.
+#[test]
+fn c10_spotlight_cannot_be_used_to_reach_other_apps() {
+    use jarvis_proto::fixtures::{node, rect, screen};
+    use jarvis_proto::{Role, UiNode};
+    let size = jarvis_proto::fixtures::IPHONE_SIZE.to_rect();
+    let mk = |children: Vec<UiNode>| {
+        screen(
+            "com.apple.springboard",
+            "Home",
+            UiNode::new(Role::Application, size)
+                .with_label("Home")
+                .with_children(vec![UiNode::new(Role::Window, size).with_children(children)]),
+            false,
+        )
+    };
+    let search = mk(vec![UiNode::new(
+        Role::SearchField,
+        rect(16.0, 120.0, 361.0, 36.0),
+    )
+    .with_label("Spotlight Search")
+    .hittable(true)
+    .focused(true)]);
+    let results = mk(vec![node(
+        Role::Cell,
+        "Shop - Open",
+        rect(16.0, 220.0, 361.0, 44.0),
+    )]);
+    let typed = r#"{"action":"type","text":"shop","submit":false}"#;
+    let tap_res = tap(&results, "Shop - Open");
+    let swipe = r#"{"action":"swipe","direction":"down"}"#;
+    let r = run(
+        with_skill(config(), settings_skill()),
+        "Turn off Wi-Fi",
+        MemoryStore::new(),
+        Phone::new(search, move |cmd, _s: &Screen| match cmd {
+            RunnerCommand::TypeText { .. } => Transition::Go(results.clone()),
+            _ => Transition::Stay,
+        }),
+        Script::model(&[typed, &tap_res, swipe, DONE]),
+    );
+    assert!(r.acts.is_empty(), "{:?}", r.acts);
+    assert_eq!(
+        r.outcome.status,
+        OutcomeStatus::Blocked,
+        "{}",
+        r.outcome.summary
+    );
+}
+
+/// Review finding c2/c8: a tool with no app (here one that opens links) is refused unless
+/// the skill names it; named, it runs and is still gated by the usual confirmations.
+#[test]
+fn c2_c8_app_less_tools_need_the_skill_allow_list() {
+    let link_tool = ToolSpec {
+        name: "open_link".into(),
+        description: "Open a link".into(),
+        params: vec![jarvis_proto::ToolParam {
+            name: "url".into(),
+            description: "url".into(),
+            kind: jarvis_proto::ParamKind::String,
+            required: true,
+        }],
+        tier: Tier::Shortcut,
+        risk: RiskCategory::None,
+        app: None,
+    };
+    let call = r#"{"action":"call_tool","name":"open_link","args":{"url":"https://example.com/"}}"#;
+    let mut c = with_skill(config(), settings_skill());
+    c.tools = vec![link_tool.clone()];
+    let r = run(
+        c,
+        "Turn off Wi-Fi",
+        MemoryStore::new(),
+        Phone::still(jarvis_proto::fixtures::settings_screen()),
+        Script::model(&[call, DONE]).decisions(&[true]),
+    );
+    assert!(r.tool_calls.is_empty());
+    assert!(r.requests[1].user.contains("not tied to one of them"));
+    let mut allowed = settings_skill();
+    allowed.tools = vec!["open_link".into()];
+    let mut c = with_skill(config(), allowed);
+    c.tools = vec![link_tool];
+    let r = run(
+        c,
+        "Turn off Wi-Fi",
+        MemoryStore::new(),
+        Phone::still(jarvis_proto::fixtures::settings_screen()),
+        Script::model(&[call, DONE]).decisions(&[true]),
+    );
+    assert_eq!(r.tool_calls.len(), 1);
+}
+
+/// Review finding c9: a learned flow recorded in another app does not replay inside a
+/// confined skill.
+#[test]
+fn c9_replay_stays_confined() {
+    let shop_phone = || {
+        Phone::new(product_screen(), |cmd, s: &Screen| {
+            if taps(cmd, s, "Add to wishlist") {
+                Transition::Go(bought_screen())
+            } else {
+                Transition::Stay
+            }
+        })
+    };
+    let t = tap(&product_screen(), "Add to wishlist");
+    let learned = run(
+        config(),
+        "add headphones to wishlist",
+        MemoryStore::new(),
+        shop_phone(),
+        Script::model(&[&t, DONE]),
+    );
+    assert_eq!(learned.memory.flows.len(), 1);
+    let r = run(
+        with_skill(config(), settings_skill()),
+        "add headphones to wishlist",
+        learned.memory.clone(),
+        shop_phone(),
+        Script::model(&[r#"{"action":"press_home"}"#, DONE]),
+    );
+    assert!(!r
+        .acts
+        .iter()
+        .any(|a| matches!(a, RunnerCommand::Tap { .. })));
 }
 
 #[test]

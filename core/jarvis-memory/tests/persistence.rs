@@ -28,6 +28,8 @@ fn populated() -> MemoryStore {
         summary: "s".into(),
         started_ms: 1,
         finished_ms: 9,
+        lock_waits: 1,
+        locked_ms: 60_000,
     });
     m
 }

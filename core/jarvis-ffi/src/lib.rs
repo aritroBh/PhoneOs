@@ -7,8 +7,8 @@
 //!   `progress() throws -> SessionProgress`, `finish() throws -> String`,
 //!   `lastObservationIssue() throws -> String?` ([`JarvisSession`]).
 //! - `JarvisSkills(json:) throws`: the skill store and matcher (`list`, `get`, `upsert`,
-//!   `remove`, `recordRun`, `matchTask`, `context`, `contextForMatch`, `taskText`,
-//!   `promoteFlow`, `toJson`, `loadIssues`) ([`JarvisSkills`]). A session runs a skill
+//!   `remove`, `setKind`, `recordRun`, `matchTask`, `context`, `contextForMatch`,
+//!   `taskText`, `promoteFlow`, `toJson`, `loadIssues`, `hasLoadIssues`) ([`JarvisSkills`]). A session runs a skill
 //!   through `SessionConfig.skill`.
 //! - Free functions: `actionJsonSchema()`, `actionGbnf()`, `systemPrompt()`,
 //!   `coreVersion()`, `parseRunnerTextToScreen(snapshot:)`, `defaultPolicy()`,

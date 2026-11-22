@@ -29,6 +29,7 @@ pub mod engine;
 pub mod error;
 pub mod eval;
 pub mod expr;
+pub mod faults;
 pub mod harness;
 #[cfg(feature = "http")]
 pub mod http;
@@ -39,7 +40,8 @@ pub mod runner_text;
 
 pub use driver::{run, run_with, RunCounts, RunOptions, RunReport, TranscriptStep};
 pub use error::SimError;
+pub use faults::{DropChars, Faults, LockSpec, ObserveFault};
 pub use harness::{run_task, RunSetup};
 pub use human::Human;
 pub use model::{Model, ModelError, ScriptedModel};
-pub use phone::{ClockCosts, ObserveMode, SimPhone, SimSnapshot};
+pub use phone::{ClockCosts, ObserveMode, SimObservation, SimPhone, SimSnapshot};

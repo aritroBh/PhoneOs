@@ -57,6 +57,19 @@ impl Budget {
         self.last_ms = now_ms;
     }
 
+    /// Moves the clock reading to `now_ms` without counting the time since the last reading:
+    /// time the session spent paused (waiting for the owner to unlock the phone) is not
+    /// part of the elapsed budget.
+    pub fn skip(&mut self, now_ms: u64) {
+        self.last_ms = now_ms;
+    }
+
+    /// Takes back the most recent step: its action was set aside without being carried out
+    /// (the phone locked first), so it will be decided again.
+    pub fn refund_step(&mut self) {
+        self.steps = self.steps.saturating_sub(1);
+    }
+
     /// Counts one agent step taken at `now_ms`.
     pub fn record_step(&mut self, now_ms: u64) {
         self.observe(now_ms);

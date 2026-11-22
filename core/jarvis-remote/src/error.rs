@@ -1,5 +1,7 @@
 //! Error types.
 
+pub use crate::crypto::EntropyError;
+
 /// A pairing code could not be parsed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CodeError {
@@ -49,6 +51,9 @@ pub enum HubError {
     /// No such paired device.
     #[error("unknown device")]
     UnknownDevice,
+    /// The shell's entropy was refused (too short or obviously not random).
+    #[error(transparent)]
+    Entropy(#[from] EntropyError),
     /// The key schedule failed (not expected to happen).
     #[error("internal cryptographic error")]
     Crypto,
@@ -60,6 +65,9 @@ pub enum ClientError {
     /// The pairing code is not a valid code.
     #[error(transparent)]
     Code(#[from] CodeError),
+    /// The entropy was refused (too short or obviously not random).
+    #[error(transparent)]
+    Entropy(#[from] EntropyError),
     /// The device name is empty or longer than [`crate::MAX_DEVICE_NAME_BYTES`].
     #[error("invalid device name")]
     InvalidName,

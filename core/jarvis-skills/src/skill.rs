@@ -11,7 +11,7 @@ use jarvis_proto::SkillContext;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{field, SkillError};
-use crate::text::{has_control, longer_than, words};
+use crate::text::{clean_arg, has_hidden, longer_than, words};
 
 /// Longest skill name, in characters.
 pub const MAX_NAME_CHARS: usize = 60;
@@ -41,8 +41,36 @@ pub const MAX_FLOW_KEYS: usize = 16;
 pub const MAX_FLOW_KEY_CHARS: usize = 300;
 /// Longest id (skills and workflows), in characters.
 pub const MAX_ID_CHARS: usize = 48;
-/// Longest argument value handed to a session, in characters.
-pub const MAX_ARG_CHARS: usize = 200;
+/// Longest argument value, in characters: the same cap as a matched request
+/// ([`crate::matcher::MAX_TASK_CHARS`]), so a value captured from a request always fits.
+/// Longer values are refused ([`SkillError::ArgTooLong`]), never cut.
+pub const MAX_ARG_CHARS: usize = crate::matcher::MAX_TASK_CHARS;
+/// Most allow-listed app-less tools per skill.
+pub const MAX_TOOLS: usize = 16;
+/// Longest tool name, in characters.
+pub const MAX_TOOL_NAME_CHARS: usize = 64;
+
+/// Every JSON field of [`Skill`]; other keys in a snapshot are reported as ignored.
+pub(crate) const SKILL_FIELDS: &[&str] = &[
+    "id",
+    "name",
+    "summary",
+    "kind",
+    "triggers",
+    "instructions",
+    "apps",
+    "confine_to_apps",
+    "tools",
+    "params",
+    "flow_keys",
+    "enabled",
+    "created_ms",
+    "updated_ms",
+    "runs",
+    "last_run_ms",
+];
+/// Every JSON field of [`SkillParam`].
+pub(crate) const PARAM_FIELDS: &[&str] = &["name", "description", "required"];
 
 /// Where a skill came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -87,8 +115,10 @@ pub struct Skill {
     pub instructions: String,
     /// Bundle ids the skill works in.
     pub apps: Vec<String>,
-    /// Refuse actions outside `apps` while the skill runs (SpringBoard stays allowed).
+    /// Act only inside `apps` while the skill runs (see `jarvis_safety::check_confinement`).
     pub confine_to_apps: bool,
+    /// App-less tools a confined skill may still call, by exact name.
+    pub tools: Vec<String>,
     /// Declared parameters.
     pub params: Vec<SkillParam>,
     /// Intent keys (`jarvis_memory::intent_key` form) of learned flows that replay it.
@@ -117,6 +147,7 @@ impl Default for Skill {
             instructions: String::new(),
             apps: Vec::new(),
             confine_to_apps: false,
+            tools: Vec::new(),
             params: Vec::new(),
             flow_keys: Vec::new(),
             enabled: true,
@@ -222,8 +253,11 @@ fn check_text(name: &str, value: &str, max: usize, required: bool) -> Result<(),
     if longer_than(value, max) {
         return Err(field(name, format!("at most {max} characters")));
     }
-    if has_control(value) {
-        return Err(field(name, "must be one line without control characters"));
+    if has_hidden(value) {
+        return Err(field(
+            name,
+            "must be one line without control or invisible characters",
+        ));
     }
     Ok(())
 }
@@ -237,10 +271,10 @@ pub(crate) fn check_bundle_id(name: &str, id: &str) -> Result<(), SkillError> {
             format!("a bundle id of 1 to {MAX_BUNDLE_ID_CHARS} characters"),
         ));
     }
-    if id.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    if id.chars().any(char::is_whitespace) || has_hidden(id) {
         return Err(field(
             name,
-            "a bundle id has no spaces or control characters",
+            "a bundle id has no spaces, control or invisible characters",
         ));
     }
     Ok(())
@@ -249,7 +283,11 @@ pub(crate) fn check_bundle_id(name: &str, id: &str) -> Result<(), SkillError> {
 impl Skill {
     /// Checks every limit and rule: id, name, summary, triggers (count, length, slots that
     /// are declared parameters), instructions, apps (count, bundle-id shape, and at least
-    /// one when `confine_to_apps`), parameters (count, names, unique), flow keys.
+    /// one when `confine_to_apps`), tools, parameters (count, names, unique), flow keys.
+    /// Names, summaries, triggers, descriptions, bundle ids, tools and flow keys must not
+    /// contain control or invisible characters (zero-width, bidi controls...), which could
+    /// make two different values look alike to the owner. Instructions may span lines; they
+    /// are sanitised when they enter a prompt.
     pub fn validate(&self) -> Result<(), SkillError> {
         if !is_valid_id(&self.id) {
             return Err(SkillError::InvalidId(self.id.clone()));
@@ -318,6 +356,18 @@ impl Skill {
                 "a confined skill needs at least one app",
             ));
         }
+        if self.tools.len() > MAX_TOOLS {
+            return Err(SkillError::TooMany {
+                field: "tools".to_owned(),
+                max: MAX_TOOLS,
+            });
+        }
+        for (i, t) in self.tools.iter().enumerate() {
+            check_text(&format!("tools[{i}]"), t, MAX_TOOL_NAME_CHARS, true)?;
+            if t.chars().any(char::is_whitespace) {
+                return Err(field(format!("tools[{i}]"), "a tool name has no spaces"));
+            }
+        }
         if self.flow_keys.len() > MAX_FLOW_KEYS {
             return Err(SkillError::TooMany {
                 field: "flow_keys".to_owned(),
@@ -330,29 +380,62 @@ impl Skill {
         Ok(())
     }
 
-    /// The context a session runs this skill under, with `args` restricted to declared
-    /// parameters (blank values dropped, values capped at [`MAX_ARG_CHARS`] characters).
-    pub fn context(&self, args: BTreeMap<String, String>) -> SkillContext {
-        SkillContext {
+    /// The context a session runs this skill under, checked against the skill as it is now.
+    ///
+    /// Errors: the skill is disabled ([`SkillError::Disabled`]), an argument names an
+    /// undeclared parameter ([`SkillError::UndeclaredArg`]), a value is longer than
+    /// [`MAX_ARG_CHARS`] after cleaning ([`SkillError::ArgTooLong`]; values are never cut),
+    /// or a required parameter has no value ([`SkillError::MissingParams`]). Values are
+    /// cleaned (control and invisible characters removed, whitespace collapsed, trimmed);
+    /// values that clean to nothing count as absent.
+    pub fn context(&self, args: BTreeMap<String, String>) -> Result<SkillContext, SkillError> {
+        if !self.enabled {
+            return Err(SkillError::Disabled(self.id.clone()));
+        }
+        let args = self.checked_args(args)?;
+        Ok(SkillContext {
             id: self.id.clone(),
             name: self.name.clone(),
             instructions: self.instructions.clone(),
             apps: self.apps.clone(),
             confine_to_apps: self.confine_to_apps,
-            args: self.declared_args(args),
-        }
+            tools: self.tools.clone(),
+            args,
+        })
     }
 
-    /// `args` restricted to declared parameters, blank values dropped, values trimmed and
-    /// capped at [`MAX_ARG_CHARS`] characters.
-    pub fn declared_args(&self, args: BTreeMap<String, String>) -> BTreeMap<String, String> {
-        args.into_iter()
-            .filter(|(k, v)| self.params.iter().any(|p| p.name == *k) && !v.trim().is_empty())
-            .map(|(k, v)| {
-                let v = crate::text::truncate_chars(v.trim(), MAX_ARG_CHARS).to_owned();
-                (k, v)
-            })
-            .collect()
+    /// `args` checked and cleaned as [`Skill::context`] does (without the enabled check).
+    pub fn checked_args(
+        &self,
+        args: BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, SkillError> {
+        let mut out = BTreeMap::new();
+        for (k, v) in args {
+            if !self.params.iter().any(|p| p.name == k) {
+                return Err(SkillError::UndeclaredArg {
+                    skill: self.id.clone(),
+                    arg: k,
+                });
+            }
+            let v = clean_arg(&v);
+            if longer_than(&v, MAX_ARG_CHARS) {
+                return Err(SkillError::ArgTooLong {
+                    arg: k,
+                    max: MAX_ARG_CHARS,
+                });
+            }
+            if !v.is_empty() {
+                out.insert(k, v);
+            }
+        }
+        let missing = self.missing_params(&out);
+        if !missing.is_empty() {
+            return Err(SkillError::MissingParams {
+                skill: self.id.clone(),
+                params: missing,
+            });
+        }
+        Ok(out)
     }
 
     /// Names of required parameters that `args` does not fill (blank counts as missing).

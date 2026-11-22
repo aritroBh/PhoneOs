@@ -107,6 +107,11 @@ fn states() -> Vec<(&'static str, Vec<Event>, Phase)> {
             ],
             Phase::WaitingForUser,
         ),
+        (
+            "locked",
+            vec![Event::Start, observed(), Event::DeviceLocked],
+            Phase::WaitingForUnlock,
+        ),
     ]
 }
 
@@ -160,6 +165,7 @@ fn unexpected_events_are_protocol_errors_in_every_state() {
         ("tool", Event::ActResult(RunnerResult::ok())),
         ("confirm", Event::UserAnswer { text: "yes".into() }),
         ("answer", Event::Start),
+        ("locked", Event::UserAnswer { text: "x".into() }),
     ];
     for ((name, events, _), (wname, bad)) in states().into_iter().zip(wrong) {
         assert_eq!(name, wname);
@@ -391,7 +397,20 @@ fn random_event(rng: &mut Rng) -> Event {
         passwords_screen(),
         product_screen(),
     ];
-    match rng.below(10) {
+    match rng.below(12) {
+        10 => match rng.below(5) {
+            0 => Event::DeviceLocked,
+            1 => Event::DeviceUnlocked,
+            2 => Event::Tick,
+            3 => Event::ObserveFailed {
+                reason: random_text(rng),
+            },
+            _ => Event::Observed(jarvis_proto::Observation {
+                device_locked: true,
+                ..observation(settings_screen())
+            }),
+        },
+        11 => Event::ActResult(RunnerResult::device_locked()),
         0 => Event::Start,
         1 | 2 => Event::Observed(observation(rng.pick(&screens).clone())),
         3 | 4 => model(&random_text(rng)),

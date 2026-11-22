@@ -92,6 +92,38 @@ pub const TASK_SOURCES: &[(&str, &str)] = &[
         include_str!("../tasks/foreign_pay.json"),
     ),
     ("phone_call.json", include_str!("../tasks/phone_call.json")),
+    (
+        "lock_mid_task.json",
+        include_str!("../tasks/lock_mid_task.json"),
+    ),
+    (
+        "lock_during_confirm.json",
+        include_str!("../tasks/lock_during_confirm.json"),
+    ),
+    (
+        "lock_during_replay.json",
+        include_str!("../tasks/lock_during_replay.json"),
+    ),
+    (
+        "locked_too_long.json",
+        include_str!("../tasks/locked_too_long.json"),
+    ),
+    (
+        "observe_fails_then_recovers.json",
+        include_str!("../tasks/observe_fails_then_recovers.json"),
+    ),
+    (
+        "observe_fails_until_budget.json",
+        include_str!("../tasks/observe_fails_until_budget.json"),
+    ),
+    (
+        "dropped_chars_corrected.json",
+        include_str!("../tasks/dropped_chars_corrected.json"),
+    ),
+    (
+        "dropped_chars_twice.json",
+        include_str!("../tasks/dropped_chars_twice.json"),
+    ),
 ];
 
 /// Parses one app definition.

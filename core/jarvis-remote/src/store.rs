@@ -3,23 +3,28 @@
 //! The JSON produced by [`DeviceStore::to_json`] contains every device's long-term key in
 //! hex. Anyone holding it can impersonate those devices. The shell must store it in the
 //! Keychain (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, not synced) and nowhere
-//! else: not in the app's documents, not in logs, not in backups.
+//! else: not in the app's documents, not in logs, not in backups. The returned string is
+//! zeroized on drop; serde's intermediate buffers while encoding and decoding are not
+//! (serde_json offers no way to do that), nor are copies the shell makes.
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
-use crate::codec::{from_hex, to_hex, DeviceId};
+use crate::codec::{from_hex, to_hex_secret, DeviceId};
 use crate::crypto::Secret32;
 use crate::error::PersistError;
 use crate::permissions::RemotePermissions;
+use crate::text::is_format;
 
 /// Most paired devices the phone keeps.
 pub const MAX_DEVICES: usize = 8;
 /// Longest device name, in bytes of UTF-8.
 pub const MAX_DEVICE_NAME_BYTES: usize = 64;
-/// Current schema version of the persisted device list.
-pub const DEVICE_STORE_VERSION: u32 = 1;
+/// Current schema version of the persisted device list. Version 2 added `nonce_lease`;
+/// version 1 is not read (it was never shipped).
+pub const DEVICE_STORE_VERSION: u32 = 2;
 
 /// One paired remote device.
 #[derive(Clone, PartialEq, Eq)]
@@ -73,17 +78,21 @@ impl DeviceRecord {
     }
 }
 
-/// The persisted list of paired devices, in pairing order.
+/// The persisted hub state: paired devices in pairing order, and the phone-nonce lease.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DeviceStore {
     /// The devices.
     pub devices: Vec<DeviceRecord>,
+    /// Every connection counter below this value may already have been used; a restored
+    /// hub starts counting here. See [`crate::RemoteHub`] on the nonce counter.
+    pub nonce_lease: u64,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoreJson {
     schema_version: u32,
+    nonce_lease: u64,
     devices: Vec<DeviceJson>,
 }
 
@@ -92,32 +101,33 @@ struct StoreJson {
 struct DeviceJson {
     id: DeviceId,
     name: String,
-    key: String,
+    key: Zeroizing<String>,
     permissions: RemotePermissions,
     paired_at_ms: u64,
 }
 
 impl DeviceStore {
-    /// Serializes the list, keys included (see the module docs: Keychain only).
-    pub fn to_json(&self) -> String {
+    /// Serializes the store, keys included (see the module docs: Keychain only).
+    pub fn to_json(&self) -> Zeroizing<String> {
         let doc = StoreJson {
             schema_version: DEVICE_STORE_VERSION,
+            nonce_lease: self.nonce_lease,
             devices: self
                 .devices
                 .iter()
                 .map(|d| DeviceJson {
                     id: d.id,
                     name: d.name.clone(),
-                    key: to_hex(d.key.as_bytes()),
+                    key: to_hex_secret(d.key.as_bytes()),
                     permissions: d.permissions,
                     paired_at_ms: d.paired_at_ms,
                 })
                 .collect(),
         };
-        serde_json::to_string(&doc).unwrap_or_else(|_| String::from("{}"))
+        Zeroizing::new(serde_json::to_string(&doc).unwrap_or_else(|_| String::from("{}")))
     }
 
-    /// Loads a list written by [`DeviceStore::to_json`]. Corrupt, unknown-version or
+    /// Loads a store written by [`DeviceStore::to_json`]. Corrupt, unknown-version or
     /// inconsistent input is an error; nothing is partially loaded.
     pub fn from_json(json: &str) -> Result<Self, PersistError> {
         let probe: serde_json::Value =
@@ -133,19 +143,10 @@ impl DeviceStore {
         }
         let doc: StoreJson =
             serde_json::from_value(probe).map_err(|e| PersistError::Corrupt(e.to_string()))?;
-        if doc.devices.len() > MAX_DEVICES {
-            return Err(PersistError::Invalid("too many devices".into()));
-        }
         let mut devices: Vec<DeviceRecord> = Vec::with_capacity(doc.devices.len());
         for d in doc.devices {
-            if devices.iter().any(|x| x.id == d.id) {
-                return Err(PersistError::Invalid("duplicate device id".into()));
-            }
-            if d.name.len() > MAX_DEVICE_NAME_BYTES || d.name != clean_name(&d.name) {
-                return Err(PersistError::Invalid("invalid device name".into()));
-            }
             let key_bytes: [u8; 32] = from_hex(&d.key)
-                .and_then(|b| b.try_into().ok())
+                .and_then(|b| b.as_slice().try_into().ok())
                 .ok_or_else(|| PersistError::Invalid("invalid key".into()))?;
             devices.push(DeviceRecord {
                 id: d.id,
@@ -155,7 +156,32 @@ impl DeviceStore {
                 paired_at_ms: d.paired_at_ms,
             });
         }
-        Ok(Self { devices })
+        let store = Self {
+            devices,
+            nonce_lease: doc.nonce_lease,
+        };
+        store.validate()?;
+        Ok(store)
+    }
+
+    /// Checks the invariants [`DeviceStore::from_json`] enforces: at most
+    /// [`MAX_DEVICES`], unique ids, clean names within [`MAX_DEVICE_NAME_BYTES`].
+    pub fn validate(&self) -> Result<(), PersistError> {
+        if self.devices.len() > MAX_DEVICES {
+            return Err(PersistError::Invalid("too many devices".into()));
+        }
+        for (i, d) in self.devices.iter().enumerate() {
+            if self.devices.iter().take(i).any(|x| x.id == d.id) {
+                return Err(PersistError::Invalid("duplicate device id".into()));
+            }
+            if d.name.is_empty()
+                || d.name.len() > MAX_DEVICE_NAME_BYTES
+                || d.name != clean_name(&d.name)
+            {
+                return Err(PersistError::Invalid("invalid device name".into()));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -183,14 +209,6 @@ pub fn clean_name(name: &str) -> String {
         out.push(c);
     }
     out
-}
-
-/// Zero-width, bidi and similar invisible format characters.
-pub(crate) fn is_format(c: char) -> bool {
-    matches!(c,
-        '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
-        | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}'
-        | '\u{E0000}'..='\u{E007F}')
 }
 
 #[cfg(test)]

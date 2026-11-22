@@ -159,9 +159,88 @@ pub(crate) fn longer_than(text: &str, max_chars: usize) -> bool {
     text.chars().nth(max_chars).is_some()
 }
 
-/// Whether `text` contains a control character (newlines included).
-pub(crate) fn has_control(text: &str) -> bool {
-    text.chars().any(char::is_control)
+/// Characters that render as nothing or reorder text: zero-width and joiner characters,
+/// bidi embeddings, overrides and isolates, the soft hyphen, word joiners and invisible
+/// operators, variation selectors, tag characters, Hangul fillers and the BOM. In owner-
+/// facing names, triggers and ids they let two different strings look identical.
+pub(crate) fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{17B4}'
+            | '\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E007F}'
+            | '\u{E0100}'..='\u{E01EF}'
+    )
+}
+
+/// Whether `text` contains a control or invisible character.
+pub(crate) fn has_hidden(text: &str) -> bool {
+    text.chars().any(|c| c.is_control() || is_invisible(c))
+}
+
+/// An argument value cleaned for a session: control and invisible characters removed,
+/// whitespace runs collapsed to one space, trimmed. Content is otherwise kept as given.
+pub(crate) fn clean_arg(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars().filter(|c| !is_invisible(*c)) {
+        if c.is_whitespace() || c.is_control() {
+            if !out.is_empty() && !out.ends_with(' ') {
+                out.push(' ');
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out.trim_end().to_owned()
+}
+
+/// Words that negate a request, in normal form (`don't` is `dont`). A request containing
+/// one that its trigger does not contain never matches loosely.
+pub(crate) const NEGATORS: &[&str] = &[
+    "not", "no", "never", "dont", "doesnt", "didnt", "wont", "cant", "stop", "cancel", "without",
+];
+
+/// Pairs of words with opposite meaning, in normal form (`turn on`/`turn off` arrive as
+/// `enable`/`disable`). A loose match whose differing words include such a pair is refused.
+pub(crate) const OPPOSITES: &[(&str, &str)] = &[
+    ("on", "off"),
+    ("enable", "disable"),
+    ("open", "close"),
+    ("start", "stop"),
+    ("lock", "unlock"),
+    ("mute", "unmute"),
+    ("add", "remove"),
+    ("send", "delete"),
+    ("connect", "disconnect"),
+    ("increase", "decrease"),
+    ("up", "down"),
+    ("play", "pause"),
+    ("show", "hide"),
+    ("login", "logout"),
+    ("signin", "signout"),
+];
+
+/// Whether `a` and `b` are an [`OPPOSITES`] pair (either order).
+pub(crate) fn opposite(a: &str, b: &str) -> bool {
+    OPPOSITES
+        .iter()
+        .any(|(x, y)| (*x == a && *y == b) || (*x == b && *y == a))
 }
 
 #[cfg(test)]
@@ -196,6 +275,25 @@ mod tests {
         assert!(ws[1].filler);
         assert_eq!(ws[2].norm, "wifi");
         assert_eq!(&"turn off the Wi-Fi"[ws[2].start..ws[2].end], "Wi-Fi");
+    }
+
+    #[test]
+    fn negators_and_opposites_are_in_normal_form() {
+        for w in NEGATORS
+            .iter()
+            .chain(OPPOSITES.iter().flat_map(|(a, b)| [a, b]))
+        {
+            assert_eq!(key_tokens(w), vec![(*w).to_owned()], "{w}");
+        }
+        assert_eq!(key_tokens("don't"), vec!["dont".to_owned()]);
+        assert!(opposite("disable", "enable") && !opposite("on", "on"));
+    }
+
+    #[test]
+    fn hidden_characters_are_found_and_args_cleaned() {
+        assert!(has_hidden("a\u{200B}b") && has_hidden("n\u{202E}evil") && has_hidden("a\nb"));
+        assert!(!has_hidden("Café menu"));
+        assert_eq!(clean_arg("  on\u{200B} my\n\tway  "), "on my way");
     }
 
     #[test]

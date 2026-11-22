@@ -25,29 +25,63 @@
 //! with `confine_to_apps` refuses actions outside its apps (`jarvis_safety::check_confinement`;
 //! refused like a deny-list hit, so a second attempt finishes `Blocked`). A skill only
 //! narrows: deny list, trust levels, first-use approval and confirmations apply unchanged.
+//!
+//! Locked phone: a passcode-locked iPhone cannot be driven (black screenshots, dead taps, no
+//! app brought forward) and no runner can enter the passcode. **The core never tries to
+//! unlock the phone and never handles a passcode.** It learns of a lock from a locked
+//! observation, a command refused with `RunnerFailure::DeviceLocked`, or
+//! `Event::DeviceLocked`; it then emits `Effect::AwaitUnlock` (re-emitted on `Tick`) and
+//! takes no model call, action, step or failure while waiting. The resume rule is
+//! **re-observe before acting**: nothing decided before the lock is executed after it
+//! without a fresh observation. Per state when the lock arrives:
+//!
+//! | Waiting for | What happens to it |
+//! |---|---|
+//! | an observation (decide / vision) | dropped; after the unlock the fresh screen is decided on |
+//! | an observation to verify an action | the action ran but its result is unknown: the model is told, the step is not learned |
+//! | the model | the request is dropped (a late reply is ignored) and made again on the fresh screen |
+//! | the runner, nothing of the action done yet | the action is dropped unexecuted (its step refunded) and decided again |
+//! | the runner, part of the action done | as for verification: result unknown, told, not learned |
+//! | a tool | a result that still arrives while locked is recorded; otherwise its result is unknown |
+//! | a confirmation | kept: asked again after the unlock when the screen is unchanged, else dropped; a decline sent while locked is honoured, an approval is not (the owner approves a screen they can see) |
+//! | an answer | an answer sent while locked is recorded; otherwise the question is dropped and decided again |
+//!
+//! A learned-flow step is never carried across a lock: it is derived again from the fresh
+//! screen, and a step whose result the lock made unknown ends the replay (the model takes
+//! over). A session in which a lock left any action's result unknown never saves a learned
+//! flow. Locked time does not count against `max_duration_ms`; waiting longer than
+//! `max_locked_wait_ms` finishes `Interrupted`.
+//!
+//! Typed text is checked: after a `type`, the next observation must show the text in the
+//! field (`crate::typing::check_typed`). On a mismatch the session deletes what arrived and
+//! types once more; a second mismatch is reported to the model as a failed step. A `submit`
+//! is pressed only after the text checks out.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use jarvis_memory::{LogEntry, LogStep, MemoryStore, Next, RecordedStep, Recorder, Replayer};
 use jarvis_observe::{compact, diff, marks, screen_hash};
+use std::collections::VecDeque;
+
 use jarvis_proto::{
-    Action, CompactScreen, ConfirmRequest, Effect, Event, ImageRef, ModelRequest, Observation,
-    Outcome, OutcomeStatus, Progress, RequestKind, RiskCategory, SessionConfig, Size, TaskSpec,
-    TimedEvent, ToolCall, ToolSpec,
+    Action, CompactScreen, ConfirmRequest, Effect, Event, ImageRef, Key, ModelRequest, Observation,
+    Outcome, OutcomeStatus, Progress, RequestKind, RiskCategory, RunnerCommand, SessionConfig,
+    Size, TaskSpec, TimedEvent, ToolCall, ToolResult, ToolSpec,
 };
 use jarvis_safety::{
     check_app, check_confinement, evaluate, first_use_app, first_use_request, redact,
     redact_screen, sanitize_screen_text, summarize, Budget, BudgetVerdict, Decision, Verdict,
 };
 
-use crate::commands::{plan, resolve_app, should_change, AppTarget};
+use crate::commands::{plan, resolve_app, should_change, AppTarget, MAX_CLEAR_DELETES};
 use crate::history::{clean, describe, History, MAX_SHOWN};
 use crate::parser::parse_model_output;
 use crate::profile::{mask, sanitize_keys, sensitive_texts, substitute};
 use crate::prompt::{self, PromptParts, ACTION_MAX_TOKENS};
 use crate::schema::{action_gbnf, action_json_schema};
-use crate::state::{Exec, ObservePurpose, Pending, Source, State};
+use crate::state::{Exec, Late, ObservePurpose, Pending, Resume, Source, State, TypeCheck};
 use crate::tools::{check_call, relevant, signature, MAX_TOOLS};
+use crate::typing::{check_typed, correction_deletes, TypedVerdict};
 
 /// Fewer enabled interactive elements than this makes the tree "useless" (vision fallback).
 const MIN_ACTIONABLE: usize = 2;
@@ -61,6 +95,13 @@ const MAX_RESULT_CHARS: usize = 300;
 const MAX_APPS_LISTED: usize = 12;
 /// Times a failed model request is re-sent before the session fails.
 pub const MAX_MODEL_RETRIES: u32 = 2;
+/// Characters of typed text or field content quoted when typing did not arrive intact.
+const MAX_TYPED_QUOTE: usize = 60;
+/// `AwaitUnlock` reason while nothing needs the owner's attention after the unlock.
+const UNLOCK_REASON: &str = "The phone is locked. Unlock it to let Jarvis continue.";
+/// `AwaitUnlock` reason while a confirmation is held.
+const UNLOCK_REASON_CONFIRM: &str =
+    "The phone is locked. Unlock it to continue; Jarvis will ask for your approval again.";
 
 /// The latest observation in three forms.
 #[derive(Debug, Clone)]
@@ -170,19 +211,39 @@ pub struct Session {
     log_steps: Vec<LogStep>,
     /// The owner's guidance block when the session runs a skill (built once).
     guidance: Option<String>,
+    /// Stuck-detection key of the most recently proposed action (to undo on a refund).
+    last_repeat_key: Option<(u64, String)>,
+    /// Observations in a row that failed (`Event::ObserveFailed`).
+    observe_failures: u32,
+    /// The current wait for an unlock so far (forward time only).
+    lock_wait_ms: u64,
+    /// Clock reading the lock wait was last advanced to.
+    lock_last_ms: u64,
+    /// Every wait for an unlock in this session, summed.
+    locked_total_ms: u64,
+    /// Waits for an unlock in this session.
+    lock_waits: u32,
+    /// A lock left some action's result unknown: the recording is not trustworthy, so no
+    /// learned flow is saved from this session.
+    lock_uncertain: bool,
 }
 
-fn event_name(e: &Event) -> &'static str {
-    match e {
-        Event::Start => "start",
-        Event::Observed(_) => "observed",
-        Event::ModelOutput(_) => "model_output",
-        Event::ModelFailed { .. } => "model_failed",
-        Event::ActResult(_) => "act_result",
-        Event::ToolResult(_) => "tool_result",
-        Event::UserDecision { .. } => "user_decision",
-        Event::UserAnswer { .. } => "user_answer",
-        Event::Cancel => "cancel",
+/// How the session learned of a lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LockSignal {
+    /// `Event::DeviceLocked` (or `DeviceUnlocked` out of turn): the outstanding effect's
+    /// reply may still arrive.
+    Event,
+    /// The reply itself said so: a locked observation or a refused command.
+    Reply,
+}
+
+/// The display form of a duration: whole minutes from one minute on, else seconds.
+fn minutes(ms: u64) -> String {
+    if ms >= 60_000 {
+        format!("{} min", ms / 60_000)
+    } else {
+        format!("{} s", ms / 1_000)
     }
 }
 
@@ -254,6 +315,13 @@ impl Session {
             last_action: None,
             log_steps: Vec::new(),
             guidance,
+            last_repeat_key: None,
+            observe_failures: 0,
+            lock_wait_ms: 0,
+            lock_last_ms: 0,
+            locked_total_ms: 0,
+            lock_waits: 0,
+            lock_uncertain: false,
         }
     }
 
@@ -268,25 +336,46 @@ impl Session {
             }
             other => other,
         };
+        let locked = matches!(state, State::AwaitingUnlock { .. });
+        if self.started && locked {
+            // Waiting for an unlock is not active time: the budget skips it, the lock
+            // clock counts it (forward steps only, like the budget).
+            self.budget.skip(now);
+            let delta = now.saturating_sub(self.lock_last_ms);
+            self.lock_wait_ms = self.lock_wait_ms.saturating_add(delta);
+            self.locked_total_ms = self.locked_total_ms.saturating_add(delta);
+            self.lock_last_ms = now;
+        }
         if matches!(event, Event::Cancel) {
             return self.finish(now, OutcomeStatus::Cancelled, "Cancelled by the owner.");
         }
-        if self.started {
+        if self.started && !locked {
             self.budget.observe(now);
             if self.budget.elapsed_ms(now) >= self.config.policy.max_duration_ms {
                 return self.finish(now, OutcomeStatus::Failed, "Time budget used up.");
             }
         }
         let state_name = state.name();
+        if self.started && !locked {
+            match event {
+                Event::DeviceLocked => return self.interrupt(now, state, LockSignal::Event, false),
+                Event::DeviceUnlocked => {
+                    return self.interrupt(now, state, LockSignal::Event, true)
+                }
+                _ => {}
+            }
+        }
         match state {
             State::Idle => self.on_idle(now, event, state_name),
             State::AwaitingObservation { purpose } => {
                 self.on_observation(now, purpose, event, state_name)
             }
             State::AwaitingModel { kind } => self.on_model(now, kind, event, state_name),
-            State::AwaitingAct { queue, pending } => {
-                self.on_act(now, queue, pending, event, state_name)
-            }
+            State::AwaitingAct {
+                queue,
+                pending,
+                fresh,
+            } => self.on_act(now, queue, pending, fresh, event, state_name),
             State::AwaitingTool { pending } => self.on_tool(now, pending, event, state_name),
             State::AwaitingConfirm {
                 pending,
@@ -296,6 +385,9 @@ impl Session {
             } => self.on_confirm(now, pending, request, approves_app, then, event, state_name),
             State::AwaitingAnswer { described } => {
                 self.on_answer(now, described, event, state_name)
+            }
+            State::AwaitingUnlock { resume, late } => {
+                self.on_locked(now, resume, late, event, state_name)
             }
             State::Finished(outcome) => {
                 self.state = State::Finished(outcome.clone());
@@ -316,6 +408,13 @@ impl Session {
                 .then(|| self.current.screen.app_bundle_id.clone()),
             model_calls: self.model_calls,
             parse_retries: self.total_parse_retries,
+            waiting_for_unlock: matches!(self.state, State::AwaitingUnlock { .. }),
+            locked_wait_ms: if matches!(self.state, State::AwaitingUnlock { .. }) {
+                self.lock_wait_ms
+            } else {
+                0
+            },
+            locked_total_ms: self.locked_total_ms,
         }
     }
 
@@ -331,10 +430,7 @@ impl Session {
     // ---------------------------------------------------------------------------------
 
     fn protocol_error(&mut self, now: u64, event: &Event, state: &str) -> Effect {
-        let summary = format!(
-            "protocol error: unexpected {} while {state}",
-            event_name(event)
-        );
+        let summary = format!("protocol error: unexpected {} while {state}", event.name());
         self.finish(now, OutcomeStatus::Failed, &summary)
     }
 
@@ -361,9 +457,16 @@ impl Session {
         event: Event,
         state: &str,
     ) -> Effect {
-        let Event::Observed(obs) = event else {
-            return self.protocol_error(now, &event, state);
+        let obs = match event {
+            Event::Observed(obs) => obs,
+            Event::ObserveFailed { reason } => return self.observe_failed(now, purpose, &reason),
+            other => return self.protocol_error(now, &other, state),
         };
+        if obs.device_locked {
+            let state = State::AwaitingObservation { purpose };
+            return self.interrupt(now, state, LockSignal::Reply, false);
+        }
+        self.observe_failures = 0;
         self.ingest(obs);
         let app = self.current.screen.app_bundle_id.clone();
         if check_app(&self.config.policy, &app).is_denied() {
@@ -377,7 +480,23 @@ impl Session {
             ObservePurpose::Decide => self.decide(now),
             ObservePurpose::Vision => self.infer(RequestKind::Vision),
             ObservePurpose::Verify(pending) => self.verify(now, *pending),
+            ObservePurpose::Reconsider(pending) => self.reconsider(now, *pending),
         }
+    }
+
+    /// `ObserveFailed`: observe again until the failure budget is used up.
+    fn observe_failed(&mut self, now: u64, purpose: ObservePurpose, reason: &str) -> Effect {
+        self.observe_failures = self.observe_failures.saturating_add(1);
+        if self.observe_failures >= self.config.policy.max_consecutive_failures.max(1) {
+            let summary = format!(
+                "Could not read the screen ({} attempts in a row): {}",
+                self.observe_failures,
+                clean(reason, 160)
+            );
+            return self.finish(now, OutcomeStatus::Failed, &summary);
+        }
+        let screenshot = matches!(purpose, ObservePurpose::Vision);
+        self.observe(purpose, screenshot)
     }
 
     fn on_model(&mut self, now: u64, kind: RequestKind, event: Event, state: &str) -> Effect {
@@ -431,18 +550,31 @@ impl Session {
     fn on_act(
         &mut self,
         now: u64,
-        mut queue: std::collections::VecDeque<jarvis_proto::RunnerCommand>,
+        mut queue: VecDeque<RunnerCommand>,
         pending: Box<Pending>,
+        fresh: bool,
         event: Event,
         state: &str,
     ) -> Effect {
         let Event::ActResult(result) = event else {
             return self.protocol_error(now, &event, state);
         };
+        if result.is_device_locked() {
+            let state = State::AwaitingAct {
+                queue,
+                pending,
+                fresh,
+            };
+            return self.interrupt(now, state, LockSignal::Reply, false);
+        }
         if result.ok {
             return match queue.pop_front() {
                 Some(next) => {
-                    self.state = State::AwaitingAct { queue, pending };
+                    self.state = State::AwaitingAct {
+                        queue,
+                        pending,
+                        fresh: false,
+                    };
                     Effect::Act(next)
                 }
                 None => self.observe(ObservePurpose::Verify(pending), false),
@@ -462,6 +594,12 @@ impl Session {
         let Event::ToolResult(result) = event else {
             return self.protocol_error(now, &event, state);
         };
+        self.record_tool(&pending, &result);
+        self.observe(ObservePurpose::Decide, false)
+    }
+
+    /// Records a tool's result in the history, budget, log and recording.
+    fn record_tool(&mut self, pending: &Pending, result: &ToolResult) {
         if result.ok {
             let out = self.safe_text(&result.output, MAX_RESULT_CHARS);
             let line = if out.is_empty() {
@@ -469,7 +607,7 @@ impl Session {
             } else {
                 format!("ok: {out}")
             };
-            self.record_success(&pending, &line);
+            self.record_success(pending, &line);
         } else {
             let error = result
                 .error
@@ -477,9 +615,8 @@ impl Session {
                 .filter(|e| !e.trim().is_empty())
                 .unwrap_or(&result.output);
             let msg = format!("failed: {}", self.safe_text(error, MAX_RESULT_CHARS));
-            self.record_failure(&pending, &msg);
+            self.record_failure(pending, &msg);
         }
-        self.observe(ObservePurpose::Decide, false)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -504,32 +641,48 @@ impl Session {
                 }
             }
             Event::UserDecision { approved: false } => {
-                let result = match approves_app {
-                    Some(app) => {
-                        self.declined_apps.insert(app);
-                        prompt::RESULT_APP_DECLINED
-                    }
-                    None => {
-                        // A step-by-step confirmation of a harmless-looking action says
-                        // nothing about the next one; risky categories are remembered.
-                        if request.category != RiskCategory::None {
-                            self.declined.insert(request.category);
-                        }
-                        prompt::RESULT_DECLINED
-                    }
-                };
-                self.history.push(
+                self.apply_decline(
+                    &request,
+                    approves_app,
                     pending.described.clone(),
-                    result,
-                    pending.source == Source::Replay,
+                    &pending.action,
+                    pending.source,
                 );
-                self.log_step(&pending.action, false);
-                if pending.source == Source::Replay {
-                    self.diverge("the owner declined a step");
-                }
                 self.decide(now)
             }
             other => self.protocol_error(now, &other, state),
+        }
+    }
+
+    /// Records the owner's "no": a declined app is off limits, a declined risk category
+    /// finishes the session if asked again.
+    fn apply_decline(
+        &mut self,
+        request: &ConfirmRequest,
+        approves_app: Option<String>,
+        described: String,
+        action: &Action,
+        source: Source,
+    ) {
+        let result = match approves_app {
+            Some(app) => {
+                self.declined_apps.insert(app);
+                prompt::RESULT_APP_DECLINED
+            }
+            None => {
+                // A step-by-step confirmation of a harmless-looking action says nothing
+                // about the next one; risky categories are remembered.
+                if request.category != RiskCategory::None {
+                    self.declined.insert(request.category);
+                }
+                prompt::RESULT_DECLINED
+            }
+        };
+        self.history
+            .push(described, result, source == Source::Replay);
+        self.log_step(action, false);
+        if source == Source::Replay {
+            self.diverge("the owner declined a step");
         }
     }
 
@@ -537,7 +690,13 @@ impl Session {
         let Event::UserAnswer { text } = event else {
             return self.protocol_error(now, &event, state);
         };
-        let answer = prompt::neutralize_user_text(&text, MAX_RESULT_CHARS);
+        self.record_answer(described, &text);
+        self.observe(ObservePurpose::Decide, false)
+    }
+
+    /// Records the owner's answer to a question.
+    fn record_answer(&mut self, described: String, text: &str) {
+        let answer = prompt::neutralize_user_text(text, MAX_RESULT_CHARS);
         self.history
             .push(described, format!("owner answered: {answer}"), false);
         self.budget.record_success();
@@ -550,7 +709,233 @@ impl Session {
             screen: &self.current.screen,
         });
         self.log_step(&question, true);
-        self.observe(ObservePurpose::Decide, false)
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Locked phone (see the module docs for the per-state table).
+    // ---------------------------------------------------------------------------------
+
+    /// The phone locked while `state` was outstanding: set it aside and wait for the
+    /// owner. With `unlocked` the unlock is already known (an out-of-turn
+    /// `DeviceUnlocked`), so the session observes at once.
+    fn interrupt(&mut self, now: u64, state: State, signal: LockSignal, unlocked: bool) -> Effect {
+        let by_event = signal == LockSignal::Event;
+        let (resume, late) = match state {
+            State::AwaitingObservation { purpose } => match purpose {
+                ObservePurpose::Decide | ObservePurpose::Vision => (Resume::Decide, None),
+                ObservePurpose::Reconsider(pending) => (Resume::Reconsider(pending), None),
+                ObservePurpose::Verify(pending) => {
+                    self.unknown_result(&pending, prompt::RESULT_LOCK_UNVERIFIED);
+                    (Resume::Decide, None)
+                }
+            },
+            State::AwaitingModel { .. } => (Resume::Decide, by_event.then_some(Late::Model)),
+            State::AwaitingAct { pending, fresh, .. } => {
+                if fresh && !by_event {
+                    // The runner refused the action's first command: nothing happened.
+                    self.set_aside(&pending, prompt::RESULT_LOCK_NOT_DONE);
+                    (Resume::Decide, None)
+                } else {
+                    self.unknown_result(&pending, prompt::RESULT_LOCK_UNKNOWN);
+                    (Resume::Decide, by_event.then_some(Late::Act))
+                }
+            }
+            State::AwaitingTool { pending } => (Resume::Decide, Some(Late::Tool(pending))),
+            State::AwaitingConfirm {
+                pending,
+                request,
+                approves_app,
+                ..
+            } => {
+                let late = Late::Decision {
+                    request,
+                    approves_app,
+                    described: pending.described.clone(),
+                    source: pending.source,
+                    action: pending.action.clone(),
+                };
+                if pending.source == Source::Replay {
+                    // A flow step is derived again from the fresh screen.
+                    self.set_aside(&pending, prompt::RESULT_LOCK_NOT_DONE);
+                    (Resume::Decide, Some(late))
+                } else {
+                    (Resume::Reconsider(pending), Some(late))
+                }
+            }
+            State::AwaitingAnswer { described } => {
+                (Resume::Decide, Some(Late::Answer { described }))
+            }
+            // Not reached: `step` routes these elsewhere. Keep the session consistent.
+            State::Idle | State::AwaitingUnlock { .. } | State::Finished(_) => {
+                (Resume::Decide, None)
+            }
+        };
+        self.lock_waits = self.lock_waits.saturating_add(1);
+        self.lock_wait_ms = 0;
+        self.lock_last_ms = now;
+        if unlocked {
+            self.end_wait(late);
+            self.resume_observe(resume)
+        } else {
+            self.await_unlock(now, resume, late)
+        }
+    }
+
+    /// Emits `AwaitUnlock`, or finishes `Interrupted` once the wait is too long.
+    fn await_unlock(&mut self, now: u64, resume: Resume, late: Option<Late>) -> Effect {
+        let max = self.config.policy.max_locked_wait_ms;
+        if self.lock_wait_ms >= max {
+            let summary = format!(
+                "Stopped: the phone stayed locked for {} (the limit is {}). Nothing went wrong with the task; unlock the phone and run it again.",
+                minutes(self.lock_wait_ms),
+                minutes(max)
+            );
+            return self.finish(now, OutcomeStatus::Interrupted, &summary);
+        }
+        let reason = match resume {
+            Resume::Reconsider(_) => UNLOCK_REASON_CONFIRM,
+            Resume::Decide => UNLOCK_REASON,
+        };
+        self.state = State::AwaitingUnlock { resume, late };
+        Effect::AwaitUnlock {
+            reason: reason.to_owned(),
+            waited_ms: self.lock_wait_ms,
+        }
+    }
+
+    fn on_locked(
+        &mut self,
+        now: u64,
+        mut resume: Resume,
+        late: Option<Late>,
+        event: Event,
+        state: &str,
+    ) -> Effect {
+        match event {
+            Event::Tick | Event::DeviceLocked | Event::ObserveFailed { .. } => {
+                self.await_unlock(now, resume, late)
+            }
+            Event::Observed(obs) if obs.device_locked => self.await_unlock(now, resume, late),
+            Event::DeviceUnlocked => {
+                self.end_wait(late);
+                self.resume_observe(resume)
+            }
+            Event::Observed(obs) => {
+                // A fresh, unlocked observation: exactly what the resume waits for.
+                self.end_wait(late);
+                let purpose = match resume {
+                    Resume::Decide => ObservePurpose::Decide,
+                    Resume::Reconsider(pending) => ObservePurpose::Reconsider(pending),
+                };
+                self.on_observation(now, purpose, Event::Observed(obs), state)
+            }
+            Event::ModelOutput(_) | Event::ModelFailed { .. }
+                if matches!(late, Some(Late::Model)) =>
+            {
+                self.await_unlock(now, resume, None)
+            }
+            Event::ActResult(_) if matches!(late, Some(Late::Act)) => {
+                self.await_unlock(now, resume, None)
+            }
+            Event::ToolResult(result) => match late {
+                Some(Late::Tool(pending)) => {
+                    // Tools do not need the screen: the result stands.
+                    self.record_tool(&pending, &result);
+                    self.await_unlock(now, resume, None)
+                }
+                _ => self.protocol_error(now, &Event::ToolResult(result), state),
+            },
+            Event::UserDecision { approved } => match late {
+                Some(Late::Decision {
+                    request,
+                    approves_app,
+                    described,
+                    source,
+                    action,
+                }) => {
+                    // A "no" is always safe to honour. A "yes" is not carried across the
+                    // lock: the owner approves a screen they can see, so it is asked again.
+                    if !approved {
+                        self.apply_decline(&request, approves_app, described, &action, source);
+                        resume = Resume::Decide;
+                    }
+                    self.await_unlock(now, resume, None)
+                }
+                _ => self.protocol_error(now, &Event::UserDecision { approved }, state),
+            },
+            Event::UserAnswer { text } => match late {
+                Some(Late::Answer { described }) => {
+                    self.record_answer(described, &text);
+                    self.await_unlock(now, resume, None)
+                }
+                _ => self.protocol_error(now, &Event::UserAnswer { text }, state),
+            },
+            other => self.protocol_error(now, &other, state),
+        }
+    }
+
+    /// The wait is over: what the interrupted effect never answered is told to the model.
+    fn end_wait(&mut self, late: Option<Late>) {
+        self.lock_wait_ms = 0;
+        match late {
+            Some(Late::Tool(pending)) => {
+                self.unknown_result(&pending, prompt::RESULT_LOCK_TOOL_UNKNOWN);
+            }
+            Some(Late::Answer { described }) => {
+                self.history
+                    .push(described, prompt::RESULT_LOCK_UNANSWERED, false);
+            }
+            Some(Late::Model | Late::Act | Late::Decision { .. }) | None => {}
+        }
+    }
+
+    /// After an unlock: observe before anything else.
+    fn resume_observe(&mut self, resume: Resume) -> Effect {
+        match resume {
+            Resume::Decide => self.observe(ObservePurpose::Decide, false),
+            Resume::Reconsider(pending) => self.observe(ObservePurpose::Reconsider(pending), false),
+        }
+    }
+
+    /// A confirmation that was pending when the phone locked, on the first screen after the
+    /// unlock: asked again (through the full gate) when the screen is unchanged, else
+    /// dropped and decided again.
+    fn reconsider(&mut self, now: u64, pending: Pending) -> Effect {
+        if screen_hash(&pending.before) == self.current.hash {
+            let prepared = self.prepare(&pending.action, pending.source);
+            return self.dispatch(now, &pending.action, pending.source, prepared);
+        }
+        self.set_aside(&pending, prompt::RESULT_LOCK_SCREEN_CHANGED);
+        self.decide(now)
+    }
+
+    /// An action dropped before any of it ran: its step is refunded (it will be decided
+    /// again) and the model, if it chose it, is told why.
+    fn set_aside(&mut self, pending: &Pending, msg: &str) {
+        self.budget.refund_step();
+        if let Some(key) = self.last_repeat_key.take() {
+            if let Some(count) = self.repeats.get_mut(&key) {
+                *count = count.saturating_sub(1);
+            }
+        }
+        if pending.source == Source::Model {
+            self.history.push(pending.described.clone(), msg, false);
+        }
+    }
+
+    /// An action whose result the lock made unknown: told, not learned, not a failure; a
+    /// flow step ends the replay.
+    fn unknown_result(&mut self, pending: &Pending, msg: &str) {
+        self.history.push(
+            pending.described.clone(),
+            msg,
+            pending.source == Source::Replay,
+        );
+        self.log_step(&pending.action, false);
+        self.lock_uncertain = true;
+        if pending.source == Source::Replay {
+            self.diverge("the phone locked during a saved step");
+        }
     }
 
     // ---------------------------------------------------------------------------------
@@ -720,11 +1105,13 @@ impl Session {
             }
             _ => {}
         }
+        self.last_repeat_key = None;
         if action.is_ui() || matches!(action, Action::Look) {
             let key = (
                 self.current.hash,
                 serde_json::to_string(&action).unwrap_or_default(),
             );
+            self.last_repeat_key = Some(key.clone());
             let count = self.repeats.entry(key).or_insert(0);
             *count = count.saturating_add(1);
             if *count >= STUCK_REPEATS {
@@ -748,7 +1135,19 @@ impl Session {
                 return self.decide(now);
             }
         }
-        match self.prepare(&action, source) {
+        let prepared = self.prepare(&action, source);
+        self.dispatch(now, &action, source, prepared)
+    }
+
+    /// Carries out what `prepare` decided for `action`.
+    fn dispatch(
+        &mut self,
+        now: u64,
+        action: &Action,
+        source: Source,
+        prepared: Result<Prepared, Reject>,
+    ) -> Effect {
+        match prepared {
             Ok(Prepared::Execute(pending)) => self.execute(pending),
             Ok(Prepared::Confirm(pending, request)) => {
                 self.ask_confirm(now, pending, request, None, None)
@@ -779,7 +1178,7 @@ impl Session {
                 Effect::AskUser { question }
             }
             Ok(Prepared::Look) => {
-                let described = describe(&action, &self.current.safe);
+                let described = describe(action, &self.current.safe);
                 if self.config.model.supports_vision {
                     self.history.push(described, prompt::RESULT_LOOKED, false);
                     self.vision_hash = Some(self.current.hash);
@@ -796,11 +1195,11 @@ impl Session {
                     let summary = format!("Blocked: {msg}.");
                     return self.finish(now, OutcomeStatus::Blocked, &summary);
                 }
-                self.reject(now, &action, source, &format!("not allowed: {msg}"))
+                self.reject(now, action, source, &format!("not allowed: {msg}"))
             }
-            Err(Reject::Failed(msg)) => self.reject(now, &action, source, &msg),
+            Err(Reject::Failed(msg)) => self.reject(now, action, source, &msg),
             Err(Reject::Blocked(msg)) => {
-                self.log_step(&action, false);
+                self.log_step(action, false);
                 if source == Source::Replay {
                     self.diverge("a saved step needs an app the owner declined");
                 }
@@ -1046,6 +1445,13 @@ impl Session {
             }),
             ui => Exec::Runner(plan(ui, screen).map_err(|e| Reject::Failed(e.to_string()))?),
         };
+        let (exec, check) = match exec {
+            Exec::Runner(queue) => {
+                let (queue, check) = type_check(&executed, screen, queue);
+                (Exec::Runner(queue), check)
+            }
+            tool => (tool, None),
+        };
         let pending = Pending {
             expect_change: should_change(&normalized, screen),
             action: normalized.clone(),
@@ -1053,6 +1459,7 @@ impl Session {
             before: screen.clone(),
             described,
             exec,
+            check,
         };
         let risk = match decision {
             Decision::Confirm(mut request) => {
@@ -1124,6 +1531,7 @@ impl Session {
                         self.state = State::AwaitingAct {
                             queue,
                             pending: Box::new(pending),
+                            fresh: true,
                         };
                         Effect::Act(first)
                     }
@@ -1134,8 +1542,112 @@ impl Session {
         }
     }
 
+    /// Sends the follow-up commands of an action already under way.
+    fn continue_act(&mut self, mut queue: VecDeque<RunnerCommand>, pending: Pending) -> Effect {
+        match queue.pop_front() {
+            Some(first) => {
+                self.state = State::AwaitingAct {
+                    queue,
+                    pending: Box::new(pending),
+                    fresh: false,
+                };
+                Effect::Act(first)
+            }
+            None => self.observe(ObservePurpose::Verify(Box::new(pending)), false),
+        }
+    }
+
+    /// Checks that typed text arrived; corrects once, then tells the model.
+    fn verify_typing(&mut self, now: u64, mut pending: Pending, mut check: TypeCheck) -> Effect {
+        let screen = &self.current.screen;
+        let field = check
+            .field
+            .and_then(|fp| screen.find_by_fingerprint(fp))
+            .or_else(|| {
+                screen
+                    .elements
+                    .iter()
+                    .find(|e| e.focused && e.role.is_text_input())
+            })
+            .filter(|e| !e.secure);
+        let after = field.and_then(|e| e.value.clone());
+        let placeholder = check
+            .placeholder
+            .clone()
+            .or_else(|| field.and_then(|e| e.placeholder.clone()));
+        let verdict = match field {
+            Some(_) => check_typed(
+                &check.typed,
+                check.prior.as_deref(),
+                after.as_deref(),
+                placeholder.as_deref(),
+            ),
+            None => TypedVerdict::Unverifiable,
+        };
+        let (kind, found) = match verdict {
+            TypedVerdict::Match | TypedVerdict::Unverifiable => {
+                let then = std::mem::take(&mut check.then);
+                if then.is_empty() {
+                    return self.verify(now, pending);
+                }
+                return self.continue_act(then, pending);
+            }
+            TypedVerdict::Mismatch { kind, found } => (kind, found),
+        };
+        if !check.retried {
+            let deletes = after.as_deref().and_then(|a| {
+                correction_deletes(
+                    check.prior.as_deref(),
+                    a,
+                    placeholder.as_deref(),
+                    MAX_CLEAR_DELETES,
+                )
+            });
+            if let Some(n) = deletes {
+                let mut queue: VecDeque<RunnerCommand> = (0..n)
+                    .map(|_| RunnerCommand::PressKey { key: Key::Delete })
+                    .collect();
+                queue.push_back(RunnerCommand::TypeText {
+                    text: check.typed.clone(),
+                });
+                check.retried = true;
+                pending.check = Some(check);
+                return self.continue_act(queue, pending);
+            }
+        }
+        let shown = match &pending.action {
+            Action::Type { text, .. } => text.clone(),
+            _ => String::new(),
+        };
+        // Quote the field only when the typed text was the model's own (no profile value
+        // substituted), so a mangled personal value is never echoed into a prompt.
+        let field_text = if shown == check.typed {
+            format!(
+                ", the field shows \"{}\"",
+                self.safe_text(&found, MAX_TYPED_QUOTE)
+            )
+        } else {
+            String::new()
+        };
+        let msg = format!(
+            "failed: the typed text did not arrive intact ({}): expected \"{}\"{field_text}{}",
+            kind.describe(),
+            self.safe_text(&shown, MAX_TYPED_QUOTE),
+            if check.retried {
+                "; it was typed again once"
+            } else {
+                ""
+            }
+        );
+        self.record_failure(&pending, &msg);
+        self.decide(now)
+    }
+
     /// Compares the screen after an action with the one before it.
-    fn verify(&mut self, now: u64, pending: Pending) -> Effect {
+    fn verify(&mut self, now: u64, mut pending: Pending) -> Effect {
+        if let Some(check) = pending.check.take() {
+            return self.verify_typing(now, pending, check);
+        }
         let changed = diff(&pending.before, &self.current.screen).changed;
         if pending.expect_change && !changed {
             let msg = match pending.action {
@@ -1244,7 +1756,9 @@ impl Session {
                 self.memory.flows.record_result(id, false, now);
             }
             _ => {
-                if let Some(flow) = recorded {
+                // A lock that left a step's result unknown makes the recording unreliable
+                // (it may lack a step that did happen): learn nothing from this session.
+                if let Some(flow) = recorded.filter(|_| !self.lock_uncertain) {
                     self.memory.flows.upsert(flow);
                 }
             }
@@ -1256,6 +1770,8 @@ impl Session {
             summary: self.log_text(&outcome.summary),
             started_ms: self.started_ms,
             finished_ms: now.max(self.started_ms),
+            lock_waits: self.lock_waits,
+            locked_ms: self.locked_total_ms,
         };
         self.memory.log.push(entry);
     }
@@ -1291,4 +1807,39 @@ fn uses_foreground_app(action: &Action) -> bool {
             | Action::TapPoint { .. }
             | Action::Look
     )
+}
+
+/// For a `type` with text into a field that is not secure: the runner queue up to and
+/// including `TypeText`, and the check (holding back what follows, i.e. `Return`).
+fn type_check(
+    executed: &Action,
+    screen: &CompactScreen,
+    mut queue: VecDeque<RunnerCommand>,
+) -> (VecDeque<RunnerCommand>, Option<TypeCheck>) {
+    let Action::Type { element, text, .. } = executed else {
+        return (queue, None);
+    };
+    let target = match element {
+        Some(i) => screen.get(*i),
+        None => screen.elements.iter().find(|e| e.focused),
+    };
+    let Some(at) = queue
+        .iter()
+        .position(|c| matches!(c, RunnerCommand::TypeText { .. }))
+    else {
+        return (queue, None);
+    };
+    if text.is_empty() || target.is_some_and(|e| e.secure) {
+        return (queue, None);
+    }
+    let then = queue.split_off(at.saturating_add(1));
+    let check = TypeCheck {
+        typed: text.clone(),
+        field: target.map(|e| e.fingerprint),
+        prior: target.and_then(|e| e.value.clone()),
+        placeholder: target.and_then(|e| e.placeholder.clone()),
+        then,
+        retried: false,
+    };
+    (queue, Some(check))
 }

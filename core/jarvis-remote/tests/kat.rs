@@ -1,9 +1,11 @@
-//! Known-answer test for the key schedule, the handshake MACs and the frame format.
+//! Known-answer test for protocol version 2: entropy derivations, X25519, the key
+//! schedule, the handshake MACs and frames in both directions.
 //!
 //! The expected values were produced by this crate and checked against an independent
-//! implementation (Python: `hmac`/`hashlib` for HKDF and HMAC, the `cryptography`
-//! package for ChaCha20-Poly1305) written from the description in `crypto.rs`. If this
-//! test fails, the wire protocol changed: every paired device would stop working.
+//! implementation (Python: `hmac`/`hashlib` for HKDF and HMAC, the `cryptography` package
+//! for X25519 and ChaCha20-Poly1305) written from the description in `crypto.rs`; all 19
+//! matched. If this test fails, the wire protocol changed: every paired device would stop
+//! working.
 
 #![allow(
     clippy::unwrap_used,
@@ -16,105 +18,180 @@ use jarvis_remote::codec::{from_hex, to_hex};
 use jarvis_remote::crypto::*;
 
 const NAME: &str = "Test Mac";
-const NP: [u8; 32] = [0x11; 32];
-const NC: [u8; 32] = [0x22; 32];
 
-fn secret() -> PairingSecret {
-    PairingSecret::from_bytes(core::array::from_fn(|i| i as u8))
+struct Fixture {
+    phone: Ephemeral,
+    remote: Ephemeral,
+    t: Transcript,
+    s: PairingSecret,
+}
+
+fn fixture() -> Fixture {
+    let phone_entropy: Vec<u8> = (0x40u8..0x60).collect();
+    let remote_entropy: Vec<u8> = (0x80u8..0xa0).collect();
+    let phone = Ephemeral::phone(&phone_entropy, 7, 1000).unwrap();
+    let remote = Ephemeral::remote(&remote_entropy).unwrap();
+    let t = Transcript {
+        np: phone.nonce,
+        nc: remote.nonce,
+        ep: phone.public,
+        er: remote.public,
+    };
+    Fixture {
+        phone,
+        remote,
+        t,
+        s: PairingSecret::from_bytes(core::array::from_fn(|i| i as u8)),
+    }
+}
+
+#[test]
+fn entropy_derivations_and_x25519_known_answers() {
+    let phone_entropy: Vec<u8> = (0x40u8..0x60).collect();
+    let se = pairing_secret_from_entropy(&phone_entropy).unwrap();
+    assert_eq!(
+        to_hex(se.as_bytes()),
+        "c5fb185ccdf12d44dbb57d29bd140a300f58132a"
+    );
+    let f = fixture();
+    assert_eq!(
+        to_hex(&f.phone.nonce),
+        "87d9f39f51e962aab53b5e1c955176d3a7561a0308e99e86ae4d9382764ef68d"
+    );
+    assert_eq!(
+        to_hex(&f.phone.public),
+        "c0b632573dba7473ff3e6115488cd8c15e04e80349e9a22ccbc0eff830389b15"
+    );
+    assert_eq!(
+        to_hex(&f.remote.nonce),
+        "cfa582db51ab9d1831ba257ff83fa785eeab9a80574e51ae3061dd01857df609"
+    );
+    assert_eq!(
+        to_hex(&f.remote.public),
+        "f0b83de25fbe3cf6746e2b42b1274eee8af8e8c460996723de3bef97e0c2a443"
+    );
+    let dh = f.phone.agree(&f.remote.public).unwrap();
+    assert_eq!(*dh, *f.remote.agree(&f.phone.public).unwrap());
+    assert_eq!(
+        to_hex(&*dh),
+        "9cb4693e7696b3b11e0d0d17ab5074f447778e1ee46eb58ffff4c217fe58124f"
+    );
+    // The secret shares nothing with the public nonce derived from the same entropy.
+    assert!(!to_hex(&f.phone.nonce).contains(&to_hex(&se.as_bytes()[..4])));
 }
 
 #[test]
 fn key_schedule_known_answers() {
-    let s = secret();
-    let pk = pair_key(&s).unwrap();
+    let f = fixture();
+    let dh = f.phone.agree(&f.remote.public).unwrap();
+    let pk = pair_key(&f.s).unwrap();
     assert_eq!(
         to_hex(pk.as_bytes()),
-        "6db7ace8c75d6181c49328f3a401ee7e825124bdcecec424a6b7685a24f7e755"
+        "c0da69c681c81fbc2db4241d4310432660020a962427165ea3b6d06a8c385b87"
     );
-    let id = derive_device_id(&s, &NP, &NC).unwrap();
-    assert_eq!(id.to_hex(), "02e34c519d81580fedb7d79b937a53a3");
-    let dk = derive_device_key(&s, &NP, &NC, &id, NAME).unwrap();
+    let id = derive_device_id(&f.s, &f.t).unwrap();
+    assert_eq!(id.to_hex(), "8d813a2b3d5cbf946f462d2f6d11fbe1");
+    let dk = derive_device_key(&f.s, &dh, &f.t, &id, NAME).unwrap();
     assert_eq!(
         to_hex(dk.as_bytes()),
-        "1919bcbae907f3defa8922d89bdf73bbdcd33584985438b9121ab29ccb7236bf"
+        "be86b968a9e5a1edc745734dc880e6798aa119d887a04d85c607a8accd84bab4"
     );
     let ak = auth_key(&dk).unwrap();
     assert_eq!(
         to_hex(ak.as_bytes()),
-        "cd6fd810ca7c060b6194a744e86d31277f2ea511d85a789ce22f6c0b4597dd22"
+        "962aeb955141315c15b06375c5c839c7d97b3847f71a240b56688a15fc2c3015"
     );
-    let (r2p, p2r) = session_keys(&dk, &id, &NP, &NC).unwrap();
+    let (r2p, p2r) = session_keys(&dk, &dh, &id, &f.t).unwrap();
     assert_eq!(
         to_hex(r2p.as_bytes()),
-        "77b7f0276be899cef08a17ffd870e10b379bde9a57db1cd62346f4b2a140ea1c"
+        "9892e4efa156a49d541adaa172cac4f915b569f47fc06ac875bd2a0fd2731de5"
     );
     assert_eq!(
         to_hex(p2r.as_bytes()),
-        "88552e37874bd623b40ea6d14dd38e327094ac32b24d0b92c5d33805aae729ab"
+        "8eab86be35d54dfbb53572b37a8a024cbab5d7ac3394b70ff77b319c37fb6440"
     );
+    // Forward secrecy, structurally: without the DH output the session keys differ.
+    let (r2p_no_dh, _) = session_keys(&dk, &[0u8; 32], &id, &f.t).unwrap();
+    assert_ne!(r2p_no_dh, r2p);
 }
 
 #[test]
 fn handshake_mac_known_answers() {
-    let s = secret();
-    let pk = pair_key(&s).unwrap();
-    let id = derive_device_id(&s, &NP, &NC).unwrap();
-    let ak = auth_key(&derive_device_key(&s, &NP, &NC, &id, NAME).unwrap()).unwrap();
-    let pcm = pair_client_mac(&pk, &NP, &NC, NAME).unwrap();
+    let f = fixture();
+    let dh = f.phone.agree(&f.remote.public).unwrap();
+    let pk = pair_key(&f.s).unwrap();
+    let id = derive_device_id(&f.s, &f.t).unwrap();
+    let ak = auth_key(&derive_device_key(&f.s, &dh, &f.t, &id, NAME).unwrap()).unwrap();
+    let pcm = pair_client_mac(&pk, &f.t, NAME).unwrap();
     assert_eq!(
         to_hex(&pcm),
-        "cf4ebed32a6b716a0ccf7e166927e850a56a067e46cf4036c3dfe1bca270967e"
+        "76b4b6a8287d8aa81b9bd1222f3e8272ac7480a64ed917a2a26d6c25d37c3c82"
     );
-    assert!(verify_pair_client_mac(&pk, &NP, &NC, NAME, &pcm).is_ok());
-    assert!(verify_pair_client_mac(&pk, &NP, &NC, "Test Mad", &pcm).is_err());
-    let ppm = pair_phone_mac(&pk, &NP, &NC, NAME, &id).unwrap();
+    assert!(verify_pair_client_mac(&pk, &f.t, NAME, &pcm).is_ok());
+    assert!(verify_pair_client_mac(&pk, &f.t, "Test Mad", &pcm).is_err());
+    let swapped = Transcript {
+        ep: f.t.er,
+        er: f.t.ep,
+        ..f.t
+    };
+    assert!(verify_pair_client_mac(&pk, &swapped, NAME, &pcm).is_err());
+    let ppm = pair_phone_mac(&pk, &f.t, NAME, &id).unwrap();
     assert_eq!(
         to_hex(&ppm),
-        "9a2d19e66a2abb016fe52a1c4989a5906dfd1a2930a15a88cf7cac09b681b327"
+        "bf17b9932fea3017419b12d08aab6883ed2e1c0fbbb2f7df4b643f8ed22161b9"
     );
-    assert!(verify_pair_phone_mac(&pk, &NP, &NC, NAME, &id, &ppm).is_ok());
-    let ccm = connect_client_mac(&ak, &id, &NP, &NC).unwrap();
+    assert!(verify_pair_phone_mac(&pk, &f.t, NAME, &id, &ppm).is_ok());
+    let ccm = connect_client_mac(&ak, &id, &f.t).unwrap();
     assert_eq!(
         to_hex(&ccm),
-        "a50892030d8c12d942ae05e277802e2abdb5046ef1ff5444818cc6ba1f72b12e"
+        "1f05146113b0259dec892ba48695a6835326e50b083c2217516a118a38a36dd5"
     );
-    assert!(verify_connect_client_mac(&ak, &id, &NC, &NP, &ccm).is_err());
-    let cpm = connect_phone_mac(&ak, &id, &NP, &NC).unwrap();
+    let cpm = connect_phone_mac(&ak, &id, &f.t).unwrap();
     assert_eq!(
         to_hex(&cpm),
-        "1bad85b54810f208f154897acf2ce7fbbe73b3ee79d7ae897e282bcf6346ce70"
+        "f386da4a8c27d4fc0e76025b720ff373b2ef2572b07402bec552d50b08f80a49"
     );
+    assert!(verify_connect_phone_mac(&ak, &id, &f.t, &cpm).is_ok());
     // The two roles' MACs differ, so one cannot be reflected as the other.
     assert_ne!(pcm, ppm);
     assert_ne!(ccm, cpm);
+    assert!(verify_connect_client_mac(&ak, &id, &f.t, &cpm).is_err());
 }
 
 #[test]
-fn frame_known_answers() {
-    let s = secret();
-    let id = derive_device_id(&s, &NP, &NC).unwrap();
-    let dk = derive_device_key(&s, &NP, &NC, &id, NAME).unwrap();
-    let mut remote = Channel::new(Side::Remote, &dk, id, &NP, &NC).unwrap();
-    let mut phone = Channel::new(Side::Phone, &dk, id, &NP, &NC).unwrap();
+fn frame_known_answers_in_both_directions() {
+    let f = fixture();
+    let dh = f.phone.agree(&f.remote.public).unwrap();
+    let id = derive_device_id(&f.s, &f.t).unwrap();
+    let dk = derive_device_key(&f.s, &dh, &f.t, &id, NAME).unwrap();
+    let mut remote = Channel::new(Side::Remote, &dk, &dh, id, &f.t).unwrap();
+    let mut phone = Channel::new(Side::Phone, &dk, &dh, id, &f.t).unwrap();
     let f0 = remote.seal(br#"{"type":"ping"}"#).unwrap();
     let f1 = remote.seal(br#"{"type":"ping"}"#).unwrap();
     assert_eq!(
         to_hex(&f0),
-        "00000000000000003479c27a0203de568f20dfe8731785d33f4cc9de2d674c2256a268180ed646"
+        "0000000000000000dfcda4cc57a9a958f5e05648c9774b17d8badc9afe9e9848660476ce37b234"
     );
     assert_eq!(
         to_hex(&f1),
-        "0000000000000001a1a5530351b0cf14384fc23c71e776e8f22c9965c1dccaeda3110f95b9189d"
+        "000000000000000180f1a1f8837ebc3887df8a065e94efecc40bb3ec09ffa96637627d8111c033"
     );
-    assert_eq!(phone.open(&f0).unwrap(), br#"{"type":"ping"}"#);
-    assert_eq!(phone.open(&f1).unwrap(), br#"{"type":"ping"}"#);
-    // A frame sealed by the phone does not open as one from the remote (separate keys).
-    let mut phone2 = Channel::new(Side::Phone, &dk, id, &NP, &NC).unwrap();
-    let echo = phone2.seal(br#"{"type":"ping"}"#).unwrap();
-    let mut phone3 = Channel::new(Side::Phone, &dk, id, &NP, &NC).unwrap();
-    assert!(phone3.open(&echo).is_err());
+    // Phone → remote, direction byte 0x50.
+    let g0 = phone.seal(br#"{"type":"pong"}"#).unwrap();
+    assert_eq!(
+        to_hex(&g0),
+        "00000000000000002cba29c427bd3069908a44d871a8679a901242b2a14b80cd7cda7eba9ee135"
+    );
+    assert_eq!(DIR_P2R, 0x50);
+    assert_eq!(DIR_R2P, 0x52);
+    assert_eq!(phone.open(&f0).unwrap().as_slice(), br#"{"type":"ping"}"#);
+    assert_eq!(phone.open(&f1).unwrap().as_slice(), br#"{"type":"ping"}"#);
+    assert_eq!(remote.open(&g0).unwrap().as_slice(), br#"{"type":"pong"}"#);
+    // A phone frame does not open as a remote frame (separate keys and directions).
+    let mut phone2 = Channel::new(Side::Phone, &dk, &dh, id, &f.t).unwrap();
+    assert!(phone2.open(&g0).is_err());
     // And a failure is final, even for the right frame afterwards.
-    let mut phone4 = Channel::new(Side::Phone, &dk, id, &NP, &NC).unwrap();
-    assert!(phone4.open(&from_hex("00").unwrap()).is_err());
-    assert!(phone4.open(&f0).is_err());
+    let mut phone3 = Channel::new(Side::Phone, &dk, &dh, id, &f.t).unwrap();
+    assert!(phone3.open(&from_hex("00").unwrap()).is_err());
+    assert!(phone3.open(&f0).is_err());
 }

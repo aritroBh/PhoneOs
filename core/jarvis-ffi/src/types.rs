@@ -134,6 +134,10 @@ pub struct ImageRef {
 pub struct ScreenObservation {
     pub screen: Screen,
     pub screenshot: Option<ImageRef>,
+    /// The runner reports `screen_locked`: the session ignores `screen` and waits for the
+    /// owner to unlock. Defaults to `false`, so existing Swift initializers keep compiling.
+    #[uniffi(default = false)]
+    pub device_locked: bool,
 }
 
 /// What the device path sends: the runner's raw `page_source` text plus what the runner
@@ -148,6 +152,9 @@ pub struct RunnerSnapshot {
     pub keyboard_visible: bool,
     pub orientation: Orientation,
     pub screenshot: Option<ImageRef>,
+    /// The runner reports `screen_locked` (see `ScreenObservation::device_locked`).
+    #[uniffi(default = false)]
+    pub device_locked: bool,
 }
 
 /// Scroll / swipe direction.
@@ -262,11 +269,24 @@ pub enum RunnerCommand {
     },
 }
 
+/// Proto `RunnerFailure`: a typed reason a command was not carried out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum RunnerFailure {
+    /// The device is locked; the command was refused and nothing happened.
+    DeviceLocked,
+    /// Any other typed reason.
+    Other,
+}
+
 /// The runner's answer to one command.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RunnerResult {
     pub ok: bool,
     pub error: Option<String>,
+    /// Set to `.deviceLocked` when the runner refused because the phone is locked. Defaults
+    /// to `nil`, so existing Swift initializers keep compiling.
+    #[uniffi(default = None)]
+    pub failure: Option<RunnerFailure>,
 }
 
 /// JSON type of a tool parameter.
@@ -432,6 +452,10 @@ pub struct Policy {
     pub max_duration_ms: u64,
     pub max_consecutive_failures: u32,
     pub max_parse_retries: u32,
+    /// Longest wait for the owner to unlock before the session finishes `.interrupted`
+    /// (milliseconds; locked time does not count against `maxDurationMs`).
+    #[uniffi(default = 1800000)]
+    pub max_locked_wait_ms: u64,
 }
 
 /// One input to the session.
@@ -466,6 +490,16 @@ pub enum Event {
         text: String,
     },
     Cancel,
+    /// The shell learned the phone locked (between or instead of effect results).
+    DeviceLocked,
+    /// The owner unlocked the phone (answers `.awaitUnlock`).
+    DeviceUnlocked,
+    /// Still locked: the shell's timer fired (answers `.awaitUnlock`).
+    Tick,
+    /// `.observe` failed after the shell's own retries (not because the phone is locked).
+    ObserveFailed {
+        reason: String,
+    },
 }
 
 /// A confirmation the owner must give before a risky action.
@@ -483,6 +517,8 @@ pub enum OutcomeStatus {
     Failed,
     Cancelled,
     Blocked,
+    /// The phone stayed locked longer than `maxLockedWaitMs`; nothing wrong with the task.
+    Interrupted,
 }
 
 /// The end of a session.
@@ -497,13 +533,33 @@ pub struct Outcome {
 /// The one thing the shell must do next.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum Effect {
-    Observe { screenshot: bool },
-    Infer { request: ModelRequest },
-    Act { command: RunnerCommand },
-    CallTool { call: ToolCall },
-    Confirm { request: ConfirmRequest },
-    AskUser { question: String },
-    Finished { outcome: Outcome },
+    Observe {
+        screenshot: bool,
+    },
+    Infer {
+        request: ModelRequest,
+    },
+    Act {
+        command: RunnerCommand,
+    },
+    CallTool {
+        call: ToolCall,
+    },
+    Confirm {
+        request: ConfirmRequest,
+    },
+    AskUser {
+        question: String,
+    },
+    Finished {
+        outcome: Outcome,
+    },
+    /// The phone is locked: show "Unlock to continue". Answer with `.deviceUnlocked`,
+    /// `.tick` (timer, still locked) or a fresh observation.
+    AwaitUnlock {
+        reason: String,
+        waited_ms: u64,
+    },
 }
 
 /// Session phase for the UI.
@@ -517,6 +573,7 @@ pub enum Phase {
     CallingTool,
     WaitingForUser,
     Finished,
+    WaitingForUnlock,
 }
 
 /// Proto `Progress`: what the UI shows while a session runs.
@@ -530,6 +587,15 @@ pub struct SessionProgress {
     pub model_calls: u32,
     /// Re-inferences after unparsable model output so far.
     pub parse_retries: u32,
+    /// Whether the session waits for the owner to unlock the phone.
+    #[uniffi(default = false)]
+    pub waiting_for_unlock: bool,
+    /// How long the current wait for an unlock has lasted (0 when not waiting).
+    #[uniffi(default = 0)]
+    pub locked_wait_ms: u64,
+    /// Total time spent waiting for unlocks in this session.
+    #[uniffi(default = 0)]
+    pub locked_total_ms: u64,
 }
 
 /// The task the owner asked for.
@@ -576,10 +642,14 @@ pub struct SkillContext {
     pub instructions: String,
     /// Bundle ids the skill works in.
     pub apps: Vec<String>,
-    /// Refuse actions outside `apps` (the home screen stays allowed). Only narrows policy.
+    /// Act only inside `apps` (from the home screen only go home, wait or open one of
+    /// `apps`; tools must act in `apps` or be listed in `tools`). Only narrows policy.
     pub confine_to_apps: bool,
     /// Parameter values (`contact` -> `Mom`).
     pub args: std::collections::HashMap<String, String>,
+    /// App-less tools a confined skill may still call, by exact name. Defaults to empty.
+    #[uniffi(default)]
+    pub tools: Vec<String>,
 }
 
 /// Where a skill came from.
@@ -620,6 +690,9 @@ pub struct Skill {
     pub updated_ms: u64,
     pub runs: u32,
     pub last_run_ms: Option<u64>,
+    /// App-less tools a confined skill may still call, by exact name. Defaults to empty.
+    #[uniffi(default)]
+    pub tools: Vec<String>,
 }
 
 /// One skill matching a request.
@@ -633,6 +706,10 @@ pub struct SkillMatch {
     pub matched_trigger: String,
     /// Required parameters not filled (ask the owner).
     pub missing: Vec<String>,
+    /// An exact literal or fully matched slotted trigger. Only exact matches may run
+    /// without asking the owner; a loose match is a suggestion.
+    #[uniffi(default = false)]
+    pub exact: bool,
 }
 
 /// The matches for a request, best first.
@@ -641,4 +718,7 @@ pub struct SkillMatchResult {
     pub matches: Vec<SkillMatch>,
     /// The best two are too close to pick one: ask the owner which.
     pub ambiguous: bool,
+    /// Ask the owner before running anything: `ambiguous`, or the best match is not exact.
+    #[uniffi(default = false)]
+    pub needs_owner_choice: bool,
 }

@@ -32,8 +32,10 @@ mod schema;
 mod session;
 mod state;
 mod tools;
+pub mod typing;
 
 pub use parser::{parse_model_output, ParseError, Parsed};
 pub use prompt::{system_prompt, ACTION_MAX_TOKENS};
 pub use schema::{action_examples, action_gbnf, action_json_schema, action_names};
 pub use session::{Session, MAX_MODEL_RETRIES};
+pub use typing::{check_typed, correction_deletes, MismatchKind, TypedVerdict};

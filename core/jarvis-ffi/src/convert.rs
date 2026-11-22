@@ -320,8 +320,13 @@ impl From<ImageRef> for p::ImageRef {
 
 impl From<p::Observation> for ScreenObservation {
     fn from(v: p::Observation) -> Self {
-        let p::Observation { screen, screenshot } = v;
+        let p::Observation {
+            screen,
+            screenshot,
+            device_locked,
+        } = v;
         ScreenObservation {
+            device_locked,
             screen: screen.into(),
             screenshot: screenshot.map(Into::into),
         }
@@ -330,8 +335,13 @@ impl From<p::Observation> for ScreenObservation {
 
 impl From<ScreenObservation> for p::Observation {
     fn from(v: ScreenObservation) -> Self {
-        let ScreenObservation { screen, screenshot } = v;
+        let ScreenObservation {
+            screen,
+            screenshot,
+            device_locked,
+        } = v;
         p::Observation {
+            device_locked,
             screen: screen.into(),
             screenshot: screenshot.map(Into::into),
         }
@@ -534,17 +544,43 @@ impl From<RunnerCommand> for p::RunnerCommand {
     }
 }
 
+impl From<p::RunnerFailure> for RunnerFailure {
+    fn from(v: p::RunnerFailure) -> Self {
+        match v {
+            p::RunnerFailure::DeviceLocked => RunnerFailure::DeviceLocked,
+            p::RunnerFailure::Other => RunnerFailure::Other,
+        }
+    }
+}
+
+impl From<RunnerFailure> for p::RunnerFailure {
+    fn from(v: RunnerFailure) -> Self {
+        match v {
+            RunnerFailure::DeviceLocked => p::RunnerFailure::DeviceLocked,
+            RunnerFailure::Other => p::RunnerFailure::Other,
+        }
+    }
+}
+
 impl From<p::RunnerResult> for RunnerResult {
     fn from(v: p::RunnerResult) -> Self {
-        let p::RunnerResult { ok, error } = v;
-        RunnerResult { ok, error }
+        let p::RunnerResult { ok, error, failure } = v;
+        RunnerResult {
+            ok,
+            error,
+            failure: failure.map(Into::into),
+        }
     }
 }
 
 impl From<RunnerResult> for p::RunnerResult {
     fn from(v: RunnerResult) -> Self {
-        let RunnerResult { ok, error } = v;
-        p::RunnerResult { ok, error }
+        let RunnerResult { ok, error, failure } = v;
+        p::RunnerResult {
+            ok,
+            error,
+            failure: failure.map(Into::into),
+        }
     }
 }
 
@@ -963,6 +999,7 @@ impl From<p::Policy> for Policy {
             max_duration_ms,
             max_consecutive_failures,
             max_parse_retries,
+            max_locked_wait_ms,
         } = v;
         Policy {
             denied_apps,
@@ -975,6 +1012,7 @@ impl From<p::Policy> for Policy {
             max_duration_ms,
             max_consecutive_failures,
             max_parse_retries,
+            max_locked_wait_ms,
         }
     }
 }
@@ -992,6 +1030,7 @@ impl From<Policy> for p::Policy {
             max_duration_ms,
             max_consecutive_failures,
             max_parse_retries,
+            max_locked_wait_ms,
         } = v;
         p::Policy {
             denied_apps,
@@ -1004,6 +1043,7 @@ impl From<Policy> for p::Policy {
             max_duration_ms,
             max_consecutive_failures,
             max_parse_retries,
+            max_locked_wait_ms,
         }
     }
 }
@@ -1032,6 +1072,10 @@ impl From<p::Event> for Event {
             p::Event::UserDecision { approved } => Event::UserDecision { approved },
             p::Event::UserAnswer { text } => Event::UserAnswer { text },
             p::Event::Cancel => Event::Cancel,
+            p::Event::DeviceLocked => Event::DeviceLocked,
+            p::Event::DeviceUnlocked => Event::DeviceUnlocked,
+            p::Event::Tick => Event::Tick,
+            p::Event::ObserveFailed { reason } => Event::ObserveFailed { reason },
         }
     }
 }
@@ -1053,6 +1097,10 @@ pub(crate) fn event_into_proto(v: Event) -> (p::Event, Option<String>) {
         Event::UserDecision { approved } => (p::Event::UserDecision { approved }, None),
         Event::UserAnswer { text } => (p::Event::UserAnswer { text }, None),
         Event::Cancel => (p::Event::Cancel, None),
+        Event::DeviceLocked => (p::Event::DeviceLocked, None),
+        Event::DeviceUnlocked => (p::Event::DeviceUnlocked, None),
+        Event::Tick => (p::Event::Tick, None),
+        Event::ObserveFailed { reason } => (p::Event::ObserveFailed { reason }, None),
     }
 }
 
@@ -1093,6 +1141,7 @@ impl From<p::OutcomeStatus> for OutcomeStatus {
             p::OutcomeStatus::Failed => OutcomeStatus::Failed,
             p::OutcomeStatus::Cancelled => OutcomeStatus::Cancelled,
             p::OutcomeStatus::Blocked => OutcomeStatus::Blocked,
+            p::OutcomeStatus::Interrupted => OutcomeStatus::Interrupted,
         }
     }
 }
@@ -1104,6 +1153,7 @@ impl From<OutcomeStatus> for p::OutcomeStatus {
             OutcomeStatus::Failed => p::OutcomeStatus::Failed,
             OutcomeStatus::Cancelled => p::OutcomeStatus::Cancelled,
             OutcomeStatus::Blocked => p::OutcomeStatus::Blocked,
+            OutcomeStatus::Interrupted => p::OutcomeStatus::Interrupted,
         }
     }
 }
@@ -1160,6 +1210,9 @@ impl From<p::Effect> for Effect {
             p::Effect::Finished(outcome) => Effect::Finished {
                 outcome: outcome.into(),
             },
+            p::Effect::AwaitUnlock { reason, waited_ms } => {
+                Effect::AwaitUnlock { reason, waited_ms }
+            }
         }
     }
 }
@@ -1176,6 +1229,9 @@ impl TryFrom<Effect> for p::Effect {
             Effect::Confirm { request } => p::Effect::Confirm(request.into()),
             Effect::AskUser { question } => p::Effect::AskUser { question },
             Effect::Finished { outcome } => p::Effect::Finished(outcome.into()),
+            Effect::AwaitUnlock { reason, waited_ms } => {
+                p::Effect::AwaitUnlock { reason, waited_ms }
+            }
         })
     }
 }
@@ -1191,6 +1247,7 @@ impl From<p::Phase> for Phase {
             p::Phase::CallingTool => Phase::CallingTool,
             p::Phase::WaitingForUser => Phase::WaitingForUser,
             p::Phase::Finished => Phase::Finished,
+            p::Phase::WaitingForUnlock => Phase::WaitingForUnlock,
         }
     }
 }
@@ -1206,6 +1263,7 @@ impl From<Phase> for p::Phase {
             Phase::CallingTool => p::Phase::CallingTool,
             Phase::WaitingForUser => p::Phase::WaitingForUser,
             Phase::Finished => p::Phase::Finished,
+            Phase::WaitingForUnlock => p::Phase::WaitingForUnlock,
         }
     }
 }
@@ -1219,6 +1277,9 @@ impl From<p::Progress> for SessionProgress {
             app,
             model_calls,
             parse_retries,
+            waiting_for_unlock,
+            locked_wait_ms,
+            locked_total_ms,
         } = v;
         SessionProgress {
             step,
@@ -1227,6 +1288,9 @@ impl From<p::Progress> for SessionProgress {
             app,
             model_calls,
             parse_retries,
+            waiting_for_unlock,
+            locked_wait_ms,
+            locked_total_ms,
         }
     }
 }
@@ -1242,6 +1306,9 @@ impl TryFrom<SessionProgress> for p::Progress {
             app,
             model_calls,
             parse_retries,
+            waiting_for_unlock,
+            locked_wait_ms,
+            locked_total_ms,
         } = v;
         Ok(p::Progress {
             step,
@@ -1250,6 +1317,9 @@ impl TryFrom<SessionProgress> for p::Progress {
             app,
             model_calls,
             parse_retries,
+            waiting_for_unlock,
+            locked_wait_ms,
+            locked_total_ms,
         })
     }
 }
@@ -1340,6 +1410,7 @@ impl From<p::SkillContext> for SkillContext {
             instructions,
             apps,
             confine_to_apps,
+            tools,
             args,
         } = v;
         SkillContext {
@@ -1349,6 +1420,7 @@ impl From<p::SkillContext> for SkillContext {
             apps,
             confine_to_apps,
             args: args.into_iter().collect(),
+            tools,
         }
     }
 }
@@ -1362,6 +1434,7 @@ impl From<SkillContext> for p::SkillContext {
             apps,
             confine_to_apps,
             args,
+            tools,
         } = v;
         p::SkillContext {
             id,
@@ -1369,6 +1442,7 @@ impl From<SkillContext> for p::SkillContext {
             instructions,
             apps,
             confine_to_apps,
+            tools,
             args: args.into_iter().collect(),
         }
     }
@@ -1435,6 +1509,7 @@ impl From<sk::Skill> for Skill {
             instructions,
             apps,
             confine_to_apps,
+            tools,
             params,
             flow_keys,
             enabled,
@@ -1452,6 +1527,7 @@ impl From<sk::Skill> for Skill {
             instructions,
             apps,
             confine_to_apps,
+            tools,
             params: params.into_iter().map(Into::into).collect(),
             flow_keys,
             enabled,
@@ -1474,6 +1550,7 @@ impl From<Skill> for sk::Skill {
             instructions,
             apps,
             confine_to_apps,
+            tools,
             params,
             flow_keys,
             enabled,
@@ -1491,6 +1568,7 @@ impl From<Skill> for sk::Skill {
             instructions,
             apps,
             confine_to_apps,
+            tools,
             params: params.into_iter().map(Into::into).collect(),
             flow_keys,
             enabled,
@@ -1510,6 +1588,7 @@ impl From<sk::SkillMatch> for SkillMatch {
             args,
             matched_trigger,
             missing,
+            exact,
         } = v;
         SkillMatch {
             skill_id,
@@ -1517,6 +1596,7 @@ impl From<sk::SkillMatch> for SkillMatch {
             args: args.into_iter().collect(),
             matched_trigger,
             missing,
+            exact,
         }
     }
 }
@@ -1529,6 +1609,7 @@ impl From<SkillMatch> for sk::SkillMatch {
             args,
             matched_trigger,
             missing,
+            exact,
         } = v;
         sk::SkillMatch {
             skill_id,
@@ -1536,6 +1617,7 @@ impl From<SkillMatch> for sk::SkillMatch {
             args: args.into_iter().collect(),
             matched_trigger,
             missing,
+            exact,
         }
     }
 }

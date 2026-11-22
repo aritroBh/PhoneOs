@@ -36,6 +36,7 @@ pub mod schedule;
 pub mod skill;
 pub mod store;
 mod text;
+pub mod utterance;
 pub mod workflow;
 pub mod workflow_store;
 
@@ -44,8 +45,9 @@ pub use jarvis_proto::SkillContext;
 pub use matcher::{match_skills, Ambiguity, SkillMatch, AMBIGUITY_MARGIN, MAX_TASK_CHARS};
 pub use run::{Awaiting, RunError, RunLimits, WorkflowEffect, WorkflowEvent, WorkflowRun};
 pub use schedule::{is_due, minutes_since_last, minutes_until_next};
-pub use skill::{is_valid_id, is_valid_param_name, Skill, SkillKind, SkillParam};
-pub use store::{SkillStore, Upsert, MAX_SKILLS, SKILLS_SCHEMA_VERSION};
+pub use skill::{is_valid_id, is_valid_param_name, Skill, SkillKind, SkillParam, MAX_ARG_CHARS};
+pub use store::{SkillStore, Upsert, MAX_DAMAGED, MAX_SKILLS, SKILLS_SCHEMA_VERSION};
+pub use utterance::{resolve_utterance, Resolution, UtteranceMatch};
 pub use workflow::{
     Condition, OnFailure, Schedule, Step, Trigger, Weekday, Workflow, WorkflowOutcome,
     WorkflowStatus,

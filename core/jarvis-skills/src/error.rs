@@ -73,6 +73,36 @@ pub enum SkillError {
     /// A skill already exists for this learned flow.
     #[error("skill {0:?} already replays this flow")]
     AlreadyPromoted(String),
+    /// The skill is disabled and cannot run.
+    #[error("the skill {0:?} is disabled")]
+    Disabled(String),
+    /// Required parameters have no value.
+    #[error("the skill {skill:?} needs {}", params.join(", "))]
+    MissingParams {
+        /// The skill id.
+        skill: String,
+        /// The parameters without a value.
+        params: Vec<String>,
+    },
+    /// An argument names a parameter the skill does not declare.
+    #[error("the skill {skill:?} has no parameter {arg:?}")]
+    UndeclaredArg {
+        /// The skill id.
+        skill: String,
+        /// The argument name.
+        arg: String,
+    },
+    /// An argument value is longer than allowed (values are never cut).
+    #[error("the value of {arg:?} is longer than {max} characters")]
+    ArgTooLong {
+        /// The argument name.
+        arg: String,
+        /// The cap.
+        max: usize,
+    },
+    /// A schedule or a local time is out of range.
+    #[error("schedule: {0}")]
+    Schedule(String),
 }
 
 impl From<serde_json::Error> for SkillError {

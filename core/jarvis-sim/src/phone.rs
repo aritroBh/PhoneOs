@@ -16,6 +16,7 @@ use crate::engine::{
 };
 use crate::error::SimError;
 use crate::expr::{display, eval, eval_bool, number, render_json, render_string, truthy, Env};
+use crate::faults::Faults;
 use crate::runner_text::to_runner_text;
 
 /// Id of the home screen "app".
@@ -108,6 +109,8 @@ pub struct SimSnapshot {
     pub states: BTreeMap<String, Value>,
     /// Number of runner commands the phone received.
     pub acts: usize,
+    /// Whether the phone is locked.
+    pub locked: bool,
 }
 
 impl SimSnapshot {
@@ -125,6 +128,7 @@ impl SimSnapshot {
                 "bundle_id": self.bundle_id,
                 "screen": self.screen,
                 "alert": self.alert,
+                "locked": self.locked,
             }),
         );
         Value::Object(m)
@@ -154,6 +158,43 @@ pub struct SimPhone {
     costs: ClockCosts,
     act_count: usize,
     fail_acts: BTreeSet<usize>,
+    faults: Faults,
+    lock: LockState,
+}
+
+/// The lock screen side of the phone and its fault counters.
+#[derive(Debug, Clone, Default)]
+struct LockState {
+    /// Indices into `Faults::locks` that have fired.
+    fired: BTreeSet<usize>,
+    locked: bool,
+    /// When the owner unlocks (`None` while locked: never).
+    unlock_at: Option<u64>,
+    /// Commands carried out since the last unlock without an observation in between.
+    stale_acts: usize,
+    /// An unlocked observation was taken since the last unlock.
+    observed: bool,
+    /// Commands refused because the phone was locked.
+    refused: usize,
+    /// Times the phone locked.
+    locks: usize,
+    /// Unlocked observations attempted.
+    observe_attempts: usize,
+    /// Observations that failed on purpose.
+    observe_failures: usize,
+    /// `TypeText` commands received.
+    typed: usize,
+}
+
+/// What the runner reports for an observation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SimObservation {
+    /// The screen.
+    Screen(Observation),
+    /// The phone is locked: a lock-screen snapshot flagged `device_locked`.
+    Locked(Observation),
+    /// The snapshot failed (an injected fault).
+    Failed(String),
 }
 
 fn check_expr(app: &str, expr: &str) -> Result<(), SimError> {
@@ -252,7 +293,158 @@ impl SimPhone {
             costs: ClockCosts::default(),
             act_count: 0,
             fail_acts: BTreeSet::new(),
+            faults: Faults::default(),
+            lock: LockState {
+                observed: true,
+                ..LockState::default()
+            },
         })
+    }
+
+    /// Injects faults (locks, failing observations, dropped characters).
+    pub fn set_faults(&mut self, faults: Faults) {
+        self.faults = faults;
+    }
+
+    /// The injected faults.
+    pub fn faults(&self) -> &Faults {
+        &self.faults
+    }
+
+    /// Whether the phone is locked.
+    pub fn is_locked(&self) -> bool {
+        self.lock.locked
+    }
+
+    /// Locks the phone now; the owner unlocks `unlock_after_ms` later (never for `None`).
+    pub fn lock_now(&mut self, unlock_after_ms: Option<u64>) {
+        if self.lock.locked {
+            return;
+        }
+        self.lock.locked = true;
+        self.lock.locks += 1;
+        self.lock.unlock_at = unlock_after_ms.map(|d| self.now_ms.saturating_add(d));
+    }
+
+    /// The owner unlocks the phone (Face ID): the same app is in front, as it was left.
+    pub fn unlock(&mut self) {
+        if self.lock.locked {
+            self.lock.locked = false;
+            self.lock.unlock_at = None;
+            self.lock.observed = false;
+        }
+    }
+
+    /// Fires locks and unlocks that are due by the clock.
+    pub fn apply_schedule(&mut self) {
+        if self.lock.locked {
+            if self.lock.unlock_at.is_some_and(|t| self.now_ms >= t) {
+                self.unlock();
+            }
+            return;
+        }
+        let due = self.faults.locks.iter().enumerate().find(|(i, l)| {
+            !self.lock.fired.contains(i) && l.at_ms.is_some_and(|t| self.now_ms >= t)
+        });
+        if let Some((i, spec)) = due {
+            let after = spec.unlock_after_ms;
+            self.lock.fired.insert(i);
+            self.lock_now(after);
+        }
+    }
+
+    /// Locks the phone if a lock is scheduled instead of the reply to effect `n`.
+    pub fn lock_at_effect(&mut self, n: usize) -> bool {
+        if self.lock.locked {
+            return false;
+        }
+        let due = self
+            .faults
+            .locks
+            .iter()
+            .enumerate()
+            .find(|(i, l)| !self.lock.fired.contains(i) && l.at_effect == Some(n));
+        match due {
+            Some((i, spec)) => {
+                let after = spec.unlock_after_ms;
+                self.lock.fired.insert(i);
+                self.lock_now(after);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The simulated shell waits for an unlock for up to `poll_ms`: true once unlocked.
+    pub fn wait_for_unlock(&mut self, poll_ms: u64) -> bool {
+        if !self.lock.locked {
+            return true;
+        }
+        let step = match self.lock.unlock_at {
+            Some(t) => t.saturating_sub(self.now_ms).clamp(1, poll_ms.max(1)),
+            None => poll_ms.max(1),
+        };
+        self.advance(step);
+        self.apply_schedule();
+        !self.lock.locked
+    }
+
+    /// Runner commands carried out after an unlock before any fresh observation (each one
+    /// acted on a screen decided before the lock). Must stay 0.
+    pub fn stale_acts(&self) -> usize {
+        self.lock.stale_acts
+    }
+
+    /// Runner commands refused because the phone was locked.
+    pub fn locked_refusals(&self) -> usize {
+        self.lock.refused
+    }
+
+    /// Times the phone locked.
+    pub fn lock_count(&self) -> usize {
+        self.lock.locks
+    }
+
+    /// Observations that failed on purpose.
+    pub fn observe_failures(&self) -> usize {
+        self.lock.observe_failures
+    }
+
+    /// What the runner reports for an observation now: the screen, a locked snapshot, or
+    /// an injected failure.
+    pub fn observe_result(&mut self) -> Result<SimObservation, SimError> {
+        self.apply_schedule();
+        if self.lock.locked {
+            let screen = Screen {
+                app_bundle_id: SPRINGBOARD_BUNDLE.to_owned(),
+                app_name: Some("Lock Screen".to_owned()),
+                size: SCREEN_SIZE,
+                root: jarvis_proto::UiNode::new(
+                    jarvis_proto::Role::Application,
+                    SCREEN_SIZE.to_rect(),
+                ),
+                keyboard_visible: false,
+                orientation: Orientation::Portrait,
+            };
+            return Ok(SimObservation::Locked(Observation {
+                screen,
+                screenshot: None,
+                device_locked: true,
+            }));
+        }
+        let n = self.lock.observe_attempts;
+        self.lock.observe_attempts += 1;
+        if let Some(f) = self.faults.observe_fail {
+            if n >= f.after && n < f.after.saturating_add(f.times) {
+                self.lock.observe_failures += 1;
+                return Ok(SimObservation::Failed(
+                    "snapshot failed: the accessibility tree did not arrive".to_owned(),
+                ));
+            }
+        }
+        let obs = self.observe()?;
+        self.lock.observed = true;
+        Ok(SimObservation::Screen(obs))
     }
 
     /// Chooses how observations are reported.
@@ -398,17 +590,14 @@ impl SimPhone {
                     .root
             }
         };
-        Ok(Observation {
-            screen: Screen {
-                app_bundle_id: bundle,
-                app_name: Some(name),
-                size: SCREEN_SIZE,
-                root,
-                keyboard_visible: r.keyboard,
-                orientation: Orientation::Portrait,
-            },
-            screenshot: None,
-        })
+        Ok(Observation::new(Screen {
+            app_bundle_id: bundle,
+            app_name: Some(name),
+            size: SCREEN_SIZE,
+            root,
+            keyboard_visible: r.keyboard,
+            orientation: Orientation::Portrait,
+        }))
     }
 
     /// The phone's state for assertions.
@@ -432,6 +621,7 @@ impl SimPhone {
                 .map(|(k, v)| (k.clone(), v.state.clone()))
                 .collect(),
             acts: self.act_count,
+            locked: self.lock.locked,
         }
     }
 
@@ -439,10 +629,35 @@ impl SimPhone {
     // Runner commands.
     // ---------------------------------------------------------------------------------
 
-    /// Carries out one runner command.
+    /// Carries out one runner command. While locked every command is refused with
+    /// `RunnerResult::device_locked` and nothing happens.
     pub fn act(&mut self, cmd: &RunnerCommand) -> ActOutcome {
         let n = self.act_count;
         self.act_count += 1;
+        self.apply_schedule();
+        if !self.lock.locked {
+            let due = self
+                .faults
+                .locks
+                .iter()
+                .enumerate()
+                .find(|(i, l)| !self.lock.fired.contains(i) && l.before_act == Some(n));
+            if let Some((i, spec)) = due {
+                let after = spec.unlock_after_ms;
+                self.lock.fired.insert(i);
+                self.lock_now(after);
+            }
+        }
+        if self.lock.locked {
+            self.lock.refused += 1;
+            return ActOutcome {
+                note: format!("REFUSED: {}: the phone is locked", cmd.name()),
+                result: RunnerResult::device_locked(),
+            };
+        }
+        if !self.lock.observed {
+            self.lock.stale_acts += 1;
+        }
         if self.fail_acts.remove(&n) {
             return fail(format!("{}: injected runner failure", cmd.name()));
         }
@@ -456,7 +671,7 @@ impl SimPhone {
                 ))
             }
             RunnerCommand::Swipe { from, to, .. } => self.swipe(*from, *to),
-            RunnerCommand::TypeText { text } => self.type_text(text),
+            RunnerCommand::TypeText { text } => self.type_text(text, true),
             RunnerCommand::PressKey { key } => self.press_key(*key),
             RunnerCommand::LaunchApp { bundle_id } => {
                 let found = self
@@ -597,17 +812,27 @@ impl SimPhone {
         set_path(&mut rt.state, bind, Value::String(f(cur)));
     }
 
-    fn type_text(&mut self, text: &str) -> ActOutcome {
+    /// Types into the focused field; `agent` typing is subject to dropped characters.
+    fn type_text(&mut self, text: &str, agent: bool) -> ActOutcome {
         let Some(hit) = self.focused_hit() else {
             return fail("no text field has keyboard focus".to_owned());
         };
         let Some(bind) = hit.bind.clone() else {
             return fail("focused element is not a text input".to_owned());
         };
-        let t = text.to_owned();
+        let n = self.lock.typed;
+        if agent {
+            self.lock.typed += 1;
+        }
+        let t = match self.faults.drop_chars {
+            Some(d) if agent && n < d.times => d.apply(text),
+            _ => text.to_owned(),
+        };
         self.edit_bound(&bind, |cur| cur + &t);
         let shown = if hit.role == jarvis_proto::Role::SecureTextField {
             format!("{} characters", text.chars().count())
+        } else if t != text {
+            format!("\"{text}\" but only \"{t}\" arrived (dropped characters)")
         } else {
             format!("\"{text}\"")
         };
@@ -626,7 +851,7 @@ impl SimPhone {
         if let Some(h) = secure {
             self.focus.clone_from(&h.key);
         }
-        self.type_text(text)
+        self.type_text(text, false)
     }
 
     fn key_label(&mut self, label: &str) -> String {

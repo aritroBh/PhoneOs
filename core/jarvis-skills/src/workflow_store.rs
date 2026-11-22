@@ -1,15 +1,21 @@
 //! The workflow store: validated workflows in a stable order, a versioned JSON snapshot,
 //! trigger lookups and run bookkeeping.
+//!
+//! Loading follows the skill store's rules: unknown fields are reported, unreadable entries
+//! are kept verbatim and written back by [`WorkflowStore::to_json`].
 
-use serde::Serialize;
 use serde_json::Value;
 
 use crate::error::SkillError;
 use crate::schedule::{is_due, minutes_until_next};
-use crate::skill::Skill;
-use crate::store::{check_version, SkillStore, Upsert};
+use crate::store::{
+    check_version, entry_label, keep_damaged, snapshot_json, unknown_keys, Damaged, SkillStore,
+    Upsert,
+};
 use crate::text::longer_than;
-use crate::workflow::{Step, Trigger, Weekday, Workflow, WorkflowOutcome, MAX_PHRASE_CHARS};
+use crate::workflow::{
+    Step, Trigger, Weekday, Workflow, WorkflowOutcome, MAX_PHRASE_CHARS, WORKFLOW_FIELDS,
+};
 
 /// Schema version written by [`WorkflowStore::to_json`].
 pub const WORKFLOWS_SCHEMA_VERSION: u32 = 1;
@@ -20,12 +26,8 @@ pub const MAX_WORKFLOWS: usize = 200;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WorkflowStore {
     workflows: Vec<Workflow>,
-}
-
-#[derive(Serialize)]
-struct SnapshotRef<'a> {
-    schema_version: u32,
-    workflows: &'a [Workflow],
+    damaged: Vec<Damaged>,
+    issues: Vec<String>,
 }
 
 impl WorkflowStore {
@@ -34,12 +36,12 @@ impl WorkflowStore {
         Self::default()
     }
 
-    /// Number of workflows.
+    /// Number of (valid) workflows.
     pub fn len(&self) -> usize {
         self.workflows.len()
     }
 
-    /// True when empty.
+    /// True when there are no valid workflows.
     pub fn is_empty(&self) -> bool {
         self.workflows.is_empty()
     }
@@ -47,6 +49,16 @@ impl WorkflowStore {
     /// All workflows, ordered by id.
     pub fn list(&self) -> &[Workflow] {
         &self.workflows
+    }
+
+    /// What loading reported (ignored fields, entries kept verbatim).
+    pub fn load_issues(&self) -> &[String] {
+        &self.issues
+    }
+
+    /// Whether loading reported anything.
+    pub fn has_load_issues(&self) -> bool {
+        !self.issues.is_empty()
     }
 
     fn position(&self, id: &str) -> Option<usize> {
@@ -60,7 +72,8 @@ impl WorkflowStore {
         self.position(id).and_then(|i| self.workflows.get(i))
     }
 
-    /// Adds a new workflow. Fails when it is invalid, the id is taken or the store is full.
+    /// Adds a new workflow, timestamps as given. Fails when it is invalid, the id is taken
+    /// or the store is full. A damaged entry with the same id is replaced.
     pub fn add(&mut self, workflow: Workflow) -> Result<(), SkillError> {
         workflow.validate()?;
         match self.workflows.binary_search_by(|w| w.id.cmp(&workflow.id)) {
@@ -69,6 +82,9 @@ impl WorkflowStore {
                 Err(SkillError::StoreFull { max: MAX_WORKFLOWS })
             }
             Err(pos) => {
+                let id = workflow.id.clone();
+                self.damaged
+                    .retain(|d| d.id.as_deref() != Some(id.as_str()));
                 self.workflows.insert(pos, workflow);
                 Ok(())
             }
@@ -76,8 +92,8 @@ impl WorkflowStore {
     }
 
     /// Replaces an existing workflow's definition, keeping the stored `created_ms`, `runs`,
-    /// `last_run_ms` and `last_outcome`.
-    pub fn update(&mut self, mut workflow: Workflow) -> Result<(), SkillError> {
+    /// `last_run_ms` and `last_outcome`; `updated_ms` becomes `now_ms`.
+    pub fn update(&mut self, mut workflow: Workflow, now_ms: u64) -> Result<(), SkillError> {
         workflow.validate()?;
         let pos = self
             .position(&workflow.id)
@@ -90,21 +106,29 @@ impl WorkflowStore {
         workflow.runs = slot.runs;
         workflow.last_run_ms = slot.last_run_ms;
         workflow.last_outcome = slot.last_outcome.take();
+        workflow.updated_ms = now_ms;
         *slot = workflow;
         Ok(())
     }
 
-    /// [`WorkflowStore::update`] when the id exists, else [`WorkflowStore::add`].
-    pub fn upsert(&mut self, workflow: Workflow) -> Result<Upsert, SkillError> {
+    /// [`WorkflowStore::update`] when the id exists, else [`WorkflowStore::add`] with
+    /// `created_ms` and `updated_ms` set to `now_ms` and no runs.
+    pub fn upsert(&mut self, mut workflow: Workflow, now_ms: u64) -> Result<Upsert, SkillError> {
         if self.position(&workflow.id).is_some() {
-            self.update(workflow).map(|()| Upsert::Updated)
+            self.update(workflow, now_ms).map(|()| Upsert::Updated)
         } else {
+            workflow.created_ms = now_ms;
+            workflow.updated_ms = now_ms;
+            workflow.runs = 0;
+            workflow.last_run_ms = None;
+            workflow.last_outcome = None;
             self.add(workflow).map(|()| Upsert::Inserted)
         }
     }
 
-    /// Removes and returns the workflow with this id.
+    /// Removes and returns the workflow with this id (a damaged entry with the id goes too).
     pub fn remove(&mut self, id: &str) -> Option<Workflow> {
+        self.damaged.retain(|d| d.id.as_deref() != Some(id));
         self.position(id).map(|i| self.workflows.remove(i))
     }
 
@@ -128,7 +152,8 @@ impl WorkflowStore {
 
     /// Problems that do not stop a workflow from being saved but will fail a step when it
     /// runs: `RunSkill` steps naming a skill that does not exist or is disabled, arguments
-    /// the skill does not declare, required parameters left empty. One line each.
+    /// the skill does not declare, required parameters left empty, values too long. One
+    /// line each.
     pub fn warnings(workflow: &Workflow, skills: &SkillStore) -> Vec<String> {
         let mut out = Vec::new();
         for (i, step) in workflow.steps.iter().enumerate() {
@@ -140,27 +165,8 @@ impl WorkflowStore {
                 out.push(format!("step {n}: there is no skill \"{skill_id}\""));
                 continue;
             };
-            if !skill.enabled {
-                out.push(format!(
-                    "step {n}: the skill \"{}\" is disabled",
-                    skill.name
-                ));
-            }
-            for k in args.keys() {
-                if !skill.params.iter().any(|p| p.name == *k) {
-                    out.push(format!(
-                        "step {n}: the skill \"{}\" has no parameter \"{k}\"",
-                        skill.name
-                    ));
-                }
-            }
-            let missing = Skill::missing_params(skill, args);
-            if !missing.is_empty() {
-                out.push(format!(
-                    "step {n}: the skill \"{}\" needs {}",
-                    skill.name,
-                    missing.join(", ")
-                ));
+            if let Err(e) = skill.context(args.clone()) {
+                out.push(format!("step {n}: {e}"));
             }
         }
         out
@@ -205,37 +211,52 @@ impl WorkflowStore {
 
     /// Enabled scheduled workflows that fired within the last `window_minutes` minutes of
     /// local time (`weekday`, `minute_of_day`), ordered by id; see [`crate::schedule::is_due`].
-    pub fn due(&self, weekday: Weekday, minute_of_day: u32, window_minutes: u32) -> Vec<&Workflow> {
-        self.workflows
-            .iter()
-            .filter(|w| w.enabled)
-            .filter(|w| match &w.trigger {
-                Trigger::Schedule(s) => is_due(s, weekday, minute_of_day, window_minutes),
-                _ => false,
-            })
-            .collect()
+    /// A `minute_of_day` above 1439 is an error.
+    pub fn due(
+        &self,
+        weekday: Weekday,
+        minute_of_day: u32,
+        window_minutes: u32,
+    ) -> Result<Vec<&Workflow>, SkillError> {
+        let mut out = Vec::new();
+        for w in self.workflows.iter().filter(|w| w.enabled) {
+            if let Trigger::Schedule(s) = &w.trigger {
+                if is_due(s, weekday, minute_of_day, window_minutes)? {
+                    out.push(w);
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// The enabled scheduled workflow that fires next and the minutes until it does (ties
     /// go to the lower id), for the shell to schedule a wake-up.
-    pub fn next_scheduled(&self, weekday: Weekday, minute_of_day: u32) -> Option<(&Workflow, u32)> {
-        self.workflows
-            .iter()
-            .filter(|w| w.enabled)
-            .filter_map(|w| match &w.trigger {
-                Trigger::Schedule(s) => Some((w, minutes_until_next(s, weekday, minute_of_day))),
-                _ => None,
-            })
-            .filter(|(_, m)| *m != u32::MAX)
-            .min_by(|(a, ma), (b, mb)| ma.cmp(mb).then_with(|| a.id.cmp(&b.id)))
+    pub fn next_scheduled(
+        &self,
+        weekday: Weekday,
+        minute_of_day: u32,
+    ) -> Result<Option<(&Workflow, u32)>, SkillError> {
+        let mut best: Option<(&Workflow, u32)> = None;
+        for w in self.workflows.iter().filter(|w| w.enabled) {
+            if let Trigger::Schedule(s) = &w.trigger {
+                let m = minutes_until_next(s, weekday, minute_of_day)?;
+                if best.is_none_or(|(_, b)| m < b) {
+                    best = Some((w, m));
+                }
+            }
+        }
+        Ok(best)
     }
 
-    /// Serializes to `{"schema_version":1,"workflows":[...]}`.
+    /// Serializes to `{"schema_version":1,"workflows":[...]}`, entries that could not be
+    /// loaded last and unchanged.
     pub fn to_json(&self) -> Result<String, SkillError> {
-        Ok(serde_json::to_string(&SnapshotRef {
-            schema_version: WORKFLOWS_SCHEMA_VERSION,
-            workflows: &self.workflows,
-        })?)
+        snapshot_json(
+            WORKFLOWS_SCHEMA_VERSION,
+            "workflows",
+            &self.workflows,
+            &self.damaged,
+        )
     }
 
     /// Parses a snapshot; see [`WorkflowStore::from_json_with_issues`].
@@ -243,9 +264,9 @@ impl WorkflowStore {
         Self::from_json_with_issues(json).map(|(s, _)| s)
     }
 
-    /// Parses a snapshot, also returning one line per skipped workflow. Same rules as
-    /// `SkillStore::from_json_with_issues`: structural damage and newer schemas are errors,
-    /// a damaged or duplicate entry is skipped and reported.
+    /// Parses a snapshot, also returning its [`WorkflowStore::load_issues`]. Same rules as
+    /// `SkillStore::from_json_with_issues`: structural damage and newer schemas are errors;
+    /// unknown fields are reported; damaged or duplicate entries are kept and reported.
     pub fn from_json_with_issues(json: &str) -> Result<(WorkflowStore, Vec<String>), SkillError> {
         let value: Value = serde_json::from_str(json)?;
         let obj = value
@@ -253,28 +274,27 @@ impl WorkflowStore {
             .ok_or_else(|| SkillError::Invalid("top level is not an object".to_owned()))?;
         check_version(obj, WORKFLOWS_SCHEMA_VERSION)?;
         let mut store = WorkflowStore::new();
-        let mut issues = Vec::new();
+        let mut issues = unknown_keys("snapshot", obj, &["schema_version", "workflows"]);
         let items = match obj.get("workflows") {
-            None | Some(Value::Null) => return Ok((store, issues)),
-            Some(Value::Array(items)) => items,
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(items)) => items.clone(),
             Some(_) => return Err(SkillError::Invalid("workflows is not an array".to_owned())),
         };
-        for (i, item) in items.iter().enumerate() {
-            if store.len() >= MAX_WORKFLOWS {
-                issues.push(format!(
-                    "workflows[{i}..]: skipped, the store holds at most {MAX_WORKFLOWS} workflows"
-                ));
-                break;
+        let mut damaged = Vec::new();
+        for (i, item) in items.into_iter().enumerate() {
+            let label = entry_label("workflows", i, &item);
+            if let Some(o) = item.as_object() {
+                issues.extend(unknown_keys(&label, o, WORKFLOW_FIELDS));
             }
-            match serde_json::from_value::<Workflow>(item.clone()) {
-                Ok(w) => {
-                    if let Err(e) = store.add(w) {
-                        issues.push(format!("workflows[{i}]: skipped: {e}"));
-                    }
-                }
-                Err(e) => issues.push(format!("workflows[{i}]: skipped: {e}")),
+            let result = serde_json::from_value::<Workflow>(item.clone())
+                .map_err(SkillError::from)
+                .and_then(|w| store.add(w));
+            if let Err(e) = result {
+                keep_damaged(&mut damaged, &mut issues, &label, item, &e);
             }
         }
+        store.damaged = damaged;
+        store.issues = issues.clone();
         Ok((store, issues))
     }
 }

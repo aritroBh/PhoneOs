@@ -40,6 +40,64 @@ pub(crate) struct Pending {
     pub expect_change: bool,
     /// How to carry it out.
     pub exec: Exec,
+    /// For `type`: the check that the text arrived, run on the next observation.
+    pub check: Option<TypeCheck>,
+}
+
+/// What a `type` action must leave in its field, checked after the text was typed.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TypeCheck {
+    /// What was typed (profile placeholders substituted).
+    pub typed: String,
+    /// Fingerprint of the target field on the screen the action was chosen on.
+    pub field: Option<u64>,
+    /// The field's value before typing.
+    pub prior: Option<String>,
+    /// The field's placeholder.
+    pub placeholder: Option<String>,
+    /// Commands held back until the text is confirmed (`PressKey Return` for `submit`).
+    pub then: VecDeque<RunnerCommand>,
+    /// Whether the one corrective attempt (delete, type again) has been made.
+    pub retried: bool,
+}
+
+/// What the session does once a fresh observation is in after an unlock.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Resume {
+    /// Decide on the fresh screen (model or learned flow), as after any observation.
+    Decide,
+    /// A confirmation was pending when the phone locked: ask it again when the fresh screen
+    /// is the one it was asked about, otherwise drop it and decide.
+    Reconsider(Box<Pending>),
+}
+
+/// The effect a lock interrupted, whose late reply is absorbed (once) while waiting.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Late {
+    /// `Infer`: the output is discarded (the screen will be read again).
+    Model,
+    /// `Act`: the result is discarded (the action's outcome is unknown either way).
+    Act,
+    /// `CallTool`: tools do not need the screen, so a result that still arrives is recorded.
+    Tool(Box<Pending>),
+    /// `Confirm`: a decline is honoured, an approval is not carried across the lock.
+    Decision {
+        /// What was asked.
+        request: ConfirmRequest,
+        /// For a first-use approval: the app.
+        approves_app: Option<String>,
+        /// History description of the action.
+        described: String,
+        /// Who chose the action.
+        source: Source,
+        /// The action (for the log).
+        action: Action,
+    },
+    /// `AskUser`: an answer that arrives is recorded.
+    Answer {
+        /// History description of the question.
+        described: String,
+    },
 }
 
 /// Why the session is waiting for an observation.
@@ -51,6 +109,9 @@ pub(crate) enum ObservePurpose {
     Vision,
     /// The screen after executing `Pending`, to verify it.
     Verify(Box<Pending>),
+    /// The first screen after an unlock, with a confirmation that was pending when the
+    /// phone locked (see [`Resume::Reconsider`]).
+    Reconsider(Box<Pending>),
 }
 
 /// The session state machine. Exactly one effect is outstanding in every non-final state.
@@ -74,6 +135,9 @@ pub(crate) enum State {
         queue: VecDeque<RunnerCommand>,
         /// The action being executed.
         pending: Box<Pending>,
+        /// The outstanding command is the action's first: if the runner refuses it, nothing
+        /// of the action has happened.
+        fresh: bool,
     },
     /// `Effect::CallTool` is outstanding.
     AwaitingTool {
@@ -97,6 +161,13 @@ pub(crate) enum State {
         /// History description of the question.
         described: String,
     },
+    /// `Effect::AwaitUnlock` is outstanding: the phone is locked.
+    AwaitingUnlock {
+        /// What to do after the fresh observation.
+        resume: Resume,
+        /// The interrupted effect, while its reply may still arrive.
+        late: Option<Late>,
+    },
     /// Over; every further step returns this outcome.
     Finished(Outcome),
 }
@@ -112,6 +183,7 @@ impl State {
             State::AwaitingTool { .. } => "waiting for a tool result",
             State::AwaitingConfirm { .. } => "waiting for a confirmation",
             State::AwaitingAnswer { .. } => "waiting for an answer",
+            State::AwaitingUnlock { .. } => "waiting for the phone to be unlocked",
             State::Finished(_) => "finished",
         }
     }
@@ -128,6 +200,7 @@ impl State {
             State::AwaitingAct { .. } => Phase::Acting,
             State::AwaitingTool { .. } => Phase::CallingTool,
             State::AwaitingConfirm { .. } | State::AwaitingAnswer { .. } => Phase::WaitingForUser,
+            State::AwaitingUnlock { .. } => Phase::WaitingForUnlock,
             State::Finished(_) => Phase::Finished,
         }
     }

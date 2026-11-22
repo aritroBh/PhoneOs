@@ -154,12 +154,20 @@ pub struct Policy {
     pub max_consecutive_failures: u32,
     /// Re-inference attempts after unparsable model output.
     pub max_parse_retries: u32,
+    /// Longest the session waits for the owner to unlock a locked phone, in milliseconds,
+    /// before it finishes `Interrupted`. Time spent waiting does not count against
+    /// `max_duration_ms`. Absent in older JSON, which reads as the default (30 minutes).
+    pub max_locked_wait_ms: u64,
 }
+
+/// Default for [`Policy::max_locked_wait_ms`]: 30 minutes.
+pub const DEFAULT_MAX_LOCKED_WAIT_MS: u64 = 30 * 60 * 1000;
 
 impl Default for Policy {
     /// Conservative: confirm every risky category (the three new ones included), deny
     /// Passwords and Wallet, no denied categories, `Guarded` mode, no app rules, first-use
-    /// approval on, 40 steps, 10 minutes, 4 consecutive failures, 2 parse retries.
+    /// approval on, 40 steps, 10 minutes, 4 consecutive failures, 2 parse retries, and at
+    /// most 30 minutes waiting for the owner to unlock the phone.
     ///
     /// Banking apps are not listed because their bundle ids vary per bank; the shell adds
     /// them from the user's own app list.
@@ -179,6 +187,7 @@ impl Default for Policy {
             max_duration_ms: 600_000,
             max_consecutive_failures: 4,
             max_parse_retries: 2,
+            max_locked_wait_ms: DEFAULT_MAX_LOCKED_WAIT_MS,
         }
     }
 }
@@ -209,6 +218,7 @@ struct PolicyWire {
     max_duration_ms: u64,
     max_consecutive_failures: u32,
     max_parse_retries: u32,
+    max_locked_wait_ms: u64,
 }
 
 impl Default for PolicyWire {
@@ -225,6 +235,7 @@ impl Default for PolicyWire {
             max_duration_ms: p.max_duration_ms,
             max_consecutive_failures: p.max_consecutive_failures,
             max_parse_retries: p.max_parse_retries,
+            max_locked_wait_ms: p.max_locked_wait_ms,
         }
     }
 }
@@ -261,6 +272,7 @@ impl From<PolicyWire> for Policy {
             max_duration_ms: w.max_duration_ms,
             max_consecutive_failures: w.max_consecutive_failures,
             max_parse_retries: w.max_parse_retries,
+            max_locked_wait_ms: w.max_locked_wait_ms,
         }
     }
 }

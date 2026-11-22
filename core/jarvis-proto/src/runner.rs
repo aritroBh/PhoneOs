@@ -94,6 +94,19 @@ impl RunnerCommand {
     }
 }
 
+/// Why the runner did not carry out a command, when the reason is one the core acts on.
+/// The free-text `RunnerResult::error` still carries the details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerFailure {
+    /// The device is locked (`screen_locked`): the command was refused and not carried out.
+    /// The session waits for the owner to unlock instead of counting a failure.
+    DeviceLocked,
+    /// Any other typed reason (also what unknown reasons from newer shells read as).
+    #[serde(other)]
+    Other,
+}
+
 /// The runner's reply to a command.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct RunnerResult {
@@ -102,6 +115,10 @@ pub struct RunnerResult {
     /// Error text when `ok` is false.
     #[serde(default)]
     pub error: Option<String>,
+    /// Typed reason when `ok` is false and the shell knows it. Absent in JSON written
+    /// before typed reasons existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<RunnerFailure>,
 }
 
 impl RunnerResult {
@@ -110,6 +127,7 @@ impl RunnerResult {
         Self {
             ok: true,
             error: None,
+            failure: None,
         }
     }
 
@@ -118,6 +136,21 @@ impl RunnerResult {
         Self {
             ok: false,
             error: Some(error.into()),
+            failure: None,
         }
+    }
+
+    /// The command was refused because the device is locked; nothing was carried out.
+    pub fn device_locked() -> Self {
+        Self {
+            ok: false,
+            error: Some("the device is locked".to_owned()),
+            failure: Some(RunnerFailure::DeviceLocked),
+        }
+    }
+
+    /// Whether this is a refusal because the device is locked.
+    pub fn is_device_locked(&self) -> bool {
+        !self.ok && self.failure == Some(RunnerFailure::DeviceLocked)
     }
 }

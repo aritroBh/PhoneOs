@@ -200,6 +200,7 @@ pub fn run(
                         width: 1179,
                         height: 2556,
                     }),
+                    device_locked: false,
                 })
             }
             Effect::Infer(req) => {
@@ -238,6 +239,7 @@ pub fn run(
                     text: script.answers.pop_front().unwrap_or_default(),
                 }
             }
+            Effect::AwaitUnlock { .. } => Event::DeviceUnlocked,
             Effect::Finished(outcome) => {
                 // Finished is sticky.
                 let again = session.step(TimedEvent::new(now, Event::Start));

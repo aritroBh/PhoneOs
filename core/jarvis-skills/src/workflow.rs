@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{field, SkillError};
 use crate::skill::{is_valid_id, is_valid_param_name, MAX_ARG_CHARS, MAX_NAME_CHARS};
-use crate::text::{has_control, longer_than};
+use crate::text::{has_hidden, longer_than};
 
 /// Most steps in one workflow.
 pub const MAX_WORKFLOW_STEPS: usize = 24;
@@ -26,8 +26,9 @@ pub const MAX_STEP_TEXT_CHARS: usize = 500;
 pub const MAX_PHRASE_CHARS: usize = 120;
 /// Longest external trigger key, in characters.
 pub const MAX_EXTERNAL_KEY_CHARS: usize = 64;
-/// Longest single wait a workflow may contain, in milliseconds (one hour).
-pub const MAX_WAIT_STEP_MS: u64 = 3_600_000;
+/// Longest single wait, in milliseconds (30 minutes): the cap `Workflow::validate`
+/// enforces and the default `RunLimits::max_wait_ms`, so a workflow that saves also runs.
+pub const MAX_WAIT_STEP_MS: u64 = 1_800_000;
 /// Most arguments of a `RunSkill` step.
 pub const MAX_STEP_ARGS: usize = 8;
 
@@ -122,17 +123,28 @@ pub enum Trigger {
 }
 
 /// A test on what happened so far, for [`Step::StopUnless`].
+///
+/// "The last result" is that of the most recent step that ran a session (`RunSkill`,
+/// `RunTask`) or failed without one (a missing or disabled skill, a refused wait).
+/// `AskOwner`, `Notify`, a completed `Wait` and `StopUnless` itself leave it unchanged.
+/// Before any such step there is no last result and both result conditions are false.
+///
+/// `LastSummaryContains` reads the session's summary, which the model writes and screen
+/// content can influence. It is a convenience, not a safety gate: never let it be the only
+/// thing between the owner and a risky step. (It never is in practice: every step is an
+/// ordinary session whose risky actions still ask the owner.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Condition {
-    /// The most recent session step succeeded.
+    /// The last result was a success.
     LastSucceeded,
-    /// The most recent session's summary contains `text` (case-insensitive).
+    /// The last result's summary contains `text` (case-insensitive); see the type docs
+    /// for why this must not guard a risky step on its own.
     LastSummaryContains {
         /// Text to look for.
         text: String,
     },
-    /// The most recent `AskOwner` was answered yes.
+    /// The most recent `AskOwner` was answered yes (false before any).
     OwnerSaidYes,
 }
 
@@ -175,14 +187,16 @@ pub enum Step {
     },
 }
 
-/// What to do when a step fails.
+/// What to do when a step fails in an ordinary way (a session that ended `Failed`, a
+/// missing or disabled skill, a refused wait). A session that ends `Blocked`, `Cancelled`
+/// or `Interrupted` always ends the run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OnFailure {
     /// End the run.
     #[default]
     Stop,
-    /// Go on with the next step.
+    /// Go on with the next step (ordinary failures only).
     Continue,
 }
 
@@ -200,8 +214,14 @@ pub enum WorkflowStatus {
     Failed,
     /// A `StopUnless` condition did not hold.
     Stopped,
-    /// The owner cancelled.
+    /// The owner cancelled the run or one of its sessions.
     Cancelled,
+    /// A session was stopped by safety (deny list, confinement, a declined confirmation or
+    /// app). Always ends the run, whatever `on_failure` says.
+    Blocked,
+    /// A session was interrupted (the phone stayed locked). Always ends the run; running
+    /// it again once the phone is unlocked is reasonable.
+    Interrupted,
 }
 
 /// The result of a run.
@@ -272,11 +292,29 @@ fn check_text(name: &str, value: &str, max: usize) -> Result<(), SkillError> {
     if longer_than(value, max) {
         return Err(field(name, format!("at most {max} characters")));
     }
-    if has_control(value) {
-        return Err(field(name, "must be one line without control characters"));
+    if has_hidden(value) {
+        return Err(field(
+            name,
+            "must be one line without control or invisible characters",
+        ));
     }
     Ok(())
 }
+
+/// Every JSON field of [`Workflow`]; other keys in a snapshot are reported as ignored.
+pub(crate) const WORKFLOW_FIELDS: &[&str] = &[
+    "id",
+    "name",
+    "enabled",
+    "trigger",
+    "steps",
+    "on_failure",
+    "created_ms",
+    "updated_ms",
+    "runs",
+    "last_run_ms",
+    "last_outcome",
+];
 
 /// Whether `key` is a valid external trigger key: `[a-z0-9._-]{1,64}`.
 pub fn is_valid_external_key(key: &str) -> bool {

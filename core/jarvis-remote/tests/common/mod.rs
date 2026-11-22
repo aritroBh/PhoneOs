@@ -50,17 +50,30 @@ pub fn audits(fx: &[HubEffect]) -> Vec<AuditEvent> {
         .collect()
 }
 
-/// Effects that are neither `Send`, `Close` nor `Audit` (i.e. things the phone would do).
+/// Effects the phone would act on (not `Send`, `Close`, `Audit` or `StoreChanged`).
 pub fn actions(fx: &[HubEffect]) -> Vec<HubEffect> {
     fx.iter()
         .filter(|e| {
             !matches!(
                 e,
-                HubEffect::Send { .. } | HubEffect::Close { .. } | HubEffect::Audit { .. }
+                HubEffect::Send { .. }
+                    | HubEffect::Close { .. }
+                    | HubEffect::Audit { .. }
+                    | HubEffect::StoreChanged
             )
         })
         .cloned()
         .collect()
+}
+
+/// The task id of the first start effect.
+pub fn task_id(fx: &[HubEffect]) -> Option<u64> {
+    fx.iter().find_map(|e| match e {
+        HubEffect::StartTask { task_id, .. }
+        | HubEffect::RunSkill { task_id, .. }
+        | HubEffect::RunWorkflow { task_id, .. } => Some(*task_id),
+        _ => None,
+    })
 }
 
 /// Server messages from client events.
@@ -131,7 +144,7 @@ impl Rig {
             client,
             sent: Vec::new(),
         };
-        let mut all_fx = self.hub.connection_opened(conn, self.now, seed);
+        let mut all_fx = self.hub.connection_opened(conn, self.now, &seed);
         let mut inbound = sends(&all_fx, conn);
         let mut all_events = Vec::new();
         for _ in 0..4 {
@@ -159,8 +172,8 @@ impl Rig {
     /// Pairs a new device with a fresh offer; panics unless it works.
     pub fn pair(&mut self, name: &str) -> (Link, ClientCredentials) {
         let seed = self.seed();
-        let offer = self.hub.open_pairing(self.now, seed).unwrap();
-        let client = RemoteClient::pair(&offer.code, name, self.seed()).unwrap();
+        let offer = self.hub.open_pairing(self.now, &seed).unwrap();
+        let client = RemoteClient::pair(&offer.code, name, &self.seed()).unwrap();
         let (link, fx, events) = self.open(client);
         let events = events.unwrap();
         assert!(
@@ -181,9 +194,22 @@ impl Rig {
         (link, creds)
     }
 
+    /// Attempts a connect with these credentials and fresh test entropy.
+    pub fn try_connect(
+        &mut self,
+        creds: &ClientCredentials,
+    ) -> (
+        Link,
+        Vec<HubEffect>,
+        Result<Vec<ClientEvent>, jarvis_remote::ClientError>,
+    ) {
+        let seed = self.seed();
+        self.open(RemoteClient::connect(creds.clone(), &seed).unwrap())
+    }
+
     /// Connects with stored credentials; panics unless it works.
     pub fn connect(&mut self, creds: &ClientCredentials) -> Link {
-        let client = RemoteClient::connect(creds.clone(), self.seed());
+        let client = RemoteClient::connect(creds.clone(), &self.seed()).unwrap();
         let (link, _fx, events) = self.open(client);
         assert!(events.unwrap().contains(&ClientEvent::Connected));
         assert!(self.hub.is_authenticated(link.conn));
@@ -237,6 +263,18 @@ impl Rig {
         let fx = self.local(ev);
         deliver(link, &fx)
     }
+
+    /// Resolves the pending confirmation (by its real id) and delivers to `link`.
+    pub fn resolve_to(&mut self, link: &mut Link, approved: bool) -> Vec<ServerMessage> {
+        let request_id = self.hub.pending_request_id().unwrap();
+        self.local_to(
+            link,
+            LocalEvent::ConfirmResolved {
+                request_id,
+                approved,
+            },
+        )
+    }
 }
 
 /// What `link` receives from these hub effects.
@@ -256,7 +294,7 @@ pub fn progress_event(step: u32, action: Action, screen_text: Option<&str>) -> L
             last_action: Some(action),
             app: Some("com.apple.MobileSMS".into()),
             model_calls: step,
-            parse_retries: 0,
+            ..Progress::default()
         },
         screen_text: screen_text.map(str::to_owned),
     }
@@ -272,8 +310,13 @@ pub fn confirm_event(category: RiskCategory, summary: &str) -> LocalEvent {
     }
 }
 
-pub fn finished_event(status: OutcomeStatus, summary: &str) -> LocalEvent {
+pub fn started(task_id: Option<u64>) -> LocalEvent {
+    LocalEvent::SessionStarted { task_id }
+}
+
+pub fn finished(task_id: Option<u64>, status: OutcomeStatus, summary: &str) -> LocalEvent {
     LocalEvent::SessionFinished {
+        task_id,
         outcome: Outcome {
             status,
             summary: summary.into(),

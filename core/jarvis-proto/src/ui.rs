@@ -444,4 +444,21 @@ pub struct Observation {
     /// Screenshot handle, present when one was requested and captured.
     #[serde(default)]
     pub screenshot: Option<ImageRef>,
+    /// The runner reports the device as locked (`screen_locked`): the snapshot is of the
+    /// lock screen (or black) and must not be acted on. The session ignores `screen` and
+    /// waits for the owner to unlock (see `Effect::AwaitUnlock`). Absent in JSON written
+    /// before lock awareness existed, which reads as `false`.
+    #[serde(default)]
+    pub device_locked: bool,
+}
+
+impl Observation {
+    /// An unlocked observation of `screen` without a screenshot.
+    pub fn new(screen: Screen) -> Self {
+        Self {
+            screen,
+            screenshot: None,
+            device_locked: false,
+        }
+    }
 }

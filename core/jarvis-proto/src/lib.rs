@@ -36,10 +36,10 @@ pub use compact::{CompactScreen, Element};
 pub use geometry::{Point, Rect, Size};
 pub use model::{Mark, ModelOutput, ModelProfile, ModelRequest, RequestKind};
 pub use policy::{
-    AppRule, Policy, PolicyMode, RiskCategory, TrustLevel, PASSWORDS_BUNDLE_ID, SETTINGS_BUNDLE_ID,
-    SPRINGBOARD_BUNDLE_ID, WALLET_BUNDLE_ID,
+    AppRule, Policy, PolicyMode, RiskCategory, TrustLevel, DEFAULT_MAX_LOCKED_WAIT_MS,
+    PASSWORDS_BUNDLE_ID, SETTINGS_BUNDLE_ID, SPRINGBOARD_BUNDLE_ID, WALLET_BUNDLE_ID,
 };
-pub use runner::{Key, RunnerCommand, RunnerResult};
+pub use runner::{Key, RunnerCommand, RunnerFailure, RunnerResult};
 pub use session::{
     ConfirmRequest, Effect, Event, Outcome, OutcomeStatus, Phase, Progress, TimedEvent,
 };

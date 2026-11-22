@@ -39,10 +39,7 @@ pub fn screen(bundle_id: &str, app_name: &str, root: UiNode, keyboard_visible: b
 
 /// Wraps a screen in an observation without a screenshot.
 pub fn observation(screen: Screen) -> Observation {
-    Observation {
-        screen,
-        screenshot: None,
-    }
+    Observation::new(screen)
 }
 
 /// A Settings cell: hittable cell holding a title text and optional detail text.

@@ -12,6 +12,12 @@ use crate::ui::Observation;
 /// One input to the session. JSON is internally tagged with `"type"`; newtype variants
 /// flatten their payload's fields next to the tag (`{"type":"observed","screen":...}`).
 ///
+/// Lock awareness: the shell may learn that the phone locked from an observation
+/// (`Observation::device_locked`), from a refused command (`RunnerResult::device_locked`),
+/// or between effects (`DeviceLocked`). The core never tries to unlock the phone and never
+/// handles a passcode: it waits (`Effect::AwaitUnlock`) and, once unlocked, observes again
+/// before doing anything.
+///
 /// `Observed` is not boxed: one event moves per step, and a plain payload keeps the type
 /// simple to mirror across FFI.
 #[allow(clippy::large_enum_variant)]
@@ -45,6 +51,47 @@ pub enum Event {
     },
     /// The user stopped the task (kill switch).
     Cancel,
+    /// The shell learned that the phone locked (lock notification, runner `screen_locked`).
+    /// Valid in every running state: whatever was outstanding is set aside and the session
+    /// waits for the owner to unlock (`Effect::AwaitUnlock`).
+    DeviceLocked,
+    /// The owner unlocked the phone. Answers `Effect::AwaitUnlock`; the session observes
+    /// again before acting. Sent while the session was not waiting, it is treated as a lock
+    /// the session missed, immediately followed by the unlock.
+    DeviceUnlocked,
+    /// Answers `Effect::AwaitUnlock` when the phone is still locked: the shell's timer
+    /// fired. The session re-emits `AwaitUnlock` with the updated wait, or finishes
+    /// `Interrupted` once `Policy::max_locked_wait_ms` has passed.
+    Tick,
+    /// `Effect::Observe` could not produce a snapshot even after the shell's own retries
+    /// (not because the phone is locked: send `DeviceLocked` or a locked observation for
+    /// that). Counts towards `Policy::max_consecutive_failures`; the session asks to observe
+    /// again until that budget is used up, then finishes `Failed`.
+    ObserveFailed {
+        /// What went wrong, for the log.
+        reason: String,
+    },
+}
+
+impl Event {
+    /// The snake_case event name, identical to the JSON `"type"` tag.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Event::Start => "start",
+            Event::Observed(_) => "observed",
+            Event::ModelOutput(_) => "model_output",
+            Event::ModelFailed { .. } => "model_failed",
+            Event::ActResult(_) => "act_result",
+            Event::ToolResult(_) => "tool_result",
+            Event::UserDecision { .. } => "user_decision",
+            Event::UserAnswer { .. } => "user_answer",
+            Event::Cancel => "cancel",
+            Event::DeviceLocked => "device_locked",
+            Event::DeviceUnlocked => "device_unlocked",
+            Event::Tick => "tick",
+            Event::ObserveFailed { .. } => "observe_failed",
+        }
+    }
 }
 
 /// An [`Event`] stamped with the shell's monotonic clock.
@@ -86,6 +133,10 @@ pub enum OutcomeStatus {
     Cancelled,
     /// Safety policy (deny list or declined confirmation) stopped the task.
     Blocked,
+    /// The phone became unusable for the agent (it stayed locked longer than
+    /// `Policy::max_locked_wait_ms`). Nothing is known to be wrong with the task or a learned
+    /// flow; running it again once the phone is unlocked is reasonable.
+    Interrupted,
 }
 
 /// How a session ended.
@@ -97,7 +148,8 @@ pub struct Outcome {
     pub summary: String,
     /// Steps taken.
     pub steps: u32,
-    /// Elapsed time from `Start`, in milliseconds.
+    /// Active time from `Start`, in milliseconds: time spent waiting for the owner to
+    /// unlock the phone is not included (see `Progress::locked_total_ms`).
     pub duration_ms: u64,
 }
 
@@ -130,6 +182,17 @@ pub enum Effect {
     },
     /// The session is over.
     Finished(Outcome),
+    /// The phone is locked: show "Unlock to continue" (notification, Live Activity). The
+    /// core never unlocks the phone or handles a passcode. Answer with `DeviceUnlocked` once
+    /// the owner unlocks, `Tick` when a timer fires and it is still locked, or a fresh
+    /// observation (`Observed`, locked or not). While waiting no model call, action or step
+    /// is taken and no failure is counted.
+    AwaitUnlock {
+        /// Why the session is waiting, for the owner.
+        reason: String,
+        /// How long the session has waited so far, in milliseconds.
+        waited_ms: u64,
+    },
 }
 
 impl Effect {
@@ -143,6 +206,7 @@ impl Effect {
             Effect::Confirm(_) => "confirm",
             Effect::AskUser { .. } => "ask_user",
             Effect::Finished(_) => "finished",
+            Effect::AwaitUnlock { .. } => "await_unlock",
         }
     }
 
@@ -198,6 +262,8 @@ pub enum Phase {
     WaitingForUser,
     /// Finished.
     Finished,
+    /// Waiting for the owner to unlock the phone.
+    WaitingForUnlock,
 }
 
 /// Progress snapshot read from the session (`Session::progress`) for the UI.
@@ -222,4 +288,14 @@ pub struct Progress {
     /// Re-inferences after unparsable model output so far.
     #[serde(default)]
     pub parse_retries: u32,
+    /// Whether the session is waiting for the owner to unlock the phone.
+    #[serde(default)]
+    pub waiting_for_unlock: bool,
+    /// How long the current wait for an unlock has lasted, in milliseconds (0 when not
+    /// waiting), as of the last event.
+    #[serde(default)]
+    pub locked_wait_ms: u64,
+    /// Total time this session has spent waiting for unlocks, in milliseconds.
+    #[serde(default)]
+    pub locked_total_ms: u64,
 }

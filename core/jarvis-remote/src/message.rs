@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::codec::MAX_PLAINTEXT_LEN;
 use crate::error::MessageError;
 use crate::permissions::RemotePermissions;
+use crate::text::clean_text;
 
 /// Remote → phone.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -30,18 +31,23 @@ pub enum ClientMessage {
     RunSkill {
         /// Skill id from `Skills`.
         id: String,
-        /// Arguments as the skill defines them.
+        /// Arguments as plain strings (name → value). The hub cleans and caps every key
+        /// and value, and refuses more than [`crate::MAX_SKILL_ARGS`] entries or more than
+        /// [`crate::MAX_SKILL_ARGS_TOTAL_CHARS`] characters in all.
         #[serde(default)]
-        args: BTreeMap<String, serde_json::Value>,
+        args: BTreeMap<String, String>,
     },
     /// Run a workflow by id. Needs `start_tasks`; the id must be listed.
     RunWorkflow {
         /// Workflow id from `Skills`.
         id: String,
     },
-    /// Stop the running task. Allowed for every paired device: stopping is always safe.
+    /// Stop the running (or requested) task. Allowed for every paired device: stopping is
+    /// always safe. Never dropped by the rate limiter while there is something to cancel.
     Cancel,
-    /// Answer the pending confirmation. Needs `approve` and a remotely decidable category.
+    /// Answer the pending confirmation. Approving needs `approve` and a category outside
+    /// [`crate::NEVER_REMOTE_APPROVE`]; declining needs only that this device was sent the
+    /// `ConfirmPending`.
     Decision {
         /// The `request_id` from `ConfirmPending`.
         request_id: u64,
@@ -52,7 +58,7 @@ pub enum ClientMessage {
     Subscribe,
     /// Stop receiving them.
     Unsubscribe,
-    /// List the skills and workflows the phone offers.
+    /// List the skills and workflows the phone offers. Needs `start_tasks`.
     ListSkills,
     /// Keep-alive; answered with `Pong`.
     Ping,
@@ -150,14 +156,17 @@ pub enum ErrorCode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ServerMessage {
-    /// Answer to `Hello`.
+    /// Answer to `Hello`. A device with every permission off learns only the protocol
+    /// version and its own permissions.
     Welcome {
-        /// The phone's display name.
-        phone_name: String,
+        /// [`crate::PROTOCOL_VERSION`].
+        protocol_version: u8,
         /// What this device may do.
         permissions: RemotePermissions,
-        /// Whether a task is running.
-        busy: bool,
+        /// The phone's display name (absent when every permission is off).
+        phone_name: Option<String>,
+        /// Whether a task is running (absent when every permission is off).
+        busy: Option<bool>,
     },
     /// A task started on the phone (from any origin).
     TaskStarted,
@@ -173,6 +182,8 @@ pub enum ServerMessage {
         last_action: Option<String>,
         /// Redacted screen text; only with `see_screen_text`.
         screen_text: Option<String>,
+        /// The phone is locked and the task waits for the owner to unlock it.
+        waiting_for_unlock: bool,
     },
     /// The task waits for a confirmation.
     ConfirmPending {
@@ -181,10 +192,11 @@ pub enum ServerMessage {
         /// Why it asks.
         category: RiskCategory,
         /// What it wants to do (redacted; generic unless this device may see screen text
-        /// or decide this request).
+        /// or approve this request).
         summary: String,
-        /// Whether a `Decision` from this device would be honoured.
-        can_decide: bool,
+        /// Whether an approving `Decision` from this device would be honoured. Declining
+        /// is always possible for a device that received this message.
+        can_approve: bool,
     },
     /// The pending confirmation was answered (on the phone or remotely).
     ConfirmResolved {
@@ -274,7 +286,8 @@ fn decode<T: DeserializeOwned + Serialize>(
         .and_then(|t| t.as_str())
         .ok_or_else(|| MessageError::Malformed("missing \"type\"".to_owned()))?;
     if !known.contains(&ty) {
-        return Err(MessageError::UnknownType(ty.chars().take(64).collect()));
+        // The type string goes to the audit log: strip controls and bidi, cap it.
+        return Err(MessageError::UnknownType(clean_text(ty, 64, false)));
     }
     let msg: T = serde_json::from_value(value.clone())
         .map_err(|e| MessageError::Malformed(e.to_string()))?;
@@ -286,7 +299,7 @@ fn decode<T: DeserializeOwned + Serialize>(
         if let Some(extra) = sent.keys().find(|k| !known.contains_key(*k)) {
             return Err(MessageError::Malformed(format!(
                 "unknown field {:?}",
-                extra.chars().take(64).collect::<String>()
+                clean_text(extra, 64, false)
             )));
         }
     }

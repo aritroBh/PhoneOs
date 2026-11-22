@@ -34,8 +34,9 @@ const MAX_GUIDANCE_LINES: usize = 24;
 const MAX_SKILL_NAME_CHARS: usize = 60;
 /// Most skill arguments in a prompt.
 const MAX_GUIDANCE_ARGS: usize = 8;
-/// Longest skill argument value in a prompt.
-const MAX_ARG_CHARS: usize = 200;
+/// Longest skill argument value in a prompt: the skill store's own cap (500), so a value
+/// it accepts reaches the model whole.
+const MAX_ARG_CHARS: usize = 500;
 /// Most skill apps listed in a prompt.
 const MAX_GUIDANCE_APPS: usize = 16;
 
@@ -108,6 +109,24 @@ pub(crate) const RESULT_NO_VISION: &str = "not available: this model reads the e
 pub(crate) const RESULT_LOOKED: &str = "screenshot taken";
 /// History result when the stuck hint replaced the action.
 pub(crate) const RESULT_STUCK: &str = "not done: repeated action";
+/// History result: the phone locked before the action ran; it will be decided again.
+pub(crate) const RESULT_LOCK_NOT_DONE: &str =
+    "not done: the phone locked first; the screen was read again after the unlock";
+/// History result: the phone locked while the action ran.
+pub(crate) const RESULT_LOCK_UNKNOWN: &str =
+    "interrupted: the phone locked while this ran; it may or may not have happened, check the screen";
+/// History result: the action ran, the phone locked before it could be checked.
+pub(crate) const RESULT_LOCK_UNVERIFIED: &str =
+    "done, but the phone locked before the result could be checked; check the screen";
+/// History result: the tool's result never came back.
+pub(crate) const RESULT_LOCK_TOOL_UNKNOWN: &str =
+    "interrupted: the phone locked before the tool's result came back; it may or may not have run";
+/// History result: a question the owner did not answer before the lock.
+pub(crate) const RESULT_LOCK_UNANSWERED: &str =
+    "not answered: the phone locked before the owner replied";
+/// History result: a held confirmation whose screen changed during the lock.
+pub(crate) const RESULT_LOCK_SCREEN_CHANGED: &str =
+    "not done: the phone locked while waiting for the owner's approval, and the screen changed";
 
 /// What goes into one request.
 #[derive(Debug, Clone)]

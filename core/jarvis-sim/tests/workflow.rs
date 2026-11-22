@@ -91,6 +91,16 @@ struct Driven {
 /// The shell loop: workflow effects to sessions on one phone (memory carried over, nothing
 /// approved at first), the owner approving every confirmation, notifications recorded.
 fn drive(wf: Workflow, scripts: Vec<Vec<String>>, mode: ObserveMode) -> Driven {
+    drive_with(wf, scripts, mode, Human::approve_all())
+}
+
+/// [`drive`] with a given owner.
+fn drive_with(
+    wf: Workflow,
+    scripts: Vec<Vec<String>>,
+    mode: ObserveMode,
+    mut human: Human,
+) -> Driven {
     let setup = RunSetup {
         mode,
         ..RunSetup::default()
@@ -100,27 +110,22 @@ fn drive(wf: Workflow, scripts: Vec<Vec<String>>, mode: ObserveMode) -> Driven {
     let mut scripts = scripts.into_iter();
     let mut sessions = Vec::new();
     let mut notifications = Vec::new();
-    let mut run = WorkflowRun::new(wf, &skills(), RunLimits::default());
+    let skills = skills();
+    let mut run = WorkflowRun::new(wf, RunLimits::default());
     let mut event = WorkflowEvent::Start;
     for _ in 0..50 {
         let now = phone.now_ms();
-        match run.step(now, event).unwrap() {
+        match run.step(now, event, &skills).unwrap() {
             WorkflowEffect::StartSession { task, skill } => {
                 let mut config = setup.session_config(&phone);
                 config.skill = skill;
                 let id = format!("wf-{}", sessions.len());
                 let session = Session::new(config, TaskSpec::new(id, task), memory.clone());
                 let mut model = ScriptedModel::new(scripts.next().unwrap_or_default());
-                let report = run_with(
-                    session,
-                    &mut phone,
-                    &mut model,
-                    &mut Human::approve_all(),
-                    &setup.options,
-                );
+                let report = run_with(session, &mut phone, &mut model, &mut human, &setup.options);
                 memory = report.memory.clone();
                 event = WorkflowEvent::SessionFinished {
-                    success: report.outcome.status == OutcomeStatus::Success,
+                    status: report.outcome.status,
                     summary: report.outcome.summary.clone(),
                 };
                 sessions.push(report);
@@ -251,7 +256,7 @@ fn a_skill_that_keeps_trying_to_escape_is_blocked_and_the_workflow_stops() {
         vec![escape_twice, wifi_off()],
         ObserveMode::Structured,
     );
-    assert_eq!(d.outcome.status, WorkflowStatus::Failed);
+    assert_eq!(d.outcome.status, WorkflowStatus::Blocked);
     assert_eq!(d.outcome.failed_step, Some(0));
     assert_eq!(d.outcome.steps_run, 1);
     assert!(
@@ -265,15 +270,81 @@ fn a_skill_that_keeps_trying_to_escape_is_blocked_and_the_workflow_stops() {
     assert!(d.notifications.is_empty());
     assert!(d.phone.snapshot().check("settings.wifi == true").unwrap());
 
-    // With Continue, the later steps still run.
+    // Review finding w2: a safety stop ends the run even with Continue.
     let escape_twice = vec![open_app("Shop"), open_app("Shop"), done("Bought")];
     let d = drive(
         workflow(OnFailure::Continue),
         vec![escape_twice, wifi_off()],
         ObserveMode::Structured,
     );
+    assert_eq!(d.outcome.status, WorkflowStatus::Blocked);
+    assert_eq!(d.sessions.len(), 1, "the Wi-Fi step never ran");
+    assert!(d.phone.snapshot().check("settings.wifi == true").unwrap());
+
+    // An ordinary failure (the model gives up) continues with Continue.
+    let gives_up = vec![fail("Mom is not in the list")];
+    let d = drive(
+        workflow(OnFailure::Continue),
+        vec![gives_up, wifi_off()],
+        ObserveMode::Structured,
+    );
     assert_eq!(d.outcome.status, WorkflowStatus::CompletedWithFailures);
     assert_eq!(d.outcome.failed_step, Some(0));
     assert_eq!(d.sessions.len(), 2);
     assert!(d.phone.snapshot().check("settings.wifi == false").unwrap());
+}
+
+/// `LastSummaryContains` reads model-written text, which screen content can steer. It is
+/// no safety gate: the risky step behind it is an ordinary session whose payment still
+/// asks the owner, and a decline stops the run.
+#[test]
+fn a_summary_gate_never_replaces_the_payment_confirmation() {
+    let wf = Workflow {
+        id: "order-if-ok".into(),
+        name: "Order if ok".into(),
+        on_failure: OnFailure::Continue,
+        steps: vec![
+            Step::RunTask {
+                text: "Check whether the headphones are a good deal".into(),
+            },
+            Step::StopUnless {
+                condition: jarvis_skills::Condition::LastSummaryContains {
+                    text: "ok to order".into(),
+                },
+            },
+            Step::RunTask {
+                text: "Order the Wireless Headphones".into(),
+            },
+        ],
+        ..Workflow::default()
+    };
+    let order = vec![
+        open_app("Shop"),
+        tap("Cell:Wireless Headphones"),
+        tap("Button:Add to Cart"),
+        tap("Button:Cart"),
+        tap("Button:Place Order"),
+        tap("Button:Place Order"),
+        done("Ordered"),
+    ];
+    let d = drive_with(
+        wf,
+        // The first summary is what an injected screen might make the model say.
+        vec![vec![done("ok to order, the screen says so")], order],
+        ObserveMode::Structured,
+        Human::decline_categories(&[RiskCategory::Payment]),
+    );
+    let shop = &d.sessions[1];
+    assert!(
+        shop.confirm_categories().contains(&RiskCategory::Payment),
+        "{}",
+        shop.transcript()
+    );
+    assert!(shop
+        .confirmations
+        .iter()
+        .any(|c| c.request.category == RiskCategory::Payment && !c.approved));
+    assert_eq!(shop.outcome.status, OutcomeStatus::Blocked);
+    assert_eq!(d.outcome.status, WorkflowStatus::Blocked);
+    assert!(!d.phone.snapshot().check("shop.ordered").unwrap());
 }

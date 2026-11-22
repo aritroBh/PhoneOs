@@ -181,6 +181,11 @@ fn all_events() -> Vec<Event> {
                 width: 1179,
                 height: 2556,
             }),
+            device_locked: false,
+        }),
+        Event::Observed(Observation {
+            device_locked: true,
+            ..fixtures::observation(fixtures::settings_screen())
         }),
         Event::ModelOutput(ModelOutput {
             text: r#"{"thought":"tap send","action":"tap","element":12}"#.into(),
@@ -201,6 +206,13 @@ fn all_events() -> Vec<Event> {
             text: "Alex Kim".into(),
         },
         Event::Cancel,
+        Event::ActResult(RunnerResult::device_locked()),
+        Event::DeviceLocked,
+        Event::DeviceUnlocked,
+        Event::Tick,
+        Event::ObserveFailed {
+            reason: "snapshot timed out".into(),
+        },
     ]
 }
 
@@ -276,6 +288,16 @@ fn all_effects() -> Vec<Effect> {
             steps: 1,
             duration_ms: 5,
         }),
+        Effect::Finished(Outcome {
+            status: OutcomeStatus::Interrupted,
+            summary: "phone stayed locked".into(),
+            steps: 2,
+            duration_ms: 9,
+        }),
+        Effect::AwaitUnlock {
+            reason: "Unlock to continue".into(),
+            waited_ms: 60_000,
+        },
     ])
     .collect()
 }
@@ -296,9 +318,71 @@ fn every_event_round_trips() {
         "user_decision",
         "user_answer",
         "cancel",
+        "device_locked",
+        "device_unlocked",
+        "tick",
+        "observe_failed",
     ] {
         assert!(tags.iter().any(|x| x == t), "missing {t}");
     }
+    for e in all_events() {
+        assert_eq!(round_trip(&e)["type"], e.name());
+    }
+}
+
+#[test]
+fn lock_awareness_wire_shapes_and_old_json() {
+    assert_eq!(
+        serde_json::to_value(Event::ObserveFailed { reason: "x".into() }).unwrap(),
+        json!({"type": "observe_failed", "reason": "x"})
+    );
+    assert_eq!(
+        serde_json::to_value(Effect::AwaitUnlock {
+            reason: "r".into(),
+            waited_ms: 5
+        })
+        .unwrap(),
+        json!({"type": "await_unlock", "reason": "r", "waited_ms": 5})
+    );
+    // A refusal names its reason; a plain result keeps its old shape.
+    assert_eq!(
+        serde_json::to_value(RunnerResult::device_locked()).unwrap(),
+        json!({"ok": false, "error": "the device is locked", "failure": "device_locked"})
+    );
+    assert_eq!(
+        serde_json::to_value(RunnerResult::ok()).unwrap(),
+        json!({"ok": true, "error": null})
+    );
+    let old: RunnerResult = serde_json::from_str(r#"{"ok":false,"error":"x"}"#).unwrap();
+    assert!(!old.is_device_locked());
+    let future: RunnerResult =
+        serde_json::from_str(r#"{"ok":false,"failure":"thermal_shutdown"}"#).unwrap();
+    assert_eq!(future.failure, Some(jarvis_proto::RunnerFailure::Other));
+    assert!(RunnerResult::device_locked().is_device_locked());
+    // Observations from before lock awareness are unlocked.
+    let obs = serde_json::to_value(fixtures::observation(fixtures::settings_screen())).unwrap();
+    let mut old = obs.clone();
+    old.as_object_mut().unwrap().remove("device_locked");
+    let back: Observation = serde_json::from_value(old).unwrap();
+    assert!(!back.device_locked);
+    assert_eq!(obs["device_locked"], json!(false));
+    // Policy JSON without the wait limit gets the 30-minute default.
+    let p: Policy = serde_json::from_str(r#"{"first_use_approval":true}"#).unwrap();
+    assert_eq!(p.max_locked_wait_ms, 1_800_000);
+    assert_eq!(
+        p.max_locked_wait_ms,
+        jarvis_proto::DEFAULT_MAX_LOCKED_WAIT_MS
+    );
+    let p: Policy = serde_json::from_str(r#"{"max_locked_wait_ms":5}"#).unwrap();
+    assert_eq!(p.max_locked_wait_ms, 5);
+    assert_eq!(
+        serde_json::to_value(OutcomeStatus::Interrupted).unwrap(),
+        json!("interrupted")
+    );
+    assert_eq!(
+        serde_json::to_value(Phase::WaitingForUnlock).unwrap(),
+        json!("waiting_for_unlock")
+    );
 }
 
 #[test]
@@ -432,6 +516,9 @@ fn session_config_and_progress_round_trip() {
         app: Some("com.apple.Preferences".into()),
         model_calls: 5,
         parse_retries: 1,
+        waiting_for_unlock: true,
+        locked_wait_ms: 60_000,
+        locked_total_ms: 90_000,
     });
     round_trip(&Progress::default());
     // Progress JSON from before the counters existed still loads.
@@ -439,6 +526,8 @@ fn session_config_and_progress_round_trip() {
         serde_json::from_str(r#"{"step":2,"phase":"acting","last_action":null,"app":null}"#)
             .unwrap();
     assert_eq!((old.model_calls, old.parse_retries), (0, 0));
+    assert!(!old.waiting_for_unlock);
+    assert_eq!((old.locked_wait_ms, old.locked_total_ms), (0, 0));
 }
 
 #[test]
@@ -564,6 +653,7 @@ fn session_config_skill_is_optional_and_omitted_when_absent() {
             instructions: "Use the existing thread.".into(),
             apps: vec!["com.apple.MobileSMS".into()],
             confine_to_apps: true,
+            tools: vec!["open_link".into()],
             args: [("contact".to_owned(), "Mom".to_owned())]
                 .into_iter()
                 .collect(),

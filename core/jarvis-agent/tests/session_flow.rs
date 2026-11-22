@@ -189,9 +189,11 @@ fn type_on_unfocused_field_taps_then_types_then_returns() {
         }
     );
     assert_eq!(run.acts[2], RunnerCommand::PressKey { key: Key::Return });
-    // One Act at a time, each followed by its result: three acts, then one verify observe.
+    // One Act at a time, each followed by its result. The typed text is checked on an
+    // observation before Return is pressed (submitting dropped characters would search for
+    // the wrong thing), then the action is verified.
     let names: Vec<&str> = run.effects.iter().map(Effect::name).collect();
-    assert_eq!(names[2..6], ["act", "act", "act", "observe"]);
+    assert_eq!(names[2..7], ["act", "act", "observe", "act", "observe"]);
 }
 
 #[test]

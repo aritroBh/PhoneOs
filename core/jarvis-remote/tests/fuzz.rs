@@ -77,10 +77,20 @@ fn random_message(rng: &mut Rng, pending: Option<u64>) -> ClientMessage {
     }
 }
 
-fn random_local(rng: &mut Rng, device: Option<ClientCredentials>) -> LocalEvent {
+fn random_local(
+    rng: &mut Rng,
+    device: Option<ClientCredentials>,
+    task: Option<u64>,
+    pending: Option<u64>,
+) -> LocalEvent {
+    let task_id = if rng.chance(3) {
+        None
+    } else {
+        task.or(Some(rng.next()))
+    };
     let cats = RiskCategory::ALL;
     match rng.below(9) {
-        0 => LocalEvent::SessionStarted,
+        0 => started(task_id),
         1 => progress_event(
             rng.below(50) as u32,
             Action::Type {
@@ -92,14 +102,21 @@ fn random_local(rng: &mut Rng, device: Option<ClientCredentials>) -> LocalEvent 
         ),
         2 => confirm_event(*rng.pick(&cats), "Tap \"Send\""),
         3 => LocalEvent::ConfirmResolved {
+            request_id: if rng.chance(4) {
+                rng.next()
+            } else {
+                pending.unwrap_or(0)
+            },
             approved: rng.chance(2),
         },
-        4 => finished_event(
+        4 => finished(
+            task_id,
             *rng.pick(&[
                 OutcomeStatus::Success,
                 OutcomeStatus::Failed,
                 OutcomeStatus::Cancelled,
                 OutcomeStatus::Blocked,
+                OutcomeStatus::Interrupted,
             ]),
             "done 4111 1111 1111 1111",
         ),
@@ -107,7 +124,7 @@ fn random_local(rng: &mut Rng, device: Option<ClientCredentials>) -> LocalEvent 
             Some(d) if rng.chance(4) => LocalEvent::DeviceRevoked {
                 device_id: d.device_id,
             },
-            _ => LocalEvent::SessionStarted,
+            _ => started(task_id),
         },
         6 => match device {
             Some(d) => LocalEvent::PermissionsChanged {
@@ -119,7 +136,7 @@ fn random_local(rng: &mut Rng, device: Option<ClientCredentials>) -> LocalEvent 
                     approve: rng.chance(2),
                 },
             },
-            None => LocalEvent::SessionStarted,
+            None => started(None),
         },
         _ => LocalEvent::CatalogChanged {
             skills: vec![CatalogEntry {
@@ -183,14 +200,14 @@ fn reconnect(rng: &mut Rng, hub: &mut RemoteHub, now: u64, legit: &mut Legit) {
         .as_ref()
         .is_some_and(|c| hub.devices().iter().any(|d| d.id == c.device_id));
     let mut client = if known {
-        RemoteClient::connect(legit.creds.clone().unwrap(), rng.entropy())
+        RemoteClient::connect(legit.creds.clone().unwrap(), &rng.entropy()).unwrap()
     } else {
-        let Ok(offer) = hub.open_pairing(now, rng.entropy()) else {
+        let Ok(offer) = hub.open_pairing(now, &rng.entropy()) else {
             return;
         };
-        RemoteClient::pair(&offer.code, "Fuzz", rng.entropy()).unwrap()
+        RemoteClient::pair(&offer.code, "Fuzz", &rng.entropy()).unwrap()
     };
-    let fx = hub.connection_opened(conn, now, rng.entropy());
+    let fx = hub.connection_opened(conn, now, &rng.entropy());
     check_effects(hub, &fx);
     let mut inbound = sends(&fx, conn);
     for _ in 0..3 {
@@ -227,11 +244,29 @@ fn hub_survives_arbitrary_input() {
         creds: None,
     };
     let mut accepted_commands = 0usize;
-    for _ in 0..20_000 {
-        let fx = match rng.below(10) {
+    let mut last_task: Option<u64> = None;
+    // Opening a connection costs an X25519 key generation (slow in debug builds), so
+    // opens are rarer than the other operations.
+    for _ in 0..12_000 {
+        let op = match rng.below(20) {
+            0 => 0,
+            1 => 1,
+            2..=4 => 2,
+            5 => 3,
+            6 | 7 => 4,
+            8 => 5,
+            _ => 9,
+        };
+        let fx = match op {
             0 => {
                 let id = rng.below(12);
-                hub.connection_opened(id, now, rng.entropy())
+                // Sometimes the shell passes broken entropy.
+                let e: Vec<u8> = if rng.chance(10) {
+                    vec![0u8; 32]
+                } else {
+                    rng.entropy().to_vec()
+                };
+                hub.connection_opened(id, now, &e)
             }
             1 => hub.connection_closed(rng.below(12)),
             2 => {
@@ -255,11 +290,12 @@ fn hub_survives_arbitrary_input() {
             }
             4 => {
                 let device = legit.creds.clone();
-                hub.local_event(now, random_local(&mut rng, device))
+                let pending = hub.pending_request_id();
+                hub.local_event(now, random_local(&mut rng, device, last_task, pending))
             }
             5 => {
                 if rng.chance(3) {
-                    let _ = hub.open_pairing(now, rng.entropy());
+                    let _ = hub.open_pairing(now, &rng.entropy());
                 } else if rng.chance(5) {
                     hub.cancel_pairing();
                 }
@@ -276,11 +312,13 @@ fn hub_survives_arbitrary_input() {
                     let msg = random_message(&mut rng, hub.pending_request_id());
                     let client = legit.client.as_mut().unwrap();
                     let mut frame = client.send(&msg).unwrap();
-                    if rng.chance(8) {
+                    // Rare: a mangled frame closes the link, and reconnecting is X25519 work.
+                    if rng.chance(40) {
                         frame = mutate(&mut rng, frame);
                     }
                     let fx = hub.receive(legit.conn, &frame, now);
                     accepted_commands += actions(&fx).len();
+                    last_task = task_id(&fx).or(last_task);
                     fx
                 }
             }
@@ -306,21 +344,24 @@ fn client_survives_arbitrary_input() {
         let mut rig = Rig::new();
         rig.pair("Mac")
     };
-    for i in 0..5_000 {
+    // Fewer iterations than the hub fuzz: every client does an X25519 key generation.
+    for i in 0..1_000 {
         let mut client = if i % 2 == 0 {
-            RemoteClient::connect(creds.clone(), rng.entropy())
+            RemoteClient::connect(creds.clone(), &rng.entropy()).unwrap()
         } else {
             RemoteClient::pair(
                 &jarvis_remote::format_code(&jarvis_remote::PairingSecret::from_bytes(
                     core::array::from_fn(|_| rng.next() as u8),
                 )),
                 "Mac",
-                rng.entropy(),
+                &rng.entropy(),
             )
             .unwrap()
         };
         if rng.chance(2) {
-            let _ = client.receive(&encode_record(Kind::ServerHello, &rng.entropy()));
+            let mut hello = rng.entropy().to_vec();
+            hello.extend(rng.entropy());
+            let _ = client.receive(&encode_record(Kind::ServerHello, &hello));
         }
         for _ in 0..3 {
             let mut bytes = rng.bytes(80);
@@ -342,7 +383,7 @@ fn decoders_survive_arbitrary_input() {
         r#"{"type":"start_task","text":"x"}"#,
         r#"{"type":"decision","request_id":1,"approved":true}"#,
         r#"{"type":"run_skill","id":"a","args":{"k":[1,{"z":null}]}}"#,
-        r#"{"schema_version":1,"devices":[{"id":"00112233445566778899aabbccddeeff","name":"Mac","key":"0000000000000000000000000000000000000000000000000000000000000000","permissions":{"start_tasks":true,"see_progress":true,"see_screen_text":false,"approve":false},"paired_at_ms":5}]}"#,
+        r#"{"schema_version":2,"nonce_lease":1024,"devices":[{"id":"00112233445566778899aabbccddeeff","name":"Mac","key":"0000000000000000000000000000000000000000000000000000000000000000","permissions":{"start_tasks":true,"see_progress":true,"see_screen_text":false,"approve":false},"paired_at_ms":5}]}"#,
     ];
     for _ in 0..20_000 {
         let base = rng.pick(&samples).as_bytes().to_vec();

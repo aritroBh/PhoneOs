@@ -109,6 +109,7 @@ struct Run {
     var textObservations = 0
     var memoryJson = ""
     var page = Page.settings
+    var unlockWaits = 0
     var error: String?
 }
 
@@ -173,6 +174,10 @@ func drive(memoryJson: String, config: SessionConfig? = nil,
         case .askUser(let question):
             run.error = "unexpected question \(question)"
             return run
+        case .awaitUnlock:
+            // Not expected in these scenarios; a real shell shows "Unlock to continue".
+            run.unlockWaits += 1
+            event = .deviceUnlocked
         case .finished(let outcome):
             run.outcome = outcome
             do {
@@ -425,6 +430,10 @@ do {
     let result = try skills.matchTask(text: "Please turn off the WiFi")
     check("matchTask finds the skill", result.matches.first?.skillId == "wifi-off"
           && result.matches.first?.score == 1000 && !result.ambiguous, "\(result)")
+    check("an exact match may run without asking",
+          result.matches.first?.exact == true && !result.needsOwnerChoice, "\(result)")
+    let opposite = try skills.matchTask(text: "turn on wi-fi")
+    check("the opposite request does not match", opposite.matches.isEmpty, "\(opposite)")
     let slotted = try skills.matchTask(text: "text mom i am on my way")
     check("matchTask captures slots", slotted.matches.first?.args["contact"] == "mom"
           && slotted.matches.first?.args["message"] == "i am on my way", "\(slotted)")
@@ -437,6 +446,20 @@ do {
         check("a corrupt skills snapshot throws InvalidSkill", false, "accepted")
     } catch JarvisError.InvalidSkill {
         check("a corrupt skills snapshot throws InvalidSkill", true)
+    }
+    let damagedJson = #"{"schema_version":1,"skills":[{"id":"kept","name":"Kept","runs":-1}]}"#
+    let damaged = try JarvisSkills(json: damagedJson)
+    let resaved = try JarvisSkills(json: try damaged.toJson())
+    check("an unloadable skill is reported and survives a save",
+          try damaged.hasLoadIssues() && (try resaved.hasLoadIssues())
+              && (try resaved.toJson()).contains("\"kept\""))
+    do {
+        var stale = result.matches.first!
+        stale.args["colour"] = "red"
+        _ = try skills.contextForMatch(m: stale)
+        check("a forged match is refused", false, "accepted")
+    } catch JarvisError.InvalidSkill {
+        check("a forged match is refused", true)
     }
 
     if let m = result.matches.first {
@@ -476,6 +499,94 @@ do {
     }
 } catch {
     check("skills checks", false, "\(error)")
+}
+
+// 9. A locked phone, an unreadable screen, typed reasons on runner results.
+do {
+    check("session 1 never waited for an unlock", first.unlockWaits == 0)
+    let p = try defaultPolicy()
+    check("defaultPolicy() waits at most 30 minutes for an unlock", p.maxLockedWaitMs == 1_800_000,
+          "\(p.maxLockedWaitMs)")
+    // Initializers written before the new fields still compile (defaults).
+    let plain = RunnerResult(ok: true, error: nil)
+    check("RunnerResult init without failure: defaults to nil", plain.failure == nil)
+    let obs = ScreenObservation(screen: settingsScreen(), screenshot: nil)
+    check("ScreenObservation init without deviceLocked: defaults to false", !obs.deviceLocked)
+    check("RunnerSnapshot init without deviceLocked: defaults to false", !snapshot("").deviceLocked)
+
+    let s = try JarvisSession(config: try makeConfig(), task: task, memoryJson: "")
+    _ = s.step(nowMs: 1_000, event: .start)
+    let lockedObs = ScreenObservation(screen: settingsScreen(), screenshot: nil, deviceLocked: true)
+    var effect = s.step(nowMs: 1_010, event: .observed(observation: lockedObs))
+    if case let .awaitUnlock(reason, waitedMs) = effect {
+        check("a locked observation asks the shell to wait for an unlock",
+              waitedMs == 0 && reason.contains("Unlock"), reason)
+    } else {
+        check("a locked observation asks the shell to wait for an unlock", false, "\(effect)")
+    }
+    let progress = try s.progress()
+    check("progress() reports the wait",
+          progress.waitingForUnlock && progress.phase == .waitingForUnlock, "\(progress)")
+    effect = s.step(nowMs: 61_010, event: .tick)
+    if case let .awaitUnlock(_, waitedMs) = effect {
+        check("tick re-emits awaitUnlock with the time waited", waitedMs == 60_000, "\(waitedMs)")
+    } else {
+        check("tick re-emits awaitUnlock with the time waited", false, "\(effect)")
+    }
+    effect = s.step(nowMs: 62_000, event: .deviceLocked)
+    if case .awaitUnlock = effect { check("deviceLocked while waiting keeps waiting", true) }
+    else { check("deviceLocked while waiting keeps waiting", false, "\(effect)") }
+    effect = s.step(nowMs: 63_000, event: .deviceUnlocked)
+    if case .observe(let shot) = effect { check("deviceUnlocked resumes by observing", !shot) }
+    else { check("deviceUnlocked resumes by observing", false, "\(effect)") }
+    effect = s.step(nowMs: 63_100, event: .observeFailed(reason: "snapshot timed out"))
+    if case .observe = effect { check("observeFailed asks to observe again", true) }
+    else { check("observeFailed asks to observe again", false, "\(effect)") }
+    var locked = snapshot(wifiText(on: true))
+    locked.deviceLocked = true
+    effect = s.step(nowMs: 63_200, event: .observedRunnerText(snapshot: locked))
+    if case .awaitUnlock = effect { check("a locked runner snapshot waits too", true) }
+    else { check("a locked runner snapshot waits too", false, "\(effect)") }
+    effect = s.step(nowMs: 63_300, event: .observed(observation: obs))
+    if case .infer = effect { check("an unlocked observation while waiting resumes", true) }
+    else { check("an unlocked observation while waiting resumes", false, "\(effect)") }
+    let lockedTotal = (try s.progress()).lockedTotalMs
+    check("progress() totals the locked time", lockedTotal == 62_090, "\(lockedTotal)")
+
+    // A refused command and a wait that runs out.
+    var short = try makeConfig()
+    short.policy.maxLockedWaitMs = 1_000
+    short.policy.firstUseApproval = false
+    let t = try JarvisSession(config: short, task: task, memoryJson: "")
+    _ = t.step(nowMs: 1, event: .start)
+    effect = t.step(nowMs: 2, event: .observed(observation: obs))
+    if case let .infer(request) = effect,
+       let i = indexInPrompt(request.user, role: "Cell", label: "Wi-Fi, HomeNet") {
+        effect = t.step(nowMs: 3, event: .modelOutput(output: ModelOutput(text: #"{"action":"tap","element":\#(i)}"#)))
+    }
+    if case .act = effect {
+        let refused = RunnerResult(ok: false, error: "screen_locked", failure: .deviceLocked)
+        effect = t.step(nowMs: 4, event: .actResult(result: refused))
+        if case .awaitUnlock = effect { check("a command refused as locked waits for an unlock", true) }
+        else { check("a command refused as locked waits for an unlock", false, "\(effect)") }
+        effect = t.step(nowMs: 5_000, event: .tick)
+        if case let .finished(outcome) = effect {
+            check("staying locked past maxLockedWaitMs finishes interrupted",
+                  outcome.status == .interrupted && outcome.summary.contains("stayed locked"),
+                  outcome.summary)
+        } else {
+            check("staying locked past maxLockedWaitMs finishes interrupted", false, "\(effect)")
+        }
+        let mem = jsonObject(try t.finish())
+        let log = ((mem?["log"] as? [String: Any])?["entries"] as? [[String: Any]])?.last
+        check("the task log records the interruption",
+              log?["outcome"] as? String == "interrupted" && log?["lock_waits"] as? Int == 1,
+              "\(String(describing: log))")
+    } else {
+        check("lock-refusal scenario reached an act", false, "\(effect)")
+    }
+} catch {
+    check("lock awareness checks", false, "\(error)")
 }
 
 print("\(failures == 0 ? "PASS" : "FAIL") swift smoke: \(passes) passed, \(failures) failed")

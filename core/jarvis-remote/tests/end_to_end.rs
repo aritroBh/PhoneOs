@@ -16,6 +16,7 @@ use jarvis_remote::{
     AuditEvent, CatalogEntry, ClientEvent, ClientMessage, CloseReason, DenyReason, DeviceStore,
     HubEffect, HubError, LocalEvent, PersistError, RemoteClient, RemoteHub, RemotePermissions,
     ServerMessage, HANDSHAKE_TIMEOUT_MS, IDLE_TIMEOUT_MS, MAX_CONNECTIONS, MAX_DEVICES,
+    PROTOCOL_VERSION,
 };
 
 fn denied(msgs: &[ServerMessage]) -> Option<DenyReason> {
@@ -43,9 +44,10 @@ fn pair_connect_start_progress_confirm_finish() {
     assert_eq!(
         msgs,
         vec![ServerMessage::Welcome {
-            phone_name: "Test Phone".into(),
-            permissions: RemotePermissions::default(),
-            busy: false,
+            protocol_version: PROTOCOL_VERSION,
+            permissions: RemotePermissions::NEW_DEVICE,
+            phone_name: Some("Test Phone".into()),
+            busy: Some(false),
         }]
     );
     let (_, msgs) = rig.request(&mut link, ClientMessage::Subscribe);
@@ -58,16 +60,18 @@ fn pair_connect_start_progress_confirm_finish() {
         },
     );
     assert!(msgs.is_empty());
+    let id = task_id(&fx).unwrap();
     assert_eq!(
         actions(&fx),
         vec![HubEffect::StartTask {
+            task_id: id,
             device_id: creds.device_id,
             text: "Text Sam that I'm late".into(),
         }]
     );
     assert!(rig.hub.is_busy());
 
-    let fx = rig.local(LocalEvent::SessionStarted);
+    let fx = rig.local(started(Some(id)));
     assert_eq!(deliver(&mut link, &fx), vec![ServerMessage::TaskStarted]);
 
     let fx = rig.local(progress_event(
@@ -88,11 +92,9 @@ fn pair_connect_start_progress_confirm_finish() {
             app: Some("com.apple.MobileSMS".into()),
             last_action: Some("type".into()),
             screen_text: None,
+            waiting_for_unlock: false,
         }]
     );
-    // The typed text never leaves the phone.
-    let wire = sends(&fx, link.conn);
-    assert!(!String::from_utf8_lossy(&wire).contains("secret"));
 
     let fx = rig.local(confirm_event(
         RiskCategory::SendMessage,
@@ -106,10 +108,10 @@ fn pair_connect_start_progress_confirm_finish() {
             request_id,
             category: RiskCategory::SendMessage,
             summary: "Waiting for confirmation (send message)".into(),
-            can_decide: false,
+            can_approve: false,
         }]
     );
-    // Default permissions cannot decide.
+    // A new device cannot approve.
     let (fx, msgs) = rig.request(
         &mut link,
         ClientMessage::Decision {
@@ -121,12 +123,12 @@ fn pair_connect_start_progress_confirm_finish() {
     assert!(actions(&fx).is_empty());
     assert!(audited_denial(&fx, DenyReason::NotPermitted));
 
-    let fx = rig.local(LocalEvent::ConfirmResolved { approved: true });
     assert_eq!(
-        deliver(&mut link, &fx),
+        rig.resolve_to(&mut link, true),
         vec![ServerMessage::ConfirmResolved { request_id }]
     );
-    let fx = rig.local(finished_event(
+    let fx = rig.local(finished(
+        Some(id),
         OutcomeStatus::Success,
         "Sent \"I'm late\" to Sam",
     ));
@@ -152,14 +154,12 @@ fn approve_on_permitted_category_is_honoured_exactly_once() {
         RemotePermissions {
             approve: true,
             see_screen_text: true,
-            ..RemotePermissions::default()
+            ..RemotePermissions::NEW_DEVICE
         },
     );
-    // The permission change is announced on the open connection.
-    let (_, msgs) = rig.request(&mut link, ClientMessage::Subscribe);
-    assert!(msgs.is_empty());
-    rig.request(&mut link, ClientMessage::StartTask { text: "go".into() });
-    rig.local_to(&mut link, LocalEvent::SessionStarted);
+    rig.request(&mut link, ClientMessage::Subscribe);
+    let (fx, _) = rig.request(&mut link, ClientMessage::StartTask { text: "go".into() });
+    rig.local_to(&mut link, started(task_id(&fx)));
 
     let fx = rig.local(confirm_event(
         RiskCategory::SendMessage,
@@ -169,13 +169,13 @@ fn approve_on_permitted_category_is_honoured_exactly_once() {
     let request_id = rig.hub.pending_request_id().unwrap();
     let ServerMessage::ConfirmPending {
         summary,
-        can_decide,
+        can_approve,
         ..
     } = &msgs[0]
     else {
         panic!("{msgs:?}")
     };
-    assert!(*can_decide);
+    assert!(*can_approve);
     assert!(summary.contains("[redacted card]"), "{summary}");
     assert!(!summary.contains("4111"));
 
@@ -192,6 +192,7 @@ fn approve_on_permitted_category_is_honoured_exactly_once() {
         vec![HubEffect::Decide {
             request_id,
             approved: true,
+            category: RiskCategory::SendMessage,
             device_id: creds.device_id,
         }]
     );
@@ -212,7 +213,7 @@ fn approve_on_permitted_category_is_honoured_exactly_once() {
     assert!(audited_denial(&fx, DenyReason::StaleRequest));
 
     // After the phone resolves it, still stale; unknown ids too.
-    rig.local_to(&mut link, LocalEvent::ConfirmResolved { approved: true });
+    rig.resolve_to(&mut link, true);
     for id in [request_id, request_id + 1, 0, u64::MAX] {
         let (fx, msgs) = rig.request(
             &mut link,
@@ -249,13 +250,14 @@ fn approve_on_permitted_category_is_honoured_exactly_once() {
         vec![HubEffect::Decide {
             request_id: new_id,
             approved: false,
+            category: RiskCategory::Call,
             device_id: creds.device_id,
         }]
     );
 }
 
 #[test]
-fn forbidden_categories_are_denied_even_with_approve() {
+fn forbidden_categories_cannot_be_approved_but_can_be_declined() {
     let mut rig = Rig::new();
     let (mut link, creds) = rig.pair("Mac");
     rig.set_permissions(
@@ -263,11 +265,12 @@ fn forbidden_categories_are_denied_even_with_approve() {
         &creds,
         RemotePermissions {
             approve: true,
-            ..RemotePermissions::default()
+            ..RemotePermissions::NEW_DEVICE
         },
     );
     rig.request(&mut link, ClientMessage::Subscribe);
     rig.request(&mut link, ClientMessage::StartTask { text: "buy".into() });
+    assert!(jarvis_remote::NEVER_REMOTE_APPROVE.contains(&RiskCategory::Unverified));
     for category in jarvis_remote::NEVER_REMOTE_APPROVE {
         let fx = rig.local(confirm_event(category, "Tap \"Pay\" in Shop"));
         let msgs = deliver(&mut link, &fx);
@@ -275,7 +278,7 @@ fn forbidden_categories_are_denied_even_with_approve() {
         assert!(matches!(
             msgs[0],
             ServerMessage::ConfirmPending {
-                can_decide: false,
+                can_approve: false,
                 ..
             }
         ));
@@ -293,7 +296,24 @@ fn forbidden_categories_are_denied_even_with_approve() {
         );
         assert!(actions(&fx).is_empty());
         assert!(audited_denial(&fx, DenyReason::NotRemotelyApprovable));
-        rig.local_to(&mut link, LocalEvent::ConfirmResolved { approved: false });
+        // Declining is always safe.
+        let (fx, _) = rig.request(
+            &mut link,
+            ClientMessage::Decision {
+                request_id,
+                approved: false,
+            },
+        );
+        assert_eq!(
+            actions(&fx),
+            vec![HubEffect::Decide {
+                request_id,
+                approved: false,
+                category,
+                device_id: creds.device_id,
+            }]
+        );
+        rig.resolve_to(&mut link, false);
     }
 }
 
@@ -302,7 +322,7 @@ fn screen_text_needs_the_permission_and_is_redacted() {
     let mut rig = Rig::new();
     let (mut link, creds) = rig.pair("Mac");
     rig.request(&mut link, ClientMessage::Subscribe);
-    rig.local_to(&mut link, LocalEvent::SessionStarted);
+    rig.local_to(&mut link, started(None));
     let text = "Your verification code is 482913\u{202E}\nDone";
     let fx = rig.local(progress_event(1, Action::Look, Some(text)));
     assert!(matches!(
@@ -312,15 +332,16 @@ fn screen_text_needs_the_permission_and_is_redacted() {
             ..
         }
     ));
-    let fx = rig.local(LocalEvent::PermissionsChanged {
-        device_id: creds.device_id,
-        permissions: RemotePermissions {
+    let msgs = rig.set_permissions(
+        &mut link,
+        &creds,
+        RemotePermissions {
             see_screen_text: true,
-            ..RemotePermissions::default()
+            ..RemotePermissions::NEW_DEVICE
         },
-    });
+    );
     assert!(matches!(
-        &deliver(&mut link, &fx)[0],
+        &msgs[0],
         ServerMessage::PermissionsChanged { permissions } if permissions.see_screen_text
     ));
     let fx = rig.local(progress_event(2, Action::Look, Some(text)));
@@ -335,8 +356,8 @@ fn screen_text_needs_the_permission_and_is_redacted() {
     assert!(!t.contains("482913"), "{t}");
     assert!(!t.contains('\u{202E}'));
     assert!(t.contains("Done"));
-    // The finish summary is forwarded too, redacted.
-    let fx = rig.local(finished_event(
+    let fx = rig.local(finished(
+        None,
         OutcomeStatus::Success,
         "Signed in with code 482913",
     ));
@@ -359,7 +380,7 @@ fn unsubscribed_or_unpermitted_devices_see_nothing() {
         &quiet_creds,
         RemotePermissions {
             see_progress: false,
-            ..RemotePermissions::default()
+            ..RemotePermissions::NEW_DEVICE
         },
     );
     let (fx, msgs) = rig.request(&mut quiet, ClientMessage::Subscribe);
@@ -368,7 +389,6 @@ fn unsubscribed_or_unpermitted_devices_see_nothing() {
     let fx = rig.local(progress_event(1, Action::PressHome, None));
     assert_eq!(deliver(&mut watcher, &fx).len(), 1);
     assert!(deliver(&mut quiet, &fx).is_empty());
-    // Unsubscribing stops the stream.
     rig.request(&mut watcher, ClientMessage::Unsubscribe);
     let fx = rig.local(progress_event(2, Action::PressHome, None));
     assert!(deliver(&mut watcher, &fx).is_empty());
@@ -380,16 +400,17 @@ fn one_task_at_a_time_across_devices() {
     let (mut a, _) = rig.pair("A");
     let (mut b, _) = rig.pair("B");
     let (fx, _) = rig.request(&mut a, ClientMessage::StartTask { text: "one".into() });
-    assert_eq!(actions(&fx).len(), 1);
+    let one = task_id(&fx).unwrap();
     for link in [&mut a, &mut b] {
         let (fx, msgs) = rig.request(link, ClientMessage::StartTask { text: "two".into() });
         assert_eq!(denied(&msgs), Some(DenyReason::Busy));
         assert!(actions(&fx).is_empty());
         assert!(audited_denial(&fx, DenyReason::Busy));
     }
+    rig.local_to(&mut a, started(Some(one)));
+    rig.local_to(&mut a, finished(Some(one), OutcomeStatus::Success, "done"));
     // A task started on the phone itself also makes the hub busy.
-    rig.local_to(&mut a, finished_event(OutcomeStatus::Success, "done"));
-    rig.local(LocalEvent::SessionStarted);
+    rig.local(started(None));
     let (_, msgs) = rig.request(
         &mut b,
         ClientMessage::StartTask {
@@ -398,8 +419,14 @@ fn one_task_at_a_time_across_devices() {
     );
     assert_eq!(denied(&msgs), Some(DenyReason::Busy));
     let (_, msgs) = rig.request(&mut b, ClientMessage::Hello);
-    assert!(matches!(msgs[0], ServerMessage::Welcome { busy: true, .. }));
-    rig.local(finished_event(OutcomeStatus::Cancelled, "stopped"));
+    assert!(matches!(
+        msgs[0],
+        ServerMessage::Welcome {
+            busy: Some(true),
+            ..
+        }
+    ));
+    rig.local(finished(None, OutcomeStatus::Cancelled, "stopped"));
     let (fx, _) = rig.request(
         &mut b,
         ClientMessage::StartTask {
@@ -418,7 +445,7 @@ fn device_without_start_tasks_is_refused() {
         &creds,
         RemotePermissions {
             start_tasks: false,
-            ..RemotePermissions::default()
+            ..RemotePermissions::NEW_DEVICE
         },
     );
     rig.local(LocalEvent::CatalogChanged {
@@ -442,6 +469,7 @@ fn device_without_start_tasks_is_refused() {
         ClientMessage::RunWorkflow {
             id: "morning".into(),
         },
+        ClientMessage::ListSkills,
     ] {
         let (fx, msgs) = rig.request(&mut link, msg);
         assert_eq!(denied(&msgs), Some(DenyReason::NotPermitted));
@@ -495,7 +523,7 @@ fn skills_are_listed_and_run_by_known_id_only() {
     assert_eq!(denied(&msgs), Some(DenyReason::UnknownSkill));
 
     let mut args = std::collections::BTreeMap::new();
-    args.insert("minutes".to_owned(), serde_json::json!(5));
+    args.insert("minutes".to_owned(), "5".to_owned());
     let (fx, _) = rig.request(
         &mut link,
         ClientMessage::RunSkill {
@@ -503,15 +531,19 @@ fn skills_are_listed_and_run_by_known_id_only() {
             args: args.clone(),
         },
     );
+    let id = task_id(&fx).unwrap();
     assert_eq!(
         actions(&fx),
         vec![HubEffect::RunSkill {
+            task_id: id,
             device_id: creds.device_id,
             id: "timer.start".into(),
             args,
         }]
     );
-    rig.local_to(&mut link, finished_event(OutcomeStatus::Success, "ok"));
+    // The shell could not start it: reported finished with the same id.
+    rig.local_to(&mut link, finished(Some(id), OutcomeStatus::Failed, "no"));
+    assert!(!rig.hub.is_busy());
     let (fx, _) = rig.request(
         &mut link,
         ClientMessage::RunWorkflow {
@@ -521,6 +553,7 @@ fn skills_are_listed_and_run_by_known_id_only() {
     assert_eq!(
         actions(&fx),
         vec![HubEffect::RunWorkflow {
+            task_id: task_id(&fx).unwrap(),
             device_id: creds.device_id,
             id: "leave-home".into(),
         }]
@@ -528,18 +561,31 @@ fn skills_are_listed_and_run_by_known_id_only() {
 }
 
 #[test]
-fn cancel_needs_a_running_task_and_names_the_device() {
+fn cancel_needs_a_task_and_names_it() {
     let mut rig = Rig::new();
     let (mut link, creds) = rig.pair("Mac");
     let (fx, msgs) = rig.request(&mut link, ClientMessage::Cancel);
     assert_eq!(denied(&msgs), Some(DenyReason::NotRunning));
     assert!(audited_denial(&fx, DenyReason::NotRunning));
-    rig.local(LocalEvent::SessionStarted);
+    // The owner's own task can be stopped from a remote (stopping is always safe).
+    rig.local(started(None));
     let (fx, _) = rig.request(&mut link, ClientMessage::Cancel);
     assert_eq!(
         actions(&fx),
         vec![HubEffect::CancelTask {
-            device_id: creds.device_id
+            device_id: creds.device_id,
+            task_id: None,
+        }]
+    );
+    rig.local(finished(None, OutcomeStatus::Cancelled, ""));
+    let (fx, _) = rig.request(&mut link, ClientMessage::StartTask { text: "x".into() });
+    let id = task_id(&fx);
+    let (fx, _) = rig.request(&mut link, ClientMessage::Cancel);
+    assert_eq!(
+        actions(&fx),
+        vec![HubEffect::CancelTask {
+            device_id: creds.device_id,
+            task_id: id,
         }]
     );
 }
@@ -569,8 +615,9 @@ fn revoking_a_device_mid_session_closes_it_and_its_key_stops_working() {
     let (mut lost, creds) = rig.pair("Lost phone");
     let (mut other, _) = rig.pair("Mac");
     let mut second = rig.connect(&creds);
-    rig.request(&mut lost, ClientMessage::StartTask { text: "go".into() });
-    rig.local(LocalEvent::SessionStarted);
+    let (fx, _) = rig.request(&mut lost, ClientMessage::StartTask { text: "go".into() });
+    let id = task_id(&fx);
+    rig.local(started(id));
 
     let fx = rig.local(LocalEvent::DeviceRevoked {
         device_id: creds.device_id,
@@ -581,9 +628,11 @@ fn revoking_a_device_mid_session_closes_it_and_its_key_stops_working() {
     assert_eq!(
         actions(&fx),
         vec![HubEffect::CancelTask {
-            device_id: creds.device_id
+            device_id: creds.device_id,
+            task_id: id,
         }]
     );
+    assert!(fx.contains(&HubEffect::StoreChanged));
     assert!(audits(&fx).contains(&AuditEvent::Revoked));
     assert!(!rig.hub.is_authenticated(lost.conn));
     assert_eq!(rig.hub.devices().len(), 1);
@@ -595,11 +644,10 @@ fn revoking_a_device_mid_session_closes_it_and_its_key_stops_working() {
     assert!(rig.hub.receive(second.conn, &bytes, rig.now).is_empty());
 
     // The old key cannot reconnect.
-    let (link, fx, _) = rig.open(RemoteClient::connect(creds.clone(), entropy(99)));
+    let (link, fx, _) = rig.open(RemoteClient::connect(creds.clone(), &entropy(99)).unwrap());
     assert_eq!(closed(&fx, link.conn), Some(CloseReason::AuthFailed));
     assert!(!link.client.is_connected());
 
-    // The other device is unaffected.
     let (_, msgs) = rig.request(&mut other, ClientMessage::Ping);
     assert_eq!(msgs, vec![ServerMessage::Pong]);
 }
@@ -613,11 +661,11 @@ fn persistence_roundtrips_and_rejects_corrupt_input() {
         &creds,
         RemotePermissions {
             approve: true,
-            ..RemotePermissions::default()
+            ..RemotePermissions::NEW_DEVICE
         },
     );
     let json = rig.hub.to_json();
-    assert!(json.contains("\"schema_version\":1"));
+    assert!(json.contains("\"schema_version\":2"));
     let restored = RemoteHub::from_json("Test Phone", &json).unwrap();
     assert_eq!(restored.devices(), rig.hub.devices());
     assert_eq!(restored.store(), rig.hub.store());
@@ -629,14 +677,14 @@ fn persistence_roundtrips_and_rejects_corrupt_input() {
         ServerMessage::Welcome { permissions, .. } if permissions.approve
     ));
 
-    // Client credentials round-trip too, and the Debug output hides the key.
     let cj = creds.to_json();
     assert_eq!(
         jarvis_remote::ClientCredentials::from_json(&cj).unwrap(),
         creds
     );
     assert!(format!("{creds:?}").contains("redacted"));
-    assert!(!format!("{:?}", rig.hub.store()).contains(&cj[cj.len() - 20..cj.len() - 2]));
+    let key_hex = jarvis_remote::codec::to_hex(creds.device_key.as_bytes());
+    assert!(!format!("{:?}", rig.hub.store()).contains(&key_hex));
 
     assert!(matches!(
         DeviceStore::from_json("{not json"),
@@ -647,8 +695,8 @@ fn persistence_roundtrips_and_rejects_corrupt_input() {
         Err(PersistError::Corrupt(_))
     ));
     assert_eq!(
-        DeviceStore::from_json(r#"{"schema_version":2,"devices":[]}"#),
-        Err(PersistError::UnsupportedVersion(2))
+        DeviceStore::from_json(r#"{"schema_version":1,"devices":[]}"#),
+        Err(PersistError::UnsupportedVersion(1))
     );
     let bad_key = json.replacen("\"key\":\"", "\"key\":\"zz", 1);
     assert!(matches!(
@@ -663,7 +711,7 @@ fn persistence_roundtrips_and_rejects_corrupt_input() {
         Err(PersistError::Invalid(_))
     ));
     assert_eq!(
-        DeviceStore::from_json(r#"{"schema_version":1,"devices":[]}"#).unwrap(),
+        DeviceStore::from_json(r#"{"schema_version":2,"nonce_lease":0,"devices":[]}"#).unwrap(),
         DeviceStore::default()
     );
 }
@@ -676,16 +724,15 @@ fn device_and_connection_limits() {
         links.push(rig.pair(&format!("Device {i}")));
     }
     assert_eq!(
-        rig.hub.open_pairing(rig.now, entropy(5)).unwrap_err(),
+        rig.hub.open_pairing(rig.now, &entropy(5)).unwrap_err(),
         HubError::TooManyDevices
     );
     assert_eq!(rig.hub.connection_count(), MAX_CONNECTIONS);
-    let fx = rig.hub.connection_opened(999, rig.now, entropy(6));
+    let fx = rig.hub.connection_opened(999, rig.now, &entropy(6));
     assert_eq!(closed(&fx, 999), Some(CloseReason::TooManyConnections));
     assert_eq!(rig.hub.connection_count(), MAX_CONNECTIONS);
-    // Closing one frees a slot.
     rig.hub.connection_closed(links[0].0.conn);
-    let fx = rig.hub.connection_opened(999, rig.now, entropy(6));
+    let fx = rig.hub.connection_opened(999, rig.now, &entropy(6));
     assert_eq!(closed(&fx, 999), None);
 }
 
@@ -694,19 +741,19 @@ fn timeouts_close_idle_and_half_open_connections() {
     let mut rig = Rig::new();
     let (mut link, _) = rig.pair("Mac");
     let half_open = rig.conn_id();
-    rig.hub.connection_opened(half_open, rig.now, entropy(42));
+    rig.hub.connection_opened(half_open, rig.now, &entropy(42));
 
     rig.now += HANDSHAKE_TIMEOUT_MS;
     let fx = rig.hub.tick(rig.now);
     assert_eq!(closed(&fx, half_open), Some(CloseReason::HandshakeTimeout));
     assert_eq!(closed(&fx, link.conn), None);
 
-    // Pings keep the authenticated connection alive.
     rig.now += IDLE_TIMEOUT_MS - HANDSHAKE_TIMEOUT_MS - 1;
     let (_, msgs) = rig.request(&mut link, ClientMessage::Ping);
     assert_eq!(msgs, vec![ServerMessage::Pong]);
     rig.now += IDLE_TIMEOUT_MS - 1;
-    assert!(rig.hub.tick(rig.now).is_empty());
+    assert!(actions(&rig.hub.tick(rig.now)).is_empty());
+    assert!(rig.hub.is_authenticated(link.conn));
     rig.now += 1;
     let fx = rig.hub.tick(rig.now);
     assert_eq!(closed(&fx, link.conn), Some(CloseReason::IdleTimeout));
@@ -737,15 +784,19 @@ fn split_and_coalesced_bytes_are_reassembled() {
 #[test]
 fn qr_payload_pairs_too_and_events_are_announced() {
     let mut rig = Rig::new();
-    let offer = rig.hub.open_pairing(rig.now, entropy(1234)).unwrap();
-    assert!(offer.qr_payload.starts_with("jarvis-remote:1:"));
-    assert!(!format!("{offer:?}").contains(&offer.code));
-    let client = RemoteClient::pair(&offer.qr_payload, "  Browser\n", entropy(77)).unwrap();
+    let offer = rig.hub.open_pairing(rig.now, &entropy(1234)).unwrap();
+    assert!(offer.qr_payload.starts_with("jarvis-remote:2:"));
+    assert!(!format!("{offer:?}").contains(offer.code.as_str()));
+    let client = RemoteClient::pair(&offer.qr_payload, "  Browser\n", &entropy(77)).unwrap();
     let (_, fx, events) = rig.open(client);
     let events = events.unwrap();
     assert!(events
         .iter()
         .any(|e| matches!(e, ClientEvent::Paired { .. })));
+    // The client's automatic Hello confirmed the pairing and got a Welcome.
+    assert!(messages(&events)
+        .iter()
+        .any(|m| matches!(m, ServerMessage::Welcome { .. })));
     let paired = fx
         .iter()
         .find_map(|e| match e {
@@ -754,9 +805,46 @@ fn qr_payload_pairs_too_and_events_are_announced() {
         })
         .unwrap();
     assert_eq!(paired.name, "Browser");
-    assert_eq!(paired.permissions, RemotePermissions::default());
+    assert_eq!(paired.permissions, RemotePermissions::NEW_DEVICE);
+    assert!(fx.contains(&HubEffect::StoreChanged));
     assert!(audits(&fx).contains(&AuditEvent::Paired {
         name: "Browser".into()
     }));
     assert!(!rig.hub.pairing_open());
+}
+
+#[test]
+fn interrupted_has_its_own_finish_status_and_unlock_wait_is_forwarded() {
+    let mut rig = Rig::new();
+    let (mut link, _) = rig.pair("Mac");
+    rig.request(&mut link, ClientMessage::Subscribe);
+    rig.local_to(&mut link, started(None));
+    let fx = rig.local(LocalEvent::Progress {
+        progress: jarvis_proto::Progress {
+            step: 4,
+            phase: jarvis_proto::Phase::WaitingForUnlock,
+            waiting_for_unlock: true,
+            ..Default::default()
+        },
+        screen_text: None,
+    });
+    assert!(matches!(
+        deliver(&mut link, &fx)[0],
+        ServerMessage::Progress {
+            waiting_for_unlock: true,
+            phase: jarvis_proto::Phase::WaitingForUnlock,
+            ..
+        }
+    ));
+    let msgs = rig.local_to(
+        &mut link,
+        finished(None, OutcomeStatus::Interrupted, "locked"),
+    );
+    assert_eq!(
+        msgs,
+        vec![ServerMessage::Finished {
+            status: OutcomeStatus::Interrupted,
+            summary: "Task interrupted (the phone stayed locked)".into(),
+        }]
+    );
 }

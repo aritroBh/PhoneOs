@@ -95,13 +95,13 @@ fn no_skill_or_no_confinement_allows_everything() {
 }
 
 #[test]
-fn acting_inside_a_skill_app_or_on_the_home_screen_is_allowed() {
+fn acting_inside_a_skill_app_is_allowed() {
     let s = skill(true);
     for app in [
         MESSAGES,
         "COM.APPLE.MOBILESMS",
+        " com.apple.MobileSMS ",
         SETTINGS_BUNDLE_ID,
-        SPRINGBOARD_BUNDLE_ID,
     ] {
         for a in in_app_actions() {
             assert_eq!(
@@ -111,6 +111,43 @@ fn acting_inside_a_skill_app_or_on_the_home_screen_is_allowed() {
             );
         }
     }
+}
+
+/// Review finding c1/c10: home-screen icons, Spotlight and Control Center launch any app
+/// without first-use approval, so no action kind may act on SpringBoard under confinement.
+#[test]
+fn every_acting_kind_is_refused_on_the_home_screen() {
+    let s = skill(true);
+    for app in [SPRINGBOARD_BUNDLE_ID, "COM.APPLE.SPRINGBOARD"] {
+        for a in in_app_actions() {
+            let v = check_confinement(Some(&s), &a, &on(app), None);
+            assert!(denied(&v).contains("home screen"), "{app} {a:?}: {v:?}");
+        }
+    }
+    // From the home screen only going home, waiting, finishing and opening a skill app
+    // remain.
+    let home = on(SPRINGBOARD_BUNDLE_ID);
+    for a in [
+        Action::PressHome,
+        Action::Wait { ms: 300 },
+        Action::OpenApp {
+            app: MESSAGES.into(),
+        },
+        Action::OpenApp {
+            app: SPRINGBOARD_BUNDLE_ID.into(),
+        },
+        Action::Done {
+            summary: "ok".into(),
+        },
+    ] {
+        assert_eq!(
+            check_confinement(Some(&s), &a, &home, None),
+            Verdict::Allow,
+            "{a:?}"
+        );
+    }
+    let v = check_confinement(Some(&s), &Action::OpenApp { app: SHOP.into() }, &home, None);
+    assert!(v.is_denied());
 }
 
 #[test]
@@ -188,19 +225,50 @@ fn tools_are_confined_by_the_app_they_act_in() {
         args: serde_json::json!({}),
     };
     let here = on(MESSAGES);
-    assert_eq!(
-        check_confinement(Some(&s), &call, &here, Some(&tool(Some(MESSAGES)))),
-        Verdict::Allow
-    );
-    assert_eq!(
-        check_confinement(Some(&s), &call, &here, Some(&tool(None))),
-        Verdict::Allow
-    );
+    for app in [MESSAGES, "COM.APPLE.MOBILESMS"] {
+        assert_eq!(
+            check_confinement(Some(&s), &call, &here, Some(&tool(Some(app)))),
+            Verdict::Allow
+        );
+    }
     let v = check_confinement(Some(&s), &call, &here, Some(&tool(Some(SHOP))));
     assert!(
         denied(&v).contains("tool send acts in com.example.shop"),
         "{v:?}"
     );
+    assert!(check_confinement(Some(&s), &call, &here, Some(&tool(Some("")))).is_denied());
+    // Unknown spec: fail closed.
+    assert!(check_confinement(Some(&s), &call, &here, None).is_denied());
+}
+
+/// Review finding c2/c8: a tool that declares no app (for example one that opens links)
+/// is refused unless the skill names it.
+#[test]
+fn app_less_tools_need_the_skill_allow_list() {
+    let call = Action::CallTool {
+        name: "send".into(),
+        args: serde_json::json!({"url": "https://example.com/pay?to=eve"}),
+    };
+    let here = on(MESSAGES);
+    let mut s = skill(true);
+    let v = check_confinement(Some(&s), &call, &here, Some(&tool(None)));
+    assert!(denied(&v).contains("not tied"), "{v:?}");
+    s.tools = vec!["other".into(), "Send".into()];
+    assert!(
+        check_confinement(Some(&s), &call, &here, Some(&tool(None))).is_denied(),
+        "names match exactly"
+    );
+    s.tools.push("send".into());
+    assert_eq!(
+        check_confinement(Some(&s), &call, &here, Some(&tool(None))),
+        Verdict::Allow
+    );
+    // The allow-list never lets a tool act in another app, and open_url stays refused.
+    assert!(check_confinement(Some(&s), &call, &here, Some(&tool(Some(SHOP)))).is_denied());
+    let url = Action::OpenUrl {
+        url: "https://example.com".into(),
+    };
+    assert!(check_confinement(Some(&s), &url, &here, None).is_denied());
 }
 
 #[test]
