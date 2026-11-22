@@ -43,7 +43,7 @@ struct RootView: View {
                 .tabItem { Label("Skills", systemImage: JarvisIcon.skills.rawValue) }
                 .tag(AppTab.skills)
             if !model.launch.playground {
-                WorkflowsView()
+                NavigationStack { WorkflowsView() }
                     .tabItem { Label("Workflows", systemImage: JarvisIcon.workflows.rawValue) }
                     .tag(AppTab.workflows)
             }
@@ -68,7 +68,16 @@ struct RootView: View {
                 .environmentObject(model)
                 .preferredColorScheme(.dark)
         }
-        .ownerPrompts(active: !model.showingRun && model.awayPhase == .off)
+        // A workflow run: the step chain, with the session inside.
+        .fullScreenCover(isPresented: Binding(
+            get: { model.showingWorkflowRun && !model.showingRun },
+            set: { presented in if !presented { model.dismissWorkflowRun() } }
+        )) {
+            WorkflowRunView()
+                .environmentObject(model)
+                .preferredColorScheme(.dark)
+        }
+        .ownerPrompts(active: !model.showingRun && !model.showingWorkflowRun && model.awayPhase == .off)
         // Away mode: the explanation the first time, then the black screen.
         .fullScreenCover(isPresented: Binding(
             get: { model.awayPhase != .off && !model.showingRun },
@@ -83,6 +92,7 @@ struct RootView: View {
         }
         .task {
             await model.refresh()
+            model.startSchedulerLoop()
             await model.checkConnections()
         }
     }
@@ -109,6 +119,8 @@ struct OwnerPrompts: ViewModifier {
                     ConfirmationSheet(prompt: prompt, request: request)
                 case .question(_, let text):
                     QuestionSheet(prompt: prompt, question: text)
+                case .yesNo(_, let text):
+                    YesNoSheet(prompt: prompt, question: text)
                 }
             }
             .environmentObject(model)

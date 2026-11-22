@@ -63,7 +63,8 @@ final class JarvisAppUITests: QATestCase {
 
         tab("Workflows", in: app).tap()
         require(app.staticTexts["workflows.title"], "the Workflows title", in: app)
-        require(app.descendants(matching: .any)["workflows.empty"].firstMatch, "the honest Workflows empty state", in: app)
+        require(app.descendants(matching: .any)["workflows.empty"].firstMatch, "the empty Workflows message", in: app)
+        XCTAssertTrue(app.buttons["workflows.new"].exists, "no New workflow button")
 
         tab("Apps", in: app).tap()
         require(app.staticTexts["apps.title"], "the Apps title", in: app)
@@ -83,7 +84,9 @@ final class JarvisAppUITests: QATestCase {
         XCTAssertTrue(app.buttons["control.away"].exists, "no Away mode row")
 
         app.buttons["control.remote"].tap()
-        require(app.descendants(matching: .any)["remote.empty"].firstMatch, "the honest Remote control empty state", in: app)
+        let remoteSwitch = app.switches["remote.enabled"]
+        require(remoteSwitch, "the Remote control switch", in: app)
+        XCTAssertEqual(remoteSwitch.value as? String, "0", "remote control must be off by default")
 
         tab("Ask", in: app).tap()
         require(app.staticTexts["ask.prompt"], "the Ask screen again", in: app)

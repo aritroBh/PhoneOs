@@ -29,11 +29,18 @@ Shell/
 │     │                          Transcript + RecordingModel, FormCaptureServer, DemoPhone
 │     ├─ Skills/                 SkillLibrary (+ SkillDraft, SkillRoute, SkillCandidate, SkillSeeds),
 │     │                          CoreErrorMessage
+│     ├─ Workflows/              WorkflowLibrary (+ AskRoute, LocalTime, WorkflowSeeds), WorkflowDraft
+│     │                          (TriggerDraft, StepDraft, WorkflowField), WorkflowRunner,
+│     │                          WorkflowScheduler
+│     ├─ Remote/                 RemoteControlService, RemotePorts (SecretStore, RandomSource,
+│     │                          RemoteTransport, Redacted), InMemoryRemoteTransport + InProcessRemote,
+│     │                          RemoteAuditLog
 │     └─ App/                    JarvisSettings (+ Codable mirrors), SettingsStore, TaskHistory,
 │                                MemorySnapshot, HumanPromptBroker, LiveRun, JarvisCoordinator,
-│                                ModelBackendFactory, ConnectionProbe, AwayMode, AppAccess
+│                                TaskCenter, ModelBackendFactory, ConnectionProbe, AwayMode, AppAccess
 ├─ App/                          Apple-only, outside Sources/ (never in the Linux build)
-│  ├─ Jarvis/                    SwiftUI app: Design/, Views/, Playground/, Intents/
+│  ├─ Jarvis/                    SwiftUI app: Design/, Views/, Playground/, Intents/, Platform/
+│  │                             (Keychain, SecRandomCopyBytes, NWListener, notifications)
 │  └─ JarvisUITests/             Runner/ (XCUITestPhoneRunner), Support/ (QA harness), tests
 ├─ Tests/JarvisKitTests/         swift-testing; drives the real Rust core
 ├─ Generated/                    C module + host static library      (gitignored)
@@ -135,10 +142,11 @@ of `Policy` or `SessionConfig`, so new core fields keep their defaults. `RunnerS
   `context(for:values:)`, `context(skillId:values:)`, `taskText(skillId:values:)`, and
   `learnedFlowID(forTask:memoryJSON:flowIDs:)` (which flow a finished task would replay, decided
   by the core: each flow is promoted into a scratch store and the task is matched against it).
-- **Errors**: the generated `JarvisError` is `internal`, so `CoreErrorMessage` reads the case
-  name and message with `Mirror`; `SkillLibraryError.invalidSkill(message)` carries the core's
-  words verbatim and `field` says which form field they are about (routing only: every rule
-  is the core's).
+- **Errors**: `CoreErrorMessage` matches the generated `JarvisError` (it is `public`; the
+  generator prints `public` and `enum JarvisError` on separate lines) and gives the case name
+  and the core's words; remote cases get fixed texts that echo no input.
+  `SkillLibraryError.invalidSkill(message)` carries the core's words verbatim and `field` says
+  which form field they are about (routing only: every rule is the core's).
 - **`SkillRoute`** from `route(text)`: `.plain` (no match), `.run(candidate, context)` (one
   exact, unambiguous, complete match), `.askArguments(candidate)` (required values missing),
   `.choose(candidates)` (the core's `needsOwnerChoice`). `JarvisCoordinator.run(task:settings:
@@ -155,6 +163,54 @@ of `Policy` or `SessionConfig`, so new core fields keep their defaults. `RunnerS
   `deniedApps`); app actions = registered `.shortcut` tools for the app; direct = registered
   `.native` tools for the app. With today's registry (`clock_now` only, no app) every app is
   screen-only.
+
+## TaskCenter, workflows, remote control (JarvisKit side, Linux-tested)
+
+- **`TaskCenter`** (`App/TaskCenter.swift`, main actor): the one entry every task takes —
+  Ask, Siri, Run now, a workflow step, a paired device — `start(text, skill:, origin:)` →
+  `JarvisCoordinator.run` with the owner's settings, the one `HumanPromptBroker` and the same
+  `OwnerAttention`, so nothing skips first use, a confirmation or the lock handling. One
+  session at a time; while a workflow holds the slot only its own steps start. Observers get
+  `sessionStarted / session(RunEvent) / sessionFinished / workflowStarted / workflowFinished`
+  in order on the main actor (the run view and remote control both listen). `TaskOrigin`
+  (`owner`, `remote(taskId, deviceId, name)`, `workflow(tag)`) tags history records.
+- **`WorkflowLibrary`** (`workflows.json`): the core's `JarvisWorkflows`, same file rules as
+  `SkillLibrary` (atomic, protected, damaged entries kept, a refused file set aside), sharing
+  the live `JarvisSkills` for warnings and runs (lock order: workflows, then skills).
+  `save(WorkflowDraft)`, `setEnabled`, `remove`, `recordRun`, `warnings(for:)`,
+  `forExternal(key:)`, `find(key)` (key, id, then name), `due(at:windowMinutes:)`,
+  `minutesUntilNextRun(of:at:)`, `catalog`, and `resolve(text) -> AskRoute` over
+  `resolveUtterance` (Ask no longer calls `matchTask` directly). `WorkflowField` routes a core
+  message (`name`, `trigger…`, `steps[i]…`) to its place on the form.
+- **`WorkflowRunner`** (main actor): drives one `JarvisWorkflowRun` — `startSession` →
+  `TaskCenter.run` (origin `.workflow`), `askOwner` → the broker's yes/no prompt
+  (`HumanPrompt.yesNo`), `notify` → `WorkflowNotifier`, `wait` → a cancellable sleep on the
+  monotonic clock, `finished` → `recordRun` plus an Activity entry (`TaskRecord.isWorkflow`,
+  `sessionIds`; sessions carry `workflowRunId`). A second start is refused with the running
+  workflow's name; `cancel()` stops the session, withdraws a question, ends a wait.
+  `Progress` (step states, activity, notes, outcome) drives the workflow run view.
+- **`WorkflowScheduler`**: each check asks the core what fired within the catch-up window (15
+  min) and starts it, at most once per scheduled minute (fired minutes kept in
+  `workflow-schedule.json`, so a relaunch catches up once); minutes that ended before the
+  workflow was saved are skipped; while something runs it waits for the next check. iOS does
+  not wake the app: schedules run while Jarvis is open (the UI says so); exact times come from
+  a Shortcuts automation calling `RunJarvisWorkflowIntent`.
+- **`RemoteControlService`** (main actor) over `JarvisRemoteHub`: every hub call goes through
+  one FIFO inbox and its effects run in order; `storeChanged` writes `toJson()` to the
+  `SecretStore` before the next effect (a failed write sends nothing more and closes every
+  connection); phone events caused by effects are queued behind them, so frames leave in the
+  hub's counter order. Remote `startTask`/`runSkill`/`runWorkflow` go through
+  `TaskCenter`/`WorkflowRunner` (skills re-checked with `SkillLibrary.context`); `cancelTask`
+  cancels only what its id names; `decide` applies only to the confirmation on screen (same
+  hub request id, category and broker request; approval also needs `remotelyApprovable`).
+  Progress is forwarded with the typed `Screen` from the last observation. `catalogChanged`
+  is sent when enabled skills/workflows change. Off by default; on loads the hub from the
+  secret store (a refused store is kept and reported), starts the transport and a 1 s tick;
+  a poisoned hub is rebuilt from the store. `RemotePairingOffer`/`Redacted` never print.
+  `RemoteAuditLog` is bounded (300) and on disk (no secrets). Ports: `SecretStore`
+  (`InMemorySecretStore`), `RandomSource` (`GeneratorRandomSource` for tests only),
+  `RemoteTransport` (`InMemoryRemoteTransport`; `InProcessRemote` drives the real
+  `JarvisRemoteClient` over it).
 
 ## SessionDriver
 
@@ -207,14 +263,27 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   bound and this code was never compiled before CI. For a device, fill in `DEVELOPMENT_TEAM`
   (marked in `project.yml`); a free Apple ID works.
 - The app: tabs **Ask · Skills · Workflows · Apps · Control** over JarvisKit (`AppModel` →
-  `JarvisCoordinator`). Ask routes each request through `SkillLibrary.route` (chooser sheet
+  `JarvisCoordinator`). Ask routes each request through `WorkflowLibrary.resolve` (chooser sheet
   with "Just do what I said", or a values sheet; the run starts after the sheet is gone), and
   has History (Activity) and Away mode buttons. Skills: search, kind filter, load-issue
   banner, detail (phrases, guidance, guardrails, on/off, Run now, Delete), editor for Written
   skills with the core's messages inline. Activity (from Ask and Control) offers "Save as
-  skill" for finished tasks with a learned flow. Apps: ways in + trust. Control: Remote
-  control, Activity, Away mode rows, then the rules (identifiers `rules.*` kept). Workflows and
-  Remote control are honest "needs the next core update" screens. In playground mode the
+  skill" for finished tasks with a learned flow, and lists a workflow run with its sessions
+  under it. Apps: ways in + trust. Control: Remote control, Activity, Away mode rows, then the
+  rules (identifiers `rules.*` kept). Workflows: list (trigger, steps, on/off, next run,
+  load-issue banner, schedule note), detail as a node chain, editor (trigger kinds, ordered
+  steps with add/remove/reorder, on-failure, the core's messages inline, skill warnings), Run
+  now with the workflow run view (step states, the session inside, Stop, outcome). Ask runs a
+  workflow by its phrase (`resolveUtterance`); the chooser offers workflows too. Remote
+  control: master switch, status, Pair a device (code, QR from `CIQRCodeGenerator`, countdown,
+  Cancel; the code is read from the model each second and gone when the offer ends), devices
+  with per-device permissions, the core's never-remote list, rename, remove, lockout, audit
+  log. App Intents: `AskJarvisIntent`, `RunJarvisWorkflowIntent` (`openAppWhenRun = false`,
+  waits up to 25 s for the outcome). Adapters in `Platform/`: `KeychainSecretStore`
+  (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, not synchronizable),
+  `SecureRandomSource` (`SecRandomCopyBytes`), `NetworkRemoteTransport` (`NWListener`, TCP,
+  Bonjour `_jarvis-remote._tcp`, local addresses only, no cellular; Info.plist
+  `NSLocalNetworkUsageDescription` + `NSBonjourServices`), `UserNotificationWorkflowNotifier`. In playground mode the
   Playground tab replaces Workflows (a sixth tab would go behind "More"); Workflows is then a
   row in Control. Also: the run view (what Jarvis sees, step timeline, Stop, "Using skill"),
   confirmation and question sheets (`HumanPromptBroker`), Away mode (explanation, then a black
@@ -224,7 +293,11 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   `-jarvis-playground` (Playground fixture tab + demo backend: `DemoPhone` and a scripted
   model, separate data folder), `-jarvis-reset` (fresh settings, memory, history, skills),
   `-jarvis-seed-damaged-skills` / `-jarvis-seed-ambiguous-skills` (write `SkillSeeds.damaged`
-  / `.ambiguous` as the skills file, for the banner and chooser tests).
+  / `.ambiguous` as the skills file, for the banner and chooser tests),
+  `-jarvis-seed-scheduled-workflow` (saves `WorkflowSeeds.scheduled`),
+  `-jarvis-seed-remote-device` (playground: remote control on, "Test Mac" paired in-process).
+  In playground mode remote control uses the in-memory transport and secret store: UI tests
+  never touch the network or the Keychain.
 - The model backend is chosen in one place: `ModelBackendKind` / `ModelBackendFactory`.
 - `XCUITestPhoneRunner` (UI-test target) is a `PhoneRunner` over public XCUITest API: it copies
   `XCUIElementSnapshot` into `RawElement`, and `UiTreeBuilder` (JarvisKit, Linux-tested) makes
@@ -233,14 +306,22 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   fixtures; Tier B drives Settings, SpringBoard and Safari (form served by
   `FormCaptureServer` on the shared loopback); `LockScreenProbeTests` gathers evidence about
   the lock screen and `LockedPhoneAgentTests` locks mid-task. The XCUITest runner reads the
-  lock from Darwin notify `com.apple.springboard.lockstate` (looked up with `dlsym`,
-  availability in the simulator [unverified]) and from SpringBoard showing the lock screen
+  lock from Darwin notify `com.apple.springboard.lockstate` (looked up with `dlsym`;
+  confirmed working on the iOS 26.5 simulator in run 6: it flips at the lock, while the
+  "front app" reading lags it by about 0.3 s) and from SpringBoard showing the lock screen
   (`LockScreenSignature`, from the run-16 probe trees). `LockSignals` (JarvisKit, tested)
   combines them: commands are refused when either says locked; `lockState()` (unlock polls,
   lock watch) and observations say unlocked as soon as an app or the home screen is in front,
   so a stale notify state cannot hold a run in its unlock wait. Every change of the readings
   goes into the notes and `lockSignalHistory` (every reading with
-  `noteLockSignalsEveryObservation`, on in the lock test).
+  `noteLockSignalsEveryObservation`, on in the lock test). After every command the runner
+  reads the notify state again (cheap, no snapshot): a command that "succeeded" while the
+  phone locked under it is reported as `RunnerFailure.deviceLocked`
+  (`RunnerResult.checkedAfterCommand`), so the core does not trust it and looks again after
+  the unlock; live runs wrap `LoopCtrlRunner` in `LockCheckingRunner` for the same check over
+  `device_info`. `ScriptedModel` decides from the prompt's "Steps so far" whether a tap/type
+  took effect (`ok`, or its `value=` precondition no longer holds) and otherwise retries it,
+  at most `Options.maxRetries` times.
 - Time limits in the UI tests: the harness sets `maxLockedWaitMs` 20 s (3 s in the lock
   probe), unlock polls 0.5 s, lock watch 1 s, every driver deadline ≤ 30 s and a run budget of
   150 s (under the CI per-test limit); playground mode in the app does the same
@@ -305,10 +386,11 @@ xcframework as a SwiftPM binary target. Clang should find its module map in the
 
 ## Notes for the core
 
-- In the generated bindings, `JarvisError` is `internal`, not `public`. Swift callers can
-  only catch it as `any Error`. This is why `SessionDriver.init` documents "throws when the
-  memory is rejected" without naming a type, and why `CoreErrorMessage` reads errors with
-  `Mirror` (case name + `message`). A `public` error type would let it go.
+- `JarvisError` is `public` (an earlier note here said `internal`: the generator prints
+  `public` on its own line); `CoreErrorMessage` now matches its cases.
+- `JarvisWorkflowRun` reads skills from the live `JarvisSkills`, but `JarvisWorkflows.due` and
+  `nextScheduled` take local time only, so "fired minutes" are the shell's to remember; a
+  `due` that returned the scheduled minute would save a second call per workflow.
 - There is no FFI for `intent_key`; `SkillLibrary.learnedFlowID` gets the same answer by
   promoting flows into a scratch store and matching. An `intentKey(text)` export would be
   simpler.

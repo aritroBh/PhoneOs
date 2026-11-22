@@ -189,7 +189,7 @@ private struct ResultCard: View {
 }
 
 /// "What Jarvis sees": the element list of the latest prompt, the chosen one highlighted.
-private struct SightCard: View {
+struct SightCard: View {
     var live: LiveRun
 
     var body: some View {
@@ -270,7 +270,7 @@ private struct SightCard: View {
 }
 
 /// Executed steps: check / spinner / failed mark, with the source in mono.
-private struct StepTimeline: View {
+struct StepTimeline: View {
     var steps: [LiveRun.Step]
 
     var body: some View {

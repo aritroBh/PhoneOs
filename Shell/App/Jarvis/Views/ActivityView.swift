@@ -12,7 +12,8 @@ struct ActivityView: View {
     private var days: [(title: String, records: [TaskRecord])] {
         let calendar = Calendar.current
         var groups: [(String, [TaskRecord])] = []
-        for record in model.history {
+        // A workflow's sessions are listed under its entry, not on their own.
+        for record in model.history where !record.isWorkflowSession {
             let title: String
             if calendar.isDateInToday(record.finishedAt) {
                 title = "Today"
@@ -28,6 +29,11 @@ struct ActivityView: View {
             }
         }
         return groups.map { (title: $0.0, records: $0.1) }
+    }
+
+    /// The sessions a workflow entry groups, in order.
+    private func sessions(of record: TaskRecord) -> [TaskRecord] {
+        (record.sessionIds ?? []).compactMap { id in model.history.first { $0.id == id } }
     }
 
     var body: some View {
@@ -71,9 +77,14 @@ struct ActivityView: View {
                         VStack(spacing: 0) {
                             ForEach(Array(day.records.enumerated()), id: \.element.id) { index, record in
                                 if index > 0 { Divider().overlay(Theme.bezel).padding(.leading, 60) }
-                                ActivityRow(record: record, canPromote: model.promotableFlows[record.task] != nil) {
+                                ActivityRow(record: record, canPromote: record.isWorkflow != true && model.promotableFlows[record.task] != nil) {
                                     skillName = record.task
                                     promoting = record
+                                }
+                                if record.isWorkflow == true {
+                                    ForEach(sessions(of: record)) { session in
+                                        ActivityRow(record: session, canPromote: false, nested: true) {}
+                                    }
                                 }
                             }
                         }
@@ -135,10 +146,19 @@ private struct FlowChips: View {
 private struct ActivityRow: View {
     var record: TaskRecord
     var canPromote: Bool
+    var nested = false
     var promote: () -> Void
 
     private var meta: String {
         var parts: [String] = []
+        if record.isWorkflow == true {
+            parts.append("Workflow")
+            parts.append(record.status.title)
+            parts.append("\(record.steps) \(record.steps == 1 ? "step" : "steps") ran")
+            if let device = record.requestedBy { parts.append("from \(device)") }
+            return parts.joined(separator: " · ")
+        }
+        if let device = record.requestedBy { parts.append("from \(device)") }
         if let skill = record.skillName { parts.append("skill \(skill)") }
         if let app = record.apps.first { parts.append(app) }
         parts.append(record.status.title)
@@ -186,7 +206,8 @@ private struct ActivityRow: View {
                 .font(Theme.mono)
                 .foregroundStyle(Theme.textTertiary)
         }
-        .padding(.horizontal, Theme.gutter)
+        .padding(.leading, nested ? Theme.gutter + 28 : Theme.gutter)
+        .padding(.trailing, Theme.gutter)
         .padding(.vertical, 12)
         .frame(minHeight: 64)
         .accessibilityElement(children: .combine)

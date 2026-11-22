@@ -8,18 +8,24 @@ import JarvisKit
 struct LaunchOptions {
     /// `-jarvis-playground`: show the Playground fixtures (QA target screens) and run tasks
     /// on the in-app demo backend (DemoPhone + scripted model), with its own data folder.
+    /// Remote control then uses the in-memory transport and secret store (no network, no
+    /// Keychain).
     var playground: Bool
-    /// `-jarvis-reset`: start from empty settings, memory, history and skills.
+    /// `-jarvis-reset`: start from empty settings, memory, history, skills and workflows.
     var reset: Bool
     /// `-jarvis-demo-locked` (with `-jarvis-playground`): the demo phone starts locked and
     /// unlocks itself after a few polls, to show "Unlock to continue".
     var demoLocked: Bool
-    /// `-jarvis-seed-damaged-skills`: write a skills file with an entry the core cannot load
-    /// (the load-issue banner test).
+    /// `-jarvis-seed-damaged-skills`: write a skills file with an entry the core cannot load.
     var seedDamagedSkills: Bool
-    /// `-jarvis-seed-ambiguous-skills`: write two skills sharing the phrase "network off"
-    /// (the chooser test).
+    /// `-jarvis-seed-ambiguous-skills`: two skills sharing the phrase "network off".
     var seedAmbiguousSkills: Bool
+    /// `-jarvis-seed-scheduled-workflow`: save `WorkflowSeeds.scheduled` (the list shows
+    /// "Next run").
+    var seedScheduledWorkflow: Bool
+    /// `-jarvis-seed-remote-device` (with `-jarvis-playground`): turn remote control on and
+    /// pair an in-process device ("Test Mac") over the in-memory transport.
+    var seedRemoteDevice: Bool
 
     static let current = LaunchOptions(arguments: ProcessInfo.processInfo.arguments)
 
@@ -29,31 +35,34 @@ struct LaunchOptions {
         demoLocked = arguments.contains("-jarvis-demo-locked")
         seedDamagedSkills = arguments.contains("-jarvis-seed-damaged-skills")
         seedAmbiguousSkills = arguments.contains("-jarvis-seed-ambiguous-skills")
+        seedScheduledWorkflow = arguments.contains("-jarvis-seed-scheduled-workflow")
+        seedRemoteDevice = arguments.contains("-jarvis-seed-remote-device")
     }
 }
 
-/// What Ask needs from the owner before a skill can run.
+/// What Ask needs from the owner before something can run.
 enum SkillChoice: Identifiable {
-    /// The matcher could not pick: offer `candidates` and "Just do what I said".
-    case choose(task: String, candidates: [SkillCandidate])
+    /// The core could not pick: offer `workflows`, `candidates` and "Just do what I said".
+    case choose(task: String, candidates: [SkillCandidate], workflows: [Workflow])
     /// Values for `params`. With a `candidate` it came from the owner's words (`task`);
     /// without, it is "Run now" from the skill's page.
     case arguments(task: String?, candidate: SkillCandidate?, skill: Skill, params: [SkillParam])
 
     var id: String {
         switch self {
-        case .choose(let task, let candidates): "choose:\(task):\(candidates.map(\.id).joined(separator: ","))"
+        case .choose(let task, let candidates, let workflows):
+            "choose:\(task):\(candidates.map(\.id).joined(separator: ",")):\(workflows.map(\.id).joined(separator: ","))"
         case .arguments(let task, _, let skill, _): "arguments:\(skill.id):\(task ?? "")"
         }
     }
 }
 
-/// The app's state, on the main actor. A thin layer over JarvisKit: settings, the
-/// coordinator, the live run, the pending owner prompt, history, skills, Away mode and
-/// connection status.
+/// The app's state, on the main actor. A thin layer over JarvisKit: settings, the one task
+/// entry (`TaskCenter`), the live run, the pending owner prompt, history, skills,
+/// workflows, remote control, Away mode and connection status.
 @MainActor
 final class AppModel: ObservableObject {
-    /// One model for the scene and the App Intent.
+    /// One model for the scene and the App Intents.
     static let shared = AppModel(launch: .current)
 
     @Published var settings: JarvisSettings {
@@ -73,9 +82,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastTask: String?
     /// The skill context of the last run ("Run again" reuses it).
     @Published private(set) var lastSkill: SkillContext?
-    /// Whether the run view is up (a run is going or its result is shown).
+    /// Whether the run view is up (a task is going or its result is shown).
     @Published var showingRun = false
-    /// A run is going (the composer and suggestions are disabled).
+    /// Something runs (a task or a workflow): the composer and suggestions are disabled.
     @Published private(set) var isRunning = false
 
     // Skills
@@ -86,6 +95,21 @@ final class AppModel: ObservableObject {
     /// Finished tasks whose learned flow can become a skill: task text → flow id.
     @Published private(set) var promotableFlows: [String: String] = [:]
 
+    // Workflows
+    @Published private(set) var workflowList: [Workflow] = []
+    @Published private(set) var workflowIssues: [String] = []
+    /// The workflow run (current or last), for the workflow run view.
+    @Published private(set) var workflowProgress: WorkflowRunner.Progress?
+    @Published var showingWorkflowRun = false
+
+    // Remote control
+    @Published private(set) var remoteStatus: RemoteControlService.Status = .off
+    @Published private(set) var remoteDevices: [DeviceInfo] = []
+    @Published private(set) var remotePairing: RemotePairingOffer?
+    @Published private(set) var remoteError: String?
+    @Published private(set) var remoteAudit: [RemoteAuditRecord] = []
+    @Published private(set) var remoteConnected: Set<String> = []
+
     // Apps
     @Published private(set) var toolSpecs: [ToolSpec] = []
 
@@ -95,30 +119,73 @@ final class AppModel: ObservableObject {
     let launch: LaunchOptions
     let coordinator: JarvisCoordinator
     let skills: SkillLibrary
+    let workflows: WorkflowLibrary
+    private let paths: JarvisPaths
     private let settingsStore: SettingsStore
     private let historyStore: TaskHistoryStore
     private let coreDeniedApps: [String]
-    private var runTask: Task<TaskRunOutcome, Never>?
+    /// The in-memory transport of playground mode (the seeded device connects through it).
+    private let memoryTransport = InMemoryRemoteTransport()
+    private var seededRemote: InProcessRemote?
+    private var schedulerLoop: Task<Void, Never>?
+
     private lazy var broker: HumanPromptBroker = HumanPromptBroker { [weak self] _ in
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.prompt = self.broker.pending
         }
     }
+    /// The one entry every task takes (Ask, Siri, Run now, workflow steps, paired devices).
+    private(set) lazy var center = TaskCenter(coordinator: coordinator, broker: broker, attention: UnlockNotifier(),
+                                              settings: { [weak self] in self?.settings ?? JarvisSettings() })
+    private(set) lazy var workflowRunner: WorkflowRunner = {
+        let runner = WorkflowRunner(library: workflows, center: center,
+                                    notifier: launch.playground ? SilentWorkflowNotifier() as any WorkflowNotifier : UserNotificationWorkflowNotifier())
+        runner.onChange = { [weak self] in self?.workflowProgress = self?.workflowRunner.progress }
+        return runner
+    }()
+    private lazy var scheduler = WorkflowScheduler(library: workflows, stateURL: paths.workflowSchedule)
+    private(set) lazy var remote: RemoteControlService = {
+        let playground = launch.playground
+        let transport = memoryTransport
+        let service = RemoteControlService(
+            secrets: playground ? InMemorySecretStore() as any SecretStore : KeychainSecretStore(),
+            random: SecureRandomSource(),
+            transport: { () -> any RemoteTransport in
+                if playground { return transport }
+                return NetworkRemoteTransport()
+            },
+            phoneName: UIDevice.current.name,
+            center: center, runner: workflowRunner, desk: broker,
+            audit: RemoteAuditLog(fileURL: paths.remoteAudit)
+        )
+        service.onChange = { [weak self] in self?.mirrorRemote() }
+        return service
+    }()
     private lazy var away = AwayModeController(
         display: UIKitAwayDisplay(), acknowledged: settings.awayAcknowledged, proximity: settings.awayProximity
     )
     private var terminateObserver: NSObjectProtocol?
-    /// The run chosen in the skill sheet, started when the sheet has gone.
-    private var pendingRun: (task: String, skill: SkillContext?)?
+    /// The start chosen in the Ask sheet, made when the sheet has gone.
+    private var pendingStart: PendingStart?
+
+    private enum PendingStart {
+        case task(String, SkillContext?)
+        case workflow(String)
+    }
 
     init(launch: LaunchOptions) {
         self.launch = launch
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         let directory = base.appendingPathComponent(launch.playground ? "Jarvis-playground" : "Jarvis", isDirectory: true)
-        if launch.reset { try? FileManager.default.removeItem(at: directory) }
+        if launch.reset {
+            try? FileManager.default.removeItem(at: directory)
+            // The paired devices live in the Keychain, not in the folder.
+            if !launch.playground { try? KeychainSecretStore().delete(RemoteControlService.secretKey) }
+        }
         let paths = JarvisPaths(directory: directory)
+        self.paths = paths
         Self.seedSkills(launch, at: paths.skills)
         self.settingsStore = SettingsStore(fileURL: paths.settings)
         self.historyStore = TaskHistoryStore(fileURL: paths.history)
@@ -135,16 +202,27 @@ final class AppModel: ObservableObject {
             demoLockedPolls: launch.playground && launch.demoLocked ? 12 : 0,
             maxLockedWaitOverrideMs: launch.playground ? 20_000 : nil
         )
-        self.skills = SkillLibrary(fileURL: paths.skills)
+        let skills = SkillLibrary(fileURL: paths.skills)
+        self.skills = skills
+        let workflowLibrary = WorkflowLibrary(fileURL: paths.workflows, skills: skills)
+        if launch.seedScheduledWorkflow { _ = try? workflowLibrary.save(WorkflowSeeds.scheduled) }
+        self.workflows = workflowLibrary
         self.coreDeniedApps = (try? defaultPolicy().deniedApps) ?? []
         self.history = historyStore.load()
+        center.observe { [weak self] event in self?.taskEvent(event) }
         refreshSkills()
+        refreshWorkflows()
         // The brightness must come back even when the app is closed from the switcher.
         terminateObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.appWillTerminate() }
         }
+        if launch.playground && launch.seedRemoteDevice {
+            settings.remoteControlEnabled = true
+        }
+        if settings.remoteControlEnabled { remote.setEnabled(true) }
+        if launch.playground && launch.seedRemoteDevice { seedRemoteDevice() }
     }
 
     private static func seedSkills(_ launch: LaunchOptions, at url: URL) {
@@ -160,28 +238,31 @@ final class AppModel: ObservableObject {
 
     // MARK: - Asking
 
-    /// The owner's request from Ask: the core's matcher decides whether a skill runs it,
-    /// whether to ask which one, or whether values are missing (ignored while a run is going).
+    /// The owner's request from Ask: `resolveUtterance` decides whether a workflow or a
+    /// skill runs it, whether to ask which one, or whether values are missing (ignored while
+    /// something runs).
     func ask(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, runTask == nil else { return }
+        guard !trimmed.isEmpty, !center.isBusy else { return }
         setupError = nil
         do {
-            switch try skills.route(trimmed) {
+            switch try workflows.resolve(trimmed) {
             case .plain:
-                _ = startRun(trimmed, skill: nil)
-            case .run(_, let context):
-                _ = startRun(trimmed, skill: context)
+                startRun(trimmed, skill: nil)
+            case .runWorkflow(let workflow):
+                startWorkflow(workflow.id)
+            case .runSkill(_, let context):
+                startRun(trimmed, skill: context)
             case .askArguments(let candidate):
                 skillChoice = .arguments(task: trimmed, candidate: candidate, skill: candidate.skill,
                                          params: candidate.missingParams)
-            case .choose(let candidates):
-                skillChoice = .choose(task: trimmed, candidates: candidates)
+            case .choose(let workflows, let candidates):
+                skillChoice = .choose(task: trimmed, candidates: candidates, workflows: workflows)
             }
         } catch {
             // The matcher failing must not stop the owner's task: run it as words.
-            _ = startRun(trimmed, skill: nil)
-            setupError = "Skills could not be matched (\(error)); the task ran without a skill."
+            startRun(trimmed, skill: nil)
+            setupError = "Skills and workflows could not be matched (\(error)); the task ran as you said it."
         }
     }
 
@@ -189,7 +270,7 @@ final class AppModel: ObservableObject {
     func choose(_ candidate: SkillCandidate, for task: String) {
         if candidate.missingParams.isEmpty {
             do {
-                finishChoice(task, skill: try skills.context(for: candidate))
+                finishChoice(.task(task, try skills.context(for: candidate)))
             } catch {
                 skillChoice = nil
                 setupError = String(describing: error)
@@ -199,14 +280,19 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// "Just do what I said": the words as a plain task.
-    func runWithoutSkill(_ task: String) {
-        finishChoice(task, skill: nil)
+    /// The owner picked a workflow in the chooser.
+    func choose(workflow: Workflow) {
+        finishChoice(.workflow(workflow.id))
     }
 
-    /// Closes the skill sheet; the run starts in `skillSheetDismissed`.
-    private func finishChoice(_ task: String, skill: SkillContext?) {
-        pendingRun = (task, skill)
+    /// "Just do what I said": the words as a plain task.
+    func runWithoutSkill(_ task: String) {
+        finishChoice(.task(task, nil))
+    }
+
+    /// Closes the sheet; the start happens in `skillSheetDismissed`.
+    private func finishChoice(_ start: PendingStart) {
+        pendingStart = start
         if skillChoice == nil {
             skillSheetDismissed()
         } else {
@@ -214,15 +300,17 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// The skill sheet is gone (chosen, or swiped away: then nothing runs).
+    /// The sheet is gone (chosen, or swiped away: then nothing runs).
     func skillSheetDismissed() {
-        guard let run = pendingRun else { return }
-        pendingRun = nil
-        _ = startRun(run.task, skill: run.skill)
+        guard let start = pendingStart else { return }
+        pendingStart = nil
+        switch start {
+        case .task(let text, let skill): startRun(text, skill: skill)
+        case .workflow(let id): startWorkflow(id)
+        }
     }
 
-    /// Values entered for a skill. Returns the core's reason when it refuses them (the
-    /// sheet stays up and shows it).
+    /// Values entered for a skill. Returns the core's reason when it refuses them.
     func submitArguments(_ choice: SkillChoice, values: [String: String]) -> String? {
         guard case .arguments(let task, let candidate, let skill, _) = choice else { return nil }
         do {
@@ -235,7 +323,7 @@ final class AppModel: ObservableObject {
                 context = try skills.context(skillId: skill.id, values: values)
                 text = try skills.taskText(skillId: skill.id, values: values)
             }
-            finishChoice(text, skill: context)
+            finishChoice(.task(text, context))
             return nil
         } catch {
             return String(describing: error)
@@ -243,9 +331,8 @@ final class AppModel: ObservableObject {
     }
 
     /// "Run now" on a skill's page: asks for its parameters first when it has any.
-    /// Returns the core's reason when it refuses (for example a disabled skill).
     func runNow(_ skill: Skill) -> String? {
-        guard runTask == nil else { return "Jarvis is already running a task." }
+        guard !center.isBusy else { return TaskCenter.Refusal.busy.description }
         if !skill.params.isEmpty {
             skillChoice = .arguments(task: nil, candidate: nil, skill: skill, params: skill.params)
             return nil
@@ -253,96 +340,102 @@ final class AppModel: ObservableObject {
         return submitArguments(.arguments(task: nil, candidate: nil, skill: skill, params: []), values: [:])
     }
 
-    /// Starts `text` as a plain task (suggestions use `ask`).
     func start(_ text: String) {
         ask(text)
     }
 
     /// "Run again" on the result: the same words under the same skill.
     func runAgain(_ text: String, skill: SkillContext?) {
-        _ = startRun(text, skill: skill)
+        startRun(text, skill: skill)
     }
 
-    /// Runs `text` and returns the summary (App Intent). A skill is used only when the
-    /// matcher found exactly one with everything filled; nothing can be asked from Siri.
+    /// Runs `text` and returns the summary (Ask Jarvis intent). A workflow or a skill is
+    /// used only when the core picks exactly one with everything filled; nothing can be
+    /// asked from Siri.
     func runAndWait(_ text: String) async -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var skill: SkillContext?
-        if case .run(_, let context)? = try? skills.route(trimmed) { skill = context }
-        guard let task = startRun(trimmed, skill: skill) else { return "Jarvis is already running a task." }
-        switch await task.value {
-        case .finished(_, let result): return result.outcome.summary
-        case .notStarted(let why): return "Jarvis could not start: \(why)"
+        switch try? workflows.resolve(trimmed) {
+        case .runWorkflow(let workflow)?:
+            return await runWorkflowAndWait(workflow.id)
+        case .runSkill(_, let context)?:
+            skill = context
+        default:
+            break
         }
+        guard let task = startRun(trimmed, skill: skill) else {
+            return setupError ?? TaskCenter.Refusal.busy.description
+        }
+        return (await task.value).outcome.summary
     }
 
+    /// Starts a task through `TaskCenter`; the run view follows its events.
+    @discardableResult
     private func startRun(_ text: String, skill: SkillContext?) -> Task<TaskRunOutcome, Never>? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, runTask == nil else { return nil }
         setupError = nil
-        // A run (for example from Siri) brings up the run view, which Away mode would
-        // cover: leave Away mode so the screen is put back and the run can be watched.
-        if awayPhase != .off { exitAway() }
-        lastTask = trimmed
-        lastSkill = skill
-        live = LiveRun(task: trimmed, maxSteps: Int(settings.clampedMaxSteps), skillName: skill?.name)
-        showingRun = true
-
-        // Events arrive on the driver's executor; a stream keeps their order on the way to
-        // the main actor (separate Tasks per event would not).
-        let (events, sink) = AsyncStream.makeStream(of: RunEvent.self)
-        let consumer = Task { @MainActor [weak self] in
-            for await event in events {
-                // A lock abandoned the pending question or confirmation: take the sheet
-                // away (the core asks again after the unlock).
-                if case .update(.lockDetected) = event { self?.broker.cancelAll() }
-                self?.live.apply(event)
-            }
+        switch center.start(text, skill: skill, origin: .owner) {
+        case .success(let task):
+            return task
+        case .failure(let refusal):
+            if refusal != .emptyTask { setupError = refusal.description }
+            return nil
         }
-        let coordinator = coordinator
-        let settings = settings
-        let broker = broker
-        let task = Task { () -> TaskRunOutcome in
-            let outcome = await coordinator.run(task: trimmed, settings: settings, skill: skill, human: broker,
-                                                attention: UnlockNotifier()) { _ = sink.yield($0) }
-            sink.finish()
-            await consumer.value
-            return outcome
-        }
-        runTask = task
-        isRunning = true
-        Task { @MainActor [weak self] in
-            let outcome = await task.value
-            guard let self else { return }
-            self.runTask = nil
-            self.isRunning = false
-            self.broker.cancelAll()
-            switch outcome {
-            case .notStarted(let why):
-                self.setupError = why
-                self.live.apply(.update(.finished(RunResult(
-                    outcome: Outcome(status: .failed, summary: why, steps: 0, durationMs: 0),
-                    endReason: .sessionFinished, memory: .unavailable(why), effectCount: 0, modelCalls: 0
-                ))))
-            case .finished:
-                if let skill { try? self.skills.recordRun(id: skill.id) }
-            }
-            await self.refresh()
-        }
-        return task
     }
 
-    /// Stops the run (the driver delivers Cancel to the core at once).
+    /// Stops what runs: the workflow (with its session) or the task.
     func stop() {
-        runTask?.cancel()
-        broker.cancelAll()
+        if workflowRunner.isRunning {
+            workflowRunner.cancel()
+        } else {
+            center.cancelSession()
+        }
     }
 
     /// Leaves the finished run view.
     func dismissRun() {
-        guard runTask == nil else { return }
+        guard center.session == nil else { return }
         showingRun = false
         live = LiveRun()
+    }
+
+    // MARK: - What runs (every task, whoever asked)
+
+    private func taskEvent(_ event: TaskCenter.Event) {
+        switch event {
+        case .sessionStarted(let session):
+            // A run (from Siri, a schedule or a paired device) brings up the run view, which
+            // Away mode would cover: leave Away mode so the screen is put back.
+            if awayPhase != .off { exitAway() }
+            lastTask = session.text
+            lastSkill = session.skill
+            live = LiveRun(task: session.text, maxSteps: Int(settings.clampedMaxSteps), skillName: session.skill?.name)
+            if session.origin.workflow == nil { showingRun = true }
+        case .session(_, let runEvent):
+            // A lock abandoned the pending question or confirmation: take the sheet away
+            // (the core asks again after the unlock).
+            if case .update(.lockDetected) = runEvent { broker.cancelAll() }
+            live.apply(runEvent)
+        case .sessionFinished(let session, let outcome):
+            switch outcome {
+            case .notStarted(let why):
+                setupError = why
+                live.apply(.update(.finished(RunResult(
+                    outcome: Outcome(status: .failed, summary: why, steps: 0, durationMs: 0),
+                    endReason: .sessionFinished, memory: .unavailable(why), effectCount: 0, modelCalls: 0
+                ))))
+            case .finished:
+                if let skill = session.skill { try? skills.recordRun(id: skill.id) }
+            }
+            Task { await refresh() }
+        case .workflowStarted:
+            if awayPhase != .off { exitAway() }
+            live = LiveRun()
+            showingWorkflowRun = true
+        case .workflowFinished:
+            refreshWorkflows()
+            Task { await refresh() }
+        }
+        isRunning = center.isBusy
     }
 
     // MARK: - Owner answers
@@ -350,13 +443,15 @@ final class AppModel: ObservableObject {
     func approve(_ prompt: HumanPrompt) { broker.approve(prompt.id) }
     func decline(_ prompt: HumanPrompt) { broker.decline(prompt.id) }
     func reply(_ prompt: HumanPrompt, _ text: String) { broker.reply(prompt.id, text) }
+    func answer(_ prompt: HumanPrompt, yes: Bool) { broker.answerYesNo(prompt.id, yes: yes) }
 
     /// The sheet was swiped away: a confirmation is declined; a question stays unanswered
-    /// (the driver stops the run rather than invent an answer).
+    /// (the driver stops the run rather than invent an answer); a yes/no is a no.
     func dismissPrompt(_ prompt: HumanPrompt) {
         switch prompt {
         case .confirm: broker.decline(prompt.id)
         case .question: if broker.pending?.id == prompt.id { broker.cancelAll() }
+        case .yesNo: broker.answerYesNo(prompt.id, yes: false)
         }
     }
 
@@ -365,6 +460,7 @@ final class AppModel: ObservableObject {
     func refreshSkills() {
         skillList = skills.skills
         skillIssues = skills.loadIssues
+        remote.refreshCatalog()
     }
 
     /// Saves a draft; the core's refusal comes back for the form to show.
@@ -399,8 +495,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Makes the learned flow of `record`'s task a Learned skill named `name`. Returns the
-    /// new skill, or the core's reason.
+    /// Makes the learned flow of `record`'s task a Learned skill named `name`.
     func promote(_ record: TaskRecord, name: String) async -> Result<Skill, SkillLibraryError> {
         guard let flowID = promotableFlows[record.task] else {
             return .failure(.invalidSkill("no learned flow for \"\(record.task)\""))
@@ -423,7 +518,7 @@ final class AppModel: ObservableObject {
         let promoted = Set(skillList.flatMap(\.flowKeys))
         let open = memory.flows.filter { !promoted.contains($0.intentKey) }.map(\.id)
         var result: [String: String] = [:]
-        for record in history where record.status == .success && result[record.task] == nil {
+        for record in history where record.status == .success && record.isWorkflow != true && result[record.task] == nil {
             if let flowID = SkillLibrary.learnedFlowID(forTask: record.task, memoryJSON: memoryJSON, flowIDs: open) {
                 result[record.task] = flowID
             }
@@ -431,15 +526,214 @@ final class AppModel: ObservableObject {
         promotableFlows = result
     }
 
+    // MARK: - Workflows
+
+    func refreshWorkflows() {
+        workflowList = workflows.workflows
+        workflowIssues = workflows.loadIssues
+        remote.refreshCatalog()
+    }
+
+    func saveWorkflow(_ draft: WorkflowDraft) -> Result<Workflow, WorkflowLibraryError> {
+        defer { refreshWorkflows() }
+        do {
+            return .success(try workflows.save(draft))
+        } catch let error as WorkflowLibraryError {
+            return .failure(error)
+        } catch {
+            return .failure(.core(String(describing: error)))
+        }
+    }
+
+    func setWorkflowEnabled(_ enabled: Bool, id: String) -> String? {
+        defer { refreshWorkflows() }
+        do {
+            try workflows.setEnabled(enabled, id: id)
+            return nil
+        } catch {
+            return String(describing: error)
+        }
+    }
+
+    func deleteWorkflow(id: String) -> String? {
+        defer { refreshWorkflows() }
+        do {
+            _ = try workflows.remove(id: id)
+            return nil
+        } catch {
+            return String(describing: error)
+        }
+    }
+
+    func workflowWarnings(_ draft: WorkflowDraft) -> [String] { workflows.warnings(for: draft) }
+    func workflowWarnings(_ workflow: Workflow) -> [String] { workflows.warnings(for: workflow) }
+
+    /// "Run now", a phrase on Ask or a schedule: starts workflow `id`. Returns why it did
+    /// not start.
+    @discardableResult
+    func startWorkflow(_ id: String) -> String? {
+        setupError = nil
+        switch workflowRunner.start(id: id) {
+        case .success:
+            return nil
+        case .failure(let refusal):
+            setupError = refusal.description
+            return refusal.description
+        }
+    }
+
+    /// Runs the workflow a Shortcuts automation names (external key, id or name) and returns
+    /// its outcome in one line. Waits at most `limit`: a longer workflow keeps running and
+    /// the answer says so.
+    func runExternal(_ key: String, limit: Duration = .seconds(25)) async -> String {
+        guard let workflow = workflows.find(key) else {
+            return "There is no workflow \u{201C}\(key)\u{201D} (or it is off)."
+        }
+        return await runWorkflowAndWait(workflow.id, limit: limit)
+    }
+
+    private func runWorkflowAndWait(_ id: String, limit: Duration = .seconds(25)) async -> String {
+        switch workflowRunner.start(id: id) {
+        case .failure(let refusal):
+            return refusal.description
+        case .success(let task):
+            let name = workflows.workflow(id: id)?.name ?? id
+            let outcome = await withTaskGroup(of: WorkflowOutcome?.self) { group -> WorkflowOutcome? in
+                group.addTask { await task.value }
+                group.addTask {
+                    try? await Task.sleep(for: limit)
+                    return nil
+                }
+                let first = await group.next() ?? nil
+                group.cancelAll()
+                return first
+            }
+            guard let outcome else { return "\(name) is still running in Jarvis." }
+            return "\(name): \(outcome.summary)"
+        }
+    }
+
+    /// Fires due schedules while Jarvis runs (every 20 s, and at once when it comes back).
+    func startSchedulerLoop() {
+        guard schedulerLoop == nil else { return }
+        schedulerLoop = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                self?.checkSchedules()
+                try? await Task.sleep(for: .seconds(20))
+            }
+        }
+    }
+
+    func checkSchedules() {
+        scheduler.tick(at: LocalTime(date: Date()), runner: workflowRunner)
+    }
+
+    /// Minutes until `workflow` next runs on its schedule.
+    func minutesUntilNextRun(_ workflow: Workflow, now: Date = Date()) -> UInt32? {
+        WorkflowLibrary.minutesUntilNextRun(of: workflow, at: LocalTime(date: now))
+    }
+
+    func dismissWorkflowRun() {
+        guard !workflowRunner.isRunning else { return }
+        showingWorkflowRun = false
+        live = LiveRun()
+    }
+
+    // MARK: - Remote control
+
+    private func mirrorRemote() {
+        remoteStatus = remote.status
+        remoteDevices = remote.devices
+        remotePairing = remote.pairing
+        remoteError = remote.lastError
+        remoteAudit = remote.audit.entries
+        remoteConnected = Set(remote.connected.values)
+    }
+
+    func setRemoteEnabled(_ on: Bool) {
+        settings.remoteControlEnabled = on
+        remote.setEnabled(on)
+        mirrorRemote()
+    }
+
+    /// Opens a pairing offer; returns why it could not.
+    func openPairing() -> String? {
+        defer { mirrorRemote() }
+        do {
+            try remote.openPairing()
+            return nil
+        } catch {
+            return String(describing: error)
+        }
+    }
+
+    func cancelPairing() {
+        remote.cancelPairing()
+        mirrorRemote()
+    }
+
+    /// The offer's time left in whole seconds (0 when expired). Pure: the service's
+    /// one-second tick drops an expired offer, and the sheet then shows that it ended.
+    func pairingSecondsLeft() -> Int {
+        guard let offer = remotePairing else { return 0 }
+        let now = remote.nowMs()
+        return offer.expiresAtMs > now ? Int((offer.expiresAtMs - now + 999) / 1_000) : 0
+    }
+
+    var pairingLockedForSeconds: Int {
+        let until = remote.pairingLockedUntilMs
+        let now = remote.nowMs()
+        return until > now ? Int((until - now + 999) / 1_000) : 0
+    }
+
+    func renameDevice(_ id: String, to name: String) -> String? {
+        remoteAction { try remote.rename(deviceId: id, to: name) }
+    }
+
+    func setPermissions(_ id: String, _ permissions: RemotePermissions) -> String? {
+        remoteAction { try remote.setPermissions(deviceId: id, permissions) }
+    }
+
+    func removeDevice(_ id: String) -> String? {
+        remoteAction { try remote.revoke(deviceId: id) }
+    }
+
+    private func remoteAction(_ action: () throws -> Void) -> String? {
+        defer { mirrorRemote() }
+        do {
+            try action()
+            return nil
+        } catch {
+            return String(describing: error)
+        }
+    }
+
+    /// Categories no device can ever approve (from the core).
+    var neverRemoteCategories: [RiskCategory] { (try? neverRemoteApprove()) ?? [] }
+
+    /// QA: pairs "Test Mac" in-process over the in-memory transport (playground only).
+    private func seedRemoteDevice() {
+        Task { @MainActor [weak self] in
+            guard let self, self.remote.isOn else { return }
+            guard (self.remote.devices).isEmpty else { return }
+            do {
+                let offer = try self.remote.openPairing()
+                self.seededRemote = try await InProcessRemote.pair(code: offer.code, name: "Test Mac", over: self.memoryTransport,
+                                                                  random: SecureRandomSource())
+            } catch {
+                self.remoteError = "The QA device could not pair: \(error)"
+            }
+            self.mirrorRemote()
+        }
+    }
+
     // MARK: - Apps
 
-    /// The Apps list: ways in from the known apps and the registered tools.
     var appAccess: [AppAccess] {
         AppAccessCatalog.make(settings: settings, knownApps: coordinator.knownApps, tools: toolSpecs,
                               coreDeniedApps: coreDeniedApps)
     }
 
-    /// Apps a skill can be limited to (the form's app list).
     var skillAppChoices: [AppAccess] { appAccess.filter(\.screen) }
 
     func name(ofApp bundleId: String) -> String {
@@ -448,7 +742,6 @@ final class AppModel: ObservableObject {
 
     // MARK: - Away mode
 
-    /// From Control or Ask: the explanation the first time, else the black screen.
     func requestAway() {
         awayPhase = away.request()
     }
@@ -474,9 +767,15 @@ final class AppModel: ObservableObject {
         settings.awayProximity = on
     }
 
-    /// Scene phase changes (RootView): the screen is put back whenever Jarvis is not active.
+    /// Scene phase changes (RootView): the screen is put back whenever Jarvis is not active;
+    /// schedules are checked when it comes back.
     func sceneBecameActive(_ active: Bool) {
-        if active { away.appReturnedToForeground() } else { away.appLeftForeground() }
+        if active {
+            away.appReturnedToForeground()
+            checkSchedules()
+        } else {
+            away.appLeftForeground()
+        }
         awayPhase = away.phase
     }
 
@@ -492,7 +791,9 @@ final class AppModel: ObservableObject {
         memory = await coordinator.memorySnapshot()
         toolSpecs = await coordinator.toolSpecs()
         refreshSkills()
+        refreshWorkflows()
         refreshPromotable(memoryJSON: await coordinator.memoryJSON())
+        mirrorRemote()
     }
 
     func checkConnections() async {
@@ -508,7 +809,6 @@ final class AppModel: ObservableObject {
         modelStatus = await model
     }
 
-    /// Sets the trust level of an app; an app without a rule yet gets one.
     func setTrust(_ level: TrustLevelOption, for bundleIdPrefix: String, name: String? = nil) {
         if let i = settings.appTrust.firstIndex(where: { $0.bundleIdPrefix == bundleIdPrefix }) {
             settings.appTrust[i].level = level

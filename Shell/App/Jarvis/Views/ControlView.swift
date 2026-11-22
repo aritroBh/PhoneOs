@@ -15,6 +15,12 @@ struct ControlView: View {
         ("Placing a call", .runner, [.call], "call"),
     ]
 
+    private var remoteDetail: String {
+        guard model.settings.remoteControlEnabled else { return "Off" }
+        let n = model.remoteDevices.count
+        return n == 0 ? "On, no devices" : "On · \(n) \(n == 1 ? "device" : "devices")"
+    }
+
     /// Categories the owner may forbid outright.
     private let denyRows: [RiskCategoryOption] = [.payment, .purchase, .publicPost, .accountChange]
 
@@ -29,7 +35,7 @@ struct ControlView: View {
                         NavigationLink {
                             RemoteControlView()
                         } label: {
-                            NavRow(icon: .remote, title: "Remote control", detail: "Not set up")
+                            NavRow(icon: .remote, title: "Remote control", detail: remoteDetail)
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("control.remote")
@@ -45,7 +51,7 @@ struct ControlView: View {
                             // The Playground tab takes the Workflows slot in QA builds.
                             RowDivider()
                             NavigationLink {
-                                WorkflowsView()
+                                WorkflowsView(pushed: true)
                             } label: {
                                 NavRow(icon: .workflows, title: "Workflows", detail: nil)
                             }

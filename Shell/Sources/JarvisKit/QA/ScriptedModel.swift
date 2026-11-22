@@ -171,7 +171,13 @@ public struct DismissRule: Sendable, Equatable, CustomStringConvertible {
 /// 2. When a `DismissRule` matches (its element and its whole context are listed, it has
 ///    uses left, and the current step's target is not listed), tap it; at most
 ///    `options.maxDismissals` dismissals per run.
-/// 3. When the last step failed (`failed: …`) and its target is still listed, retry it once.
+/// 3. A tap/type step counts as done only from the prompt: the next request's last
+///    "Steps so far" line must say `ok` (or `done, but …` while the step's stated
+///    precondition, such as `value="0"`, no longer holds). When it says the action failed,
+///    was not done, was dropped or its result is unknown (`interrupted: …` after a lock),
+///    the step is retried, unless its precondition no longer holds on screen (it took
+///    effect) or its target is gone. At most `options.maxRetries` retries per step, then the
+///    script fails with the reason.
 /// 4. Run the current step. A missing target waits (`wait` actions) up to
 ///    `options.patience` times, then fails with a reason that lists what was on screen.
 ///
@@ -189,19 +195,23 @@ public final class ScriptedModel: ModelProvider {
         public var waitMs: Int
         /// The reply after a declined confirmation.
         public var onDeclined: ScriptStep
+        /// Retries of one tap/type step whose result the prompt reports as not done.
+        public var maxRetries: Int
 
         public init(
             dismiss: [DismissRule] = [],
             maxDismissals: Int = 3,
             patience: Int = 4,
             waitMs: Int = 700,
-            onDeclined: ScriptStep = .fail(reason: "the owner declined")
+            onDeclined: ScriptStep = .fail(reason: "the owner declined"),
+            maxRetries: Int = 3
         ) {
             self.dismiss = dismiss
             self.maxDismissals = maxDismissals
             self.patience = patience
             self.waitMs = waitMs
             self.onDeclined = onDeclined
+            self.maxRetries = max(0, maxRetries)
         }
     }
 
@@ -223,9 +233,10 @@ public final class ScriptedModel: ModelProvider {
         var scrolls = 0
         var dismissals = 0
         var ruleUses: [Int: Int] = [:]
-        var retried: Set<Int> = []
-        /// Step index and query of the last tap/type reply.
-        var lastAction: (step: Int, query: ElementQuery)?
+        /// Retries per step index.
+        var retries: [Int: Int] = [:]
+        /// The tap/type reply whose result the next prompt reports.
+        var pending: (step: Int, query: ElementQuery)?
         var decisions: [Decision] = []
     }
 
@@ -267,13 +278,30 @@ public final class ScriptedModel: ModelProvider {
 
     private func decide(_ screen: PromptScreen, _ s: inout State) -> (Int?, String, String) {
         let last = screen.lastResult ?? ""
+        let pending = s.pending
+        s.pending = nil
         if last.contains("owner declined") || last.contains("does not want Jarvis to act") {
             let (reply, _) = render(options.onDeclined, on: screen, thought: "the owner said no")
             return (nil, reply, "last step was declined (\(last)); replying \(options.onDeclined)")
         }
 
-        let current = s.cursor < steps.count ? steps[s.cursor] : nil
-        let currentTargetListed = current.map(Self.queries)?.contains { $0.find(in: screen) != nil } ?? false
+        var current = s.cursor < steps.count ? steps[s.cursor] : nil
+        var currentTargetListed = current.map(Self.queries)?.contains { $0.find(in: screen) != nil } ?? false
+
+        // Did the last tap/type take effect? Only the prompt says.
+        if let pending, Self.needsRetry(result: last, query: pending.query, on: screen, nextTargetListed: currentTargetListed) {
+            let label = "step \(pending.step + 1)/\(steps.count) (\(steps[pending.step]))"
+            let done = s.retries[pending.step, default: 0]
+            guard done < options.maxRetries else {
+                return (pending.step, failJSON("\(label): still not done after \(done) retries (last result: \(last))", screen),
+                        "\(label): giving up after \(done) retries")
+            }
+            s.retries[pending.step] = done + 1
+            s.cursor = pending.step
+            s.waits = 0
+            current = steps[pending.step]
+            currentTargetListed = true
+        }
         if !currentTargetListed, s.dismissals < options.maxDismissals {
             for (i, rule) in options.dismiss.enumerated() where s.ruleUses[i, default: 0] < rule.maxUses {
                 if let e = rule.match(screen) {
@@ -283,13 +311,6 @@ public final class ScriptedModel: ModelProvider {
                             "dismiss rule \(rule) matched \(e.line)")
                 }
             }
-        }
-
-        if last.hasPrefix("failed"), let previous = s.lastAction, !s.retried.contains(previous.step),
-           previous.query.find(in: screen) != nil, !currentTargetListed {
-            s.retried.insert(previous.step)
-            s.cursor = previous.step
-            s.waits = 0
         }
 
         while s.cursor < steps.count {
@@ -317,7 +338,7 @@ public final class ScriptedModel: ModelProvider {
                 }
                 s.cursor += 1
                 s.waits = 0
-                s.lastAction = (index, query)
+                s.pending = (index, query)
                 var object: [String: JSONValue] = ["element": .number(Double(element.index))]
                 if case .type(_, let text, let submit) = step {
                     object["action"] = "type"
@@ -375,6 +396,25 @@ public final class ScriptedModel: ModelProvider {
         var reason = "\(problem). Screen: \(screen.app ?? "?") — \(listed.isEmpty ? "(no elements)" : listed)"
         if let last = screen.history.last { reason += ". Last step: \(last)" }
         return Self.json(["action": "fail", "reason": .string(reason)], thought: "cannot continue")
+    }
+
+    /// Whether a tap/type whose history result is `result` must run again on `screen`.
+    ///
+    /// - `ok`: done.
+    /// - `done, but …` (ran, the lock came before the check): done unless the stated
+    ///   precondition (`value=`) still holds.
+    /// - anything else (`failed: …`, `not done: …`, `interrupted: …`, `not answered: …`):
+    ///   retried while the target is still there and its precondition, if any, still holds.
+    ///   A plain failure without a precondition is not retried once the next step's target
+    ///   is listed (the screen moved on).
+    static func needsRetry(result: String, query: ElementQuery, on screen: PromptScreen, nextTargetListed: Bool) -> Bool {
+        let r = result.trimmingCharacters(in: .whitespaces).lowercased()
+        if r.isEmpty || r == "ok" { return false }
+        let targetThere = query.find(in: screen) != nil
+        if r.hasPrefix("done") { return query.value != nil && targetThere }
+        if query.value != nil { return targetThere }
+        if r.hasPrefix("failed") && nextTargetListed { return false }
+        return targetThere
     }
 
     /// The elements whose presence means the step can proceed.

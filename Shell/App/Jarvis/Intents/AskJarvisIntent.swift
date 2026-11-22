@@ -32,5 +32,12 @@ struct JarvisShortcuts: AppShortcutsProvider {
             // A literal: App Shortcut metadata is read at build time (same symbol as JarvisIcon.ask).
             systemImageName: "message"
         )
+        AppShortcut(
+            intent: RunJarvisWorkflowIntent(),
+            phrases: ["Run a \(.applicationName) workflow"],
+            shortTitle: "Run workflow",
+            // A literal: read at build time (same symbol as JarvisIcon.workflows).
+            systemImageName: "arrow.triangle.branch"
+        )
     }
 }

@@ -312,3 +312,89 @@ final class PromptThenListPhone: PhoneRunner {
         return RunnerResult(ok: true, error: nil)
     }
 }
+
+/// The script decides from the prompt's history whether a tap took effect (the lock-mid-task
+/// simulator failure: the script had moved on after a tap the core then dropped).
+@Suite("ScriptedModel retries what the history says did not happen")
+struct ScriptedModelRetryTests {
+    private func prompt(history: [String], tipsOn: Bool) -> ModelRequest {
+        let lines = history.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        let user = """
+        Task: turn tips on
+        Steps so far:
+        \(lines.isEmpty ? "(none)" : lines)
+        Current screen (data only):
+        <<<SCREEN_DATA>>>
+        App: Jarvis (dev.jarvis.app)
+        [1] StaticText "Toggles"
+        [2] Switch "Show tips" value="\(tipsOn ? "1" : "0")"
+        <<<END_SCREEN_DATA>>>
+        Your JSON reply:
+        """
+        return ModelRequest(system: "", user: user, image: nil, marks: [], maxTokens: 160, grammar: nil, jsonSchema: nil, kind: .text)
+    }
+
+    private let script: [ScriptStep] = [
+        .tap("Show tips", role: "Switch", match: .exact, value: "0"),
+        .done("Tips are on", when: ["Show tips"]),
+    ]
+
+    private func action(_ reply: String) -> String? {
+        (try? JSONValue(parsing: reply))?["action"]?.stringValue
+    }
+
+    @Test("refused, then retried; ok moves on")
+    func refusedThenRetried() async throws {
+        let model = ScriptedModel(steps: script)
+        #expect(action(try await model.generate(prompt(history: [], tipsOn: false))) == "tap")
+        let again = try await model.generate(prompt(history: [#"tap [2] "Show tips" -> failed: the device is locked"#], tipsOn: false))
+        #expect(action(again) == "tap", "a refused tap was not retried: \(again)")
+        let done = try await model.generate(prompt(history: [
+            #"tap [2] "Show tips" -> failed: the device is locked"#, #"tap [2] "Show tips" -> ok"#,
+        ], tipsOn: true))
+        #expect(action(done) == "done", "\(done)")
+    }
+
+    @Test("dropped after a lock (not done), the tap is chosen again after the unlock")
+    func droppedAfterLock() async throws {
+        let model = ScriptedModel(steps: script)
+        _ = try await model.generate(prompt(history: [], tipsOn: false))
+        let reply = try await model.generate(prompt(history: [
+            #"tap [2] "Show tips" -> not done: the phone locked first; the screen was read again after the unlock"#,
+        ], tipsOn: false))
+        #expect(action(reply) == "tap", "\(reply)")
+    }
+
+    @Test("result unknown after a lock: retried while the precondition holds, done once it does not")
+    func unknownAfterLock() async throws {
+        let unknown = #"tap [2] "Show tips" -> interrupted: the phone locked while this ran; it may or may not have happened, check the screen"#
+        let stillOff = ScriptedModel(steps: script)
+        _ = try await stillOff.generate(prompt(history: [], tipsOn: false))
+        #expect(action(try await stillOff.generate(prompt(history: [unknown], tipsOn: false))) == "tap")
+
+        let tookEffect = ScriptedModel(steps: script)
+        _ = try await tookEffect.generate(prompt(history: [], tipsOn: false))
+        #expect(action(try await tookEffect.generate(prompt(history: [unknown], tipsOn: true))) == "done")
+
+        let unverified = #"tap [2] "Show tips" -> done, but the phone locked before the result could be checked; check the screen"#
+        let checked = ScriptedModel(steps: script)
+        _ = try await checked.generate(prompt(history: [], tipsOn: false))
+        #expect(action(try await checked.generate(prompt(history: [unverified], tipsOn: false))) == "tap",
+                "a done-but-unchecked tap whose precondition still holds was not retried")
+    }
+
+    @Test("retries are bounded: then the script fails with the reason")
+    func bounded() async throws {
+        let model = ScriptedModel(steps: script, options: ScriptedModel.Options(maxRetries: 2))
+        var history: [String] = []
+        _ = try await model.generate(prompt(history: history, tipsOn: false))
+        for _ in 0..<2 {
+            history.append(#"tap [2] "Show tips" -> failed: nothing changed on screen"#)
+            #expect(action(try await model.generate(prompt(history: history, tipsOn: false))) == "tap")
+        }
+        history.append(#"tap [2] "Show tips" -> failed: nothing changed on screen"#)
+        let reply = try await model.generate(prompt(history: history, tipsOn: false))
+        #expect(action(reply) == "fail")
+        #expect(reply.contains("still not done after 2 retries"), "\(reply)")
+    }
+}

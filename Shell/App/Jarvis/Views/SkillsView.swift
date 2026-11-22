@@ -181,23 +181,25 @@ private struct EditingDraft: Identifiable {
 /// What the core reported when it loaded the skills file. Damaged entries are kept.
 struct LoadIssuesBanner: View {
     var issues: [String]
+    /// What was loaded ("skills", "workflows"); also the identifier prefix.
+    var what = "skills"
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.gapSmall) {
             HStack(spacing: Theme.gapSmall) {
                 Image.decorative(.warning, size: Theme.iconStandard)
                     .foregroundStyle(Theme.warning)
-                Text(issues.count == 1 ? "1 problem loading skills" : "\(issues.count) problems loading skills")
+                Text(issues.count == 1 ? "1 problem loading \(what)" : "\(issues.count) problems loading \(what)")
                     .font(Theme.rowTitle)
                     .foregroundStyle(Theme.textPrimary)
-                    .accessibilityIdentifier("skills.issues.title")
+                    .accessibilityIdentifier("\(what).issues.title")
             }
             ForEach(Array(issues.enumerated()), id: \.offset) { index, issue in
                 Text(issue)
                     .font(Theme.monoSmall)
                     .foregroundStyle(Theme.textSoft)
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("skills.issue.\(index)")
+                    .accessibilityIdentifier("\(what).issue.\(index)")
             }
             Text("Entries that could not be loaded are kept unchanged in the file; nothing was deleted.")
                 .font(Theme.meta)
@@ -208,7 +210,7 @@ struct LoadIssuesBanner: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .card(fill: Theme.warningFill)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("skills.issues")
+        .accessibilityIdentifier("\(what).issues")
     }
 }
 
@@ -758,7 +760,7 @@ struct SkillEditorView: View {
     }
 }
 
-private struct EditorSection<Content: View>: View {
+struct EditorSection<Content: View>: View {
     var title: String
     @ViewBuilder var content: Content
 
@@ -770,7 +772,7 @@ private struct EditorSection<Content: View>: View {
     }
 }
 
-private struct EditorField: View {
+struct EditorField: View {
     var placeholder: String
     @Binding var text: String
     var identifier: String

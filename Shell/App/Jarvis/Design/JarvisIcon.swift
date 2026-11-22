@@ -52,6 +52,15 @@ enum JarvisIcon: String, CaseIterable {
     case guardrail = "hand.raised"
     case proximity = "iphone.radiowaves.left.and.right"
     case warningOutline = "exclamationmark.triangle"
+    case notify = "bell"
+    case wait = "hourglass"
+    case askOwner = "questionmark.circle"
+    case condition = "questionmark.diamond"
+    case shortcut = "square.stack.3d.up"
+    case qrCode = "qrcode"
+    case moveUp = "chevron.up"
+    case remove = "minus.circle"
+    case log = "list.bullet"
 
     /// The symbol as an image (scale it with `.font(.system(size:))`).
     var image: Image { Image(systemName: rawValue) }

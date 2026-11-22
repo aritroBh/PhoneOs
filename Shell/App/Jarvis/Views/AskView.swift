@@ -193,8 +193,8 @@ struct SkillChoiceSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.gutter) {
             switch choice {
-            case .choose(let task, let candidates):
-                chooser(task: task, candidates: candidates)
+            case .choose(let task, let candidates, let workflows):
+                chooser(task: task, candidates: candidates, workflows: workflows)
             case .arguments(let task, _, let skill, let params):
                 arguments(task: task, skill: skill, params: params)
             }
@@ -209,15 +209,41 @@ struct SkillChoiceSheet: View {
     }
 
     @ViewBuilder
-    private func chooser(task: String, candidates: [SkillCandidate]) -> some View {
-        Chip(text: "Which skill?", icon: .skills, foreground: Theme.textSoft, fill: Theme.raisedHigh)
-        Text("“\(task)” fits more than one skill.")
+    private func chooser(task: String, candidates: [SkillCandidate], workflows: [Workflow]) -> some View {
+        Chip(text: workflows.isEmpty ? "Which skill?" : "Which one?", icon: .skills, foreground: Theme.textSoft, fill: Theme.raisedHigh)
+        Text(workflows.isEmpty && candidates.count > 1 ? "“\(task)” fits more than one skill." : "“\(task)” could mean more than one thing.")
             .font(Theme.question)
             .foregroundStyle(Theme.textPrimary)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("skill.choice.title")
         ScrollView {
             VStack(spacing: Theme.gapSmall) {
+                ForEach(workflows, id: \.id) { workflow in
+                    Button {
+                        model.choose(workflow: workflow)
+                    } label: {
+                        HStack(spacing: Theme.gap) {
+                            Image.decorative(.workflows, size: Theme.iconProminent)
+                                .foregroundStyle(Theme.textSoft)
+                                .frame(width: Theme.rowTile, height: Theme.rowTile)
+                                .modifier(Bezeled(fill: Theme.raisedHigh, radius: Theme.radiusElement + 2))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(workflow.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                                Text("Workflow · \(workflow.steps.count) \(workflow.steps.count == 1 ? "step" : "steps")")
+                                    .font(Theme.meta)
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer(minLength: 8)
+                            Image.decorative(.chevronRight, size: Theme.iconCompact).foregroundStyle(Theme.textTertiary)
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 60)
+                        .card()
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("skill.choice.workflow.\(workflow.id)")
+                }
                 ForEach(candidates) { candidate in
                     Button {
                         model.choose(candidate, for: task)

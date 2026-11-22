@@ -126,6 +126,18 @@ final class XCUITestPhoneRunner: PhoneRunner {
         return await act(command)
     }
 
+    /// After a command: the notify state alone (cheap, and it flips about 0.3 s before the
+    /// front app does). A command that "succeeded" while the phone locked under it is
+    /// reported as locked (`RunnerResult.checkedAfterCommand`), so the core re-observes
+    /// after the unlock instead of trusting it.
+    private func lockedAfterCommand() -> DeviceLockState {
+        switch notifyLockState() {
+        case true?: .locked
+        case false?: .unlocked
+        case nil: .unknown
+        }
+    }
+
     // MARK: - Observation (main actor)
 
     private func takeSettle() -> Bool {
@@ -314,7 +326,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
 
     private func act(_ command: RunnerCommand) -> RunnerResult {
         settlePending = true
-        let result = execute(command)
+        let result = execute(command).checkedAfterCommand(command, lockedAfter: lockedAfterCommand())
         onCommand?(command, result)
         return result
     }

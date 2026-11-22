@@ -113,3 +113,37 @@ struct QuestionSheet: View {
         .presentationCornerRadius(Theme.radiusSheet)
     }
 }
+
+/// A workflow's "Ask you" step: the question, No / Yes.
+struct YesNoSheet: View {
+    @EnvironmentObject private var model: AppModel
+    var prompt: HumanPrompt
+    var question: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.gutter) {
+            Chip(text: "Workflow asks", icon: .workflows, foreground: Theme.warning, fill: Theme.warningFill)
+            Text(question)
+                .font(Theme.question)
+                .foregroundStyle(Theme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("yesno.text")
+            Spacer(minLength: 0)
+            HStack(spacing: Theme.gap) {
+                Button("No") { model.answer(prompt, yes: false) }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("yesno.no")
+                Button("Yes") { model.answer(prompt, yes: true) }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("yesno.yes")
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 28)
+        .padding(.bottom, 12)
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Theme.sheet)
+        .presentationCornerRadius(Theme.radiusSheet)
+    }
+}

@@ -225,7 +225,9 @@ public final class JarvisCoordinator: Sendable {
             do {
                 baseModel = try ModelBackendFactory.make(settings: settings, screenshots: screenshots)
                 let runnerURL = try ModelBackendFactory.validURL(settings.runnerBaseURL)
-                runner = LoopCtrlRunner(configuration: LoopCtrlRunner.Configuration(baseURL: runnerURL))
+                // LoopCtrl can say whether the screen is locked (`device_info`): check it after
+                // every command, so a tap that landed on the lock screen is not trusted.
+                runner = LockCheckingRunner(LoopCtrlRunner(configuration: LoopCtrlRunner.Configuration(baseURL: runnerURL)))
             } catch {
                 return .notStarted(String(describing: error))
             }

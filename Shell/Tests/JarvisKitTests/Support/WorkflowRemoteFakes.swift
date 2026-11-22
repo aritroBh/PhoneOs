@@ -257,7 +257,12 @@ final class RemoteHarness {
         if !service.isOn { service.setEnabled(true) }
         try await eventually("the listener") { transport.isListening }
         let offer = try service.openPairing()
-        return try await InProcessRemote.pair(code: offer.code, name: name, over: transport)
+        let before = service.devices.count
+        let remote = try await InProcessRemote.pair(code: offer.code, name: name, over: transport)
+        // The hub keeps a device once its first authenticated frame arrives, which can be
+        // just after the client says it is connected.
+        try await eventually("the device to be kept") { service.devices.count > before }
+        return remote
     }
 
     func cleanUp() {

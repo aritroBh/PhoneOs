@@ -197,6 +197,9 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     public var awayAcknowledged: Bool
     /// Away mode blanks the display with the proximity sensor (off by default).
     public var awayProximity: Bool
+    /// Remote control's listener runs (off by default; the paired devices live in the
+    /// Keychain, not here).
+    public var remoteControlEnabled: Bool
 
     public static let defaultAppTrust: [AppTrust] = [
         AppTrust(bundleIdPrefix: "com.apple.Preferences", name: "Settings", level: .guarded),
@@ -221,7 +224,8 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         runnerBaseURL: String = "http://127.0.0.1:8300",
         appTrust: [AppTrust] = JarvisSettings.defaultAppTrust,
         awayAcknowledged: Bool = false,
-        awayProximity: Bool = false
+        awayProximity: Bool = false,
+        remoteControlEnabled: Bool = false
     ) {
         self.policyMode = policyMode
         self.firstUseApproval = firstUseApproval
@@ -238,6 +242,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         self.appTrust = appTrust
         self.awayAcknowledged = awayAcknowledged
         self.awayProximity = awayProximity
+        self.remoteControlEnabled = remoteControlEnabled
     }
 
     enum CodingKeys: String, CodingKey {
@@ -256,6 +261,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         case appTrust = "app_trust"
         case awayAcknowledged = "away_acknowledged"
         case awayProximity = "away_proximity"
+        case remoteControlEnabled = "remote_control_enabled"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -276,6 +282,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         appTrust = (try? c.decodeIfPresent([AppTrust].self, forKey: .appTrust)) ?? d.appTrust
         awayAcknowledged = (try? c.decodeIfPresent(Bool.self, forKey: .awayAcknowledged)) ?? d.awayAcknowledged
         awayProximity = (try? c.decodeIfPresent(Bool.self, forKey: .awayProximity)) ?? d.awayProximity
+        remoteControlEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .remoteControlEnabled)) ?? d.remoteControlEnabled
     }
 
     /// Decodes a category list, skipping names this build does not know.

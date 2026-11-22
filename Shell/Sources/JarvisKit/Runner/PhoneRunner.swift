@@ -205,3 +205,42 @@ public struct CapturedScreenshot: Sendable, Equatable {
         self.scale = scale
     }
 }
+
+extension RunnerResult {
+    /// The result to report for `command` when the lock reading right after it is
+    /// `lockedAfter`. A command that "succeeded" while the phone locked under it most
+    /// likely landed on the lock screen and did nothing, so it is reported as
+    /// `RunnerFailure.deviceLocked`: the core does not trust it and looks again after the
+    /// unlock. Waits and results already marked locked are kept; `.unknown` changes nothing.
+    public func checkedAfterCommand(_ command: RunnerCommand, lockedAfter: DeviceLockState) -> RunnerResult {
+        guard lockedAfter == .locked, failure != .deviceLocked else { return self }
+        if case .wait = command { return self }
+        return .deviceLocked("the phone locked as \(Transcript.describe(command)) ran; it may not have taken effect")
+    }
+}
+
+/// Wraps a runner that can read the lock state cheaply (LoopCtrl's `device_info`) and checks
+/// it after every command (`RunnerResult.checkedAfterCommand`). A failed lock read changes
+/// nothing. Observations and lock polls pass through.
+public final class LockCheckingRunner: PhoneRunner {
+    public let inner: any PhoneRunner
+
+    public init(_ inner: any PhoneRunner) {
+        self.inner = inner
+    }
+
+    public func snapshot(includeScreenshot: Bool) async throws -> RunnerObservation {
+        try await inner.snapshot(includeScreenshot: includeScreenshot)
+    }
+
+    public func perform(_ command: RunnerCommand) async throws -> RunnerResult {
+        let result = try await inner.perform(command)
+        if case .wait = command { return result }
+        let after = (try? await inner.lockState()) ?? .unknown
+        return result.checkedAfterCommand(command, lockedAfter: after)
+    }
+
+    public func lockState() async throws -> DeviceLockState {
+        try await inner.lockState()
+    }
+}
