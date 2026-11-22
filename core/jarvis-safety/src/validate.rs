@@ -293,10 +293,7 @@ fn validate_url(url: &str) -> Result<(), ActionError> {
         let after = rest
             .strip_prefix("//")
             .ok_or(ActionError::MalformedUrl("web URL without //host"))?;
-        let authority = after
-            .split(['/', '?', '#'])
-            .next()
-            .unwrap_or_default();
+        let authority = after.split(['/', '?', '#']).next().unwrap_or_default();
         if authority.contains('@') {
             return Err(ActionError::MalformedUrl("credentials in URL"));
         }

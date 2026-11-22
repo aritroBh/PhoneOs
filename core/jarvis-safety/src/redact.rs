@@ -72,9 +72,13 @@ pub fn redact_element(el: &Element) -> Element {
     out.value = if el.secure {
         None
     } else if credential_field {
-        el.value
-            .as_ref()
-            .map(|v| if v.is_empty() { String::new() } else { SECRET_MASK.to_owned() })
+        el.value.as_ref().map(|v| {
+            if v.is_empty() {
+                String::new()
+            } else {
+                SECRET_MASK.to_owned()
+            }
+        })
     } else {
         el.value.as_deref().map(redact)
     };
@@ -124,7 +128,7 @@ fn luhn(digits: &[u32]) -> bool {
         };
         sum = sum.saturating_add(v);
     }
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Card numbers: grouped digit runs with 13–19 digits passing Luhn.
@@ -199,8 +203,7 @@ fn labelled_secret_spans(chars: &[char], spans: &mut Vec<(usize, usize, &'static
     let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
     let mut i = 0usize;
     while i < chars.len() {
-        if !at(chars, i).is_some_and(is_word) || (i > 0 && at(chars, i - 1).is_some_and(is_word))
-        {
+        if !at(chars, i).is_some_and(is_word) || (i > 0 && at(chars, i - 1).is_some_and(is_word)) {
             i += 1;
             continue;
         }
@@ -435,9 +438,7 @@ fn standalone_number(chars: &[char], start: usize, end: usize) -> bool {
         return false;
     }
     let currency = |c: Option<char>| {
-        c.is_some_and(|c| {
-            matches!(fold_fullwidth(c), '$' | '€' | '£' | '¥' | '₹' | '#' | '+')
-        })
+        c.is_some_and(|c| matches!(fold_fullwidth(c), '$' | '€' | '£' | '¥' | '₹' | '#' | '+'))
     };
     if currency(before) || (before == Some(' ') && currency(before2)) {
         return false;

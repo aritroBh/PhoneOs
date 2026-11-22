@@ -1,6 +1,8 @@
 //! Risk classification: what could go wrong if an action ran unattended.
 
-use jarvis_proto::{Action, CompactScreen, Direction, Element, Point, Role, RiskCategory, ToolSpec};
+use jarvis_proto::{
+    Action, CompactScreen, Direction, Element, Point, RiskCategory, Role, ToolSpec,
+};
 
 use crate::phrases::{
     action_tables, match_label, match_tokens, max_risk, Phrase, COMPOSE_FIELD_PHRASES,
@@ -30,8 +32,7 @@ use crate::validate::url_scheme;
 ///   screen context (and is rejected by `validate_action` anyway).
 pub fn classify(action: &Action, screen: &CompactScreen, tool: Option<&ToolSpec>) -> RiskCategory {
     match action {
-        Action::Tap { element } | Action::LongPress { element, .. } => match screen.get(*element)
-        {
+        Action::Tap { element } | Action::LongPress { element, .. } => match screen.get(*element) {
             Some(el) => element_risk(el, screen),
             None => context_risk(screen, None),
         },
@@ -107,7 +108,9 @@ fn element_risk(el: &Element, screen: &CompactScreen) -> RiskCategory {
             other => max_risk(other, RiskCategory::Purchase),
         };
     }
-    let in_settings_app = screen.app_bundle_id.eq_ignore_ascii_case(SETTINGS_BUNDLE_ID);
+    let in_settings_app = screen
+        .app_bundle_id
+        .eq_ignore_ascii_case(SETTINGS_BUNDLE_ID);
     if el.role == Role::Switch && in_settings_app {
         risk = max_risk(risk, RiskCategory::SystemSetting);
     }
@@ -145,7 +148,9 @@ pub(crate) fn context_risk(screen: &CompactScreen, exclude: Option<u32>) -> Risk
 
 /// Whether the screen is the Settings app or reads like an account/settings page.
 fn is_settings_screen(screen: &CompactScreen) -> bool {
-    screen.app_bundle_id.eq_ignore_ascii_case(SETTINGS_BUNDLE_ID)
+    screen
+        .app_bundle_id
+        .eq_ignore_ascii_case(SETTINGS_BUNDLE_ID)
         || screen.elements.iter().any(|e| {
             match_label(&e.label, &[SETTINGS_CONTEXT_PHRASES]).category != RiskCategory::None
         })
@@ -163,7 +168,12 @@ pub(crate) fn type_target(element: Option<u32>, screen: &CompactScreen) -> Optio
 }
 
 /// Risk of typing `text` (and pressing Return when `submit`).
-fn type_risk(element: Option<u32>, text: &str, submit: bool, screen: &CompactScreen) -> RiskCategory {
+fn type_risk(
+    element: Option<u32>,
+    text: &str,
+    submit: bool,
+    screen: &CompactScreen,
+) -> RiskCategory {
     let target = type_target(element, screen);
     let mut risk = RiskCategory::None;
     if let Some(t) = target {

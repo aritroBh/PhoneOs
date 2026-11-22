@@ -67,6 +67,7 @@ version = "0.1.0"
 dependencies = [
  "jarvis-proto",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 
