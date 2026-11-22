@@ -73,8 +73,10 @@ cd "$core"
 cargo rustc -p jarvis-ffi --lib --release --no-default-features --features panic-hooks \
   --crate-type staticlib >&2
 cargo build -p jarvis-ffi --bin uniffi-bindgen-swift >&2
-cp "$core/target/release/libjarvis_core_ffi.a" "$static/"
-bindgen_swift="$core/target/debug/uniffi-bindgen-swift"
+# cargo puts its output in CARGO_TARGET_DIR when that is set.
+target="${CARGO_TARGET_DIR:-$core/target}"
+cp "$target/release/libjarvis_core_ffi.a" "$static/"
+bindgen_swift="$target/debug/uniffi-bindgen-swift"
 "$bindgen_swift" "$static/libjarvis_core_ffi.a" "$static/swift" --swift-sources >&2
 "$bindgen_swift" "$static/libjarvis_core_ffi.a" "$static/include/JarvisCoreFFI" --headers >&2
 "$bindgen_swift" "$static/libjarvis_core_ffi.a" "$static/include/JarvisCoreFFI" --modulemap \
