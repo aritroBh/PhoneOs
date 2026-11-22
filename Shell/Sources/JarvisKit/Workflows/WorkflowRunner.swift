@@ -82,7 +82,8 @@ public final class WorkflowRunner {
     private let notifier: any WorkflowNotifier
     private let clock: any MonotonicClock
     private let limits: RunLimits?
-    private let sleep: @Sendable (Duration) async throws -> Void
+    /// An injected sleep for the Wait step; nil sleeps on the continuous clock.
+    private let sleep: (@Sendable (Duration) async throws -> Void)?
     private let wallClock: @Sendable () -> Date
 
     public private(set) var progress: Progress?
@@ -90,9 +91,14 @@ public final class WorkflowRunner {
     /// Called after every change of `progress`.
     public var onChange: (@MainActor () -> Void)?
 
+    /// `sleep` has no closure as its default value on purpose. With Swift 6.3.3 (Xcode 26.6)
+    /// an `async` closure written as the default argument of this public init, when the init
+    /// is called from another module, aborts the process at the first Wait step ("freed
+    /// pointer was not the last allocation" on return from the closure). The same closure
+    /// passed by the caller, or a direct `Task.sleep`, is fine; `pause` below does the latter.
     public init(library: WorkflowLibrary, center: TaskCenter, notifier: any WorkflowNotifier = SilentWorkflowNotifier(),
                 clock: any MonotonicClock = SystemMonotonicClock(), limits: RunLimits? = nil,
-                sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+                sleep: (@Sendable (Duration) async throws -> Void)? = nil,
                 wallClock: @escaping @Sendable () -> Date = Date.init) {
         self.library = library
         self.center = center
@@ -209,13 +215,22 @@ public final class WorkflowRunner {
                 setActivity(.waiting(untilMs: untilMs))
                 let now = clock.nowMs()
                 do {
-                    if untilMs > now { try await sleep(.milliseconds(Int64(clamping: untilMs - now))) }
+                    if untilMs > now { try await pause(.milliseconds(Int64(clamping: untilMs - now))) }
                     markCurrent(.done)
                     event = .waitElapsed
                 } catch {
                     event = .cancel
                 }
             }
+        }
+    }
+
+    /// The Wait step's sleep; throws when the run is cancelled.
+    private func pause(_ duration: Duration) async throws {
+        if let sleep {
+            try await sleep(duration)
+        } else {
+            try await Task.sleep(for: duration)
         }
     }
 

@@ -342,6 +342,19 @@ final class SteppingClock: MonotonicClock {
     }
 }
 
+/// A clock that only moves when told to (a fake sleep moves it by the time it was asked for).
+final class ManualClock: MonotonicClock {
+    private let now = Mutex<UInt64>(1_000)
+
+    func nowMs() -> UInt64 { now.withLock { $0 } }
+
+    func advance(by duration: Duration) {
+        let ms = UInt64(max(0, duration.components.seconds)) * 1_000
+            + UInt64(max(0, duration.components.attoseconds / 1_000_000_000_000_000))
+        now.withLock { $0 += ms }
+    }
+}
+
 // MARK: - Assembly
 
 struct Harness {

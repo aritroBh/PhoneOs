@@ -14,6 +14,16 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$(dirname "$here")" || exit 1
 
 swift --version 2>&1 | head -n 2
+
+# Swift 6.3.3 (Xcode 26.6): an async closure written as a default argument of a public
+# function aborts the process when another module makes the call ("freed pointer was not
+# the last allocation"). Linux and newer compilers do not show it, so it is refused here.
+if grep -rnE '\)[[:space:]]*async[^=]*=[[:space:]]*\{' Sources App --include='*.swift' \
+    | grep -E '(->|throws)[^=]*=[[:space:]]*\{' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*([a-z]+ )*(let|var) '; then
+  echo "error: an async closure is used as a default argument (lines above); take an optional and call the default in the body" >&2
+  exit 1
+fi
+
 swift build || exit 1
 
 log="$(mktemp)"

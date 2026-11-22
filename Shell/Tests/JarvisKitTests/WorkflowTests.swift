@@ -287,6 +287,47 @@ struct WorkflowRunnerTests {
         #expect(!h.center.isBusy)
     }
 
+    // The two forms of the Wait step's sleep. The first one aborted the whole process on the
+    // Mac (Swift 6.3.3) while the default was a closure in the init's signature.
+    @Test("a workflow that only waits ends with the runner's own sleep")
+    func waitOnlyOwnSleep() async throws {
+        let h = AppHarness("wf-wait-own")
+        defer { h.cleanUp() }
+        let w = try h.library.save(draft("Wait", [StepDraft(kind: .wait, waitSeconds: 1)]))
+        guard case .success(let task) = h.runner.start(id: w.id) else {
+            Issue.record("refused")
+            return
+        }
+        let before = ContinuousClock.now
+        let outcome = try await value(of: task, "the workflow run to end")
+        #expect(outcome.status == .succeeded, "\(outcome)")
+        #expect(ContinuousClock.now - before >= .milliseconds(900), "the wait was skipped")
+    }
+
+    @Test("an injected sleep gets the step's duration and replaces the real wait")
+    func waitInjectedSleep() async throws {
+        // The fake sleep moves the fake clock: with a real clock the core would (rightly) see
+        // the wait as not over and ask for the rest again.
+        let asked = Mutex<[Duration]>([])
+        let clock = ManualClock()
+        let h = AppHarness("wf-wait-injected", clock: clock, sleep: { duration in
+            asked.withLock { $0.append(duration) }
+            clock.advance(by: duration)
+        })
+        defer { h.cleanUp() }
+        let w = try h.library.save(draft("Wait", [StepDraft(kind: .wait, waitSeconds: 600), StepDraft(kind: .notify, text: "after")]))
+        guard case .success(let task) = h.runner.start(id: w.id) else {
+            Issue.record("refused")
+            return
+        }
+        let outcome = try await value(of: task, "the workflow run to end")
+        #expect(outcome.status == .succeeded, "\(outcome)")
+        let durations = asked.withLock { $0 }
+        #expect(durations.count == 1, "\(durations)")
+        #expect(durations.first == .seconds(600), "\(durations)")
+        #expect(h.notifier.posted.withLock { $0 } == ["after"])
+    }
+
     @Test("cancel during a session stops the session and the run")
     func cancelMidSession() async throws {
         // The delete confirmation stays on screen (nobody answers it).

@@ -82,10 +82,20 @@ instead. `swift build` then fails with:
 
 ### On CI
 
-`.github/workflows/shell.yml` runs the three commands above on a Linux runner for every
-change under `core/` or `Shell/`, so a core change the Swift side has not followed fails
-there in a few minutes. The app and UI tests under `App/` are compiled only by
-`.github/workflows/ios.yml` on a macOS runner.
+`.github/workflows/shell.yml` runs the bootstrap and then `scripts/host-test.sh` (build and
+test) on a Linux runner for every change under `core/` or `Shell/`, so a core change the
+Swift side has not followed fails there in a few minutes. The app and UI tests under `App/`
+are compiled only by `.github/workflows/ios.yml` on a macOS runner, which runs the same
+script on the Mac host first.
+
+`scripts/host-test.sh`, when the tests fail or the test process dies, reruns every suite
+alone, then every test of a failing suite alone, and on a Mac prints the newest crash report
+with the code before the crashing call. It also refuses one source pattern before building:
+
+- **No `async` closure as a default argument.** With Swift 6.3.3 (Xcode 26.6) such a closure
+  on a public function, called from another module, aborts the process when it returns
+  (`freed pointer was not the last allocation`). Linux (Swift 6.4) does not show it. Take an
+  optional and do the default in the body, as `WorkflowRunner`'s `sleep` does.
 
 ## Bootstrap and test on a Mac (untested: written on Linux)
 

@@ -52,12 +52,10 @@ jobs:
         if: steps.tools.outputs.have_swift == 'true'
         working-directory: Shell
         run: scripts/bootstrap.sh
-      - name: Build
+      - name: Build and test
         if: steps.tools.outputs.have_swift == 'true'
         working-directory: Shell
-        run: swift build
-      - name: Test
-        if: steps.tools.outputs.have_swift == 'true'
-        working-directory: Shell
-        # Every suite has its own time limit; this is the backstop for the whole run.
-        run: timeout 600 swift test
+        # The script also refuses source patterns that only break on the Mac toolchain, and
+        # on a failure reruns each suite alone. Every suite has its own time limit; the
+        # timeout is the backstop for the whole run.
+        run: timeout 900 scripts/host-test.sh
