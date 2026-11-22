@@ -80,6 +80,13 @@ If the generated files are missing, the manifest compiles `Sources/JarvisCoreMis
 instead. `swift build` then fails with:
 `error: JarvisCore bindings are missing: run Shell/scripts/bootstrap.sh …`.
 
+### On CI
+
+`.github/workflows/shell.yml` runs the three commands above on a Linux runner for every
+change under `core/` or `Shell/`, so a core change the Swift side has not followed fails
+there in a few minutes. The app and UI tests under `App/` are compiled only by
+`.github/workflows/ios.yml` on a macOS runner.
+
 ## Bootstrap and test on a Mac (untested: written on Linux)
 
 ```sh
