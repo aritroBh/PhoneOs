@@ -18,7 +18,7 @@ Updated as work lands. `[x]` = done and verified, `[~]` = written but not verifi
 - [x] `jarvis-sim` (simulated phone, scripted model, HTTP model, eval CLI)
 - [x] `jarvis-ffi` (UniFFI surface, Swift bindings generate, iOS target check)
 - [x] Structural policy: modes, per-app trust, deny categories, first-use approval
-- [x] CI: fmt + clippy + test + sim eval + Swift smoke on Linux
+- [x] CI: fmt + clippy + test + sim eval + Swift smoke on Linux (toolchain pinned, `core/rust-toolchain.toml`)
 
 ## Swift shell (`Shell/`)
 
@@ -30,22 +30,27 @@ Verified on Linux (Swift 6, real Rust core linked):
 - [x] `OpenAICompatibleModel` (first `ModelProvider` backend)
 - [x] `FileMemoryStore`, `ScreenshotStore`, `ToolRegistry`
 - [x] First-use approval + policy defaults flow through `SessionConfigBuilder`
+- [x] `TaskCenter` (one entry for Ask, Siri, workflows, remote), `HumanPromptBroker`, owner attention
+- [x] CI: `shell.yml` builds and tests JarvisKit on Linux for every core or shell change
+- [x] `scripts/host-test.sh`: on a failure reruns suites and tests alone, prints the Mac crash report
 
-In progress — first compiled on a macOS runner:
+Verified on a macOS runner (Xcode 26.6, iPhone 17 Pro Max simulator, iOS 26.5):
 
-- [ ] xcframework build (device + simulator + macOS slices)
-- [ ] XcodeGen project (`Shell/project.yml`)
-- [ ] App UI: chat, activity, connections, settings
-- [ ] App Intents (Siri / Shortcuts / Action Button entry)
-- [ ] In-process XCUITest `PhoneRunner` (typed tree from `XCUIElementSnapshot`)
+- [x] xcframework build (device + simulator slices; Mac host tests link the host library)
+- [x] XcodeGen project (`Shell/project.yml`)
+- [x] App UI first wave: Ask, run view, activity, settings, owner sheets
+- [x] App Intents (`AskJarvisIntent`; `RunJarvisWorkflowIntent` compiled in run 8, see below)
+- [x] In-process XCUITest `PhoneRunner` (typed tree from `XCUIElementSnapshot`)
+- [x] Mac host run of the package tests (found a Swift 6.3.3 abort Linux does not show: `Shell/README.md`, "On CI")
 
 ## iPhone Simulator QA (GitHub macOS runner)
 
-- [ ] `.github/workflows/ios.yml` + `Shell/scripts/sim-qa.sh`
-- [ ] Tier A: playground flows (form, toggle, scroll, confirm gate, replay, secure field)
-- [ ] Tier B: real Settings, springboard, Safari form
-- [ ] Artifacts per step: compact screen, raw tree, screenshot, transcript
-- [ ] Green run on an iPhone 17 Pro Max simulator
+- [x] `.github/workflows/ios.yml` + `Shell/scripts/sim-qa.sh` (per-test time limits, slowest-tests summary)
+- [x] Tier A: playground flows (form, toggle, scroll, confirm gate, replay, secure field)
+- [x] Tier B: real Settings, springboard, Safari form
+- [x] Artifacts per step: compact screen, raw tree, screenshot, transcript
+- [x] Green run on an iPhone 17 Pro Max simulator (run 3: 13/13; run 6: 20/21, the lock-mid-task test)
+- [ ] Run 8 green: Workflows + Remote screens, lock-mid-task resume, unknown-icon question (27 tests)
 
 ## Skills, workflows, remote control
 
@@ -54,8 +59,9 @@ In progress — first compiled on a macOS runner:
 - [x] `jarvis-remote`: pairing, AEAD frames, hub + client state machines, adversarial tests
 - [x] Independent adversarial review of both crates: 22 findings, 22 fixed with regression tests
 - [x] FFI surface for skills, workflows, remote
-- [ ] Swift: skill and workflow stores, local-network listener, App Intent entry for automations
-- [ ] App screens: Skills, skill detail, Workflows, Apps (ways in + trust), Control, Remote control
+- [x] Swift: skill and workflow stores, workflow runner and scheduler, remote control service (Linux-tested)
+- [~] App: local-network listener (Bonjour), Keychain store, notifications, App Intent for workflows (first Mac compile in run 8)
+- [~] App screens: Skills, skill detail, Workflows, Apps (ways in + trust), Control, Remote control (first Mac compile in run 8)
 - [x] Design: canvas with nine screens (Astryx conventions, Lucide on web / SF Symbols on iOS)
 - [ ] Human security review of the remote protocol
 
@@ -65,15 +71,17 @@ In progress — first compiled on a macOS runner:
 - [x] Core: lock awareness (pause, "unlock to continue", re-observe before acting), `ObserveFailed`, typed-text verification
 - [x] Swift driver: report lock state, handle `AwaitUnlock`, notification (Linux-tested; simulator run pending)
 - [ ] Live Activity for runs and unlock prompts
-- [ ] Away mode in the app
+- [~] Away mode in the app (logic Linux-tested; staying dark while another app is in front needs spike S7)
 - [ ] Audio-session interruption recovery, before-first-unlock detection
 - [ ] Siri AI `ToolIntent` + app skills bundle experiment
 
 ## Core follow-ups
 
 - [x] Local-model eval on the simulated phone (`docs/MODEL-EVAL.md`)
-- [ ] Model-readiness fixes from that eval (state deltas, deny check before icon taps, narrower purchase rule, scroll cue, on/off switches, neutral examples)
-- [ ] Re-run the eval after the fixes; add a model of 2B or less and constrained decoding
+- [x] Model-readiness fixes from that eval (state deltas, loop detection, switches `(on)/(off)`, scroll cue, icon taps checked like `open_app`)
+- [x] Re-run after the fixes (Qwen3.5-4B: 5/9 → 6/9 on the re-run set)
+- [ ] Eval with a model of 2B or less and with constrained decoding
+- [x] `jarvis-remote`: corrupt-store errors never quote the file (keys)
 - [ ] First-use approval for `OpenUrl` and tools with no declared app
 - [ ] Non-English safety phrases
 
@@ -92,7 +100,7 @@ In progress — first compiled on a macOS runner:
 
 - [ ] Voice: wake word, STT, TTS
 - [ ] Native tools + Shortcuts bridge + Connections screen
-- [ ] Away mode in the app (black screen, brightness, proximity, return-to-dark after each task)
+- [ ] Away mode on the device (black screen, brightness, proximity, return-to-dark after each task): after S7
 - [ ] Background operation, Live Activity, notifications
 - [ ] Vision fallback on device, learned-flow replay on device
 - [ ] Personal eval set (30 tasks)
