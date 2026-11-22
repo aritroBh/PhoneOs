@@ -88,7 +88,9 @@ final class StubHTTPServer: Sendable {
         Thread.detachNewThread { [self] in acceptLoop() }
     }
 
-    /// Stops accepting connections.
+    /// Stops accepting connections. Only the accept loop closes the listening socket (within
+    /// one poll interval): closing it here could hand its descriptor number to another
+    /// server while this loop still calls accept() on it.
     func stop() {
         let wasStopped = stopped.withLock { s -> Bool in
             defer { s = true }
@@ -96,18 +98,21 @@ final class StubHTTPServer: Sendable {
         }
         guard !wasStopped else { return }
         shutdown(listenFD, Int32(SHUT_RDWR))
-        close(listenFD)
     }
 
     deinit { stop() }
 
     private func acceptLoop() {
         while true {
-            let client = accept(listenFD, nil, nil)
-            if client < 0 {
-                if stopped.withLock({ $0 }) { return }
-                continue
+            if stopped.withLock({ $0 }) {
+                close(listenFD)
+                return
             }
+            var pfd = pollfd(fd: listenFD, events: Int16(POLLIN), revents: 0)
+            guard poll(&pfd, 1, 20) > 0 else { continue }
+            if stopped.withLock({ $0 }) { continue }
+            let client = accept(listenFD, nil, nil)
+            if client < 0 { continue }
             #if canImport(Darwin)
             var one: Int32 = 1
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))

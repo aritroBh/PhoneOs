@@ -120,7 +120,14 @@ final class FakePhone: PhoneRunner {
 
     func perform(_ command: RunnerCommand) async throws -> RunnerResult {
         if let commandHang { await commandHang.hang() }
-        let fail = state.withLock { s -> Bool in
+        if apply(command) { throw InjectedError(message: "runner connection reset") }
+        return RunnerResult(ok: true, error: nil)
+    }
+
+    /// Records `command` and moves between pages; returns true when it must fail.
+    @discardableResult
+    func apply(_ command: RunnerCommand) -> Bool {
+        state.withLock { s -> Bool in
             s.commands.append(command)
             if s.failingCommands > 0 {
                 s.failingCommands -= 1
@@ -138,8 +145,6 @@ final class FakePhone: PhoneRunner {
             }
             return false
         }
-        if fail { throw InjectedError(message: "runner connection reset") }
-        return RunnerResult(ok: true, error: nil)
     }
 
     static func text(for page: Page) -> String {
