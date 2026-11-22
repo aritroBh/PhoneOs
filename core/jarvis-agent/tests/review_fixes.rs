@@ -277,10 +277,19 @@ fn a_first_use_approval_also_looks_again_before_acting() {
     assert!(matches!(d.observed(&before), Effect::Act(_)));
 }
 
-/// An approved `type … submit` is re-checked too: when the field has gone, nothing is typed.
+/// An approved `type … submit` is re-checked too: when the field has gone, Return is not
+/// pressed. Sixth review: the typing (harmless) runs first, and the Return is asked about
+/// after it, on the post-typing screen (was: asked before typing; deliberate change).
 #[test]
-fn an_approved_typed_submit_is_rechecked_before_typing() {
-    let chat = |focused: bool| {
+fn an_approved_typed_submit_is_rechecked_before_its_return() {
+    let chat = |focused: bool, value: Option<&str>| {
+        let mut field = UiNode::new(Role::TextView, rect(16.0, 460.0, 300.0, 40.0))
+            .with_label("Message")
+            .hittable(true)
+            .focused(focused);
+        if let Some(v) = value {
+            field = field.with_value(v);
+        }
         screen(
             "com.example.chat",
             "Chat",
@@ -288,10 +297,7 @@ fn an_approved_typed_submit_is_rechecked_before_typing() {
                 "Chat",
                 vec![
                     text("Alex", rect(150.0, 70.0, 93.0, 40.0)),
-                    UiNode::new(Role::TextView, rect(16.0, 460.0, 300.0, 40.0))
-                        .with_label("Message")
-                        .hittable(true)
-                        .focused(focused),
+                    field,
                     node(Role::Button, "Send", rect(320.0, 460.0, 60.0, 40.0)),
                 ],
             ),
@@ -300,11 +306,26 @@ fn an_approved_typed_submit_is_rechecked_before_typing() {
     };
     let mut d = Driver::new(config(), "Tell Alex I'm late");
     d.step(Event::Start);
-    d.observed(&chat(true));
-    let Effect::Confirm(c) = d.model(r#"{"action":"type","text":"late","submit":true}"#) else {
+    d.observed(&chat(true, None));
+    let e = d.model(r#"{"action":"type","text":"late","submit":true}"#);
+    assert!(
+        matches!(e, Effect::Act(RunnerCommand::TypeText { .. })),
+        "{e:?}"
+    );
+    assert!(matches!(
+        d.step(Event::ActResult(RunnerResult::ok())),
+        Effect::Observe { .. }
+    ));
+    let Effect::Confirm(c) = d.observed(&chat(true, Some("late"))) else {
         panic!()
     };
     assert_eq!(c.category, RiskCategory::SendMessage);
+    assert!(
+        c.summary
+            .starts_with("Press Return in \"Message\" after typing \"late\""),
+        "{}",
+        c.summary
+    );
     assert!(matches!(
         d.step(Event::UserDecision { approved: true }),
         Effect::Observe { .. }
@@ -1282,7 +1303,7 @@ fn checkout_with_chrome(clock: &str, password: &str, prediction: &str) -> Screen
 
 /// Fifth review: a `StatusBar` node is excluded only on SpringBoard, so inside an app a
 /// ticking status-bar clock voids the approval (it was kept before: an app can give any
-/// node that role). The secure value and the keyboard's own window still do not count.
+/// node that role). The secure value still does not count (sixth review: the keyboard is hashed).
 #[test]
 fn a_status_bar_clock_that_ticks_keeps_the_approval() {
     let before = checkout_with_chrome("9:41", "••••", "Hello");
@@ -1295,13 +1316,17 @@ fn a_status_bar_clock_that_ticks_keeps_the_approval() {
     );
     let (asked, e) = approve_then_look(config(), &before, i, &after);
     assert!(!matches!(e, Effect::Act(_)), "'{asked}': {e:?}");
-    // The clock unchanged: only the secure value and the keyboard's window changed.
-    let after = checkout_with_chrome("9:41", "•••••", "Thanks");
+    // The clock unchanged: only the secure value changed. (Sixth review: the keyboard's
+    // window is hashed now, so a changed prediction voids too; was: kept. Deliberate.)
+    let after = checkout_with_chrome("9:41", "•••••", "Hello");
     let (asked, e) = approve_then_look(config(), &before, i, &after);
     assert!(
         matches!(e, Effect::Act(RunnerCommand::Tap { .. })),
         "'{asked}': {e:?}"
     );
+    let after = checkout_with_chrome("9:41", "••••", "Thanks");
+    let (asked, e) = approve_then_look(config(), &before, i, &after);
+    assert!(!matches!(e, Effect::Act(_)), "'{asked}': {e:?}");
     // The same clock text in the app's own window (no status-bar role) voids it.
     let in_app = |clock: &str| {
         screen(

@@ -7,7 +7,7 @@ use jarvis_proto::{
 
 use crate::app::{app_level, check_app, is_springboard, mode_level, Verdict};
 use crate::classify::{classify, type_target};
-use crate::gate::{changes_state, gate_in, Gate};
+use crate::gate::{changes_state, gate_on, Gate};
 use crate::redact::{contains_secret, credential_like_field, redact, redact_screen};
 use crate::sanitize::sanitize_screen_text_with_limit;
 use crate::text::{has_money, CURRENCY_WORDS};
@@ -55,7 +55,7 @@ pub struct ScreenTree<'a> {
 }
 
 impl ScreenTree<'_> {
-    fn source(&self, el: &Element) -> Option<u32> {
+    pub(crate) fn source(&self, el: &Element) -> Option<u32> {
         let pos = usize::try_from(el.index).ok()?.checked_sub(1)?;
         self.sources.get(pos).copied()
     }
@@ -85,13 +85,35 @@ impl ScreenTree<'_> {
     }
 
     /// Whether `el`'s node is inside raw node `container`'s subtree.
-    fn inside(&self, el: &Element, container: u32) -> bool {
+    pub(crate) fn inside(&self, el: &Element, container: u32) -> bool {
         let end = usize::try_from(container)
             .ok()
             .and_then(|i| self.ends.get(i))
             .copied()
             .unwrap_or(0);
         self.source(el).is_some_and(|s| s > container && s < end)
+    }
+}
+
+/// Text the session itself typed into a field during the task: the field's fingerprint and
+/// the text as decided (profile placeholders kept, the way the profile-masked screen the
+/// summary is built from shows it). A field's value appears in a summary only when it is
+/// exactly what the session typed there, or an amount in an amount-like field (see
+/// [`summary_with`]).
+#[derive(Clone, PartialEq, Eq)]
+pub struct TypedText {
+    /// Fingerprint of the field the text went into.
+    pub field: u64,
+    /// The text (placeholders kept).
+    pub text: String,
+}
+
+impl std::fmt::Debug for TypedText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TypedText")
+            .field("field", &self.field)
+            .field("text_chars", &self.text.chars().count())
+            .finish()
     }
 }
 
@@ -166,9 +188,10 @@ pub fn classify_from(
 }
 
 /// [`evaluate`] for a screen from `source`: on a screen read from runner text every
-/// state-changing runner action is at least `Unverified` ([`classify_from`]), so it asks
-/// under every policy that asks for unverified controls, and its summary starts with
-/// [`UNVERIFIED_SCREEN_WARNING`]. Deny-list and category denials apply unchanged.
+/// state-changing runner action is at least `Unverified` ([`classify_from`]) and **always
+/// asks**, whatever the policy mode, the app's trust level or the categories the owner
+/// relaxed (a source-level rule in the gate, [`crate::gate_on`]); its summary starts with
+/// [`UNVERIFIED_SCREEN_WARNING`]. Deny-list and category denials still refuse first.
 pub fn evaluate_from(
     policy: &Policy,
     action: &Action,
@@ -240,7 +263,9 @@ pub fn evaluate_from(
         level = app_level(&without_app_denials(policy), &affected_app);
     }
     let category = classify_from(action, screen, tool, source);
-    match gate_in(policy, category, level, action, screen) {
+    let runner_text =
+        source == ScreenSource::RunnerText && !matches!(action, Action::CallTool { .. });
+    match gate_on(policy, category, level, action, screen, runner_text) {
         Gate::Allow => Decision::Allow,
         Gate::Deny => Decision::Deny(format!("{category:?} actions are not allowed")),
         Gate::Confirm => Decision::Confirm(ConfirmRequest {
@@ -737,7 +762,25 @@ fn is_value_field(el: &Element) -> bool {
     if el.secure || el.role == Role::SecureTextField {
         return false;
     }
-    match &el.role {
+    is_value_role(&el.role)
+}
+
+/// Whether a field of `role` with name `label` / `placeholder` may have `value` quoted in a
+/// note for the owner without knowing what the session typed: any non-field element, or an
+/// amount-like field holding an amount or a plain number (see [`summary_with`]).
+pub(crate) fn value_quotable(
+    role: &Role,
+    label: &str,
+    placeholder: Option<&str>,
+    value: &str,
+) -> bool {
+    !(is_value_role(role) || role.is_text_input())
+        || (amount_like_name(label, placeholder) && money_or_number(value))
+}
+
+/// Roles of [`is_value_field`].
+fn is_value_role(role: &Role) -> bool {
+    match role {
         Role::Slider | Role::Picker => true,
         Role::Other(name) => {
             let n = name.to_lowercase();
@@ -858,12 +901,12 @@ fn has_charge_words(text: &str) -> bool {
 
 /// Whether `field`'s name (label or placeholder) is amount-like.
 fn amount_like_field(el: &Element) -> bool {
-    let name = format!(
-        "{} {}",
-        el.label,
-        el.placeholder.as_deref().unwrap_or_default()
-    )
-    .to_lowercase();
+    amount_like_name(&el.label, el.placeholder.as_deref())
+}
+
+/// Whether a name (label or placeholder) is amount-like.
+fn amount_like_name(label: &str, placeholder: Option<&str>) -> bool {
+    let name = format!("{label} {}", placeholder.unwrap_or_default()).to_lowercase();
     name.split(|c: char| !c.is_alphanumeric())
         .any(|w| AMOUNT_FIELD_WORDS.contains(&w))
 }
@@ -922,9 +965,10 @@ fn max_amount(chars: &[char], ranges: &[(usize, usize)]) -> f64 {
 /// - an element that shows an amount, with the label text of its row: its own words, else
 ///   the static texts of its row band, else a static text stacked right on top of it;
 /// - an amount split over two elements of one row ("$" and "25") is joined ("$25");
-/// - a value field (text input, slider, stepper, picker) whose value is an amount, or whose
-///   name is amount-like (amount, total, price, tip, quantity, qty) and whose value holds a
-///   number, as `Name: value`.
+/// - a value field (text input, slider, stepper, picker) whose name is amount-like (amount,
+///   total, price, tip, quantity, qty) and whose value is a money amount or a plain number,
+///   as `Name: value` (sixth review: no other field's value is listed here, see
+///   `summary_with`).
 ///
 /// Order: the charge first (field amounts, and texts with charge wording, see
 /// `has_charge_words`), then the rest; largest first within each (ties: screen order). The
@@ -961,24 +1005,23 @@ fn amount_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<AmountF
             continue;
         }
         if is_value_field(e) {
-            if let Some(v) = field_value(e) {
+            // Only an amount-like field holding an amount or a plain number shows its
+            // value here (sixth review; see `summary_with`).
+            if let Some(v) = field_value(e).filter(|v| amount_like_field(e) && money_or_number(v)) {
                 let chars: Vec<char> = v.chars().collect();
                 let ranges = amount_ranges(&chars);
-                let number = v.chars().any(|c| c.is_ascii_digit()) && amount_like_field(e);
-                if !ranges.is_empty() || number {
-                    let value = if ranges.is_empty() {
-                        amount_value(v).unwrap_or(-1.0)
-                    } else {
-                        max_amount(&chars, &ranges)
-                    };
-                    let name = field_name(e);
-                    let text = if name.is_empty() {
-                        v.to_owned()
-                    } else {
-                        format!("{name}: {v}")
-                    };
-                    push(&mut out, text, value, true);
-                }
+                let value = if ranges.is_empty() {
+                    amount_value(v).unwrap_or(-1.0)
+                } else {
+                    max_amount(&chars, &ranges)
+                };
+                let name = field_name(e);
+                let text = if name.is_empty() {
+                    v.to_owned()
+                } else {
+                    format!("{name}: {v}")
+                };
+                push(&mut out, text, value, true);
             }
             continue;
         }
@@ -1081,7 +1124,7 @@ fn selected_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<Strin
         .iter()
         .filter(|e| !e.secure && e.role != Role::Key && !e.frame.is_empty())
         .filter(|e| {
-            let t: Vec<char> = crate::classify::element_text(e).chars().collect();
+            let t: Vec<char> = fact_text(e).chars().collect();
             !amount_ranges(&t).is_empty()
         })
         .map(|e| e.frame)
@@ -1093,7 +1136,7 @@ fn selected_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<Strin
             && !matches!(e.role, Role::Tab | Role::Key)
             && !target.is_some_and(|t| t.index == e.index)
     }) {
-        let t = crate::classify::element_text(e).trim().to_owned();
+        let t = fact_text(e).trim().to_owned();
         if t.is_empty() || ranked.iter().any(|(_, _, x)| *x == t) {
             continue;
         }
@@ -1111,47 +1154,84 @@ fn selected_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<Strin
     ranked.into_iter().map(|(_, _, t)| t).collect()
 }
 
-/// The values of the value fields on `screen` (text inputs, sliders, steppers, pickers;
-/// never secure ones, nor the target) that are not amounts, as `Name: value`. A field
-/// named as a credential or a bank or card detail ([`credential_like_field`]) that holds a
-/// value is listed by name only, as `Name (hidden)`.
-fn field_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<String> {
+/// Whether `v` is a money amount ("$40.00", "USD 40", "40 €") or a plain number ("500",
+/// "1,250.5") and nothing else.
+fn money_or_number(v: &str) -> bool {
+    let t = v.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if is_number(t) {
+        return true;
+    }
+    let chars: Vec<char> = t.chars().collect();
+    let ranges = amount_ranges(&chars);
+    ranges.len() == 1 && ranges.first() == Some(&(0, chars.len()))
+}
+
+/// Whether the value of `el` (from the profile-masked screen) is exactly what the session
+/// typed into that field during the task (surrounding whitespace ignored).
+fn typed_here(el: &Element, typed: &[TypedText]) -> bool {
+    let Some(v) = el.value.as_deref().map(str::trim).filter(|v| !v.is_empty()) else {
+        return false;
+    };
+    typed
+        .iter()
+        .any(|t| t.field == el.fingerprint && t.text.trim() == v)
+}
+
+/// The value fields on `screen` (text inputs, sliders, steppers, pickers; never secure
+/// ones, nor the target) other than amount-like fields holding an amount (listed with the
+/// amounts), by name: `Name: value` only when the value is exactly what the session typed
+/// there (`typed`, compared on `raw`, the profile-masked screen before redaction; the value
+/// shown is the redacted one), else `Name (filled)` or `Name (empty)`. A field named as a
+/// credential or a bank or card detail ([`credential_like_field`]) that holds a value is
+/// `Name (hidden)`. A field without a name is "A field".
+fn field_facts(
+    screen: &CompactScreen,
+    raw: &CompactScreen,
+    target: Option<&Element>,
+    typed: &[TypedText],
+) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for e in screen
         .elements
         .iter()
         .filter(|e| is_value_field(e) && !target.is_some_and(|t| t.index == e.index))
     {
-        let Some(v) = field_value(e) else { continue };
-        if credential_like_field(e) {
-            let name = field_name(e);
-            let t = if name.is_empty() {
-                "A protected field (hidden)".to_owned()
-            } else {
-                format!("{name} (hidden)")
-            };
-            if !out.contains(&t) {
-                out.push(t);
-            }
-            continue;
-        }
-        let chars: Vec<char> = v.chars().collect();
-        let amount = !amount_ranges(&chars).is_empty()
-            || (v.chars().any(|c| c.is_ascii_digit()) && amount_like_field(e));
-        if amount {
-            continue;
-        }
         let name = field_name(e);
-        let t = if name.is_empty() {
-            v.to_owned()
+        let name = if name.is_empty() {
+            "A field".to_owned()
         } else {
-            format!("{name}: {v}")
+            name
+        };
+        let value = field_value(e);
+        let t = match value {
+            Some(_) if credential_like_field(e) => format!("{name} (hidden)"),
+            Some(v) if amount_like_field(e) && money_or_number(v) => continue,
+            Some(v) if raw.get(e.index).is_some_and(|r| typed_here(r, typed)) => {
+                format!("{name}: {v}")
+            }
+            Some(_) => format!("{name} (filled)"),
+            None => format!("{name} (empty)"),
         };
         if !out.contains(&t) {
             out.push(t);
         }
     }
     out
+}
+
+/// The text a fact may quote for `el`: its label alone for a value field (whose value is
+/// shown only under the field rule, see [`field_facts`]), else [`element_text`].
+///
+/// [`element_text`]: crate::classify::element_text
+fn fact_text(el: &Element) -> String {
+    if is_value_field(el) || el.role.is_text_input() {
+        el.label.clone()
+    } else {
+        crate::classify::element_text(el)
+    }
 }
 
 /// Whether `word` looks like who is paid or messaged: a phone number (7 to 15 digits with
@@ -1256,7 +1336,7 @@ fn recipient_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<Stri
             && !credential_like_field(e)
             && !target.is_some_and(|t| t.index == e.index)
     }) {
-        let t = crate::classify::element_text(e).trim().to_owned();
+        let t = fact_text(e).trim().to_owned();
         if t.is_empty() || has_money(&t) || ranked.iter().any(|(_, _, _, _, x)| *x == t) {
             continue;
         }
@@ -1341,7 +1421,8 @@ fn fact_list(heading: &str, items: &[String], max: usize, entry: usize) -> Optio
 ///   by recipient wording and closeness to the target, at most [`MAX_LISTED_RECIPIENTS`],
 ///   then `and N more`);
 /// - `Selected: Annual plan` (at most [`MAX_LISTED_SELECTED`], ranked, then `and N more`);
-/// - `Fields: Note: dinner; Card number (hidden)` (at most [`MAX_LISTED_FIELDS`], then
+/// - `Fields: Message: On my way; Note (filled); Card number (hidden)` (a value only where
+///   the session typed it, see [`field_facts`]; at most [`MAX_LISTED_FIELDS`], then
 ///   `and N more`; a protected field by name only).
 ///
 /// Empty parts are left out; a part with no room left says how many entries it has
@@ -1485,14 +1566,63 @@ pub fn summary_for(
     source: ScreenSource,
     tree: Option<&ScreenTree<'_>>,
 ) -> String {
+    summary_with(action, screen, category, source, tree, &[])
+}
+
+/// [`summary_for`], knowing what the session typed during the task (`typed`).
+///
+/// **Field values (sixth review).** A field's value (text input, slider, stepper, picker)
+/// is shown only when (a) it is exactly what the session typed into that field during this
+/// task (the owner sees what Jarvis wrote, with the usual profile masking), or (b) the
+/// field's label or placeholder is amount-like (amount, total, price, tip, quantity, qty)
+/// and the value is a money amount or a plain number (listed with the amounts). Every
+/// other field is named with `(filled)` or `(empty)`; a field named as a credential or a
+/// bank or card detail shows `(hidden)`. Static texts keep the usual redaction.
+pub fn summary_with(
+    action: &Action,
+    screen: &CompactScreen,
+    category: RiskCategory,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+) -> String {
+    with_source(source, |max| {
+        summarize_with(action, screen, category, tree, typed, false, max)
+    })
+}
+
+/// The summary of pressing Return in field `field` after the session typed `text` there (the
+/// second part of a `type … submit`, gated on the post-typing `screen`): `Press Return
+/// ("send") in "Message" after typing "On my way" in Chat`, then the screen's facts
+/// (recipients and amounts of that screen; the field itself is not repeated). Built like
+/// [`summary_with`]; `text` keeps its profile placeholders, a secret is never quoted.
+pub fn return_summary(
+    field: u32,
+    text: &str,
+    screen: &CompactScreen,
+    category: RiskCategory,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+) -> String {
+    let action = Action::Type {
+        element: Some(field),
+        text: text.to_owned(),
+        submit: true,
+    };
+    with_source(source, |max| {
+        summarize_with(&action, screen, category, tree, typed, true, max)
+    })
+}
+
+/// A summary of at most [`MAX_SUMMARY_CHARS`] from `build(max)`, behind the warning on a
+/// runner-text screen.
+fn with_source(source: ScreenSource, build: impl Fn(usize) -> String) -> String {
     match source {
-        ScreenSource::Typed => summarize_with(action, screen, category, tree, MAX_SUMMARY_CHARS),
+        ScreenSource::Typed => build(MAX_SUMMARY_CHARS),
         ScreenSource::RunnerText => {
             let room = MAX_SUMMARY_CHARS.saturating_sub(UNVERIFIED_SCREEN_WARNING.chars().count());
-            format!(
-                "{UNVERIFIED_SCREEN_WARNING}{}",
-                summarize_with(action, screen, category, tree, room.max(120))
-            )
+            format!("{UNVERIFIED_SCREEN_WARNING}{}", build(room.max(120)))
         }
     }
 }
@@ -1502,6 +1632,8 @@ fn summarize_with(
     raw: &CompactScreen,
     category: RiskCategory,
     tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+    return_only: bool,
     max: usize,
 ) -> String {
     // Facts and quoted labels come from the prompt's label-aware redaction.
@@ -1533,7 +1665,7 @@ fn summarize_with(
                 Vec::new()
             },
             selected: selected_facts(screen, target),
-            fields: field_facts(screen, target),
+            fields: field_facts(screen, raw, target, typed),
         }
     } else {
         Facts {
@@ -1545,7 +1677,7 @@ fn summarize_with(
     };
     let mut line = String::new();
     for l in LIMITS {
-        let mut parts = vec![action_line(action, screen, category, l, tree)];
+        let mut parts = vec![action_line(action, screen, category, l, tree, return_only)];
         parts.extend(facts_suffix(&facts, l));
         line = parts.join(". ");
         if line.chars().count() <= max {
@@ -1562,6 +1694,7 @@ fn action_line(
     category: RiskCategory,
     l: Limits,
     tree: Option<&ScreenTree<'_>>,
+    return_only: bool,
 ) -> String {
     let app_name = screen
         .app_name
@@ -1596,6 +1729,17 @@ fn action_line(
                 || "the focused field".to_owned(),
                 |t| describe_with(t, l.label),
             );
+            if return_only {
+                let key = screen
+                    .cues
+                    .return_key
+                    .as_deref()
+                    .map(|k| clean(k, 24))
+                    .filter(|k| !k.is_empty())
+                    .map(|k| format!(" (\"{k}\")"))
+                    .unwrap_or_default();
+                return format!("Press Return{key} in {into} after typing {what}{in_app}");
+            }
             let ret = if *submit { " and press Return" } else { "" };
             format!("Type {what} into {into}{ret}{in_app}")
         }

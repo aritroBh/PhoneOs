@@ -277,7 +277,25 @@ fn an_unknown_icon_asks_first_with_its_label() {
     );
     assert_eq!(searched.confirms.len(), 1);
     assert!(searched.confirms[0].summary.contains("top search result"));
-    assert!(searched.acts.is_empty(), "{:?}", searched.acts);
+    // Sixth review: the search text is typed first (harmless) and only its Return, which
+    // opens the top hit, is asked about; declined, it is not pressed. (Was: asked before
+    // anything was typed; deliberate change.)
+    assert!(
+        searched
+            .acts
+            .iter()
+            .all(|a| !matches!(a, RunnerCommand::PressKey { .. })),
+        "{:?}",
+        searched.acts
+    );
+    assert!(
+        searched
+            .acts
+            .iter()
+            .any(|a| matches!(a, RunnerCommand::TypeText { .. })),
+        "{:?}",
+        searched.acts
+    );
 }
 
 /// An app the owner declined in this session cannot be reached through its icon, and a

@@ -87,7 +87,9 @@ fn protected_fields_are_listed_by_name_only() {
         let sum = summarize(&tap(3), &s, None);
         assert!(!sum.contains(value), "{name}: {sum}");
         assert!(sum.contains(&format!("{name} (hidden)")), "{name}: {sum}");
-        assert!(sum.contains("Note: dinner"), "{sum}");
+        // Sixth review: an ordinary field Jarvis did not type is named, not quoted (was
+        // "Note: dinner"; deliberate change).
+        assert!(sum.contains("Note (filled)"), "{sum}");
     }
     let s = app_screen(vec![by_placeholder, button(10, "Send")]);
     let sum = summarize(&tap(10), &s, None);
@@ -219,7 +221,26 @@ fn a_fact_list_without_room_counts_its_entries() {
     els.push(tf(7, &format!("Memo {long}"), &format!("second {long}")));
     els.push(label(8, "To account ••••4521"));
     els.push(button(9, &format!("Pay {long}")));
-    let sum = summarize(&tap(9), &app_screen(els), None);
+    // Sixth review: field values show only when Jarvis typed them, so the long values are
+    // typed here (was: shown unconditionally).
+    let typed = [
+        jarvis_safety::TypedText {
+            field: 6,
+            text: format!("first {long}"),
+        },
+        jarvis_safety::TypedText {
+            field: 7,
+            text: format!("second {long}"),
+        },
+    ];
+    let sum = jarvis_safety::summary_with(
+        &tap(9),
+        &app_screen(els),
+        RiskCategory::Payment,
+        ScreenSource::Typed,
+        None,
+        &typed,
+    );
     assert!(sum.contains("Fields: 2 not shown"), "{sum}");
     assert!(sum.chars().count() <= 320, "{sum}");
 }

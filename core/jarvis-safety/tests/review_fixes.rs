@@ -1856,7 +1856,9 @@ fn an_amount_typed_into_a_field_is_listed() {
         at5(button(3, "Save"), 16.0, 700.0, 361.0, 50.0),
     ]);
     let sum = summarize(&tap(3), &s, None);
-    assert!(sum.contains("Fields: Volume: 80%"), "{sum}");
+    // Sixth review: a slider is named with "(filled)", not quoted (was "Volume: 80%";
+    // deliberate change, see `summary_with`).
+    assert!(sum.contains("Fields: Volume (filled)"), "{sum}");
     assert!(!sum.contains("hunter2"), "{sum}");
 }
 
@@ -1987,7 +1989,25 @@ fn a_venmo_like_payment_states_who_how_much_and_what_for() {
     let sum = summarize(&tap(5), &s, None);
     assert_eq!(
         sum,
-        "Tap \"Pay\" in Example. Amounts on screen: Amount: 120. To/Account: @alex-smith-42. Fields: What's it for?: Concert tickets"
+        "Tap \"Pay\" in Example. Amounts on screen: Amount: 120. To/Account: @alex-smith-42. Fields: What's it for? (filled)"
+    );
+    // Sixth review: the note shows only when Jarvis typed it (was always quoted; deliberate
+    // change, see `summary_with`).
+    let typed = [jarvis_safety::TypedText {
+        field: 4,
+        text: "Concert tickets".to_owned(),
+    }];
+    let sum = jarvis_safety::summary_with(
+        &tap(5),
+        &s,
+        Payment,
+        jarvis_safety::ScreenSource::Typed,
+        None,
+        &typed,
+    );
+    assert!(
+        sum.ends_with("Fields: What's it for?: Concert tickets"),
+        "{sum}"
     );
 }
 

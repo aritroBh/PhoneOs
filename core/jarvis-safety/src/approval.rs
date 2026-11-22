@@ -36,11 +36,10 @@ struct Fact {
 /// The compact-screen record an approval was given on, captured from the screen the
 /// question was asked about.
 ///
-/// It holds the app, the keyboard's Return-key label (the cue the classifier reads) **only
-/// when the action presses Return** (`type … submit`; for any other action the keyboard's
-/// presence or its Return key does not matter), the approved action's target (its position
-/// in the list) and, for every element of the
-/// compact screen in order: role, label, value (never a secure field's), placeholder,
+/// It holds the app, the keyboard's Return-key label (the cue the classifier reads; since
+/// the sixth review the keys are hashed in the raw digest too, so a changed or appearing
+/// Return key voids any approval, not only a submit's), the approved action's target (its
+/// position in the list) and, for every element of the compact screen in order: role, label, value (never a secure field's), placeholder,
 /// selected/checked state, enabled flag and secure flag. Frames and focus are not part of
 /// it, so a list that only moved keeps it.
 ///
@@ -146,9 +145,23 @@ impl ApprovalContext {
                 continue;
             }
             let role = crate::evaluate::role_words(&a.role);
+            // A field's value is quoted only where a summary could show it without knowing
+            // what Jarvis typed (an amount in an amount-like field); other fields are named
+            // (sixth review).
             let text = |f: &Fact| {
                 let t = match &f.value {
-                    Some(v) if !v.trim().is_empty() => format!("{} {v}", f.label),
+                    Some(v)
+                        if !v.trim().is_empty()
+                            && crate::evaluate::value_quotable(
+                                &f.role,
+                                &f.label,
+                                f.placeholder.as_deref(),
+                                v,
+                            ) =>
+                    {
+                        format!("{} {v}", f.label)
+                    }
+                    Some(v) if !v.trim().is_empty() => format!("{} (filled)", f.label),
                     _ => f.label.clone(),
                 };
                 format!("\"{}\"", crate::evaluate::clean_quote(&t, NOTE_TEXT_CHARS))
@@ -230,11 +243,6 @@ fn is_icon(role: &Role) -> bool {
     matches!(role, Role::Other(name) if name.trim().eq_ignore_ascii_case("icon"))
 }
 
-/// Whether `action` presses the keyboard's Return key.
-fn presses_return(action: &Action) -> bool {
-    matches!(action, Action::Type { submit: true, .. })
-}
-
 /// Longest screen text quoted in a [`ApprovalContext::change_note`], in characters.
 const NOTE_TEXT_CHARS: usize = 60;
 
@@ -271,11 +279,7 @@ fn record(action: &Action, screen: &CompactScreen) -> ApprovalContext {
         .collect();
     ApprovalContext {
         app: screen.app_bundle_id.clone(),
-        return_key: if presses_return(action) {
-            screen.cues.return_key.clone()
-        } else {
-            None
-        },
+        return_key: screen.cues.return_key.clone(),
         springboard: is_springboard(&screen.app_bundle_id),
         facts,
         target: target.map(|t| t.index),

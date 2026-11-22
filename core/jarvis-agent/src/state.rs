@@ -24,21 +24,47 @@ pub(crate) enum Exec {
     Tool(ToolCall),
 }
 
+/// Which part of a model step a [`Pending`] carries out. A `type … submit` is two parts
+/// (sixth review): the typing, gated as a plain `type`, and, once the typed text checks out,
+/// pressing Return in that field, gated on the screen as it is then as its own action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stage {
+    /// The whole action (everything but a `type … submit`).
+    Whole,
+    /// The typing of a `type … submit`, without Return.
+    Typing,
+    /// Return after the typing of a `type … submit`, gated on the post-typing screen.
+    Return,
+}
+
 /// An action that passed parsing, validation and safety, on its way to being executed.
 /// `Debug` leaves out the runner commands (they carry substituted profile values) and the
 /// screens.
 #[derive(Clone, PartialEq)]
 pub(crate) struct Pending {
     /// The action as decided: placeholders kept, `open_app` resolved to a bundle id. This is
-    /// what history, flows and the log see.
+    /// what history, flows and the log see (for both parts of a `type … submit`).
     pub action: Action,
+    /// What was gated and what an approval is bound to (placeholders kept): `action`, but
+    /// for the typing part of a `type … submit` the same `type` without `submit`, and for
+    /// its Return part a `type` with `submit` naming the field on the post-typing screen
+    /// (`bound`), whose text is already typed.
+    pub gate: Action,
+    /// Which part of the model step this is.
+    pub stage: Stage,
     /// Who chose it.
     pub source: Source,
-    /// The screen it was chosen on (original, unsanitised; for verification and recording).
+    /// The screen the model step was chosen on (original, unsanitised; for verification and
+    /// recording).
     pub before: CompactScreen,
     /// The prompt-safe copy of `before` (for describing what changed in the history).
     pub before_safe: CompactScreen,
-    /// The exact digest of the raw tree `before` was compacted from: an approval holds only
+    /// The screen `gate` was gated on, which an approval is bound to: `before`, but the
+    /// post-typing screen for the Return part of a `type … submit`.
+    pub bound: CompactScreen,
+    /// The prompt-safe copy of `bound` (for the note when an approval no longer holds).
+    pub bound_safe: CompactScreen,
+    /// The exact digest of the raw tree `bound` was compacted from: an approval holds only
     /// on a fresh look with the same digest.
     pub before_digest: jarvis_observe::ScreenDigest,
     /// The raw node (index in the digest's node order) the target was listed from, if the
@@ -66,8 +92,6 @@ pub(crate) struct TypeCheck {
     pub prior: Option<String>,
     /// The field's placeholder.
     pub placeholder: Option<String>,
-    /// Commands held back until the text is confirmed (`PressKey Return` for `submit`).
-    pub then: VecDeque<RunnerCommand>,
     /// Whether the one corrective attempt (delete, type again) has been made.
     pub retried: bool,
 }
@@ -80,6 +104,7 @@ impl std::fmt::Debug for Pending {
         };
         f.debug_struct("Pending")
             .field("action", &self.action.name())
+            .field("stage", &self.stage)
             .field("source", &self.source)
             .field("described", &self.described)
             .field("expect_change", &self.expect_change)
@@ -94,7 +119,6 @@ impl std::fmt::Debug for TypeCheck {
         f.debug_struct("TypeCheck")
             .field("typed_chars", &self.typed.chars().count())
             .field("field", &self.field)
-            .field("held_back", &self.then.len())
             .field("retried", &self.retried)
             .finish_non_exhaustive()
     }
@@ -131,6 +155,9 @@ pub(crate) enum Late {
         source: Source,
         /// The action (for the log).
         action: Action,
+        /// Which part of the model step was asked about (a declined Return leaves the text
+        /// typed).
+        stage: Stage,
     },
     /// `AskUser`: an answer that arrives is recorded.
     Answer {
@@ -176,13 +203,14 @@ pub(crate) struct ApprovalLook {
     pub settled: bool,
 }
 
-/// A typed home-screen search whose held-back Return waits for the results to settle.
+/// A typed home-screen search whose Return (gated on its own) waits for the results to
+/// settle.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Settle {
-    /// The typing action (its text already typed and checked).
+    /// The typing part (its text already typed and checked).
     pub pending: Box<Pending>,
-    /// The held-back commands (`PressKey Return`).
-    pub then: VecDeque<RunnerCommand>,
+    /// Fingerprint of the field the text went into (where Return is pressed).
+    pub field: Option<u64>,
     /// The result labels of the previous look.
     pub labels: Vec<String>,
     /// Looks taken so far for this Return.

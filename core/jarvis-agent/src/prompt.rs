@@ -194,6 +194,18 @@ pub(crate) fn stale_approvals_summary(count: u32, last_change: &str) -> String {
 /// History result: the text was typed, but the screen changed before its Return was pressed.
 pub(crate) const RESULT_RETURN_HELD: &str =
     "not done: the text was typed, but the screen changed before Return, so Return was not pressed; check the screen";
+/// History result: the owner declined Return after the text was typed (the second part of a
+/// `type … submit`).
+pub(crate) const RESULT_RETURN_DECLINED: &str =
+    "not done: typed, not submitted: the owner declined pressing Return. The text stays in the field; do not press Return again; find another way or use fail";
+/// History result: the phone locked between the typing and its Return, and the screen
+/// changed (or the Return was refused as locked).
+pub(crate) const RESULT_RETURN_LOCKED: &str =
+    "not done: the text was typed, but the phone locked before Return, so Return was not pressed; check the screen";
+/// History result: the session refused `type` without an element because no listed field is
+/// focused.
+pub(crate) const RESULT_NO_FOCUSED_FIELD: &str =
+    "no field is focused; tap a field first (or give the field's element number)";
 /// History result: a held confirmation whose screen changed during the lock.
 pub(crate) const RESULT_LOCK_SCREEN_CHANGED: &str =
     "not done: the phone locked while waiting for the owner's approval, and the screen changed";

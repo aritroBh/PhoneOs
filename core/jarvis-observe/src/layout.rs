@@ -10,21 +10,18 @@
 //! everywhere: it is not hashed, never a compact element (so never a target, a source of
 //! summary facts or classifier context), and its subtree is skipped by the scroll cues.
 //!
-//! * **Keyboard.** The whole *top-level window subtree* (the root's direct child that holds
-//!   it) of a node with role `Keyboard`, when that window holds nothing but the keyboard
-//!   and its chrome: every content-bearing node outside the keyboard's own subtree (a
-//!   label, value or placeholder, or an interactive or text role) lies at or below
-//!   [`KEYBOARD_ACCESSORY_REACH`] points above the keyboard's top (the prediction /
-//!   autofill bar above it, the emoji and dictation buttons below it). iOS hosts the
-//!   keyboard in a window of its own (`UIRemoteKeyboardWindow`); an app cannot put its own
-//!   content there. Otherwise (a `Keyboard` node inside a window that also holds app
-//!   content) only the `Keyboard` node's own subtree is excluded. The Return key's label is
-//!   still read from the keyboard (`ScreenCues::return_key`), as a cue, never hashed.
 //! * **Status bar**, only on SpringBoard (the app id the runner reports): a node with role
 //!   `StatusBar` that is a direct child of a top-level `Window` of the root. In any other
 //!   app, and anywhere else, a `StatusBar` node is ordinary content.
 //!
-//! No exclusion goes by identifier (an app can set any identifier) or by position alone.
+//! Nothing else is excluded: not by identifier (an app can set any identifier), not by
+//! position, and **not the keyboard** (sixth review). An app's input accessory bar lives in
+//! the keyboard's window right above the keys, so a rule that left out "the keyboard's
+//! window" left out a compose bar, its Send button and an amount; the keyboard, its keys,
+//! its prediction bar and everything around it are hashed like any other node. Compaction
+//! still keeps the `Keyboard` node's own subtree (the keys) off the compact screen and reads
+//! its Return key as a cue; that is the one direction allowed: what is hashed need not be
+//! listed, but nothing unhashed is ever listed.
 //!
 //! # Shown
 //!
@@ -40,10 +37,6 @@ use jarvis_proto::{Rect, Role, Screen, UiNode, SPRINGBOARD_BUNDLE_ID};
 
 use crate::compact::{is_pruned, MAX_DEPTH};
 
-/// How far (points) above the keyboard's top the keyboard's own chrome may reach (the
-/// prediction and autofill bar is 44 pt on iOS 26) for its window to count as the
-/// keyboard's own.
-pub(crate) const KEYBOARD_ACCESSORY_REACH: f64 = 100.0;
 /// An element must keep this share of its area visible...
 const MIN_VISIBLE_FRACTION: f64 = 0.3;
 /// ...or at least this many points in both directions.
@@ -69,49 +62,10 @@ fn is_status_bar(role: &Role) -> bool {
     }
 }
 
-/// A node that says something: a label, value or placeholder, or an interactive or text
-/// role.
-fn content_bearing(n: &UiNode) -> bool {
-    let has = |s: &Option<String>| s.as_deref().is_some_and(|t| !t.trim().is_empty());
-    has(&n.label)
-        || has(&n.value)
-        || has(&n.placeholder)
-        || n.role.is_interactive()
-        || n.role == Role::StaticText
-}
-
-/// Whether the top-level subtree `top` holds nothing but the keyboard `kb` and its chrome
-/// (see the module docs).
-fn keyboard_owns(top: &UiNode, kb: &UiNode) -> bool {
-    if kb.frame.is_empty() || !kb.frame.y.is_finite() {
-        return false;
-    }
-    let band_top = kb.frame.y - KEYBOARD_ACCESSORY_REACH;
-    let mut stack = vec![top];
-    while let Some(n) = stack.pop() {
-        if std::ptr::eq(n, kb) {
-            continue;
-        }
-        let in_band = matches!(
-            n.frame.y.partial_cmp(&band_top),
-            Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
-        );
-        if content_bearing(n) && !in_band {
-            return false;
-        }
-        stack.extend(n.children.iter());
-    }
-    true
-}
-
 /// The excluded subtree roots of `screen` (see the module docs), by address.
 fn exclusions(screen: &Screen) -> HashSet<usize> {
     let root = &screen.root;
     let mut out = HashSet::new();
-    if root.role == Role::Keyboard {
-        out.insert(addr(root));
-        return out;
-    }
     let springboard = screen
         .app_bundle_id
         .trim()
@@ -123,19 +77,6 @@ fn exclusions(screen: &Screen) -> HashSet<usize> {
             }
         }
     }
-    // (node, its top-level ancestor: the root's direct child it is in)
-    let mut stack: Vec<(&UiNode, &UiNode)> = root.children.iter().map(|c| (c, c)).collect();
-    while let Some((n, top)) = stack.pop() {
-        if out.contains(&addr(n)) || out.contains(&addr(top)) {
-            continue;
-        }
-        if n.role == Role::Keyboard {
-            let cut = if keyboard_owns(top, n) { top } else { n };
-            out.insert(addr(cut));
-            continue;
-        }
-        stack.extend(n.children.iter().map(|c| (c, top)));
-    }
     out
 }
 
@@ -144,8 +85,7 @@ pub(crate) struct Layout<'a> {
     excluded: HashSet<usize>,
     /// The topmost shown Alert/Sheet (last in document order), outside excluded subtrees.
     pub alert: Option<&'a UiNode>,
-    /// The first shown keyboard (inside an excluded subtree or not): its frame occludes, its
-    /// Return key is a cue.
+    /// The first shown keyboard: its frame occludes, its Return key is a cue.
     pub keyboard: Option<&'a UiNode>,
     bounds: Rect,
     occluder: Option<Rect>,

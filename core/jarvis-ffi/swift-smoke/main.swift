@@ -259,9 +259,12 @@ do {
 
     var trusted = try makeConfig()
     trusted.policy.appRules = [AppRule(bundleIdPrefix: settingsBundle, level: .trusted)]
-    let trustedRun = drive(memoryJson: "", config: trusted, decide: { _ in false })
-    check("a Trusted app toggles a setting with no confirmation",
-          trustedRun.outcome?.status == .success && trustedRun.confirms.isEmpty,
+    // Sixth review: the Wi-Fi page here is read from runner text, and a text screen always
+    // confirms whatever the trust level; the typed Settings screen asks nothing.
+    let trustedRun = drive(memoryJson: "", config: trusted, decide: { _ in true })
+    check("a Trusted app asks only on the runner-text screen",
+          trustedRun.outcome?.status == .success && trustedRun.confirms.count == 1
+              && trustedRun.confirms[0].summary.hasPrefix("Warning: this screen was read through an unverified text format"),
           "\(trustedRun.confirms) \(String(describing: trustedRun.outcome))")
 
     let s = try JarvisSession(config: try makeConfig(), task: task, memoryJson: "")

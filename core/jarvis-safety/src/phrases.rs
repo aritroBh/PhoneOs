@@ -487,7 +487,9 @@ pub const CREDENTIAL_FIELD_PHRASES: &[Phrase] = &[
 
 /// Field names (label or placeholder) whose value is never shown, in prompts or in the
 /// owner's summaries, beyond [`CREDENTIAL_FIELD_PHRASES`]: card expiry and bank account
-/// entry fields. Not used for classification (typing into them is not a credential).
+/// entry fields, and (sixth review) card and identity details: CSC, security number, card
+/// number written short, security answers, maiden name, memorable word, date of birth, tax
+/// id, driver license, passport, access code. Not used for classification (typing into them is not a credential).
 pub const HIDDEN_FIELD_PHRASES: &[Phrase] = &[
     p("expiry", Credential),
     p("expiry date", Credential),
@@ -506,6 +508,34 @@ pub const HIDDEN_FIELD_PHRASES: &[Phrase] = &[
     p("swift code", Credential),
     p("security answer", Credential),
     p("mnemonic", Credential),
+    // Sixth review: identity and card details whose values were quoted in summaries.
+    p("csc", Credential),
+    p("cvv2", Credential),
+    p("cvc2", Credential),
+    p("security number", Credential),
+    p("card no", Credential),
+    p("card", Credential),
+    p("answer", Credential),
+    p("maiden name", Credential),
+    p("memorable word", Credential),
+    p("memorable", Credential),
+    p("date of birth", Credential),
+    p("birth date", Credential),
+    p("birthdate", Credential),
+    p("dob", Credential),
+    p("tax id", Credential),
+    p("taxpayer", Credential),
+    p("tin", Credential),
+    p("driver license", Credential),
+    p("driver licence", Credential),
+    p("drivers license", Credential),
+    p("drivers licence", Credential),
+    p("license number", Credential),
+    p("licence number", Credential),
+    p("passport", Credential),
+    p("national id", Credential),
+    p("id number", Credential),
+    p("access code", Credential),
 ];
 
 /// Text-input labels whose Return key publishes or sends what was typed.

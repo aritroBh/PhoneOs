@@ -357,16 +357,22 @@ fn step_by_step_and_first_use_settings_cross_the_bridge() {
     let cats: Vec<RiskCategory> = run.confirms.iter().map(|r| r.category).collect();
     assert_eq!(cats, vec![RiskCategory::None, RiskCategory::SystemSetting]);
 
-    // A Trusted rule for Settings: no confirmation at all.
+    // A Trusted rule for Settings: nothing is asked on the typed screen. Sixth review: the
+    // Wi-Fi page here is read from runner text, and a text screen always confirms whatever
+    // the trust level, so the switch tap there is asked (was: no confirmation at all;
+    // deliberate change).
     let mut c = config();
     c.policy.app_rules = vec![AppRule {
         bundle_id_prefix: SETTINGS.to_owned(),
         level: TrustLevel::Trusted,
         name: Some("Settings".to_owned()),
     }];
-    let run = drive_with(c, "", |_| false);
+    let run = drive_with(c, "", |_| true);
     assert_eq!(run.outcome.unwrap().status, OutcomeStatus::Success);
-    assert!(run.confirms.is_empty(), "{:?}", run.confirms);
+    assert_eq!(run.confirms.len(), 1, "{:?}", run.confirms);
+    assert!(run.confirms[0]
+        .summary
+        .starts_with(jarvis_safety::UNVERIFIED_SCREEN_WARNING));
 }
 
 #[test]

@@ -2,11 +2,18 @@
 //!
 //! | Action | Commands |
 //! |---|---|
-//! | `tap` / `long_press` | `Tap` / `LongPress` at the element centre |
-//! | `type` | `Tap` the element when it is not focused, `TypeText` (skipped for empty text), `PressKey Return` when `submit` |
-//! | `clear` | `Tap` near the field's trailing edge (caret to the end), then `PressKey Delete` once per character of the current value (1..=[`MAX_CLEAR_DELETES`]); runners whose Delete clears the whole field just see a few extra no-op presses |
-//! | `scroll` / `swipe` | one `Swipe` from [`crate::gestures`] |
-//! | `tap_point` | `Tap` at the normalized point scaled by the screen size |
+//! | `tap` / `long_press` | `Tap` / `LongPress` at the element's tap point (below) |
+//! | `type` | `Tap` the element (at its tap point) when it is not focused, `TypeText` (skipped for empty text), `PressKey Return` when `submit` (the session carries a submit out in two gated parts and never plans one whole) |
+//! | `clear` | `Tap` near the field's trailing edge (caret to the end; another uncontested point of the field when that is covered), then `PressKey Delete` once per character of the current value (1..=[`MAX_CLEAR_DELETES`]); runners whose Delete clears the whole field just see a few extra no-op presses |
+//! | `scroll` / `swipe` | one `Swipe` from [`crate::gestures`]; on an element, its start point must be uncontested |
+//! | `tap_point` | `Tap` at the normalized point scaled by the screen size, when it resolves to at most one control |
+//!
+//! **Tap points (sixth review).** Every point Jarvis taps or presses lands on the control it
+//! names: it is inside the target's shown frame and inside no other enabled control's frame
+//! unless that control is the target's ancestor or descendant in the raw tree
+//! ([`jarvis_safety::tap_spot`]: the centre, else the first uncontested point of a fixed 3 × 3
+//! grid). When every candidate is covered the action is not planned
+//! ([`PlanError::Covered`]): the session refuses it ("not done: … is covered by …").
 //! | `press_home` | `PressKey Home` |
 //! | `open_app` | `LaunchApp` (the bundle id is resolved before safety runs) |
 //! | `open_url` / `wait` | `OpenUrl` / `Wait` |
@@ -16,6 +23,7 @@ use std::collections::VecDeque;
 use jarvis_proto::{Action, AppInfo, CompactScreen, Key, Point, RunnerCommand};
 
 use jarvis_safety::gestures::{denormalize, gesture, GestureError, GestureKind};
+use jarvis_safety::{control_at, point_is_clear, tap_spot, Covered, ScreenTree};
 
 /// Most Delete presses a `clear` sends.
 pub const MAX_CLEAR_DELETES: usize = 64;
@@ -31,6 +39,9 @@ pub(crate) enum PlanError {
     Gesture(GestureError),
     /// The action is not a runner action.
     NotUi,
+    /// Every point that would press the target is covered by another control (or a raw
+    /// point lands on two unrelated controls).
+    Covered(Covered),
 }
 
 impl std::fmt::Display for PlanError {
@@ -39,6 +50,9 @@ impl std::fmt::Display for PlanError {
             PlanError::NoElement(i) => write!(f, "element {i} is not on this screen"),
             PlanError::Gesture(g) => write!(f, "{g}"),
             PlanError::NotUi => write!(f, "this action does not use the screen"),
+            PlanError::Covered(c) => {
+                write!(f, "element {} is covered by element {}", c.target, c.by)
+            }
         }
     }
 }
@@ -98,20 +112,26 @@ fn tap(p: Point) -> RunnerCommand {
 }
 
 /// The runner commands for `action` on `screen`. `Type` text must already have its profile
-/// placeholders substituted; `OpenApp` must carry a bundle id.
+/// placeholders substituted; `OpenApp` must carry a bundle id. `tree` (the raw tree's shape,
+/// from `jarvis_observe::compact_view`) tells which controls hold one another, for the tap
+/// point rule (see the module docs).
 pub(crate) fn plan(
     action: &Action,
     screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
 ) -> Result<VecDeque<RunnerCommand>, PlanError> {
     let el = |i: u32| screen.get(i).ok_or(PlanError::NoElement(i));
+    let spot = |i: u32, preferred: Option<Point>| -> Result<Point, PlanError> {
+        tap_spot(el(i)?, screen, tree, preferred).map_err(PlanError::Covered)
+    };
     let mut q = VecDeque::new();
     match action {
-        Action::Tap { element } => q.push_back(tap(el(*element)?.frame.center())),
+        Action::Tap { element } => q.push_back(tap(spot(*element, None)?)),
         Action::LongPress {
             element,
             duration_ms,
         } => {
-            let c = el(*element)?.frame.center();
+            let c = spot(*element, None)?;
             q.push_back(RunnerCommand::LongPress {
                 x: c.x,
                 y: c.y,
@@ -126,7 +146,7 @@ pub(crate) fn plan(
             if let Some(i) = element {
                 let e = el(*i)?;
                 if !e.focused {
-                    q.push_back(tap(e.frame.center()));
+                    q.push_back(tap(spot(*i, None)?));
                 }
             }
             if !text.is_empty() {
@@ -140,7 +160,8 @@ pub(crate) fn plan(
             let e = el(*element)?;
             let f = e.frame;
             let inset = CLEAR_TAP_INSET.min(f.width / 4.0);
-            q.push_back(tap(Point::new(f.max_x() - inset, f.center().y)));
+            let trailing = Point::new(f.max_x() - inset, f.center().y);
+            q.push_back(tap(spot(*element, Some(trailing))?));
             let n = e
                 .value
                 .as_deref()
@@ -156,18 +177,28 @@ pub(crate) fn plan(
             } else {
                 GestureKind::Swipe
             };
-            let frame = match element {
-                Some(i) => Some(el(*i)?.frame),
+            let target = match element {
+                Some(i) => Some(el(*i)?),
                 None => None,
             };
-            let g = gesture(kind, *direction, frame, screen.size).map_err(PlanError::Gesture)?;
+            let g = gesture(kind, *direction, target.map(|t| t.frame), screen.size)
+                .map_err(PlanError::Gesture)?;
+            // A drag on an element starts on it alone (the path is what the classifier read,
+            // so the start is not moved).
+            if let Some(t) = target {
+                point_is_clear(g.from, t, screen, tree).map_err(PlanError::Covered)?;
+            }
             q.push_back(RunnerCommand::Swipe {
                 from: g.from,
                 to: g.to,
                 duration_ms: g.duration_ms,
             });
         }
-        Action::TapPoint { x, y } => q.push_back(tap(denormalize(*x, *y, screen.size))),
+        Action::TapPoint { x, y } => {
+            let p = denormalize(*x, *y, screen.size);
+            control_at(p, screen, tree).map_err(PlanError::Covered)?;
+            q.push_back(tap(p));
+        }
         Action::PressHome => q.push_back(RunnerCommand::PressKey { key: Key::Home }),
         Action::OpenApp { app } => q.push_back(RunnerCommand::LaunchApp {
             bundle_id: app.clone(),
@@ -358,7 +389,9 @@ mod tests {
             label: "Email".into(),
             value: value.map(str::to_owned),
             placeholder: None,
-            frame: Rect::new(20.0, 200.0, 300.0, 40.0),
+            // Sixth review: the two fields no longer share one frame (a tap on either would
+            // be covered by the other).
+            frame: Rect::new(20.0, 140.0 + 60.0 * f64::from(index), 300.0, 40.0),
             enabled: true,
             focused,
             selected: false,
@@ -382,7 +415,7 @@ mod tests {
             text: "hi".into(),
             submit: true,
         };
-        let q: Vec<_> = plan(&a, &screen()).unwrap().into_iter().collect();
+        let q: Vec<_> = plan(&a, &screen(), None).unwrap().into_iter().collect();
         assert_eq!(
             q,
             vec![
@@ -396,17 +429,17 @@ mod tests {
             text: "hi".into(),
             submit: false,
         };
-        assert_eq!(plan(&focused, &screen()).unwrap().len(), 1);
+        assert_eq!(plan(&focused, &screen(), None).unwrap().len(), 1);
     }
 
     #[test]
     fn clear_taps_trailing_edge_then_deletes_per_char() {
-        let q: Vec<_> = plan(&Action::Clear { element: 2 }, &screen())
+        let q: Vec<_> = plan(&Action::Clear { element: 2 }, &screen(), None)
             .unwrap()
             .into_iter()
             .collect();
         assert_eq!(q.len(), 4);
-        assert_eq!(q[0], RunnerCommand::Tap { x: 312.0, y: 220.0 });
+        assert_eq!(q[0], RunnerCommand::Tap { x: 312.0, y: 280.0 });
         assert!(q[1..]
             .iter()
             .all(|c| *c == RunnerCommand::PressKey { key: Key::Delete }));

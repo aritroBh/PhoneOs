@@ -13,7 +13,8 @@
 //!
 //! The foreground app's bundle id, then every node that is not excluded (see
 //! [`crate::layout`]), in depth-first pre-order: its depth, role, label, value, identifier,
-//! placeholder, the `enabled`, `selected` and `secure` flags, and whether it is **shown**:
+//! placeholder, the `enabled`, `selected` and `secure` flags, the raw `visible` flag, and
+//! whether it is **shown**:
 //! the exact predicate compaction uses to list a node (no pruned ancestor, within the depth
 //! cap, inside the alert while one is up, and enough of its frame on screen and above the
 //! keyboard; one function, `Layout::shown_frame`, decides it for both). Every field is
@@ -25,15 +26,15 @@
 //!
 //! Not part of it:
 //!
-//! * **frames** themselves (the agent re-plans the point on the fresh screen), `focused`,
-//!   and the raw `visible`/`hittable` flags (the shown bit covers them);
+//! * **frames** themselves (the agent re-plans the point on the fresh screen), `focused`
+//!   and the raw `hittable` flag;
 //! * the **value of a secure field** (its presence, role and label are hashed; the value is
-//!   never even read into the input);
-//! * **excluded** subtrees (see [`crate::layout`]): the keyboard's own top-level window (or
-//!   only the `Keyboard` node's subtree when it shares a window with app content), and on
-//!   SpringBoard only the status bar under a top-level window. Nothing is excluded by
-//!   identifier. The keyboard's Return-key label is not hashed: the approval record carries
-//!   it only for an action that presses Return;
+//!   never even read into the input); compaction never lists a secure node's value either;
+//! * **excluded** subtrees (see [`crate::layout`]): on SpringBoard only, the status bar under
+//!   a top-level window. Nothing is excluded by identifier, and nothing in or near the
+//!   keyboard is excluded: its keys (so its Return-key label), its prediction bar and an
+//!   app's input accessory bar are hashed like any other node, so a keyboard that appears,
+//!   hides or changes its Return key changes the digest;
 //! * on SpringBoard only, the badge part after the first comma of an app **icon**'s label
 //!   (role `Icon`: `Mail, 3 unread` → `Mail`); other nodes keep their whole label;
 //! * the position (`12%`) of iOS's scroll indicators (`Vertical scroll bar, N pages` /
@@ -146,7 +147,7 @@ fn is_scroll_indicator(node: &UiNode) -> bool {
 
 /// Writes the digest input of `screen` (see the module docs) to `sink`.
 fn feed(screen: &Screen, sink: &mut impl Sink) {
-    sink.put(b"jarvis-screen-digest-v2");
+    sink.put(b"jarvis-screen-digest-v3");
     put_str(sink, screen.app_bundle_id.trim());
     let springboard = screen
         .app_bundle_id
@@ -178,6 +179,7 @@ fn feed(screen: &Screen, sink: &mut impl Sink) {
             u8::from(node.enabled),
             u8::from(node.selected),
             u8::from(secure),
+            u8::from(node.visible),
             u8::from(shown),
         ]);
     });

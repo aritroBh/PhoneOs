@@ -65,6 +65,28 @@ pub fn gate_in(
     }
 }
 
+/// [`gate_in`] plus the **screen-source rule** (sixth review): when the screen the action is
+/// judged on came from the third-party runner's text format (`runner_text`, which on-screen
+/// text can forge), every action that [`changes_state`] is confirmed, whatever the policy
+/// mode, the app's trust level (a `Trusted` app's [`TRUSTED_ALLOWED`] categories included)
+/// or the categories the owner relaxed. Only a denial (a deny-listed app, a denied
+/// category) takes precedence, and refuses. This is a rule on the source, not on a
+/// category: no trust level or relaxed category can let such an action through unasked.
+pub fn gate_on(
+    policy: &Policy,
+    category: RiskCategory,
+    level: TrustLevel,
+    action: &Action,
+    screen: &CompactScreen,
+    runner_text: bool,
+) -> Gate {
+    match gate_in(policy, category, level, action, screen) {
+        Gate::Deny => Gate::Deny,
+        _ if runner_text && changes_state(action, screen) => Gate::Confirm,
+        other => other,
+    }
+}
+
 /// Whether `action` can change state: everything except `Wait`, `Look`, `Done`, `Fail`,
 /// `AskUser` and a plain vertical `Scroll` (one whose target, if any, is not a picker,
 /// slider or switch, where dragging changes the value). `PressHome`, `OpenApp`, `OpenUrl`,

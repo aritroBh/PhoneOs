@@ -450,3 +450,57 @@ fn switches_render_as_on_or_off_and_keep_the_raw_value() {
     }
     assert!(!text.contains("value=\"0\""), "{text}");
 }
+
+// ---- tap points (sixth review) -----------------------------------------------------------
+
+/// Every listed control on every real screen gets an uncontested tap point: real trees
+/// (full-screen `Other` overlays, tab bars whose buttons overlap a little, nested cells) do
+/// not make ordinary taps refused. Text inputs included (they are tapped to focus).
+///
+/// **Known exception, kept visible:** on `long_list_scrolled` the list has scrolled under
+/// the translucent navigation and tab bars, so list rows (`Item 7`/`Item 8`, `Item 23`/
+/// `Item 24`, buttons themselves) lie under the back button and under all five tab-bar
+/// buttons. UIKit draws the bars on top, but the tree's order is not trusted (an overlap is
+/// a conflict whichever is on top), so those six taps are refused ("… is covered by …")
+/// until the list is scrolled so that no row lies under them; the rows themselves get
+/// another point. The list below is exact: any other refusal, or any of these starting to
+/// pass, fails the test.
+#[test]
+fn every_listed_control_has_an_uncontested_tap_point() {
+    let mut refused = Vec::new();
+    let mut checked = 0usize;
+    for name in FIXTURES {
+        let s = fixture(name);
+        let view = jarvis_observe::compact_view(&s);
+        let tree = jarvis_safety::ScreenTree {
+            sources: &view.sources,
+            parents: &view.parents,
+            ends: &view.ends,
+        };
+        for e in view
+            .screen
+            .elements
+            .iter()
+            .filter(|e| e.enabled && jarvis_safety::takes_taps(&e.role))
+        {
+            checked += 1;
+            match jarvis_safety::tap_spot(e, &view.screen, Some(&tree), None) {
+                Ok(p) => assert!(e.frame.contains(p), "{name}: {}", e.label),
+                Err(c) => refused.push(format!(
+                    "{name}: [{}] {:?} {:?} covered by [{}]",
+                    e.index, e.role, e.label, c.by
+                )),
+            }
+        }
+    }
+    assert!(checked > 100, "{checked}");
+    let known = [
+        "long_list_scrolled: [3] Button \"Playground\" covered by [5]",
+        "long_list_scrolled: [21] Button \"Playground\" covered by [20]",
+        "long_list_scrolled: [22] Button \"Ask\" covered by [20]",
+        "long_list_scrolled: [23] Button \"Activity\" covered by [20]",
+        "long_list_scrolled: [24] Button \"Apps\" covered by [20]",
+        "long_list_scrolled: [25] Button \"Rules\" covered by [20]",
+    ];
+    assert_eq!(refused, known, "{}", refused.join("\n"));
+}

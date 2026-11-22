@@ -589,6 +589,7 @@ name = "jarvis-observe"
 version = "0.1.0"
 dependencies = [
  "jarvis-proto",
+ "jarvis-safety",
  "serde",
  "serde_json",
  "sha2",

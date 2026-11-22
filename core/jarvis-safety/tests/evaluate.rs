@@ -114,9 +114,28 @@ fn send_in_messages_needs_confirmation() {
         None,
     ));
     assert_eq!(req.category, RiskCategory::SendMessage);
-    // Fourth review: the values of fields are facts (the message about to be sent).
+    // Sixth review: a field's value is shown only when Jarvis typed it (see
+    // `summary_with`); a message already in the field is named, not quoted. (Was: the value
+    // quoted, fourth review; deliberate change.)
     assert_eq!(
         req.summary,
+        "Tap \"Send\" in Messages. Fields: Message (filled)"
+    );
+    let field = s.elements.iter().find(|e| e.label == "Message").unwrap();
+    let typed = [jarvis_safety::TypedText {
+        field: field.fingerprint,
+        text: "See you at 7".to_owned(),
+    }];
+    let sum = jarvis_safety::summary_with(
+        &Action::Tap { element: send },
+        &s,
+        RiskCategory::SendMessage,
+        jarvis_safety::ScreenSource::Typed,
+        None,
+        &typed,
+    );
+    assert_eq!(
+        sum,
         "Tap \"Send\" in Messages. Fields: Message: See you at 7"
     );
     assert_eq!(req.app, "com.apple.MobileSMS");

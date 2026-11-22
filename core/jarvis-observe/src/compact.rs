@@ -124,6 +124,21 @@ fn non_empty(s: &Option<String>) -> Option<String> {
     (!c.is_empty()).then_some(c)
 }
 
+/// Whether `node` is secure (flag or role): its value is never hashed, so it is never
+/// copied anywhere into the compact screen, whatever its role.
+fn is_secure(node: &UiNode) -> bool {
+    node.secure || node.role == Role::SecureTextField
+}
+
+/// `node`'s value when it may be shown (cleaned, not blank): never a secure node's.
+fn shown_value(node: &UiNode) -> Option<String> {
+    if is_secure(node) {
+        None
+    } else {
+        non_empty(&node.value)
+    }
+}
+
 /// Indices of `frames` in reading order: rows top to bottom (tolerating jitter), left to
 /// right within a row. An element joins the current row when its top edge or its vertical
 /// centre is within [`ROW_TOLERANCE`] of the row's first element. Ties keep original order.
@@ -216,7 +231,7 @@ impl<'a> Summaries<'a> {
             if !is_live(node) || depth > MAX_DEPTH || layout.is_excluded(node) {
                 continue;
             }
-            let label = non_empty(&node.label).or_else(|| non_empty(&node.value));
+            let label = non_empty(&node.label).or_else(|| shown_value(node));
             match (&node.role, label) {
                 (Role::StaticText, Some(l)) => s.texts.push((node.frame, l)),
                 (Role::Image, Some(l)) => s.images.push((node.frame, l)),
@@ -368,7 +383,7 @@ impl Target {
             }
             t.frame = inner.frame;
             t.label = t.label.or_else(|| non_empty(&inner.label));
-            t.value = t.value.or_else(|| non_empty(&inner.value));
+            t.value = t.value.or_else(|| shown_value(inner));
             t.placeholder = t.placeholder.or_else(|| non_empty(&inner.placeholder));
             t.enabled &= inner.enabled;
             t.focused |= inner.focused;
@@ -448,7 +463,7 @@ impl<'a> Walker<'a> {
                 self.push(node, label, &st, Some(target));
             }
             Kind::Text => {
-                if let Some(label) = non_empty(&node.label).or_else(|| non_empty(&node.value)) {
+                if let Some(label) = non_empty(&node.label).or_else(|| shown_value(node)) {
                     if !st.skip_text {
                         self.push(node, label, &st, None);
                     }
@@ -533,7 +548,7 @@ impl<'a> Walker<'a> {
             key.push_str(&st.context);
         }
         let fingerprint = self.ordinals.assign(&node.role, &key, &self.path);
-        let secure = node.secure || node.role == Role::SecureTextField;
+        let secure = is_secure(node);
         let (frame, enabled, focused, selected) = match &target {
             Some(t) => (t.frame, t.enabled, t.focused, t.selected),
             None => (node.frame, node.enabled, node.focused, node.selected),
@@ -643,7 +658,7 @@ pub struct CompactView {
 
 /// Flattens a screen to its indexed, ordered, deduplicated actionable/informative elements.
 ///
-/// * Excluded subtrees (the keyboard's own window, SpringBoard's status bar; see
+/// * Excluded subtrees (SpringBoard's status bar; see
 ///   `crate::layout`) are never listed.
 /// * Invisible, zero-area, off-screen (or mostly off-screen) and keyboard-covered nodes are
 ///   dropped; partly visible ones keep the visible part of their frame. A hidden node with a
@@ -813,7 +828,7 @@ fn cues(root: &UiNode, bounds: Rect, layout: &Layout<'_>) -> ScreenCues {
                     out.more_above |= percent > 0;
                 }
             }
-            if out.page.is_none() {
+            if out.page.is_none() && !is_secure(n) {
                 out.page = page_indicator(n);
             }
         }

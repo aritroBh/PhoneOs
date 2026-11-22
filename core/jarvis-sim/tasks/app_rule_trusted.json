@@ -10,6 +10,10 @@
   },
   "expect_confirm_count": 0,
   "max_steps": 12,
+  "runner_text": {
+    "expect_confirm": ["unverified", "system_setting"],
+    "expect_confirm_count": 2
+  },
   "script": [
     "{\"thought\":\"open Wi-Fi\",\"action\":\"tap\",\"element\":\"@Cell:Wi-Fi\"}",
     "{\"thought\":\"switch it off\",\"action\":\"tap\",\"element\":\"@Switch:Wi-Fi\"}",

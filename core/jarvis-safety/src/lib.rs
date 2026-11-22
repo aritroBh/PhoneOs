@@ -45,6 +45,7 @@ mod confine;
 mod evaluate;
 mod gate;
 pub mod gestures;
+mod hit;
 mod phrases;
 mod redact;
 mod sanitize;
@@ -60,10 +61,12 @@ pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;
 pub use confine::check_confinement;
 pub use evaluate::{
-    classify_from, evaluate, evaluate_from, first_use_app, first_use_request, summarize,
-    summary_for, Decision, ScreenSource, ScreenTree, UNVERIFIED_SCREEN_WARNING,
+    classify_from, evaluate, evaluate_from, first_use_app, first_use_request, return_summary,
+    summarize, summary_for, summary_with, Decision, ScreenSource, ScreenTree, TypedText,
+    UNVERIFIED_SCREEN_WARNING,
 };
-pub use gate::{changes_state, gate, gate_in, Gate, TRUSTED_ALLOWED};
+pub use gate::{changes_state, gate, gate_in, gate_on, Gate, TRUSTED_ALLOWED};
+pub use hit::{control_at, point_is_clear, takes_taps, tap_spot, Covered, GRID as TAP_GRID};
 pub use phrases::{
     label_risk, AppRule, Phrase, RuleTarget, ACTION_PHRASES, APP_PHRASES, APP_RULES,
     APP_STORE_BUNDLE_ID, COMPOSE_FIELD_PHRASES, CONTEXT_PHRASES, CREDENTIAL_FIELD_PHRASES,

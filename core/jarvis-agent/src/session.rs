@@ -72,8 +72,16 @@
 //!
 //! Typed text is checked: after a `type`, the next observation must show the text in the
 //! field (`crate::typing::check_typed`). On a mismatch the session deletes what arrived and
-//! types once more; a second mismatch is reported to the model as a failed step. A `submit`
-//! is pressed only after the text checks out.
+//! types once more; a second mismatch is reported to the model as a failed step.
+//!
+//! A `type … submit` is one model step carried out in two gated parts (sixth review): the
+//! typing, gated as a plain `type`; then, once the text checks out, pressing Return in that
+//! field on the screen as it is *then*, through the full gate as its own action (classified,
+//! asked with a summary of that screen, bound to it and looked at again after an approval;
+//! pressed at once when nothing asks), see `Session::gate_return`. A decline leaves the
+//! text typed ("typed, not submitted"). `type` without an element needs a listed focused
+//! field. Every tap lands on the control it names (`jarvis_safety::tap_spot`); a covered
+//! control is refused ("not done: … is covered by …").
 //!
 //! Small models need more than "ok": every step that worked says what visibly changed
 //! (`crate::changes`), the same action repeated on the same control on a changing screen is
@@ -97,15 +105,16 @@ use jarvis_proto::{
 };
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
-    approval_context, check_app, check_app_name, check_confinement, evaluate_from, first_use_app,
-    first_use_request, is_springboard, label_names_denied_app, redact, redact_screen,
-    sanitize_screen_text, search_names_denied_app, summary_for, widget_names_denied_app, Budget,
-    BudgetVerdict, Decision, ScreenSource, ScreenTree, Verdict,
+    approval_context, check_app, check_app_name, check_confinement, control_at, evaluate_from,
+    first_use_app, first_use_request, is_springboard, label_names_denied_app, redact,
+    redact_screen, return_summary, sanitize_screen_text, search_names_denied_app, summary_with,
+    widget_names_denied_app, Budget, BudgetVerdict, Covered, Decision, ScreenSource, ScreenTree,
+    TypedText, Verdict,
 };
 
 use crate::changes::describe_change;
 use crate::commands::{
-    home_launch, is_widget, plan, resolve_app, should_change, AppTarget, HomeLaunch,
+    home_launch, is_widget, plan, resolve_app, should_change, AppTarget, HomeLaunch, PlanError,
     MAX_CLEAR_DELETES,
 };
 use crate::history::{clean, describe, History, MAX_SHOWN};
@@ -114,7 +123,8 @@ use crate::profile::{mask, sanitize_keys, sensitive_texts, substitute};
 use crate::prompt::{self, PromptParts, ACTION_MAX_TOKENS};
 use crate::schema::{action_gbnf, action_json_schema};
 use crate::state::{
-    ApprovalLook, Exec, Late, ObservePurpose, Pending, Resume, Settle, Source, State, TypeCheck,
+    ApprovalLook, Exec, Late, ObservePurpose, Pending, Resume, Settle, Source, Stage, State,
+    TypeCheck,
 };
 use crate::tools::{check_call, relevant, signature, MAX_TOOLS};
 use crate::typing::{check_typed, correction_deletes, TypedVerdict};
@@ -373,6 +383,9 @@ enum Prepared {
 enum Reject {
     /// Not executed; the model is told and it counts as a failure.
     Failed(String),
+    /// Not executed; the model is told this result line as it is (it starts with "not
+    /// done:") and it counts as a failure.
+    NotDone(String),
     /// The action targets a deny-listed app.
     AppDenied(String),
     /// The action targets an app the owner declined in this session: finish `Blocked`.
@@ -450,6 +463,9 @@ pub struct Session {
     stale_approvals: u32,
     /// Where the observation being handled came from (`Observed` or `ObservedRunnerText`).
     incoming_source: ScreenSource,
+    /// What the session typed into which field during the task (placeholders kept): the
+    /// only field values a confirmation summary may quote besides amounts.
+    typed: Vec<TypedText>,
 }
 
 impl std::fmt::Debug for Session {
@@ -588,6 +604,7 @@ impl Session {
             lock_uncertain: false,
             stale_approvals: 0,
             incoming_source: ScreenSource::Typed,
+            typed: Vec::new(),
         }
     }
 
@@ -939,6 +956,7 @@ impl Session {
                     pending.described.clone(),
                     &pending.action,
                     pending.source,
+                    pending.stage,
                 );
                 self.decide(now)
             }
@@ -955,6 +973,7 @@ impl Session {
         described: String,
         action: &Action,
         source: Source,
+        stage: Stage,
     ) {
         self.repeat = None;
         self.declined_open = Some(format!("\"{}\"", clean(&request.summary, 120)));
@@ -969,7 +988,12 @@ impl Session {
                 if request.category != RiskCategory::None {
                     self.declined.insert(request.category);
                 }
-                prompt::RESULT_DECLINED
+                // A declined Return leaves the text typed: "typed, not submitted".
+                if stage == Stage::Return {
+                    prompt::RESULT_RETURN_DECLINED
+                } else {
+                    prompt::RESULT_DECLINED
+                }
             }
         };
         self.history
@@ -1032,7 +1056,11 @@ impl Session {
             },
             State::AwaitingModel { .. } => (Resume::Decide, by_event.then_some(Late::Model)),
             State::AwaitingAct { pending, fresh, .. } => {
-                if fresh && !by_event {
+                if fresh && !by_event && pending.stage == Stage::Return {
+                    // Return was refused: the text is typed, Return was not pressed.
+                    self.record_failure(&pending, prompt::RESULT_RETURN_LOCKED);
+                    (Resume::Decide, None)
+                } else if fresh && !by_event {
                     // The runner refused the action's first command: nothing happened.
                     self.set_aside(&pending, prompt::RESULT_LOCK_NOT_DONE);
                     (Resume::Decide, None)
@@ -1060,8 +1088,9 @@ impl Session {
                     described: pending.described.clone(),
                     source: pending.source,
                     action: pending.action.clone(),
+                    stage: pending.stage,
                 };
-                if pending.source == Source::Replay {
+                if pending.source == Source::Replay && pending.stage != Stage::Return {
                     // A flow step is derived again from the fresh screen.
                     self.set_aside(&pending, prompt::RESULT_LOCK_NOT_DONE);
                     (Resume::Decide, Some(late))
@@ -1159,11 +1188,19 @@ impl Session {
                     described,
                     source,
                     action,
+                    stage,
                 }) => {
                     // A "no" is always safe to honour. A "yes" is not carried across the
                     // lock: the owner approves a screen they can see, so it is asked again.
                     if !approved {
-                        self.apply_decline(&request, approves_app, described, &action, source);
+                        self.apply_decline(
+                            &request,
+                            approves_app,
+                            described,
+                            &action,
+                            source,
+                            stage,
+                        );
                         resume = Resume::Decide;
                     }
                     self.await_unlock(now, resume, None)
@@ -1208,7 +1245,23 @@ impl Session {
     /// unlock: asked again (through the full gate) when the screen is unchanged, else
     /// dropped and decided again.
     fn reconsider(&mut self, now: u64, pending: Pending) -> Effect {
-        if screen_hash(&pending.before) == self.current.hash {
+        let same = screen_hash(&pending.bound) == self.current.hash;
+        if pending.stage == Stage::Return {
+            // The text is typed: its Return is gated again on the same screen, else not
+            // pressed (and the step is not refunded: the typing happened).
+            if same {
+                let field = match &pending.gate {
+                    Action::Type {
+                        element: Some(i), ..
+                    } => pending.bound.get(*i).map(|e| e.fingerprint),
+                    _ => None,
+                };
+                return self.gate_return(now, pending, field);
+            }
+            self.record_failure(&pending, prompt::RESULT_RETURN_LOCKED);
+            return self.decide(now);
+        }
+        if same {
             let prepared = self.prepare(&pending.action, pending.source);
             return self.dispatch(now, &pending.action, pending.source, prepared);
         }
@@ -1220,7 +1273,7 @@ impl Session {
     /// approval is never carried across a lock: asked again on the same screen, else
     /// decided again (a flow step is derived again).
     fn approval_interrupted(&mut self, pending: Box<Pending>) -> Resume {
-        if pending.source == Source::Replay {
+        if pending.source == Source::Replay && pending.stage != Stage::Return {
             self.set_aside(&pending, prompt::RESULT_LOCK_NOT_DONE);
             Resume::Decide
         } else {
@@ -1265,7 +1318,7 @@ impl Session {
         if let Some(fresh) = self.recheck_approved(&look.pending, look.approved.as_ref()) {
             return self.execute(fresh);
         }
-        let asked = look.pending.before.app_bundle_id.trim().to_owned();
+        let asked = look.pending.bound.app_bundle_id.trim().to_owned();
         let front = self.current.screen.app_bundle_id.trim().to_owned();
         let same_app = front.eq_ignore_ascii_case(&asked);
         let between = is_springboard(&front) || self.is_agent_app(&front);
@@ -1326,8 +1379,8 @@ impl Session {
     /// the full gate, which asks again if the action is proposed again).
     fn approval_stale(&mut self, now: u64, pending: &Pending) -> Effect {
         // What changed, in words (from the prompt-safe screens; cleaned and bounded).
-        let change = approval_context(&pending.action, &pending.before_safe)
-            .change_note(&pending.action, &self.current.safe)
+        let change = approval_context(&pending.gate, &pending.bound_safe)
+            .change_note(&pending.gate, &self.current.safe)
             .unwrap_or_else(|| prompt::CHANGE_UNSEEN.to_owned());
         self.record_failure(pending, &prompt::approval_stale(&change));
         self.stale_approvals = self.stale_approvals.saturating_add(1);
@@ -1358,25 +1411,26 @@ impl Session {
         approved: Option<&ConfirmRequest>,
     ) -> Option<Pending> {
         let screen = &self.current.screen;
-        let action = pending.action.clone();
+        // What was gated and bound (for a `type … submit`, its typing or its Return part).
+        let gate = pending.gate.clone();
         // A1: the raw digest; A2: the compact content (and the target's position, the app,
-        // and the Return key for a submit); A3: the target is the same raw node.
+        // and the Return key); A3: the target is the same raw node.
         if self.current.digest != pending.before_digest
-            || !approval_context(&action, &pending.before).holds_on(&action, screen)
-            || self.target_source(&action) != pending.before_target_source
+            || !approval_context(&gate, &pending.bound).holds_on(&gate, screen)
+            || self.target_source(&gate) != pending.before_target_source
         {
             return None;
         }
         if is_springboard(&screen.app_bundle_id)
             && matches!(
-                home_launch(&action, screen, &self.apps),
-                Some(HomeLaunch::Unresolved { .. })
+                home_launch(&gate, screen, &self.apps),
+                Some(HomeLaunch::Unresolved { .. } | HomeLaunch::Search { .. })
             )
             && self.denied_search_result().is_some()
         {
             return None;
         }
-        let executed = match &action {
+        let executed = match &gate {
             Action::Type {
                 element,
                 text,
@@ -1406,36 +1460,49 @@ impl Session {
             Decision::Confirm(request) => {
                 let same = approved.is_some_and(|a| {
                     a.category == request.category
-                        && a.summary == self.risk_summary(&action, request.category)
+                        && a.summary == self.risk_summary(&gate, pending.stage, request.category)
                 });
                 if !same {
                     return None;
                 }
             }
         }
-        let queue = plan(&executed, screen).ok()?;
-        let exec = Exec::Runner(queue);
-        if let (Some(target), Some(p)) = (action_target(&action, screen), planned_point(&exec)) {
-            if !target.frame.contains(p) {
-                return None;
+        let (queue, check) = if pending.stage == Stage::Return {
+            // The text is typed: only Return is pressed.
+            (
+                VecDeque::from([RunnerCommand::PressKey { key: Key::Return }]),
+                None,
+            )
+        } else {
+            // The tap point is derived again on this screen by the same procedure, and must
+            // lie in the target's fresh frame.
+            let tree = self.tree();
+            let queue = plan(&executed, screen, Some(&tree)).ok()?;
+            let exec = Exec::Runner(queue);
+            if let (Some(target), Some(p)) = (action_target(&gate, screen), planned_point(&exec)) {
+                if !target.frame.contains(p) {
+                    return None;
+                }
             }
-        }
-        let Exec::Runner(queue) = exec else {
-            return None;
+            let Exec::Runner(queue) = exec else {
+                return None;
+            };
+            type_check(&executed, screen, queue)
         };
-        let (queue, check) = type_check(&executed, screen, queue);
-        Some(Pending {
-            expect_change: should_change(&action, screen),
-            described: describe(&action, &self.current.safe),
-            before_target_source: self.target_source(&action),
-            action,
-            source: pending.source,
-            before: screen.clone(),
-            before_safe: self.current.safe.clone(),
-            before_digest: self.current.digest,
-            exec: Exec::Runner(queue),
-            check,
-        })
+        let mut fresh = pending.clone();
+        if pending.stage != Stage::Return {
+            fresh.expect_change = should_change(&pending.action, screen);
+            fresh.described = describe(&pending.action, &self.current.safe);
+            fresh.before = screen.clone();
+            fresh.before_safe = self.current.safe.clone();
+        }
+        fresh.bound = screen.clone();
+        fresh.bound_safe = self.current.safe.clone();
+        fresh.before_digest = self.current.digest;
+        fresh.before_target_source = self.target_source(&gate);
+        fresh.exec = Exec::Runner(queue);
+        fresh.check = check;
+        Some(fresh)
     }
 
     /// An action dropped before any of it ran: its step is refunded (it will be decided
@@ -1504,23 +1571,44 @@ impl Session {
         self.current.sources.get(pos).copied()
     }
 
-    /// The confirmation summary of `action` (as decided: placeholders kept) in `category`
-    /// on the current screen: built from the profile-masked screen, with the raw tree for
-    /// `under "…"` and the unverified-screen warning on runner text. The same function
-    /// builds it when asked and when an approval is checked (A4: it must be identical).
-    fn risk_summary(&self, action: &Action, category: RiskCategory) -> String {
-        let tree = ScreenTree {
+    /// The raw tree's shape of the current screen (see `jarvis_observe::CompactView`).
+    fn tree(&self) -> ScreenTree<'_> {
+        ScreenTree {
             sources: &self.current.sources,
             parents: &self.current.parents,
             ends: &self.current.ends,
-        };
-        summary_for(
-            action,
-            &self.current.masked,
-            category,
-            self.current.source,
-            Some(&tree),
-        )
+        }
+    }
+
+    /// The confirmation summary of `gate` (as decided: placeholders kept; for the Return part
+    /// of a `type … submit`, pressing Return after the typing) in `category` on the current
+    /// screen: built from the profile-masked screen, with the raw tree for `under "…"`, the
+    /// fields the session typed (the only field values it may quote besides amounts) and
+    /// the unverified-screen warning on runner text. The same function builds it when asked
+    /// and when an approval is checked (A4: it must be identical).
+    fn risk_summary(&self, gate: &Action, stage: Stage, category: RiskCategory) -> String {
+        let tree = self.tree();
+        let screen = &self.current.masked;
+        let source = self.current.source;
+        match (stage, gate) {
+            (
+                Stage::Return,
+                Action::Type {
+                    element: Some(field),
+                    text,
+                    ..
+                },
+            ) => return_summary(
+                *field,
+                text,
+                screen,
+                category,
+                source,
+                Some(&tree),
+                &self.typed,
+            ),
+            _ => summary_with(gate, screen, category, source, Some(&tree), &self.typed),
+        }
     }
 
     /// Finishes when a budget is exhausted.
@@ -1794,9 +1882,14 @@ impl Session {
                     let summary = format!("Blocked: {msg}.");
                     return self.finish(now, OutcomeStatus::Blocked, &summary);
                 }
-                self.reject(now, action, source, &format!("not allowed: {msg}"))
+                let result = format!("failed: {}", clean(&format!("not allowed: {msg}"), 200));
+                self.reject(now, action, source, &result)
             }
-            Err(Reject::Failed(msg)) => self.reject(now, action, source, &msg),
+            Err(Reject::Failed(msg)) => {
+                let result = format!("failed: {}", clean(&msg, 200));
+                self.reject(now, action, source, &result)
+            }
+            Err(Reject::NotDone(msg)) => self.reject(now, action, source, &clean(&msg, 240)),
             Err(Reject::Blocked(msg)) => {
                 self.log_step(action, false);
                 if source == Source::Replay {
@@ -1878,10 +1971,11 @@ impl Session {
         format!("the owner did not let Jarvis act in {}", clean(&name, 60))
     }
 
-    /// A refused action: tell the model, count a failure, decide again on the same screen.
-    fn reject(&mut self, now: u64, action: &Action, source: Source, msg: &str) -> Effect {
+    /// A refused action: tell the model (`result`, the cleaned result line), count a
+    /// failure, decide again on the same screen.
+    fn reject(&mut self, now: u64, action: &Action, source: Source, result: &str) -> Effect {
         let described = describe(action, &self.current.safe);
-        let result = format!("failed: {}", clean(msg, 200));
+        let result = result.to_owned();
         self.repeat = None;
         self.last_failed = Some(format!("{described} -> {}", clean(&result, 120)));
         self.history
@@ -1978,12 +2072,40 @@ impl Session {
                         .to_owned(),
                 ));
             }
+            // `type` without an element goes into the focused field: only a listed one
+            // (sixth review), never whatever happens to have focus.
+            Action::Type { element: None, .. }
+                if !screen
+                    .elements
+                    .iter()
+                    .any(|e| e.focused && e.role.is_text_input()) =>
+            {
+                return Err(Reject::Failed(prompt::RESULT_NO_FOCUSED_FIELD.to_owned()));
+            }
             other => other.clone(),
+        };
+        // A `type … submit` is two gated parts (sixth review): the typing, gated here as a
+        // plain `type`, and Return, gated after the typed text checks out on the screen as
+        // it is then (`gate_return`).
+        let (gate, stage) = match &normalized {
+            Action::Type {
+                element,
+                text,
+                submit: true,
+            } => (
+                Action::Type {
+                    element: *element,
+                    text: text.clone(),
+                    submit: false,
+                },
+                Stage::Typing,
+            ),
+            other => (other.clone(), Stage::Whole),
         };
         // 1a. A tap on the home screen launches what it hits: the icon gets the checks
         //     `open_app` gets, before the tap is sent (see `home_launch`).
         let home = if is_springboard(&screen.app_bundle_id) {
-            home_launch(&normalized, screen, &self.apps)
+            home_launch(&gate, screen, &self.apps)
         } else {
             None
         };
@@ -2036,7 +2158,10 @@ impl Session {
         if let Action::Type { element, .. } = &normalized {
             let target = match element {
                 Some(i) => screen.get(*i),
-                None => screen.elements.iter().find(|e| e.focused),
+                None => screen
+                    .elements
+                    .iter()
+                    .find(|e| e.focused && e.role.is_text_input()),
             };
             if target.is_some_and(|e| e.secure) {
                 let app = self
@@ -2054,7 +2179,7 @@ impl Session {
             }
         }
         // 2. Substitute profile placeholders into what will actually be typed.
-        let executed = match &normalized {
+        let executed = match &gate {
             Action::Type {
                 element,
                 text,
@@ -2105,7 +2230,13 @@ impl Session {
                 name: name.clone(),
                 args: args.clone(),
             }),
-            ui => Exec::Runner(plan(ui, screen).map_err(|e| Reject::Failed(e.to_string()))?),
+            ui => {
+                let tree = self.tree();
+                Exec::Runner(plan(ui, screen, Some(&tree)).map_err(|e| match e {
+                    PlanError::Covered(c) => Reject::NotDone(self.covered_message(c)),
+                    other => Reject::Failed(other.to_string()),
+                })?)
+            }
         };
         let (exec, check) = match exec {
             Exec::Runner(queue) => {
@@ -2117,11 +2248,15 @@ impl Session {
         let pending = Pending {
             expect_change: should_change(&normalized, screen),
             action: normalized.clone(),
+            before_target_source: self.target_source(&gate),
+            gate: gate.clone(),
+            stage,
             source,
             before: screen.clone(),
             before_safe: self.current.safe.clone(),
+            bound: screen.clone(),
+            bound_safe: self.current.safe.clone(),
             before_digest: self.current.digest,
-            before_target_source: self.target_source(&normalized),
             described,
             exec,
             check,
@@ -2130,7 +2265,7 @@ impl Session {
             Decision::Confirm(mut request) => {
                 // Describe the placeholder, never the substituted personal value, from the
                 // profile-masked screen (see `risk_summary`).
-                request.summary = self.risk_summary(&normalized, request.category);
+                request.summary = self.risk_summary(&gate, stage, request.category);
                 Some(request)
             }
             Decision::Allow | Decision::Deny(_) => None,
@@ -2311,34 +2446,37 @@ impl Session {
                 Some(fp) => screen.find_by_fingerprint(fp).is_some(),
                 None => field.is_some(),
             };
+        let field_fp = field.map(|e| e.fingerprint).or(check.field);
         let (kind, found) = match verdict {
-            TypedVerdict::Unverifiable if !check.then.is_empty() && !same_field => {
-                // The screen changed after typing: the held-back Return was gated on the
-                // screen it was asked about, not this one. It is not pressed.
+            TypedVerdict::Unverifiable if pending.stage == Stage::Typing && !same_field => {
+                // The screen changed after typing: Return is not pressed on a screen that
+                // no longer shows the field the text went into.
                 self.record_failure(&pending, prompt::RESULT_RETURN_HELD);
                 return self.decide(now);
             }
             TypedVerdict::Match | TypedVerdict::Unverifiable => {
-                let then = std::mem::take(&mut check.then);
-                if then.is_empty() {
+                if verdict == TypedVerdict::Match {
+                    self.remember_typed(&pending, field_fp);
+                }
+                if pending.stage != Stage::Typing {
                     return self.verify(now, pending);
                 }
                 if is_springboard(&self.current.screen.app_bundle_id) {
                     // Return on the home screen opens Spotlight's top hit: look once more
-                    // so results that load late are seen, then press it only while no
+                    // so results that load late are seen; Return is then gated while no
                     // denied app is among them.
                     let labels = self.result_labels();
                     return self.observe(
                         ObservePurpose::Settle(Box::new(Settle {
                             pending: Box::new(pending),
-                            then,
+                            field: field_fp,
                             labels,
                             looks: 1,
                         })),
                         false,
                     );
                 }
-                return self.continue_act(then, pending);
+                return self.gate_return(now, pending, field_fp);
             }
             TypedVerdict::Mismatch { kind, found } => (kind, found),
         };
@@ -2433,12 +2571,7 @@ impl Session {
     /// A held-back Return on the home screen, once the results have settled: pressed
     /// unless a denied app is among them. That is not a deny strike (the result list is
     /// not an attempt to open it): the step fails and the model is told which app.
-    fn press_held_return(
-        &mut self,
-        now: u64,
-        pending: Pending,
-        then: VecDeque<RunnerCommand>,
-    ) -> Effect {
+    fn press_held_return(&mut self, now: u64, pending: Pending, field: Option<u64>) -> Effect {
         if let Some(name) = self.denied_search_result() {
             let msg = format!(
                 "not done: Return was not pressed: it could open {name}, which is on the deny list and among the results"
@@ -2446,7 +2579,167 @@ impl Session {
             self.record_failure(&pending, &msg);
             return self.decide(now);
         }
-        self.continue_act(then, pending)
+        self.gate_return(now, pending, field)
+    }
+
+    /// The second part of a `type … submit` (sixth review): its text is typed and checked;
+    /// pressing Return in that field on the screen as it is **now** goes through the full
+    /// gate as its own action. It is classified on this screen (the Return key's label, the
+    /// field, the screen around it), asked if the policy asks (the summary says what was
+    /// typed in which field, with this screen's facts), bound to this screen by the normal
+    /// binding, looked at again after an approval and only then pressed; if the policy does
+    /// not ask, it is pressed at once. A refusal or a decline leaves the text typed and the
+    /// model is told ("typed, not submitted"). Neither part adds a step or a history line of
+    /// its own: the pair is one model step.
+    fn gate_return(&mut self, now: u64, typing: Pending, field: Option<u64>) -> Effect {
+        let screen = &self.current.screen;
+        let target = field
+            .and_then(|fp| screen.find_by_fingerprint(fp))
+            .or_else(|| {
+                screen
+                    .elements
+                    .iter()
+                    .find(|e| e.focused && e.role.is_text_input())
+            })
+            .filter(|e| e.role.is_text_input() && e.enabled);
+        let (Some(target), Action::Type { text, .. }) = (target, &typing.action) else {
+            self.record_failure(&typing, prompt::RESULT_RETURN_HELD);
+            return self.decide(now);
+        };
+        let gate = Action::Type {
+            element: Some(target.index),
+            text: text.clone(),
+            submit: true,
+        };
+        if is_springboard(&screen.app_bundle_id) {
+            if let Some(name) = self.denied_search_result() {
+                let msg = format!(
+                    "not done: Return was not pressed: it could open {name}, which is on the deny list and among the results"
+                );
+                self.record_failure(&typing, &msg);
+                return self.decide(now);
+            }
+        }
+        let executed = match substitute(text, &self.memory.profile) {
+            Ok(t) => Action::Type {
+                element: Some(target.index),
+                text: t,
+                submit: true,
+            },
+            Err(e) => {
+                let msg = format!("not done: the text was typed; Return was not pressed: {e}");
+                self.record_failure(&typing, &msg);
+                return self.decide(now);
+            }
+        };
+        let policy = &self.config.policy;
+        let decision = evaluate_from(policy, &executed, screen, None, self.current.source);
+        let home = if is_springboard(&screen.app_bundle_id) {
+            home_launch(&gate, screen, &self.apps)
+        } else {
+            None
+        };
+        let mut pending = typing;
+        pending.before_target_source = self.target_source(&gate);
+        pending.gate = gate.clone();
+        pending.stage = Stage::Return;
+        pending.bound = self.current.screen.clone();
+        pending.bound_safe = self.current.safe.clone();
+        pending.before_digest = self.current.digest;
+        pending.exec = Exec::Runner(VecDeque::from([RunnerCommand::PressKey {
+            key: Key::Return,
+        }]));
+        pending.check = None;
+        let risk = match decision {
+            Decision::Deny(reason) => {
+                let msg = format!(
+                    "not done: the text was typed; Return was not pressed: not allowed: {}",
+                    clean(&reason, 160)
+                );
+                self.record_failure(&pending, &msg);
+                return self.decide(now);
+            }
+            Decision::Allow => None,
+            Decision::Confirm(mut request) => {
+                request.summary = self.risk_summary(&gate, Stage::Return, request.category);
+                Some(request)
+            }
+        };
+        // Return in the home screen's search field opens the top result: asked like an
+        // unknown icon (when first-use approval is on), naming the search.
+        if let Some(HomeLaunch::Search { text }) = home.filter(|_| policy.first_use_approval) {
+            if policy.denies_category(RiskCategory::FirstUse) {
+                let msg = format!(
+                    "not done: the text was typed; Return was not pressed: the top search result for \"{}\" is not a known app, and new apps are not allowed",
+                    clean(&text, 60)
+                );
+                self.record_failure(&pending, &msg);
+                return self.decide(now);
+            }
+            let request = ConfirmRequest {
+                category: RiskCategory::FirstUse,
+                summary: clean(
+                    &format!(
+                        "Let Jarvis open the top search result for \"{}\" from the home screen? It is not one of the known apps.",
+                        clean(&text, 60)
+                    ),
+                    200,
+                ),
+                app: self.current.screen.app_bundle_id.clone(),
+            };
+            let action = pending.action.clone();
+            let source = pending.source;
+            let prepared = Ok(Prepared::FirstUse {
+                pending,
+                app: None,
+                request,
+                then: risk,
+            });
+            return self.dispatch(now, &action, source, prepared);
+        }
+        match risk {
+            Some(request) => self.ask_confirm(now, pending, request, None, None),
+            None => self.execute(pending),
+        }
+    }
+
+    /// Remembers that the session typed `pending`'s text into the field `field` (placeholders
+    /// kept): summaries may then quote that field's value while it is exactly that text.
+    fn remember_typed(&mut self, pending: &Pending, field: Option<u64>) {
+        let (Some(field), Action::Type { text, .. }) = (field, &pending.action) else {
+            return;
+        };
+        if text.trim().is_empty() {
+            return;
+        }
+        self.typed.retain(|t| t.field != field);
+        self.typed.push(TypedText {
+            field,
+            text: text.clone(),
+        });
+    }
+
+    /// The refusal of an action whose every tap point is covered by another control (sixth
+    /// review), naming both from the prompt-safe screen.
+    fn covered_message(&self, c: Covered) -> String {
+        let name = |i: u32| {
+            self.current.safe.get(i).map_or_else(
+                || format!("element {i}"),
+                |e| {
+                    let label = clean(&e.label, 60);
+                    if label.is_empty() {
+                        format!("element {i} ({})", e.role.as_str())
+                    } else {
+                        format!("element {i} ({label})")
+                    }
+                },
+            )
+        };
+        format!(
+            "not done: {} is covered by {}: a tap there could land on the other control, so nothing was sent; choose another control or scroll first",
+            name(c.target),
+            name(c.by)
+        )
     }
 
     /// The look after typing a search on the home screen, before its held-back Return:
@@ -2455,14 +2748,14 @@ impl Session {
     fn on_settle(&mut self, now: u64, settle: Settle) -> Effect {
         let Settle {
             pending,
-            then,
+            field,
             labels,
             looks,
         } = settle;
         let fresh = self.result_labels();
         let still_home = is_springboard(&self.current.screen.app_bundle_id);
         if still_home && fresh == labels {
-            return self.press_held_return(now, *pending, then);
+            return self.press_held_return(now, *pending, field);
         }
         if !still_home || looks >= MAX_SETTLE_LOOKS {
             let msg = if still_home {
@@ -2476,7 +2769,7 @@ impl Session {
         self.observe(
             ObservePurpose::Settle(Box::new(Settle {
                 pending,
-                then,
+                field,
                 labels: fresh,
                 looks: looks.saturating_add(1),
             })),
@@ -2792,12 +3085,16 @@ fn action_target<'a>(action: &Action, screen: &'a CompactScreen) -> Option<&'a E
             .iter()
             .find(|e| e.focused && e.role.is_text_input()),
         Action::TapPoint { x, y } => {
+            // The smallest control containing the point (sixth review), else the smallest
+            // element there.
             let p = denormalize(*x, *y, screen.size);
-            screen
-                .elements
-                .iter()
-                .filter(|e| e.frame.contains(p))
-                .min_by(|a, b| a.frame.area().total_cmp(&b.frame.area()))
+            control_at(p, screen, None).ok().flatten().or_else(|| {
+                screen
+                    .elements
+                    .iter()
+                    .filter(|e| e.frame.contains(p))
+                    .min_by(|a, b| a.frame.area().total_cmp(&b.frame.area()))
+            })
         }
         other => other.element().and_then(|i| screen.get(i)),
     }
@@ -2817,36 +3114,35 @@ fn planned_point(exec: &Exec) -> Option<Point> {
     })
 }
 
-/// For a `type` with text into a field that is not secure: the runner queue up to and
-/// including `TypeText`, and the check (holding back what follows, i.e. `Return`).
+/// For a `type` with text into a field that is not secure: the runner queue and the check
+/// that the text arrived (a submit's Return is never in it: it is gated on its own once the
+/// text checks out, see `Session::gate_return`).
 fn type_check(
     executed: &Action,
     screen: &CompactScreen,
-    mut queue: VecDeque<RunnerCommand>,
+    queue: VecDeque<RunnerCommand>,
 ) -> (VecDeque<RunnerCommand>, Option<TypeCheck>) {
     let Action::Type { element, text, .. } = executed else {
         return (queue, None);
     };
     let target = match element {
         Some(i) => screen.get(*i),
-        None => screen.elements.iter().find(|e| e.focused),
+        None => screen
+            .elements
+            .iter()
+            .find(|e| e.focused && e.role.is_text_input()),
     };
-    let Some(at) = queue
+    let typing = queue
         .iter()
-        .position(|c| matches!(c, RunnerCommand::TypeText { .. }))
-    else {
-        return (queue, None);
-    };
-    if text.is_empty() || target.is_some_and(|e| e.secure) {
+        .any(|c| matches!(c, RunnerCommand::TypeText { .. }));
+    if !typing || text.is_empty() || target.is_some_and(|e| e.secure) {
         return (queue, None);
     }
-    let then = queue.split_off(at.saturating_add(1));
     let check = TypeCheck {
         typed: text.clone(),
         field: target.map(|e| e.fingerprint),
         prior: target.and_then(|e| e.value.clone()),
         placeholder: target.and_then(|e| e.placeholder.clone()),
-        then,
         retried: false,
     };
     (queue, Some(check))

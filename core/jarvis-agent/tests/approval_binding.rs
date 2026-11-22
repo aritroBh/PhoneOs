@@ -401,33 +401,51 @@ fn pay_screen(keyboard_up: bool, shared: bool, return_label: &str) -> Screen {
     screen(BANK, "Bank", root, keyboard_up)
 }
 
-/// A keyboard that appears or hides between the question and the look does not void a
-/// plain tap when nothing else changed (its window, or its own subtree, is excluded, and
-/// its Return key is only part of the record for a submit). In practice the shown set
-/// usually changes when a keyboard comes or goes (rows it covered), which voids.
+/// Sixth review: the keyboard is hashed like any other node, so a keyboard that appears,
+/// hides or changes between the question and the look voids even a plain tap (documented
+/// fail-closed). Was: it did not void a plain tap (its window was excluded); deliberate
+/// change.
 #[test]
-fn a_keyboard_that_appears_or_hides_does_not_void_a_plain_tap() {
+fn a_keyboard_that_appears_or_hides_voids_a_plain_tap() {
     for shared in [false, true] {
-        for (asked_kb, fresh_kb) in [(false, true), (true, false)] {
+        for (asked_kb, fresh_kb, label) in [
+            (false, true, "Send"),
+            (true, false, "Send"),
+            (true, true, "Send"),
+        ] {
             let asked = pay_screen(asked_kb, shared, "Done");
-            let fresh = pay_screen(fresh_kb, shared, "Send");
-            assert_eq!(screen_digest(&asked), screen_digest(&fresh));
+            let fresh = pay_screen(fresh_kb, shared, label);
+            assert_ne!(screen_digest(&asked), screen_digest(&fresh));
             let mut d = D::new();
             d.ask_approve(&asked, index_of(&asked, "Pay"));
             let e = d.look(&fresh);
             assert!(
-                matches!(e, Effect::Act(RunnerCommand::Tap { .. })),
+                !matches!(e, Effect::Act(RunnerCommand::Tap { .. })),
                 "shared {shared}, {asked_kb} -> {fresh_kb}: {e:?}"
             );
         }
     }
+    // The same keyboard on both looks keeps the approval.
+    let asked = pay_screen(true, false, "Done");
+    let mut d = D::new();
+    d.ask_approve(&asked, index_of(&asked, "Pay"));
+    assert!(matches!(
+        d.look(&asked),
+        Effect::Act(RunnerCommand::Tap { .. })
+    ));
 }
 
 fn chat(return_label: &str) -> Screen {
-    let field = UiNode::new(Role::TextField, rect(16.0, 300.0, 361.0, 44.0))
+    chat_with(return_label, None)
+}
+
+fn chat_with(return_label: &str, value: Option<&str>) -> Screen {
+    let mut f = UiNode::new(Role::TextField, rect(16.0, 300.0, 361.0, 44.0))
         .with_label("Message")
         .hittable(true);
-    let mut f = field;
+    if let Some(v) = value {
+        f = f.with_value(v);
+    }
     f.focused = true;
     let root = UiNode::new(Role::Application, IPHONE_SIZE.to_rect())
         .with_label("Chat")
@@ -440,21 +458,51 @@ fn chat(return_label: &str) -> Screen {
     screen("com.example.chat", "Chat", root, true)
 }
 
-/// For an action that presses Return (`type … submit`) the Return key's label is part of
-/// the record: "send" turning into "go" voids it. The same change keeps a plain tap.
+/// Sixth review: a submit's Return is gated on its own after the typing, on the post-typing
+/// screen, whose Return key is in the record (and, the keys being hashed, in the digest):
+/// "send" turning into "go" between that question and the look voids it. The keys are
+/// hashed for every action, so the same change voids a plain tap too. Was: the Return key
+/// was recorded only for a submit and a plain tap kept its approval (deliberate change).
 #[test]
-fn a_return_key_that_changes_voids_a_submit_but_not_a_tap() {
+fn a_return_key_that_changes_voids_the_return_and_a_tap() {
     let asked = chat("send");
     let idx = index_of(&asked, "Message");
     let submit = format!(r#"{{"action":"type","element":{idx},"text":"hi","submit":true}}"#);
-    for (fresh, acts) in [(chat("send"), true), (chat("go"), false)] {
+    for (fresh, acts) in [
+        (chat_with("send", Some("hi")), true),
+        (chat_with("go", Some("hi")), false),
+    ] {
         let mut d = D::new();
-        let summary = d.ask(&asked, &submit);
-        assert!(summary.contains("press Return"), "{summary}");
+        assert!(matches!(d.step(Event::Start), Effect::Observe { .. }));
+        assert!(matches!(d.observed(&asked), Effect::Infer(_)));
+        let e = d.step(Event::ModelOutput(ModelOutput {
+            text: submit.clone(),
+        }));
+        assert!(
+            matches!(e, Effect::Act(RunnerCommand::TypeText { .. })),
+            "{e:?}"
+        );
+        let e = d.step(Event::ActResult(jarvis_proto::RunnerResult::ok()));
+        assert!(matches!(e, Effect::Observe { .. }), "{e:?}");
+        let Effect::Confirm(req) = d.observed(&chat_with("send", Some("hi"))) else {
+            panic!("the Return is asked after typing")
+        };
+        assert!(req.summary.contains("Press Return"), "{}", req.summary);
         d.approve();
         let e = d.look(&fresh);
-        assert_eq!(matches!(e, Effect::Act(_)), acts, "{e:?}");
+        assert_eq!(
+            matches!(e, Effect::Act(RunnerCommand::PressKey { .. })),
+            acts,
+            "{e:?}"
+        );
     }
+    let tap = pay_screen(true, false, "send");
+    let mut d = D::new();
+    d.ask_approve(&tap, index_of(&tap, "Pay"));
+    assert!(!matches!(
+        d.look(&pay_screen(true, false, "go")),
+        Effect::Act(_)
+    ));
 }
 
 // ---------------------------------------------------------------------------------------
