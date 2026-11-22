@@ -835,6 +835,15 @@ impl Session {
                 .is_some_and(|own| own.trim().eq_ignore_ascii_case(app.trim()))
     }
 
+    /// Whether the owner declined first-use approval for `app` in this session (bundle ids
+    /// compared ignoring ASCII case and surrounding whitespace).
+    fn app_declined(&self, app: &str) -> bool {
+        let app = app.trim();
+        self.declined_apps
+            .iter()
+            .any(|d| d.trim().eq_ignore_ascii_case(app))
+    }
+
     /// The display name of `bundle_id`: the screen's, when it is in front, else from
     /// `known_apps`.
     fn app_name(&self, bundle_id: &str) -> Option<String> {
@@ -879,7 +888,7 @@ impl Session {
         let policy = &self.config.policy;
         // 0. Nothing happens inside an app the owner declined in this session, not even
         //    reading it closer.
-        if uses_foreground_app(action) && self.declined_apps.contains(&screen.app_bundle_id) {
+        if uses_foreground_app(action) && self.app_declined(&screen.app_bundle_id) {
             return Err(Reject::Blocked(
                 self.declined_message(&screen.app_bundle_id),
             ));
@@ -897,7 +906,7 @@ impl Session {
                             clean(&bundle_id, 80)
                         )));
                     }
-                    if self.declined_apps.contains(&bundle_id) {
+                    if self.app_declined(&bundle_id) {
                         return Err(Reject::Blocked(self.declined_message(&bundle_id)));
                     }
                     Action::OpenApp { app: bundle_id }
@@ -915,7 +924,7 @@ impl Session {
             Action::CallTool { name, args } => match check_call(&self.config.tools, name, args) {
                 Ok((spec, args)) => {
                     if let Some(app) = &spec.app {
-                        if self.declined_apps.contains(app) {
+                        if self.app_declined(app) {
                             return Err(Reject::Blocked(self.declined_message(app)));
                         }
                         if check_app(policy, app).is_denied() {

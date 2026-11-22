@@ -8,7 +8,7 @@ OpenAI-compatible HTTP API. Dev tool only: never shipped on the phone.
 cd core
 cargo run -p jarvis-sim -- apps                       # apps, screens, alerts
 cargo run -p jarvis-sim -- dump --app shop --screen cart --set 'shop.cart=[{"name":"Desk Lamp","price":35.5}]'
-cargo run -p jarvis-sim -- eval builtin               # 16 built-in tasks with bundled scripts
+cargo run -p jarvis-sim -- eval builtin               # 22 built-in tasks with bundled scripts
 cargo run -p jarvis-sim -- run --task "Turn off Wi-Fi" --start-app settings
 ```
 
@@ -23,6 +23,7 @@ not depend on element numbers.
 jarvis-sim run --task "..." [--start-app settings] [--mode structured|runner-text]
                [--model-url URL --model NAME] [--script file.jsonl] [--approve|--decline]
                [--context-tokens N] [--max-steps N] [--grammar] [--memory file.json]
+               [--step-by-step] [--no-first-use] [--approve-app APP]...
 jarvis-sim eval <dir|file|builtin> [same flags] [--filter TEXT] [--json] [--strict]
 jarvis-sim apps
 jarvis-sim dump --app ID --screen NAME [--mode ...] [--tokens N] [--set app.path=JSON]
@@ -34,6 +35,12 @@ jarvis-sim dump --app ID --screen NAME [--mode ...] [--tokens N] [--set app.path
   evals in both.
 * `--approve` / `--decline` answer every confirmation (default: approve, or the task's own owner
   spec in `eval`). An explicit flag wins over the task.
+* First-use approval is on by default, as in `Policy::default()`: the first action inside each
+  app asks `first_use` (the built-in tasks expect it). `--no-first-use` turns it off,
+  `--approve-app APP` (sim app id or bundle id, repeatable) pre-approves an app, and
+  `--step-by-step` confirms every state-changing action. Task files can set the same through
+  `"policy": {"step_by_step", "first_use_approval", "app_rules", "approved_apps"}`, and check
+  `forbid_confirm` and `expect_confirm_count` besides `expect_confirm`.
 * `--memory file.json` loads the memory store if the file exists and writes it after the run, so
   running the same task twice shows learned-flow replay: the second run makes zero model calls.
 * `eval` prints one row per task (pass/fail, steps, model calls, simulated time, confirmation

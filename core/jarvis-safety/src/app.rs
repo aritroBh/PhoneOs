@@ -164,10 +164,15 @@ pub fn app_level(policy: &Policy, bundle_id: &str) -> TrustLevel {
     }
     match matching_rule(policy, bundle_id) {
         Some(rule) => rule.level,
-        None => match policy.mode {
-            PolicyMode::Guarded => TrustLevel::Guarded,
-            PolicyMode::StepByStep => TrustLevel::StepByStep,
-        },
+        None => mode_level(policy),
+    }
+}
+
+/// The trust level `policy.mode` gives apps without a rule.
+pub fn mode_level(policy: &Policy) -> TrustLevel {
+    match policy.mode {
+        PolicyMode::Guarded => TrustLevel::Guarded,
+        PolicyMode::StepByStep => TrustLevel::StepByStep,
     }
 }
 

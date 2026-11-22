@@ -511,3 +511,29 @@ fn first_use_targets_the_app_acted_in() {
     assert!(!req.summary.contains('\u{202E}'));
     assert!(!req.summary.contains('"'));
 }
+
+#[test]
+fn an_app_less_tool_follows_the_mode_not_the_foreground_rule() {
+    let p = Policy {
+        app_rules: vec![AppRule::new("com.apple.Preferences", TrustLevel::Trusted)],
+        ..Policy::default()
+    };
+    let s = settings_switch();
+    let call = Action::CallTool {
+        name: "set_brightness".to_owned(),
+        args: serde_json::json!({"level": 0.2}),
+    };
+    // A setting changed by a tool that acts in no app is not covered by Settings' trust.
+    let t = tool("set_brightness", None, RiskCategory::SystemSetting);
+    assert_eq!(
+        decision_category(&evaluate(&p, &call, &s, Some(&t))),
+        Some(RiskCategory::SystemSetting)
+    );
+    // The same tool declared as acting in Settings is.
+    let t = tool(
+        "set_brightness",
+        Some("com.apple.Preferences"),
+        RiskCategory::SystemSetting,
+    );
+    assert_eq!(evaluate(&p, &call, &s, Some(&t)), Decision::Allow);
+}

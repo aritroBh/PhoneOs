@@ -497,3 +497,33 @@ fn tool_url_arguments_are_scheme_validated_before_the_call() {
         r.requests[1].user
     );
 }
+
+#[test]
+fn a_declined_app_matches_regardless_of_bundle_id_case() {
+    let wish = tap_label(&product_screen(), "Add to wishlist");
+    let mut c = first_use_config();
+    c.known_apps
+        .push(jarvis_proto::AppInfo::new("COM.EXAMPLE.SHOP", "Shop Upper"));
+    let r = run(
+        c,
+        "Save",
+        MemoryStore::new(),
+        shop_phone(),
+        Script::model(&[
+            &wish,
+            r#"{"action":"press_home"}"#,
+            r#"{"action":"open_app","app":"Shop Upper"}"#,
+        ])
+        .decisions(&[false]),
+    );
+    assert_eq!(
+        r.outcome.status,
+        OutcomeStatus::Blocked,
+        "{}",
+        r.outcome.summary
+    );
+    assert!(!r
+        .acts
+        .iter()
+        .any(|a| matches!(a, RunnerCommand::LaunchApp { .. })));
+}

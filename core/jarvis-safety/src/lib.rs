@@ -1,5 +1,6 @@
-//! Safety layer for the Jarvis core: app deny list, risk classification, confirmation gates,
-//! budgets, screen-text sanitising, redaction and action validation.
+//! Safety layer for the Jarvis core: app deny list and trust levels, first-use targets, risk
+//! classification, confirmation gates (Guarded / StepByStep / Trusted), budgets,
+//! screen-text sanitising, redaction and action validation.
 //!
 //! Screen content is untrusted data. Everything here is pure, deterministic and panic-free.
 //! The agent calls [`evaluate`] for every proposed action, [`sanitize_screen_text`] and
@@ -8,19 +9,26 @@
 //!
 //! # What this layer does and does not protect against
 //!
-//! This is a **net for blunders, not a security boundary**. It catches the common ways a
-//! small model goes wrong — tapping Pay, Send or Delete it should not, typing a password,
-//! looping forever — and it keeps untrusted screen text from posing as prompt structure
-//! or leaking obvious secrets into prompts and logs. It errs towards asking.
+//! Two kinds of control live here. **Structural controls** do not depend on reading labels:
+//! the per-app deny list and trust levels ([`app_level`]), first-use approval of every new
+//! app ([`first_use_app`], enforced by the agent), `StepByStep` mode, which confirms every
+//! action that [`changes_state`], categories that are never executed
+//! (`Policy::deny_categories`), URL scheme checks (tool arguments included) and budgets.
+//! A **keyword net** reads English labels and nearby text through phrase tables plus a few
+//! app-specific rules to catch common blunders — tapping Pay, Send, Delete or Call, typing
+//! a password — and treats what it cannot read (other scripts, common non-English words
+//! and accented letters on controls, unlabeled or symbol-named buttons, tools without a
+//! spec) as `Unverified`, which asks by default. Untrusted screen text is kept from posing
+//! as prompt structure or leaking obvious secrets into prompts and logs.
 //!
-//! It does **not** understand what a button really does. Classification reads English
-//! labels and nearby text through phrase tables plus a few app-specific rules; a button
-//! whose label says nothing (and whose screen gives no hint) can still do something
-//! irreversible. Non-English and unreadable labels are only caught bluntly (a tap on one
-//! always asks, via [`label_is_unreadable`]); German, French or Spanish UI in Latin script
-//! is read as if it were English and mostly passes as harmless. Sanitising breaks known
-//! delimiter and chat-template forms but cannot stop a model from *following* injected
-//! prose; redaction is pattern-based and will miss secrets in unusual formats.
+//! It does **not** understand what a control really does. In `Guarded` mode, inside an
+//! app the owner has approved, an English-labelled control with no risky word or context
+//! (a "Next" that actually pays) runs without asking; only `StepByStep` closes that gap,
+//! at the cost of a prompt per step. The foreign-word table is small, so many non-English
+//! labels still read as harmless. `OpenUrl` and tools that declare no app are not
+//! first-use gated, because their target app is unknown. Sanitising breaks known delimiter
+//! and chat-template forms but cannot stop a model from *following* injected prose;
+//! redaction is pattern-based and will miss secrets in unusual formats.
 //!
 //! The real boundary is the operating system: Face ID / passcode prompts, the Apple Pay
 //! sheet, iOS's own call and profile-install confirmations, and the deny list keeping the
@@ -40,7 +48,7 @@ mod sanitize;
 mod text;
 mod validate;
 
-pub use app::{app_level, check_app, is_springboard, matching_rule, Verdict};
+pub use app::{app_level, check_app, is_springboard, matching_rule, mode_level, Verdict};
 pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;
 pub use evaluate::{evaluate, first_use_app, first_use_request, summarize, Decision};

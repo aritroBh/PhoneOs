@@ -4,7 +4,7 @@ use jarvis_proto::{
     Action, CompactScreen, ConfirmRequest, Element, Policy, RiskCategory, ToolSpec, TrustLevel,
 };
 
-use crate::app::{app_level, check_app, is_springboard, Verdict};
+use crate::app::{app_level, check_app, is_springboard, mode_level, Verdict};
 use crate::classify::{classify, type_target};
 use crate::gate::{changes_state, gate_in, Gate};
 use crate::redact::{contains_secret, redact};
@@ -51,7 +51,8 @@ fn uses_foreground_app(action: &Action) -> bool {
 /// acts on a denied app; any action whose category is in `policy.deny_categories`.
 ///
 /// Otherwise the gate depends on the trust level ([`crate::app_level`]) of the app the
-/// action affects (the tool's app for `CallTool`, else the foreground app): `StepByStep`
+/// action affects (for `CallTool` the tool's app, or `policy.mode` when it has none; else
+/// the foreground app): `StepByStep`
 /// confirms every action that [`changes_state`] (with category `None` when nothing riskier
 /// was found), `Trusted` lets [`crate::TRUSTED_ALLOWED`] categories through, and in every
 /// case a category in `policy.confirm` asks, with a one-line sanitised summary such as
@@ -106,15 +107,19 @@ pub fn evaluate(
                     clean(name, MAX_QUOTE_CHARS)
                 ));
             };
-            if let Some(app) = &spec.app {
-                if check_app(policy, app).is_denied() {
-                    return Decision::Deny(format!(
-                        "tool acts on {}, which is on the deny list",
-                        clean(app, MAX_QUOTE_CHARS)
-                    ));
+            match &spec.app {
+                Some(app) => {
+                    if check_app(policy, app).is_denied() {
+                        return Decision::Deny(format!(
+                            "tool acts on {}, which is on the deny list",
+                            clean(app, MAX_QUOTE_CHARS)
+                        ));
+                    }
+                    affected_app = app.clone();
+                    level = app_level(policy, app);
                 }
-                affected_app = app.clone();
-                level = app_level(policy, app);
+                // A tool that acts in no app is not covered by the foreground app's rule.
+                None => level = mode_level(policy),
             }
         }
         _ => {}
