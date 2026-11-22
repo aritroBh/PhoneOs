@@ -1,4 +1,5 @@
 import SwiftUI
+import JarvisCore
 import JarvisKit
 
 /// Ask (idle): status, the prompt, suggested tasks with a Learned/New badge, the composer.
