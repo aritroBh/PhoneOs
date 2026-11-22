@@ -119,6 +119,7 @@ private struct ResultCard: View {
         case .failed: "Failed"
         case .cancelled: "Stopped"
         case .blocked: "Blocked"
+        case .interrupted: "Phone stayed locked"
         }
     }
 

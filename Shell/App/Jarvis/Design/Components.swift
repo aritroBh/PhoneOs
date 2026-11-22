@@ -84,7 +84,7 @@ extension LiveRun.Status {
         switch self {
         case .standingBy: Theme.textTertiary
         case .driving, .replaying: Theme.tally
-        case .needsYou: Theme.warning
+        case .needsYou, .locked: Theme.warning
         case .done: Theme.connected
         case .stopped: Theme.error
         }
@@ -92,7 +92,7 @@ extension LiveRun.Status {
 
     var pulses: Bool {
         switch self {
-        case .driving, .replaying, .needsYou: true
+        case .driving, .replaying, .needsYou, .locked: true
         default: false
         }
     }
@@ -202,6 +202,8 @@ struct StatusTile: View {
         case .cancelled: (.stop, Theme.textSecondary, Theme.raisedHigh)
         case .failed: (.error, Theme.errorText, Theme.errorFill)
         case .blocked: (.denied, Theme.errorText, Theme.errorFill)
+        // Not an error: the phone stayed locked; running it again after an unlock is fine.
+        case .interrupted: (.lock, Theme.warning, Theme.warningFill)
         }
     }
 
@@ -220,6 +222,7 @@ extension TaskRecord.Status {
         case .failed: "Failed"
         case .cancelled: "Stopped"
         case .blocked: "Blocked"
+        case .interrupted: "Phone stayed locked"
         }
     }
 }
