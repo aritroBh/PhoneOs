@@ -3,11 +3,12 @@ import UIKit
 import JarvisCore
 import JarvisKit
 
-/// The approval sheet's picture: the screen Jarvis evaluated, phone-shaped, with the control
-/// it will act on outlined in the Live view cursor's colour, and a small label saying
-/// whether it is the real screen ("What Jarvis sees now") or an outline of it ("Layout
-/// only"). Everything it shows is decided in `ApprovalPreview` (JarvisKit) and the core's
-/// viewer; this view only draws. Tapping it opens it full screen with pinch zoom.
+/// The approval sheet's picture: the screen from when Jarvis asked, phone-shaped, with the
+/// control it will act on outlined in the Live view cursor's colour, and a small label saying
+/// what the picture is ("Screen when Jarvis asked", "Layout from the app's data", "Layout from
+/// the runner's text", "No picture of this screen"). Everything it shows is decided in
+/// `ApprovalPreview` (JarvisKit) and the core's viewer; this view only draws. Tapping it
+/// opens it full screen with pinch zoom.
 struct ApprovalPreviewThumbnail: View {
     var preview: ApprovalPreview
     var screen: CoreViewerScreen?
@@ -21,7 +22,7 @@ struct ApprovalPreviewThumbnail: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(preview.accessibilityLabel)
-        .accessibilityValue(preview.badge)
+        .accessibilityValue(preview.badge(screen: screen, drawsScreenshot: image != nil))
         .accessibilityHint("Shows the screen full size")
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("confirm.preview")
@@ -56,7 +57,7 @@ struct ApprovalScreenPicture: View {
         .aspectRatio(CGFloat(preview.aspectRatio), contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: Theme.viewerScreenRadius, style: .continuous))
         .overlay(alignment: .topLeading) {
-            Text(preview.badge)
+            Text(preview.badge(screen: screen, drawsScreenshot: image != nil))
                 .font(Theme.meta.weight(.semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.horizontal, 8)
@@ -176,7 +177,7 @@ struct ApprovalPreviewFullScreen: View {
     var body: some View {
         VStack(spacing: Theme.gap) {
             HStack {
-                Text(preview.badge)
+                Text(preview.badge(screen: screen, drawsScreenshot: image != nil))
                     .font(Theme.sectionLabel)
                     .foregroundStyle(Theme.textSoft)
                 Spacer()
@@ -215,7 +216,7 @@ struct ApprovalPreviewFullScreen: View {
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(preview.accessibilityLabel)
-                .accessibilityValue(preview.badge)
+                .accessibilityValue(preview.badge(screen: screen, drawsScreenshot: image != nil))
                 .accessibilityIdentifier("confirm.preview.full")
             Text(preview.caption)
                 .font(Theme.meta)
@@ -227,23 +228,38 @@ struct ApprovalPreviewFullScreen: View {
     }
 }
 
-/// The decoded image of the approval frame (decoded once per key). A frame that is no
-/// longer in the store is not shown.
+/// The decoded image of the approval frame, decoded once per frame: keyed on the frame's
+/// identity (its observation key, the store's sequence number for it and its byte count),
+/// never on the observation alone, so a new frame under the same key is decoded afresh. A
+/// frame that is no longer in the store is not shown and its decoded image is dropped;
+/// `reset()` drops it when the question is resolved or the sheet goes.
 @MainActor
 final class ApprovalImageCache {
-    private var key: ViewerFrameKey?
+    private struct Identity: Equatable {
+        var key: ViewerFrameKey
+        var sequence: UInt64
+        var bytes: Int
+    }
+
+    private var identity: Identity?
     private var cached: UIImage?
 
     func image(for preview: ApprovalPreview, in store: ApprovalFrameStore) -> UIImage? {
-        guard let frame = preview.frame(in: store) else {
-            key = nil
-            cached = nil
+        guard let held = preview.held(in: store) else {
+            reset()
             return nil
         }
-        if preview.key != key {
-            key = preview.key
-            cached = UIImage(data: frame.data)
+        let now = Identity(key: preview.key, sequence: held.sequence, bytes: held.frame.data.count)
+        if now != identity {
+            identity = now
+            cached = UIImage(data: held.frame.data)
         }
         return cached
+    }
+
+    /// Drops the decoded image.
+    func reset() {
+        identity = nil
+        cached = nil
     }
 }

@@ -76,7 +76,9 @@ public final class LiveViewModel: Sendable {
         }
     }
 
-    /// Feeds one event (one FFI call). Returns whether `timeline` changed.
+    /// Feeds one event (one FFI call). Returns whether `timeline` or `approvalTarget`
+    /// changed (a failed feed drops the approval picture: whatever the core holds now is
+    /// unknown).
     @discardableResult
     public func apply(_ event: RunEvent) -> Bool {
         guard let viewer else { return false }
@@ -87,7 +89,11 @@ public final class LiveViewModel: Sendable {
                 change = try viewer.feed(update: update)
             } catch {
                 s.stale = true
-                return false
+                // The core may have moved on (a newer question, or none): a picture of an
+                // earlier question is not kept for whatever is asked next (preview review).
+                let hadApproval = s.approval != nil
+                s.approval = nil
+                return hadApproval
             }
             if change.approval {
                 s.approval = (try? viewer.approvalTarget()) ?? nil

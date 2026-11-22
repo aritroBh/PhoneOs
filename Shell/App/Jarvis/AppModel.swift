@@ -188,9 +188,10 @@ final class AppModel: ObservableObject {
     )
     private var terminateObserver: NSObjectProtocol?
     private var protectedDataObserver: NSObjectProtocol?
-    /// The phone is locking: the approval sheet's real-screen frame goes.
+    /// The phone is locking: the approval sheet's screenshot goes.
     private var protectedDataLockObserver: NSObjectProtocol?
-    /// The scene is active (the approval sheet draws the real screen only then).
+    /// The scene is active (the approval sheet draws the screenshot only then; it is
+    /// captured and held whichever app is in front).
     @Published private(set) var appIsActive = true
     /// The start chosen in the Ask sheet, made when the sheet has gone.
     private var pendingStart: PendingStart?
@@ -249,12 +250,18 @@ final class AppModel: ObservableObject {
         protectedDataObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reloadSettings() }
+            MainActor.assumeIsolated {
+                // Unlocked again: the approval picture may be captured again.
+                self?.coordinator.approvalFrames.isPhoneUnlocked = true
+                self?.reloadSettings()
+            }
         }
         protectedDataLockObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.coordinator.approvalFrames.removeAll() }
+            // The phone is locking: the approval picture goes now, and none is kept until
+            // it is unlocked again.
+            MainActor.assumeIsolated { self?.coordinator.approvalFrames.isPhoneUnlocked = false }
         }
         mirrorSettingsProblem()
         if launch.playground && launch.seedRemoteDevice {
@@ -461,19 +468,21 @@ final class AppModel: ObservableObject {
 
     // MARK: - Approval preview
 
-    /// The approval sheet's real-screen frame (one, memory only, held only while asked).
+    /// The approval sheet's screenshot (one, memory only, held only while asked).
     var approvalFrames: ApprovalFrameStore { coordinator.approvalFrames }
 
     /// The approval sheet's picture of `prompt`: the core's picture of the pending
-    /// confirmation (from the Live view's viewer) bound to that request, with the real
-    /// screen only when a frame of exactly the evaluated observation is held and the app is
-    /// active. `nil` for any other prompt.
+    /// confirmation (from the Live view's viewer) bound to that request and the open
+    /// question, with the screenshot only when a frame of exactly the evaluated observation
+    /// is held, its aspect matches the screen's, and the app is active. `nil` for any other
+    /// prompt.
     func approvalPreview(for prompt: HumanPrompt) -> ApprovalPreview? {
         ApprovalPreview.make(prompt: prompt, target: viewer.approvalTarget, frames: coordinator.approvalFrames,
                              appActive: appIsActive)
     }
 
-    /// The wireframe of the evaluated screen (the "Layout only" backdrop).
+    /// The wireframe of the evaluated screen (the "Layout from the app's data" / "Layout
+    /// from the runner's text" backdrop).
     func approvalScreen(_ preview: ApprovalPreview) -> CoreViewerScreen? {
         viewer.screen(id: preview.screenId)
     }
@@ -869,10 +878,11 @@ final class AppModel: ObservableObject {
     /// Scene phase changes (RootView): the screen is put back whenever Jarvis is not active;
     /// schedules are checked when it comes back.
     func sceneBecameActive(_ active: Bool) {
+        // The approval sheet's screenshot is drawn only while Jarvis is in front
+        // (`approvalPreview(for:)` reads this). It is captured and held while Jarvis is in
+        // the background: when Jarvis asks, the target app is in front, and the owner is on
+        // the way to the sheet. It goes when the question is resolved or the phone locks.
         appIsActive = active
-        // The approval sheet's real screen only while Jarvis is in front: it goes as soon
-        // as the app leaves the foreground, and none is taken until it is back.
-        coordinator.approvalFrames.isAppActive = active
         if active {
             reloadSettings()
             away.appReturnedToForeground()

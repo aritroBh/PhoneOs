@@ -249,13 +249,17 @@ struct ApprovalCaptureTests {
         let prompt = HumanPrompt.confirm(id: 7, request: target.request)
         store.put(approvalPixels, for: ViewerFrameKey(taskId: "ask", observation: evaluated))
         let real = try #require(ApprovalPreview.make(prompt: prompt, target: target, frames: store, appActive: true))
-        #expect(real.backdrop == .realScreen && real.badge == "What Jarvis sees now")
+        // Preview review: the badges say what the picture is ("Screen when Jarvis asked",
+        // "Layout from the app's data"; were "What Jarvis sees now", "Layout only").
+        #expect(real.backdrop == .realScreen && real.badge == "Screen when Jarvis asked")
         #expect(real.frame(in: store) == approvalPixels)
         #expect(ApprovalPreview.make(prompt: prompt, target: target, frames: store, appActive: false)?.backdrop == .layout,
                 "never the real screen while the app is not in front")
+        #expect(store.count == 1, "but the frame is held while Jarvis is in the background")
         store.put(approvalPixels, for: ViewerFrameKey(taskId: "ask", observation: evaluated - 1))
         let other = try #require(ApprovalPreview.make(prompt: prompt, target: target, frames: store, appActive: true))
-        #expect(other.backdrop == .layout && other.badge == "Layout only", "a frame of another observation is never shown")
+        #expect(other.backdrop == .layout && other.badge == "Layout from the app's data",
+                "a frame of another observation is never shown")
         #expect(other.frame(in: store) == nil)
         // Only for the confirmation the picture belongs to.
         let wrong = ConfirmRequest(category: target.request.category, summary: "Something else", app: target.request.app)
@@ -309,7 +313,17 @@ struct ApprovalCaptureTests {
         #expect(liveGate.asked.first?.key == ViewerFrameKey(taskId: "ask", observation: liveEvaluated))
         #expect(liveGate.asked.first?.frame == approvalPixels)
         #expect(livePhone.captures == liveRun.observationCount, "the Live view's captures only, none for the question")
+        // Preview review: the Live view's frame was taken after the evaluated tree read, so
+        // it is kept only after one more tree read equals the evaluated tree.
+        #expect(livePhone.snapshots == liveRun.observationCount + liveRun.evaluated.count, "one tree re-read per question")
         #expect(store.count == 0)
+
+        // The Live view's frame of a screen that moved on after it: not kept.
+        let movedStore = ApprovalFrameStore()
+        let movedPhone = ApprovalPhone(moveOnAfterCapture: true)
+        let movedGate = ApprovalGate([.decline], store: movedStore)
+        _ = try await driveApproval(movedPhone, gate: movedGate, store: movedStore, viewerFrames: ViewerFrameStore())
+        #expect(movedGate.asked.first?.frame == nil)
     }
 
     @Test("dropped on every resolution: approved, declined, failed, timed out, cancelled, a lock")
@@ -345,13 +359,15 @@ struct ApprovalCaptureTests {
         #expect(lockGate.asked.allSatisfy { $0.frame == approvalPixels })
         #expect(lockPhone.capturesWhileLocked == 0, "never captured while the phone is locked")
         #expect(lockStore.count == 0)
-        // The app left the foreground (or the phone locked) while the sheet was up.
+        // Preview review (new rule): the phone locked (protected data unavailable) while the
+        // sheet was up drops the frame and refuses new ones; Jarvis merely being in the
+        // background does not (that was `isAppActive = false`, which dropped it).
         let appStore = ApprovalFrameStore()
         appStore.put(approvalPixels, for: ViewerFrameKey(taskId: "t", observation: 1))
-        appStore.isAppActive = false
+        appStore.isPhoneUnlocked = false
         #expect(appStore.count == 0 && !appStore.accepts)
         #expect(!appStore.put(approvalPixels, for: ViewerFrameKey(taskId: "t", observation: 1)))
-        appStore.isAppActive = true
+        appStore.isPhoneUnlocked = true
         #expect(appStore.put(approvalPixels, for: ViewerFrameKey(taskId: "t", observation: 1)))
         appStore.remove(ViewerFrameKey(taskId: "t", observation: 2))
         #expect(appStore.count == 1, "removing another observation's key leaves the frame")
@@ -412,10 +428,13 @@ struct ApprovalCaptureTests {
         let phone = ApprovalPhone()
         let run = try await driveApproval(phone, gate: ApprovalGate([.decline], store: off), store: off)
         #expect(phone.captures == 0 && phone.snapshots == run.observationCount)
-        let inactive = ApprovalFrameStore()
-        inactive.isAppActive = false
+        // Preview review (new rule): the phone locked (protected data unavailable) refuses
+        // captures; that was `isAppActive = false`, which no longer exists: whether Jarvis is
+        // in front does not matter for capturing (the target app is in front when it asks).
+        let locked = ApprovalFrameStore()
+        locked.isPhoneUnlocked = false
         let background = ApprovalPhone()
-        let backgroundRun = try await driveApproval(background, gate: ApprovalGate([.decline], store: inactive), store: inactive)
+        let backgroundRun = try await driveApproval(background, gate: ApprovalGate([.decline], store: locked), store: locked)
         #expect(background.captures == 0 && background.snapshots == backgroundRun.observationCount)
     }
 
@@ -531,7 +550,8 @@ struct ApprovalTargetTests {
             }
             #expect(close(rect, unit(payFrame)))
             #expect(p.accessibilityLabel == "Outlined: Button 'Pay $512.40'")
-            #expect(p.backdrop == .layout && p.badge == "Layout only")
+            // Preview review: was "Layout only".
+            #expect(p.backdrop == .layout && p.badge == "Layout from the app's data")
             #expect(p.key == ViewerFrameKey(taskId: "shop", observation: 1))
             #expect(p.screenSize == phoneSize)
         }
@@ -548,7 +568,8 @@ struct ApprovalTargetTests {
                 continue
             }
             #expect(close(rect, unit(noteFrame)))
-            #expect(p.caption.contains("type into"))
+            // Preview review: "The outline is where Jarvis will type. …" (was "… type into …").
+            #expect(p.caption.hasPrefix("The outline is where Jarvis will type."))
             #expect(p.accessibilityLabel == "Outlined: TextField 'Note'")
         }
     }
@@ -696,7 +717,9 @@ struct ApprovalPrivacyTests {
         try await eventually("the session to end") { r.base.center.session == nil }
         #expect(r.base.coordinator.approvalFrames.count == 0)
         let text = remote.messages.map { String(describing: $0) }.joined(separator: "\n")
-        for fragment in ["Outlined", "What Jarvis sees", "Layout only", "Jarvis will tap", "outlined"] {
+        for fragment in ["Outlined", "What Jarvis sees", "Layout only", "Jarvis will tap", "outlined",
+                         "Screen when Jarvis asked", "Layout from", "No picture of this screen", "The outline is where",
+                         "from when Jarvis asked"] {
             #expect(!text.contains(fragment), "\(fragment)")
         }
         let sent = r.log.all.compactMap { if case .send(_, let bytes) = $0 { bytes } else { nil } }
@@ -705,6 +728,185 @@ struct ApprovalPrivacyTests {
             #expect(!Self.contains(bytes, approvalPixels.data))
         }
     }
+}
+
+// MARK: - Preview review: what the picture may claim
+
+private func shot(_ width: UInt32, _ height: UInt32) -> CapturedScreenshot {
+    CapturedScreenshot(data: Data(repeating: 0x42, count: 24), mimeType: "image/png", pixelWidth: width, pixelHeight: height)
+}
+
+/// A run that observes the shop screen as runner text and asks to confirm `action`.
+private func askedOnRunnerText(_ action: Action) -> (LiveViewModel, CoreApprovalTarget?) {
+    let viewer = LiveViewModel()
+    let text = """
+    Application, label: 'Shop', {{0, 0}, {393, 852}}
+      Window, {{0, 0}, {393, 852}}
+        TextField, label: 'Note', value: 'private note text', {{16, 200}, {361, 44}}
+        Button, label: 'Pay $512.40', {{16, 700}, {361, 50}}
+    """
+    let snapshot = RunnerSnapshot(source: text, appBundleId: "com.example.shop", appName: "Shop", size: phoneSize,
+                                  keyboardVisible: false, orientation: .portrait, screenshot: nil, deviceLocked: false)
+    var events: [RunEvent] = [.update(.started(TaskSpec(id: "text", text: "Pay")))]
+    events.append(.update(.effect(.observe(screenshot: false), number: 1)))
+    events.append(.update(.effectCompleted(.observe(screenshot: false), event: .observedRunnerText(snapshot: snapshot))))
+    events.append(.update(.effect(.confirm(request: payRequest), number: 2)))
+    events.append(.update(.progress(SessionProgress(step: 1, phase: .acting, lastAction: action, app: "com.example.shop",
+                                                    modelCalls: 1, parseRetries: 0, waitingForUnlock: false, lockedWaitMs: 0,
+                                                    lockedTotalMs: 0))))
+    events.append(.update(.confirmationPending(payRequest)))
+    for e in events { viewer.apply(e) }
+    return (viewer, viewer.approvalTarget)
+}
+
+@Suite("Approval preview: what the picture may claim (preview review)", .timeLimit(.minutes(1)))
+struct ApprovalClaimTests {
+    @Test("a frame is drawn as the screen only when its aspect ratio is the screen's (within 2%)")
+    func aspect() throws {
+        let (_, target) = asked(.tap(element: 1))
+        let t = try #require(target)
+        let key = try #require(ViewerFrameKey(t.frameKey))
+        let prompt = HumanPrompt.confirm(id: 1, request: payRequest)
+        for (frame, real) in [(shot(393, 852), true), (shot(1179, 2556), true), (shot(400, 852), true),
+                              (shot(410, 852), false), (shot(852, 393), false), (shot(0, 0), false), (shot(393, 0), false)] {
+            let store = ApprovalFrameStore()
+            store.put(frame, for: key)
+            let p = try #require(ApprovalPreview.make(prompt: prompt, target: t, frames: store, appActive: true))
+            #expect((p.backdrop == .realScreen) == real, "\(frame.pixelWidth)x\(frame.pixelHeight)")
+            #expect((p.frame(in: store) != nil) == real)
+        }
+    }
+
+    @Test("bound to the open question: a picture of another observation with the same request text is not shown")
+    func boundToTheOpenQuestion() throws {
+        let (_, target) = asked(.tap(element: 1))
+        let t = try #require(target)
+        let key = try #require(ViewerFrameKey(t.frameKey))
+        let prompt = HumanPrompt.confirm(id: 1, request: payRequest)
+        let store = ApprovalFrameStore()
+        store.beginQuestion(ViewerFrameKey(taskId: key.taskId, observation: key.observation + 4))
+        #expect(ApprovalPreview.make(prompt: prompt, target: t, frames: store, appActive: true) == nil,
+                "a stale picture with the same request is not this question's")
+        store.beginQuestion(key)
+        #expect(ApprovalPreview.make(prompt: prompt, target: t, frames: store, appActive: true) != nil)
+        store.put(shot(393, 852), for: key)
+        store.endQuestion(key)
+        #expect(store.questionKey == nil && store.count == 0, "the question and its frame go together")
+        // The question key holds no pixels: kept with the option off.
+        store.isEnabled = false
+        store.beginQuestion(key)
+        #expect(store.questionKey == key && store.count == 0)
+        store.removeAll()
+        #expect(store.questionKey == nil)
+    }
+
+    @Test("every frame kept gets a new sequence number (an image cache keys on it)")
+    func sequence() throws {
+        let store = ApprovalFrameStore()
+        let key = ViewerFrameKey(taskId: "t", observation: 3)
+        store.put(shot(393, 852), for: key)
+        let first = try #require(store.held(for: key))
+        store.put(shot(393, 852), for: key)
+        let second = try #require(store.held(for: key))
+        #expect(first.sequence != second.sequence)
+        #expect(store.held(for: ViewerFrameKey(taskId: "t", observation: 4)) == nil)
+    }
+
+    @Test("the badge says what is drawn: the screenshot, the app's layout, the runner's text, or no picture")
+    func badges() throws {
+        let (viewer, target) = asked(.tap(element: 1))
+        let t = try #require(target)
+        let p = try #require(ApprovalPreview.make(prompt: .confirm(id: 1, request: payRequest), target: t,
+                                                  frames: ApprovalFrameStore(), appActive: true))
+        let typed = viewer.screen(id: p.screenId)
+        #expect(typed?.info.fromText == false)
+        #expect(p.badge(screen: typed) == "Layout from the app's data")
+        #expect(p.badge(screen: nil) == "No picture of this screen")
+
+        let (textViewer, textTarget) = askedOnRunnerText(.tap(element: 2))
+        let tt = try #require(textTarget)
+        let q = try #require(ApprovalPreview.make(prompt: .confirm(id: 1, request: payRequest), target: tt,
+                                                  frames: ApprovalFrameStore(), appActive: true))
+        let text = try #require(textViewer.screen(id: q.screenId))
+        #expect(text.info.fromText && text.info.source == .runnerText)
+        #expect(!text.elements.isEmpty, "runner text has a wireframe now")
+        #expect(q.badge(screen: text) == "Layout from the runner's text")
+        let encoded = try #require(textViewer.encode())
+        #expect(encoded.range(of: Data("private note text".utf8)) == nil, "a value never reaches the encoding")
+
+        let store = ApprovalFrameStore()
+        let key = try #require(ViewerFrameKey(t.frameKey))
+        store.put(shot(393, 852), for: key)
+        let real = try #require(ApprovalPreview.make(prompt: .confirm(id: 1, request: payRequest), target: t,
+                                                     frames: store, appActive: true))
+        #expect(real.badge(screen: typed) == "Screen when Jarvis asked")
+    }
+
+    @Test("tap_point names no element; the caption says the picture is from when Jarvis asked")
+    func tapPointNamesNothing() throws {
+        let (_, target) = asked(.tapPoint(x: 0.5, y: (700 + 25) / phoneSize.height))
+        let t = try #require(target)
+        #expect(!t.accessibilityLabel.contains("Pay"), "\(t.accessibilityLabel)")
+        #expect(t.accessibilityLabel.contains("at the marked point"))
+        #expect(t.caption == "The mark is where Jarvis will tap. The picture is from when Jarvis asked and may have changed.")
+        let (_, tap) = asked(.tap(element: 1))
+        #expect(try #require(tap).caption.hasSuffix("The picture is from when Jarvis asked and may have changed."))
+    }
+
+    @Test("a failed feed drops the approval picture")
+    func failedFeed() throws {
+        let inner = try SwitchableViewer()
+        let viewer = LiveViewModel(viewer: inner)
+        let (_, reference) = asked(.tap(element: 1))
+        #expect(reference != nil)
+        var events: [RunEvent] = [.update(.started(TaskSpec(id: "shop", text: "Pay")))]
+        events.append(.update(.effect(.observe(screenshot: false), number: 1)))
+        events.append(.update(.effectCompleted(.observe(screenshot: false), event: .observed(observation: ScreenObservation(
+            screen: shopScreen(), screenshot: nil, deviceLocked: false)))))
+        events.append(.update(.effect(.confirm(request: payRequest), number: 2)))
+        events.append(.update(.progress(SessionProgress(step: 1, phase: .acting, lastAction: .tap(element: 1),
+                                                        app: "com.example.shop", modelCalls: 1, parseRetries: 0,
+                                                        waitingForUnlock: false, lockedWaitMs: 0, lockedTotalMs: 0))))
+        events.append(.update(.confirmationPending(payRequest)))
+        for e in events { viewer.apply(e) }
+        #expect(viewer.approvalTarget != nil)
+        inner.failing = true
+        #expect(viewer.apply(.update(.questionPending("?"))), "the dropped picture is a change")
+        #expect(viewer.approvalTarget == nil, "a picture of an earlier question is not kept after a failed feed")
+    }
+}
+
+/// A real viewer that throws from every call once `failing` is set.
+private final class SwitchableViewer: JarvisViewerProtocol, Sendable {
+    private let inner: JarvisViewer
+    private let broken = Mutex(false)
+
+    init() throws {
+        inner = try JarvisViewer(config: CoreViewerConfig(maxSteps: LiveViewModel.maxSteps, framesEnabled: false,
+                                                          knownApps: LiveViewModel.knownApps))
+    }
+
+    var failing: Bool {
+        get { broken.withLock { $0 } }
+        set { broken.withLock { $0 = newValue } }
+    }
+
+    private func check() throws {
+        if failing { throw JarvisError.Internal(message: "injected") }
+    }
+
+    func encode() throws -> Data { try check(); return try inner.encode() }
+    func feed(update: CoreViewerUpdate) throws -> CoreViewerChange { try check(); return try inner.feed(update: update) }
+    func generation() throws -> UInt64 { try check(); return try inner.generation() }
+    func replay(action: CoreReplayAction, nowMs: Double, reduceMotion: Bool) throws -> CoreReplayStatus {
+        try check()
+        return try inner.replay(action: action, nowMs: nowMs, reduceMotion: reduceMotion)
+    }
+    func replayStatus() throws -> CoreReplayStatus { try check(); return try inner.replayStatus() }
+    func scene(query: CoreSceneQuery) throws -> CoreLiveScene { try check(); return try inner.scene(query: query) }
+    func screen(id: UInt32) throws -> CoreViewerScreen? { try check(); return try inner.screen(id: id) }
+    func timeline() throws -> CoreViewerTimeline { try check(); return try inner.timeline() }
+    func approvalTarget() throws -> CoreApprovalTarget? { try check(); return try inner.approvalTarget() }
 }
 
 @Suite("Approval preview: the setting", .timeLimit(.minutes(1)))

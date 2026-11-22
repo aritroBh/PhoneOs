@@ -330,6 +330,15 @@ private struct PhoneScreen: View {
             .position(x: content.midX, y: content.midY)
         } else if let elements = screen?.elements, !elements.isEmpty {
             WireframeCanvas(elements: elements, scene: scene)
+            if screen?.info.fromText == true {
+                // The runner's text format is forgeable by on-screen text: say where the
+                // layout came from.
+                Text("Layout from the runner's text")
+                    .font(Theme.meta)
+                    .foregroundStyle(Theme.textTertiary)
+                    .position(x: content.midX, y: content.minY + 14)
+                    .accessibilityHidden(true)
+            }
         }
     }
 

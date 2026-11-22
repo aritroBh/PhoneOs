@@ -3,11 +3,11 @@ import UIKit
 import JarvisCore
 import JarvisKit
 
-/// The confirmation gate (`HumanGate.confirm`): category chip, the screen Jarvis evaluated
-/// with the target outlined (`ApprovalPreview`; the real screen when "Show the real screen
-/// when Jarvis asks" is on and a frame of that very observation was kept, else its layout),
-/// question, the exact element line, Decline / Approve. The picture gives way first when
-/// the sheet is small, so Decline and Approve stay where they are.
+/// The confirmation gate (`HumanGate.confirm`): category chip, a picture of the screen from
+/// when Jarvis asked with the target outlined (`ApprovalPreview`; the screenshot when "Show
+/// the real screen when Jarvis asks" is on and a checked frame of that very observation was
+/// kept, else its layout), question, the exact element line, Decline / Approve. The picture
+/// gives way first when the sheet is small, so Decline and Approve stay where they are.
 struct ConfirmationSheet: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
@@ -23,7 +23,7 @@ struct ConfirmationSheet: View {
         return preview
     }
 
-    /// The real screen, never while the app is not active (app switcher snapshot).
+    /// The screenshot, never while the app is not active (app switcher snapshot).
     private func image(for preview: ApprovalPreview) -> UIImage? {
         guard scenePhase == .active else { return nil }
         return images.image(for: preview, in: model.approvalFrames)
@@ -115,6 +115,11 @@ struct ConfirmationSheet: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.sheet)
         .presentationCornerRadius(Theme.radiusSheet)
+        // The decoded screenshot goes with the question.
+        .onChange(of: preview == nil) { _, gone in
+            if gone { images.reset() }
+        }
+        .onDisappear { images.reset() }
     }
 }
 

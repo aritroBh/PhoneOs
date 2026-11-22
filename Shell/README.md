@@ -337,20 +337,25 @@ apps, so the cursor is shown inside Jarvis, not over the app being driven.
 
 ### Approval preview
 
-The confirmation sheet shows the screen Jarvis evaluated with the control it will act on
-outlined (docs/ARCHITECTURE.md, *Approval preview*). The core's viewer computes the picture
-(`LiveViewModel.approvalTarget`: the evaluated observation's `ViewerFrameKey`, its screen id,
-the target in unit coordinates, caption, VoiceOver label). With "Show the real screen when
-Jarvis asks" on (`JarvisSettings.approvalScreenshots`, default on →
-`DriverConfiguration.approvalScreenshots`, driver default off), `SessionDriver` makes one
+The confirmation sheet shows a screenshot taken when Jarvis asked (or the layout of that
+screen) with the control the action names outlined (docs/ARCHITECTURE.md, *Approval preview*,
+which lists exactly what is checked: the outline comes from the tree the core used; pixels are
+not checked by the core, and content outside the accessibility tree can differ). The core's
+viewer computes the picture (`LiveViewModel.approvalTarget`: the evaluated observation's
+`ViewerFrameKey`, its screen id, the target in unit coordinates, caption, VoiceOver label).
+With "Show the real screen when Jarvis asks" on (`JarvisSettings.approvalScreenshots`, default
+on → `DriverConfiguration.approvalScreenshots`, driver default off), `SessionDriver` makes one
 best-effort capture of that observation before it asks (`viewerScreenshotTimeout`; the core's
-own pixels or the Live view's frame of it are reused; a fresh capture is kept only when a tree
-read right after it shows the very screen evaluated, phone unlocked) into an
-`ApprovalFrameStore` (one frame, memory only), and removes it as soon as the question is
-resolved. `ApprovalPreview.make(prompt:target:frames:appActive:)` binds the picture to the
-pending confirmation and shows the real screen only under exactly the evaluated key with the app
-active, else the wireframe ("Layout only"). Nothing of it reaches the encoded timeline, the
-history or a paired device (tested in `ApprovalPreviewTests`).
+own pixels, taken with the tree, are reused as is; the Live view's frame of it or a fresh
+capture is kept only when a tree read after it shows the very screen evaluated, phone
+unlocked), whichever app is in front, into an `ApprovalFrameStore` (one frame, memory only),
+and removes it as soon as the question is resolved or the phone locks.
+`ApprovalPreview.make(prompt:target:frames:appActive:)` binds the picture to the pending
+confirmation and the open question, and shows the screenshot ("Screen when Jarvis asked") only
+under exactly the evaluated key, with the screen's aspect ratio (±2%) and the app active; else
+the wireframe ("Layout from the app's data" / "Layout from the runner's text") or "No picture
+of this screen". Nothing of it reaches the encoded timeline, the history or a paired device
+(tested in `ApprovalPreviewTests`).
 
 ## SessionDriver
 

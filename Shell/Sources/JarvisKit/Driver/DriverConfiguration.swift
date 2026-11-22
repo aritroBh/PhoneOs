@@ -55,10 +55,11 @@ public struct DriverConfiguration: Sendable, Equatable {
     /// capture of the screen the confirmation was computed from, bounded by
     /// `viewerScreenshotTimeout`, before the question goes out. The frame is bound to that
     /// observation (`ViewerFrameKey`): the observation's own pixels when the core asked for
-    /// them, else the Live view's frame of it, else `PhoneRunner.viewerScreenshot()`
-    /// followed by a tree read that must show the very screen evaluated (same tree, app,
-    /// size, keyboard and orientation) and report the phone unlocked; a screen that moved
-    /// on keeps nothing. Fail closed on the lock: only after an observation the runner
+    /// them (captured with the tree, kept as is); otherwise the Live view's frame of it or
+    /// `PhoneRunner.viewerScreenshot()`, either kept only when a tree read after it shows
+    /// the very screen evaluated (same tree, app, size, keyboard and orientation) and
+    /// reports the phone unlocked; a screen that moved on keeps nothing. Captured whichever
+    /// app is in front. Fail closed on the lock: only after an observation the runner
     /// reported unlocked, never in an unlock wait. Errors and timeouts are ignored (no note,
     /// no IO failure, never retried). The frame goes to `DriverDependencies.approvalFrames`
     /// (memory only) and is removed as soon as the question is resolved, whatever resolved

@@ -338,10 +338,15 @@ public actor SessionDriver {
 
     /// Asks the owner, with the approval sheet's frame held for exactly as long as the
     /// question is open: whatever resolves it (a decision, a timeout, a decline by error,
-    /// a lock, cancellation), the frame is removed before the core hears the answer.
+    /// a lock, cancellation), the frame is removed before the core hears the answer. The
+    /// store names the open question (the evaluated observation, no pixels) for as long, so
+    /// the sheet never shows a picture computed for another question.
     private func confirm(_ request: ConfirmRequest) async -> Event {
+        let question = lastObservation.map { ViewerFrameKey(taskId: task.id, observation: $0.number) }
+        if let question { deps.approvalFrames?.beginQuestion(question) }
         let held = await captureApprovalFrame()
         let event = await askToConfirm(request)
+        if let question { deps.approvalFrames?.endQuestion(question) }
         if let held { deps.approvalFrames?.remove(held) }
         return event
     }
@@ -490,22 +495,37 @@ public actor SessionDriver {
     /// store, best effort; returns its key when one was kept. Never changes the event the
     /// core gets, never retried, its own deadline (`viewerScreenshotTimeout`), every error
     /// ignored. Fail closed: only after an observation the runner reported unlocked, never
-    /// in an unlock wait; a fresh capture is kept only when a tree read right after it
-    /// shows the very screen evaluated with the phone still reported unlocked.
+    /// in an unlock wait. Captured whichever app is in front (the store's `accepts` does not
+    /// depend on Jarvis being active: the target app is in front when Jarvis asks).
+    ///
+    /// Which pixels are tree-checked (preview review):
+    /// - The observation's **own screenshot** (the core asked for it) was captured by the
+    ///   runner in the same snapshot call as the evaluated tree: kept as is, no re-read.
+    /// - **Any other pixels** were taken after that tree read: the Live view's frame of the
+    ///   observation (captured right after it, before the core even decided) and a fresh
+    ///   capture alike. They are kept only when one tree read made after them, inside the
+    ///   same deadline, equals the evaluated tree (same tree, app, size, keyboard and
+    ///   orientation: stricter than the core's digest) and reports the phone unlocked.
+    ///   Content outside the tree (images, canvas, video) is not checked by this.
     private func captureApprovalFrame() async -> ViewerFrameKey? {
         guard let store = activeApprovalFrames, !waitingForUnlock, let last = lastObservation,
               last.observation.isKnownUnlocked else { return nil }
         let key = ViewerFrameKey(taskId: task.id, observation: last.number)
-        // That very observation's pixels (the core asked for them), or the Live view's frame
-        // of it: no capture at all.
-        if let own = last.observation.screenshot ?? deps.viewerFrames?.frame(for: key) {
+        if let own = last.observation.screenshot {
             return store.put(own, for: key) ? key : nil
         }
         let runner = deps.runner
         let evaluated = last.observation
+        let liveFrame: CapturedScreenshot? = deps.viewerFrames?.frame(for: key)
         do {
             let frame = try await io(.viewerScreenshot, configuration.viewerScreenshotTimeout) { () -> CapturedScreenshot? in
-                guard let taken = try await runner.viewerScreenshot() else { return nil }
+                let taken: CapturedScreenshot
+                if let liveFrame {
+                    taken = liveFrame
+                } else {
+                    guard let fresh = try await runner.viewerScreenshot() else { return nil }
+                    taken = fresh
+                }
                 // The screen must not have moved on since it was evaluated, and the phone
                 // must still be unlocked: otherwise nothing is kept.
                 let now = try await runner.snapshot(includeScreenshot: false)
