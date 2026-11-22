@@ -148,14 +148,33 @@ App structure: tabs **Ask · Skills · Workflows · Apps · Control**; Activity 
 
 ## 3. "Works when I close my phone"
 
+A phone locked with a passcode cannot be driven: the runner cannot enter the passcode or act behind the lock screen. So "closed" is built as **Away mode**: the phone stays unlocked and awake but looks off.
+
 | State | Works? |
 |---|---|
 | Jarvis backgrounded, another app in front, screen on | Yes. This is the normal operating state. |
-| Screen dimmed to minimum, Auto-Lock Never, on charger ("pocket mode") | Yes. This is the realistic answer to "closed". |
+| **Away mode**: dark screen, not locked (below) | Yes, expected. This is the answer to "closed". Verified by spike S7. |
 | Side button pressed, display off, no passcode needed yet | Runner stays alive **[U]**; read-only work continues **[U]**. |
-| Locked with passcode | No. The runner cannot enter a passcode and cannot act behind the lock screen. |
+| Locked with passcode | No. |
 
-Progress is shown in a Live Activity / Dynamic Island. Jarvis notifies you when it needs a decision or Face ID, and when it finishes.
+### 3.1 Away mode
+
+| Piece | Mechanism | Status |
+|---|---|---|
+| Never auto-locks | Settings → Auto-Lock → Never (owner sets once). While Jarvis is in front: `isIdleTimerDisabled`. | Public API / setting |
+| Looks off, idle | Jarvis shows a pure black screen (OLED pixels off) at brightness 0 (`UIScreen.brightness`; the change persists until the device locks). | Public API |
+| Really off, idle | Proximity monitoring (`UIDevice.isProximityMonitoringEnabled`): phone face down or covered → display off and touches ignored, device not locked. Applies only while Jarvis is in front. | Public API; behaviour with the runner **[U]** |
+| Dark while working | Brightness stays 0 while other apps are in front. Darker still: Accessibility → Zoom → Low Light filter or Reduce White Point on the triple-click shortcut. | Setting; whether the runner can drive with the display off by proximity **[U]** |
+| Returns to dark | After each task the runner brings Jarvis back to the front. | Runner `launch_app` |
+| Still listening | Wake word on the audio session (2.4), foreground in Away mode. | S4 |
+| Tells you | Live Activity / Dynamic Island, notifications for decisions and results. | Phase 4 |
+
+Costs, stated plainly:
+
+- **The phone is unlocked the whole time.** Anyone who picks it up has everything. Away mode is for home or a desk, not a pocket, bag or public place. The black screen can ask for Face ID before showing Jarvis, but a swipe home still reaches an unlocked phone; iOS offers no way to block that outside Guided Access, which would also block the runner.
+- No pocket use: with the display on (dim) and unlocked, touches register. Face down with proximity blanking avoids this only while Jarvis is in front.
+- Battery and heat: keep it on a charger; on-device inference plus charging runs warm.
+- Auto-Lock Never applies to all use of the phone until switched back; Away mode should remind the owner when it ends.
 
 `BGContinuedProcessingTask` is not the mechanism: it must be user-started, must report progress, the user can cancel it, and background GPU is unavailable on iPhone. The background audio session is the keepalive.
 

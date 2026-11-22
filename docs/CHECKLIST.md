@@ -73,11 +73,13 @@ In progress — first compiled on a macOS runner:
 - [ ] S4 Wake word + background keepalive for 8 h
 - [ ] S5 Runner vs AutoFill / Face ID / alerts / display off
 - [ ] S6 Build + install pipeline
+- [ ] S7 Away mode: dark but not locked (brightness 0, proximity blanking, runner while blanked)
 
 ## Later phases
 
 - [ ] Voice: wake word, STT, TTS
 - [ ] Native tools + Shortcuts bridge + Connections screen
+- [ ] Away mode in the app (black screen, brightness, proximity, return-to-dark after each task)
 - [ ] Background operation, Live Activity, notifications
 - [ ] Vision fallback on device, learned-flow replay on device
 - [ ] Personal eval set (30 tasks)
