@@ -93,10 +93,11 @@ final class SystemAppAgentTests: QATestCase {
             ],
             options: .init(dismiss: Self.firstLaunchDismissals)
         )
+        let settings = settingsId
         let owner = QAOwner(transcript: run.transcript, decide: { request in
             // The icon question, and (a first-launch sheet's button is an action in Settings)
             // Settings' own first use; nothing else.
-            request.category == .firstUse && ["com.apple.springboard", settingsId].contains(request.app)
+            request.category == .firstUse && ["com.apple.springboard", settings].contains(request.app)
         })
         let unknownToCore = KnownApps.common.filter { $0.name != "Settings" }
         let outcome = try await run.run(
