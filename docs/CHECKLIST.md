@@ -50,7 +50,8 @@ Verified on a macOS runner (Xcode 26.6, iPhone 17 Pro Max simulator, iOS 26.5):
 - [x] Tier B: real Settings, springboard, Safari form
 - [x] Artifacts per step: compact screen, raw tree, screenshot, transcript
 - [x] Green run on an iPhone 17 Pro Max simulator (run 3: 13/13; run 6: 20/21, the lock-mid-task test)
-- [ ] Run 8 green: Workflows + Remote screens, lock-mid-task resume, unknown-icon question (27 tests)
+- [x] App with Workflows + Remote screens builds; lock-mid-task resumes and finishes after the unlock (run 10: 25 of 27)
+- [ ] All 27 green: the two run-10 failures were in the tests and are changed; rerun blocked (Actions jobs are not being started for this private repository, see the PR)
 
 ## Skills, workflows, remote control
 
@@ -60,8 +61,9 @@ Verified on a macOS runner (Xcode 26.6, iPhone 17 Pro Max simulator, iOS 26.5):
 - [x] Independent adversarial review of both crates: 22 findings, 22 fixed with regression tests
 - [x] FFI surface for skills, workflows, remote
 - [x] Swift: skill and workflow stores, workflow runner and scheduler, remote control service (Linux-tested)
-- [~] App: local-network listener (Bonjour), Keychain store, notifications, App Intent for workflows (first Mac compile in run 8)
-- [~] App screens: Skills, skill detail, Workflows, Apps (ways in + trust), Control, Remote control (first Mac compile in run 8)
+- [~] App: local-network listener (Bonjour), Keychain store, notifications, App Intent for workflows (compiled; listener not exercised between two devices)
+- [x] App screens: Skills, skill detail, Workflows, Apps (ways in + trust), Control, Remote control (compiled and driven by UI tests on the simulator)
+- [x] Independent adversarial review of the Swift layer: 4 proven defects + 4 gaps, all fixed with regression tests
 - [x] Design: canvas with nine screens (Astryx conventions, Lucide on web / SF Symbols on iOS)
 - [ ] Human security review of the remote protocol
 
@@ -72,7 +74,9 @@ Verified on a macOS runner (Xcode 26.6, iPhone 17 Pro Max simulator, iOS 26.5):
 - [x] Swift driver: report lock state, handle `AwaitUnlock`, notification (Linux-tested; simulator run pending)
 - [ ] Live Activity for runs and unlock prompts
 - [~] Away mode in the app (logic Linux-tested; staying dark while another app is in front needs spike S7)
-- [ ] Audio-session interruption recovery, before-first-unlock detection
+- [x] Before the first unlock: stores never overwrite an unreadable file; tasks are refused until the rules can be read
+- [x] Lock state read before every command; nothing is sent to a phone that reads locked
+- [ ] Audio-session interruption recovery (with voice)
 - [ ] Siri AI `ToolIntent` + app skills bundle experiment
 
 ## Core follow-ups
