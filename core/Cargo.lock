@@ -447,6 +447,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jarvis-remote"
+version = "0.1.0"
+dependencies = [
+ "jarvis-proto",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "jarvis-safety"
 version = "0.1.0"
 dependencies = [
@@ -469,6 +479,16 @@ dependencies = [
  "serde_json",
  "thiserror",
  "ureq",
+]
+
+[[package]]
+name = "jarvis-skills"
+version = "0.1.0"
+dependencies = [
+ "jarvis-proto",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
