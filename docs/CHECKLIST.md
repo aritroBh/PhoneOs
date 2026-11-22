@@ -17,17 +17,42 @@ Updated as work lands. `[x]` = done and verified, `[~]` = written but not verifi
 - [x] `jarvis-agent` (session state machine, prompts, parser, schema/grammar, router)
 - [x] `jarvis-sim` (simulated phone, scripted model, HTTP model, eval CLI)
 - [x] `jarvis-ffi` (UniFFI surface, Swift bindings generate, iOS target check)
-- [x] CI: fmt + clippy + test on Linux
+- [x] Structural policy: modes, per-app trust, deny categories, first-use approval
+- [x] CI: fmt + clippy + test + sim eval + Swift smoke on Linux
 
-## Swift shell — needs the Mac to verify
+## Swift shell (`Shell/`)
 
-- [ ] XcodeGen project + xcframework build script
-- [ ] `SessionDriver` (effect → IO → event loop)
-- [ ] `RunnerClient` (XCUITest runner RPC)
-- [ ] `ModelProvider` + first backend
-- [ ] App UI: chat, task log, connections, settings
-- [ ] App Intents + Action Button
-- [ ] Encrypted store for memory snapshot
+Verified on Linux (Swift 6, real Rust core linked):
+
+- [x] `JarvisKit` package + `scripts/bootstrap.sh` (Rust lib + UniFFI bindings)
+- [x] `SessionDriver` (effect → IO → event loop, cancellation, timeouts)
+- [x] `LoopCtrlRunner` (XCUITest runner JSON-RPC client; wire format unverified until S1)
+- [x] `OpenAICompatibleModel` (first `ModelProvider` backend)
+- [x] `FileMemoryStore`, `ScreenshotStore`, `ToolRegistry`
+- [x] First-use approval + policy defaults flow through `SessionConfigBuilder`
+
+In progress — first compiled on a macOS runner:
+
+- [ ] xcframework build (device + simulator + macOS slices)
+- [ ] XcodeGen project (`Shell/project.yml`)
+- [ ] App UI: chat, activity, connections, settings
+- [ ] App Intents (Siri / Shortcuts / Action Button entry)
+- [ ] In-process XCUITest `PhoneRunner` (typed tree from `XCUIElementSnapshot`)
+
+## iPhone Simulator QA (GitHub macOS runner)
+
+- [ ] `.github/workflows/ios.yml` + `Shell/scripts/sim-qa.sh`
+- [ ] Tier A: playground flows (form, toggle, scroll, confirm gate, replay, secure field)
+- [ ] Tier B: real Settings, springboard, Safari form
+- [ ] Artifacts per step: compact screen, raw tree, screenshot, transcript
+- [ ] Green run on an iPhone 17 Pro Max simulator
+
+## Core follow-ups
+
+- [ ] `Event` for "observation failed" (today the driver cancels; run is logged as cancelled)
+- [ ] Local-model eval on the simulated phone (in progress)
+- [ ] First-use approval for `OpenUrl` and tools with no declared app
+- [ ] Non-English safety phrases
 
 ## Phase 0 spikes — need the phone
 
