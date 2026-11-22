@@ -145,6 +145,7 @@ pub fn denormalize(x: f64, y: f64, size: Size) -> Point {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

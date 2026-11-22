@@ -571,7 +571,7 @@ impl<'a> Walker<'a> {
 }
 
 /// The topmost visible Alert/Sheet (last in document order) and the first visible keyboard.
-fn find_overlays(root: &UiNode) -> (Option<&UiNode>, Option<Rect>) {
+fn find_overlays(root: &UiNode) -> (Option<&UiNode>, Option<&UiNode>) {
     let mut alert = None;
     let mut keyboard = None;
     let mut stack = vec![root];
@@ -582,13 +582,59 @@ fn find_overlays(root: &UiNode) -> (Option<&UiNode>, Option<Rect>) {
         match n.role {
             Role::Alert | Role::Sheet if !n.frame.is_empty() => alert = Some(n),
             Role::Keyboard if keyboard.is_none() && !n.frame.is_empty() => {
-                keyboard = Some(n.frame);
+                keyboard = Some(n);
             }
             _ => {}
         }
         stack.extend(n.children.iter().rev());
     }
     (alert, keyboard)
+}
+
+/// Longest Return-key label kept, in characters (real ones are one or two words).
+const MAX_RETURN_KEY_CHARS: usize = 24;
+
+/// Labels iOS gives the keyboard's Return key (`UIReturnKeyType`, English), lowercased.
+const RETURN_KEY_LABELS: &[&str] = &[
+    "return",
+    "go",
+    "google",
+    "join",
+    "next",
+    "route",
+    "search",
+    "send",
+    "yahoo",
+    "done",
+    "emergency call",
+    "continue",
+];
+
+/// The label of `keyboard`'s Return key: the key or button whose identifier is `Return`
+/// (what UIKit reports), else the one whose whole label is a known Return-key label. Hidden
+/// and area-less keys are ignored; whitespace is collapsed and the label bounded. Keys stay
+/// out of the element list either way: this is a fact about the screen, not a control.
+fn return_key_label(keyboard: &UiNode) -> Option<String> {
+    let mut by_label = None;
+    let mut stack: Vec<(&UiNode, usize)> = vec![(keyboard, 0)];
+    while let Some((n, depth)) = stack.pop() {
+        if is_pruned(n) || depth > MAX_DEPTH {
+            continue;
+        }
+        let keyish = matches!(n.role, Role::Key | Role::Button) && !n.frame.is_empty();
+        let label = clean_opt(&n.label);
+        if keyish && !label.is_empty() {
+            let id = clean_opt(&n.identifier);
+            if id.eq_ignore_ascii_case("return") {
+                return Some(label.chars().take(MAX_RETURN_KEY_CHARS).collect());
+            }
+            if by_label.is_none() && RETURN_KEY_LABELS.contains(&label.to_lowercase().as_str()) {
+                by_label = Some(label.chars().take(MAX_RETURN_KEY_CHARS).collect());
+            }
+        }
+        stack.extend(n.children.iter().rev().map(|c| (c, depth + 1)));
+    }
+    by_label
 }
 
 /// Clips `frame` to the screen and above the keyboard; `None` when too little remains visible.
@@ -628,7 +674,8 @@ fn round(f: &Rect) -> [i64; 4] {
 /// * A control wrapping a single compatible control of the same role (a SwiftUI `Toggle` row)
 ///   is listed with the wrapper's label and value and the inner control's frame.
 /// * While an Alert/Sheet is up only its subtree is listed.
-/// * Keyboard keys are never listed; `keyboard_visible` is set instead.
+/// * Keyboard keys are never listed; `keyboard_visible` is set instead, and the Return
+///   key's label goes to `cues.return_key` (it says whether Return sends, searches or goes).
 /// * Cells (and hittable `Other` rows) take their label from child static texts, and those
 ///   texts are not listed again. A row holding controls is not listed; its controls are.
 /// * Secure fields never carry a value; a value equal to the placeholder is dropped.
@@ -654,6 +701,8 @@ pub fn compact(screen: &Screen) -> CompactScreen {
     walker.walk(&screen.root, &start);
 
     let bounds = screen.bounds();
+    let return_key = keyboard.and_then(return_key_label);
+    let keyboard = keyboard.map(|k| k.frame);
     let occluder = if alert.is_some() { None } else { keyboard };
     let mut kept: Vec<(Cand, Rect)> = walker
         .cands
@@ -708,7 +757,10 @@ pub fn compact(screen: &Screen) -> CompactScreen {
         size: screen.size,
         keyboard_visible: screen.keyboard_visible || keyboard.is_some(),
         elements,
-        cues: cues(alert.unwrap_or(&screen.root), bounds),
+        cues: ScreenCues {
+            return_key,
+            ..cues(alert.unwrap_or(&screen.root), bounds)
+        },
     }
 }
 

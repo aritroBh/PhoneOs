@@ -808,7 +808,15 @@ fn policy_task_and_config_round_trip() {
             app_rules: levels
                 .iter()
                 .enumerate()
-                .map(|(i, l)| p::AppRule::new(format!("com.example.app{i}"), *l))
+                .map(|(i, l)| {
+                    let rule = p::AppRule::new(format!("com.example.app{i}"), *l);
+                    // Display names cross the bridge both ways (and may be absent).
+                    if i % 2 == 0 {
+                        rule.with_name(format!("App {i}"))
+                    } else {
+                        rule
+                    }
+                })
                 .collect(),
             first_use_approval: true,
             ..p::Policy::default()

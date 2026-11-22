@@ -240,7 +240,10 @@ impl FlowStore {
 }
 
 /// Everything the agent remembers, persisted by the shell as JSON bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+///
+/// `Debug` shows the profile with sensitive values redacted and only counts of flows and
+/// log entries (flow steps can hold typed text): it is safe for logs and panics.
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct MemoryStore {
     /// Schema version of the data.
     pub schema_version: u32,
@@ -252,6 +255,18 @@ pub struct MemoryStore {
     pub log: TaskLog,
     /// Bundle ids the owner has let the agent act in (first-use approval), sorted.
     pub approved_apps: BTreeSet<String>,
+}
+
+impl std::fmt::Debug for MemoryStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryStore")
+            .field("schema_version", &self.schema_version)
+            .field("flows", &self.flows.len())
+            .field("profile", &self.profile)
+            .field("log_entries", &self.log.len())
+            .field("approved_apps", &self.approved_apps)
+            .finish()
+    }
 }
 
 impl Default for MemoryStore {

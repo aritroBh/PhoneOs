@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 
 use jarvis_proto::{Action, AppInfo, CompactScreen, Key, Point, RunnerCommand};
 
-use crate::gestures::{denormalize, gesture, GestureError, GestureKind};
+use jarvis_safety::gestures::{denormalize, gesture, GestureError, GestureKind};
 
 /// Most Delete presses a `clear` sends.
 pub const MAX_CLEAR_DELETES: usize = 64;

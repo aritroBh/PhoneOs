@@ -42,7 +42,7 @@ fn golden_login_with_keyboard_focus_and_disabled() {
     let got = render(&compact(&login_screen()), 1000);
     let want = "\
 App: Acme (com.example.acme)
-Keyboard: visible
+Keyboard: visible (Return key: \"go\")
 [1] StaticText \"Welcome back\"
 [2] TextField \"Email\" value=\"alex@example.com\"
 [3] SecureTextField \"Password\" (focused)
@@ -58,7 +58,10 @@ fn golden_compose_text_view_focused_with_value() {
         got.contains("[7] TextView \"Message\" value=\"See you at 7\" (focused)"),
         "{got}"
     );
-    assert!(got.starts_with("App: Messages (com.apple.MobileSMS)\nKeyboard: visible\n"));
+    // The keyboard's Return key reads "send": the model is told (a cue, not an element).
+    assert!(got.starts_with(
+        "App: Messages (com.apple.MobileSMS)\nKeyboard: visible (Return key: \"send\")\n"
+    ));
 }
 
 #[test]

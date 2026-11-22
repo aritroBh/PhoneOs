@@ -99,21 +99,38 @@ pub enum TrustLevel {
 /// A prefix matches a bundle id case-insensitively when the id equals it or continues it
 /// at a `.` (`com.example` matches `com.example.shop`, not `com.examples`); a trailing `.`
 /// or `*` on the prefix is ignored.
+///
+/// `name` is the display name the owner sees for the app (its home-screen icon,
+/// app-switcher card, Settings row). Optional and absent from older JSON. With a name, a
+/// `Denied` rule also refuses a home-screen icon, app-switcher card or `open_app` whose
+/// name equals it (case, whitespace and punctuation folded); for other levels the name lets
+/// the agent recognise the app's icon when the rule's prefix is a full bundle id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppRule {
     /// Bundle id or bundle id prefix.
     pub bundle_id_prefix: String,
     /// Trust level for matching apps.
     pub level: TrustLevel,
+    /// The app's display name, when the shell knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 impl AppRule {
-    /// Creates a rule.
+    /// Creates a rule without a display name.
     pub fn new(bundle_id_prefix: impl Into<String>, level: TrustLevel) -> Self {
         Self {
             bundle_id_prefix: bundle_id_prefix.into(),
             level,
+            name: None,
         }
+    }
+
+    /// The rule with the app's display name.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
     }
 }
 

@@ -12,7 +12,7 @@
   "max_steps": 12,
   "faults": {
     "locks": [
-      { "at_effect": 10, "unlock_after_ms": 90000 }
+      { "at_effect": 11, "unlock_after_ms": 90000 }
     ]
   },
   "script": [

@@ -97,3 +97,25 @@ fn guess_field_for_form_label() {
         assert_eq!(Profile::field_for_element_label(label), want, "{label:?}");
     }
 }
+
+/// `Debug` output (logs, panics, `{:?}` in the shell's bridge) never shows a value marked
+/// sensitive, for a field, the profile or the whole store; plain values stay readable.
+#[test]
+fn debug_output_never_shows_sensitive_values() {
+    let mut store = jarvis_memory::MemoryStore::new();
+    store.profile.set("card_number", "4111111111111111", true);
+    store.profile.set("passport", "X1234567", true);
+    store.profile.set("email", "alex@example.com", false);
+    store.approve_app("com.example.shop");
+    let field = format!("{:?}", store.profile.lookup("card_number").unwrap());
+    let profile = format!("{:?}", store.profile);
+    let whole = format!("{store:?}");
+    let pretty = format!("{store:#?}");
+    for out in [&field, &profile, &whole, &pretty] {
+        assert!(!out.contains("4111111111111111"), "{out}");
+        assert!(!out.contains("X1234567"), "{out}");
+        assert!(out.contains("<redacted>"), "{out}");
+    }
+    assert!(profile.contains("alex@example.com"), "{profile}");
+    assert!(whole.contains("com.example.shop"), "{whole}");
+}

@@ -25,7 +25,9 @@ pub(crate) enum Exec {
 }
 
 /// An action that passed parsing, validation and safety, on its way to being executed.
-#[derive(Debug, Clone, PartialEq)]
+/// `Debug` leaves out the runner commands (they carry substituted profile values) and the
+/// screens.
+#[derive(Clone, PartialEq)]
 pub(crate) struct Pending {
     /// The action as decided: placeholders kept, `open_app` resolved to a bundle id. This is
     /// what history, flows and the log see.
@@ -47,7 +49,8 @@ pub(crate) struct Pending {
 }
 
 /// What a `type` action must leave in its field, checked after the text was typed.
-#[derive(Debug, Clone, PartialEq)]
+/// `Debug` never shows the typed text or the field's contents.
+#[derive(Clone, PartialEq)]
 pub(crate) struct TypeCheck {
     /// What was typed (profile placeholders substituted).
     pub typed: String,
@@ -61,6 +64,34 @@ pub(crate) struct TypeCheck {
     pub then: VecDeque<RunnerCommand>,
     /// Whether the one corrective attempt (delete, type again) has been made.
     pub retried: bool,
+}
+
+impl std::fmt::Debug for Pending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let exec = match &self.exec {
+            Exec::Runner(q) => format!("{} runner command(s)", q.len()),
+            Exec::Tool(call) => format!("tool {}", call.name),
+        };
+        f.debug_struct("Pending")
+            .field("action", &self.action.name())
+            .field("source", &self.source)
+            .field("described", &self.described)
+            .field("expect_change", &self.expect_change)
+            .field("exec", &exec)
+            .field("check", &self.check)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for TypeCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TypeCheck")
+            .field("typed_chars", &self.typed.chars().count())
+            .field("field", &self.field)
+            .field("held_back", &self.then.len())
+            .field("retried", &self.retried)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What the session does once a fresh observation is in after an unlock.
@@ -114,6 +145,10 @@ pub(crate) enum ObservePurpose {
     /// The first screen after an unlock, with a confirmation that was pending when the
     /// phone locked (see [`Resume::Reconsider`]).
     Reconsider(Box<Pending>),
+    /// A fresh look after the owner approved `Pending`: it runs only if its target is still
+    /// the same control (re-planned on the fresh screen). The request is the risk
+    /// confirmation that was approved (`None` when only a first-use approval was asked).
+    Approved(Box<Pending>, Option<ConfirmRequest>),
 }
 
 /// The session state machine. Exactly one effect is outstanding in every non-final state.

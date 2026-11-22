@@ -126,8 +126,8 @@ pub fn canonical_key(name: &str) -> Option<&'static str> {
     canonical_of_normalised(&normalise(name))
 }
 
-/// One stored profile value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One stored profile value. Its `Debug` output never shows a sensitive value.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileField {
     /// The value to type.
     pub value: String,
@@ -136,12 +136,30 @@ pub struct ProfileField {
     pub sensitive: bool,
 }
 
-/// User profile fields keyed by canonical name (`email`, `phone`, `first_name`, ...).
+/// User profile fields keyed by canonical name (`email`, `phone`, `first_name`, ...). Its
+/// `Debug` output never shows a sensitive value.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Profile {
     /// Fields by key, sorted.
     #[serde(default)]
     pub fields: BTreeMap<String, ProfileField>,
+}
+
+/// Shown in `Debug` output in place of a sensitive value.
+const REDACTED: &str = "<redacted>";
+
+impl std::fmt::Debug for ProfileField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value: &dyn std::fmt::Debug = if self.sensitive {
+            &REDACTED
+        } else {
+            &self.value
+        };
+        f.debug_struct("ProfileField")
+            .field("value", value)
+            .field("sensitive", &self.sensitive)
+            .finish()
+    }
 }
 
 impl Profile {

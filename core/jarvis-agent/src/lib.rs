@@ -23,7 +23,6 @@
 
 mod changes;
 mod commands;
-pub mod gestures;
 mod history;
 mod lenient;
 mod parser;
@@ -35,6 +34,9 @@ mod state;
 mod tools;
 pub mod typing;
 
+/// Gesture geometry (where scrolls and swipes start and end); it lives in `jarvis-safety`
+/// so the classifier reads the very path the command will take.
+pub use jarvis_safety::gestures;
 pub use parser::{parse_model_output, ParseError, Parsed};
 pub use prompt::{system_prompt, ACTION_MAX_TOKENS};
 pub use schema::{action_examples, action_gbnf, action_json_schema, action_names};

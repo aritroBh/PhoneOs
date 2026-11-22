@@ -338,8 +338,14 @@ fn a_pending_confirmation_is_asked_again_after_the_unlock_on_the_same_screen() {
     );
     assert_eq!(s.progress().model_calls, 1);
     assert_eq!(s.progress().step, 1);
-    assert!(matches!(
+    // Approved: one more look at the screen before acting (changed deliberately with the
+    // observe-after-approval rule), then the tap.
+    assert_eq!(
         s.step(ev(80, Event::UserDecision { approved: true })),
+        Effect::Observe { screenshot: false }
+    );
+    assert!(matches!(
+        s.step(ev(85, observed(settings_screen()))),
         Effect::Act(RunnerCommand::Tap { .. })
     ));
 }
@@ -383,8 +389,13 @@ fn an_approval_given_before_the_lock_is_asked_again_for_the_unexecuted_action() 
     let mut s = session();
     thinking(&mut s);
     s.step(ev(30, model(TAP_AIRPLANE)));
-    assert!(matches!(
+    // Approved: a fresh look first (observe-after-approval), then the tap.
+    assert_eq!(
         s.step(ev(40, Event::UserDecision { approved: true })),
+        Effect::Observe { screenshot: false }
+    );
+    assert!(matches!(
+        s.step(ev(45, observed(settings_screen()))),
         Effect::Act(_)
     ));
     // The approved tap never ran: the phone locked first.
@@ -800,8 +811,13 @@ fn a_replay_step_refused_by_the_lock_is_derived_again_with_no_model_call() {
     // Asked again (a flow step is derived again, through the same gate).
     let again = s.step(ev(100, observed(wifi_screen(true))));
     assert_eq!(again, e);
-    assert!(matches!(
+    // Approved: a fresh look first (observe-after-approval, a flow step included).
+    assert_eq!(
         s.step(ev(110, Event::UserDecision { approved: true })),
+        Effect::Observe { screenshot: false }
+    );
+    assert!(matches!(
+        s.step(ev(115, observed(wifi_screen(true)))),
         Effect::Act(_)
     ));
     s.step(ev(120, Event::ActResult(RunnerResult::ok())));
@@ -840,7 +856,15 @@ fn a_replay_step_whose_result_the_lock_made_unknown_hands_over_to_the_model() {
         )),
         Effect::Confirm(_)
     ));
-    s.step(ev(80, Event::UserDecision { approved: true }));
+    // Approved: a fresh look first (observe-after-approval), then the tap.
+    assert_eq!(
+        s.step(ev(80, Event::UserDecision { approved: true })),
+        Effect::Observe { screenshot: false }
+    );
+    assert!(matches!(
+        s.step(ev(85, observed(wifi_screen(true)))),
+        Effect::Act(_)
+    ));
     s.step(ev(90, Event::ActResult(RunnerResult::ok())));
     expect_infer(s.step(ev(100, observed(wifi_screen(false)))));
     let o = finished(s.step(ev(110, model("done()"))));

@@ -168,6 +168,13 @@ pub(crate) const RESULT_LOCK_TOOL_UNKNOWN: &str =
 /// History result: a question the owner did not answer before the lock.
 pub(crate) const RESULT_LOCK_UNANSWERED: &str =
     "not answered: the phone locked before the owner replied";
+/// History result: the owner approved, but the approved control was no longer where it was
+/// asked about (moved, gone, another app, or the screen now reads differently).
+pub(crate) const RESULT_APPROVAL_STALE: &str =
+    "not done: the screen changed after the owner approved it; read the screen again and choose again";
+/// History result: the text was typed, but the screen changed before its Return was pressed.
+pub(crate) const RESULT_RETURN_HELD: &str =
+    "not done: the text was typed, but the screen changed before Return, so Return was not pressed; check the screen";
 /// History result: a held confirmation whose screen changed during the lock.
 pub(crate) const RESULT_LOCK_SCREEN_CHANGED: &str =
     "not done: the phone locked while waiting for the owner's approval, and the screen changed";

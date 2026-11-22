@@ -133,6 +133,16 @@ fn header(screen: &CompactScreen) -> String {
     };
     if screen.keyboard_visible {
         out.push_str("\nKeyboard: visible");
+        // The Return key's label only when it says more than "return" (a "send" key sends).
+        if let Some(key) = screen
+            .cues
+            .return_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|k| !k.is_empty() && !k.eq_ignore_ascii_case("return"))
+        {
+            out.push_str(&format!(" (Return key: \"{}\")", escape(key)));
+        }
     }
     if let Some((page, count)) = screen.cues.page {
         out.push_str(&format!("\nPage {page} of {count}"));
@@ -251,7 +261,8 @@ fn static_text_omission_order(screen: &CompactScreen) -> Vec<usize> {
 
 /// Renders the screen as prompt text within `budget_tokens` (see [`estimate_tokens`]).
 ///
-/// First line `App: Name (bundle.id)`, then `Keyboard: visible` when up, then one line per
+/// First line `App: Name (bundle.id)`, then `Keyboard: visible` when up (with
+/// `(Return key: "send")` when the Return key reads anything but "return"), then one line per
 /// element, e.g. `[4] TextField "Email" value="a@b.c" (focused)`. Over budget, it degrades in
 /// order: truncate long labels and values; omit static texts far from interactive elements
 /// (`… N static texts omitted`); drop elements from the bottom

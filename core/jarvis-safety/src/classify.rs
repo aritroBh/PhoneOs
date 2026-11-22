@@ -4,6 +4,7 @@ use jarvis_proto::{
     Action, CompactScreen, Direction, Element, Point, RiskCategory, Role, Tier, ToolSpec,
 };
 
+use crate::gestures::{finger_direction, gesture, GestureKind};
 use crate::phrases::{
     action_tables, in_app, match_label, match_tokens, match_whole, max_risk, severity,
     sf_symbol_risk, LabelRisk, Phrase, RuleTarget, ACTION_PHRASES, APP_RULES,
@@ -17,6 +18,7 @@ use crate::text::{
     CURRENCY_WORDS,
 };
 use crate::validate::{looks_like_url, url_scheme};
+use jarvis_proto::SPRINGBOARD_BUNDLE_ID;
 
 /// Most elements read as context for one decision. On bigger screens the elements
 /// nearest (vertically) to the target are read, so padding a page cannot push a price or
@@ -60,8 +62,17 @@ const MAX_TOOL_STRINGS: usize = 64;
 ///   `SendMessage`, and a typed `tel:` URL is classified like `OpenUrl`.
 /// * `TapPoint` takes the riskiest pressable element under the point, or the screen
 ///   context when only text or nothing is there.
-/// * Swipes are read like taps of their element (with context); a sideways swipe on a cell
-///   or button row is at least `Delete` (full swipes trigger the destructive action).
+/// * Swipes and scrolls are classified by the drag the runner will really make (the same
+///   path `gestures::gesture` computes for the command). A swipe is read like a tap of its
+///   element (with context); a sideways swipe on a cell or button row is at least `Delete`
+///   (full swipes trigger the destructive action). A scroll is the same finger movement in
+///   the opposite direction, so a sideways scroll, or any scroll whose element is itself an
+///   adjustable control (slider, switch, picker, stepper), is classified exactly like the
+///   swipe it becomes. Every gesture, with or without an element, also takes the risk of
+///   the enabled controls its path crosses that react to such a drag (see
+///   [`reacts_to_drag`]): a sideways drag across a "Slide to pay" slider on a checkout is
+///   `Payment`. A plain vertical scroll of a list, or a swipe across empty space or plain
+///   text, stays `None`.
 /// * `OpenUrl` to `tel:`/`facetime:` is `Call`.
 /// * Everything else is `None`. An element index that does not exist falls back to the
 ///   screen context (and is rejected by `validate_action` anyway).
@@ -76,19 +87,16 @@ pub fn classify(action: &Action, screen: &CompactScreen, tool: Option<&ToolSpec>
             text,
             submit,
         } => type_risk(*element, text, *submit, screen),
-        Action::Swipe {
-            direction,
-            element: Some(i),
-        } => match screen.get(*i) {
-            Some(el) => swipe_risk(el, *direction, screen),
-            None => context_of(screen, None).risk,
-        },
+        Action::Swipe { direction, element } => {
+            gesture_risk(GestureKind::Swipe, *direction, *element, screen)
+        }
+        Action::Scroll { direction, element } => {
+            gesture_risk(GestureKind::Scroll, *direction, *element, screen)
+        }
         Action::TapPoint { x, y } => tap_point(*x, *y, screen).0,
         Action::OpenUrl { url } => url_risk(url),
         Action::CallTool { name, args } => tool_risk(name, args, tool),
         Action::Clear { .. }
-        | Action::Scroll { .. }
-        | Action::Swipe { element: None, .. }
         | Action::PressHome
         | Action::OpenApp { .. }
         | Action::Wait { .. }
@@ -451,28 +459,49 @@ fn type_risk(
     risk
 }
 
-/// Risk announced by the keyboard's Return key ("send", "post"); the backspace key and
-/// harmless return labels ("go", "search", "done") add nothing.
-fn return_key_risk(screen: &CompactScreen) -> RiskCategory {
-    screen
+/// Return-key labels that only move the caret, search or go to the next field: they add
+/// nothing to a submit.
+const PLAIN_RETURN_LABELS: &[&str] = &["return", "search", "next", "enter", "route"];
+
+/// Risk announced by the keyboard's Return key: its label as compacted into
+/// `screen.cues.return_key` (or, on a hand-built screen that still lists keys, the `Key`
+/// elements). A label that is an action word asks under its category ("send" is
+/// `SendMessage`, "pay" `Payment`, "post" `PublicPost`, "call" `Call`); a generic
+/// confirmation ("go", "done", "join", "continue") means what the screen around it means,
+/// so it takes the screen's context risk (a "done" key on a checkout pays). Plain labels
+/// ("return", "search", "next") and the backspace key add nothing.
+fn return_key_risk(target: Option<&Element>, screen: &CompactScreen) -> RiskCategory {
+    let cue = screen.cues.return_key.as_deref();
+    let keys = screen
         .elements
         .iter()
         .filter(|e| e.role == Role::Key)
         .take(MAX_CONTEXT_ELEMENTS)
-        .map(
-            |e| match match_label(&e.label, &[ACTION_PHRASES]).category {
-                RiskCategory::Delete => RiskCategory::None,
-                other => other,
-            },
-        )
-        .fold(RiskCategory::None, max_risk)
+        .map(|e| e.label.as_str());
+    let tables = action_tables(&screen.app_bundle_id);
+    let mut risk = RiskCategory::None;
+    let mut generic = false;
+    for label in cue.into_iter().chain(keys) {
+        let plain = PLAIN_RETURN_LABELS.contains(&tokens(label).join(" ").as_str());
+        let lr = match_label(label, &tables);
+        match lr.category {
+            // The keyboard's backspace key is labelled "delete".
+            RiskCategory::Delete => {}
+            other => risk = max_risk(risk, other),
+        }
+        generic |= lr.generic && !plain;
+    }
+    if generic {
+        risk = max_risk(risk, context_of(screen, target.map(|t| t.index)).risk);
+    }
+    risk
 }
 
 /// Risk of pressing Return in `target`: the compose field's own meaning, the Return key's
 /// label and the screen's context (a Send button, a price). Search fields only search
 /// (unless the Return key itself says otherwise).
 fn submit_risk(target: Option<&Element>, screen: &CompactScreen) -> RiskCategory {
-    let key = return_key_risk(screen);
+    let key = return_key_risk(target, screen);
     let rest = match target {
         Some(t) if t.role == Role::SearchField => RiskCategory::None,
         Some(t) => {
@@ -494,15 +523,119 @@ fn submit_risk(target: Option<&Element>, screen: &CompactScreen) -> RiskCategory
     max_risk(key, rest)
 }
 
+/// Whether `role`/`el` is a control whose value or state a drag changes: a slider, switch,
+/// picker or stepper (by role, or an `Other` role of that name), or anything labelled as a
+/// slide/swipe action ("Slide to pay", "Swipe up to unlock").
+fn is_adjustable(el: &Element) -> bool {
+    let named = match &el.role {
+        Role::Slider | Role::Switch | Role::Picker => true,
+        Role::Other(name) => {
+            let n: String = name
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+                .to_lowercase();
+            matches!(
+                n.as_str(),
+                "slider" | "switch" | "toggle" | "picker" | "pickerwheel" | "stepper"
+            )
+        }
+        _ => false,
+    };
+    named
+        || tokens(&bounded(&el.label))
+            .iter()
+            .any(|t| matches!(t.as_str(), "slide" | "swipe"))
+}
+
+/// Whether a drag in finger direction `finger` that crosses `el` acts on it. Sideways:
+/// adjustable controls (sliders, switches, steppers, slide-to-act controls) and list or
+/// button rows, whose swipe actions a sideways drag reveals and a long one triggers (not on
+/// the home screen, whose icons have none: a sideways swipe there turns the page).
+/// Vertically: pickers, vertical sliders and slide-to-act controls; rows only scroll.
+/// Disabled elements and keyboard keys never react.
+fn reacts_to_drag(el: &Element, finger: Direction, screen: &CompactScreen) -> bool {
+    if !el.enabled || el.role == Role::Key {
+        return false;
+    }
+    let sideways = matches!(finger, Direction::Left | Direction::Right);
+    if sideways {
+        is_adjustable(el)
+            || (matches!(el.role, Role::Cell | Role::Button)
+                && !in_app(&screen.app_bundle_id, SPRINGBOARD_BUNDLE_ID))
+    } else {
+        match el.role {
+            Role::Picker => true,
+            Role::Slider => el.frame.height > el.frame.width,
+            Role::Switch => false,
+            _ => is_adjustable(el),
+        }
+    }
+}
+
+/// The elements whose frame the straight path `from` → `to` touches (at most
+/// [`MAX_CONTEXT_ELEMENTS`], in screen order).
+fn crossed(screen: &CompactScreen, from: Point, to: Point) -> impl Iterator<Item = &Element> {
+    let (x0, x1) = (from.x.min(to.x), from.x.max(to.x));
+    let (y0, y1) = (from.y.min(to.y), from.y.max(to.y));
+    screen
+        .elements
+        .iter()
+        .filter(move |e| {
+            let f = e.frame;
+            !f.is_empty() && f.x <= x1 && f.max_x() >= x0 && f.y <= y1 && f.max_y() >= y0
+        })
+        .take(MAX_CONTEXT_ELEMENTS)
+}
+
+/// Risk of a scroll or swipe (see [`classify`]): the drag is computed exactly as the
+/// command will make it; the target element's own risk counts for swipes, sideways
+/// scrolls and scrolls of adjustable controls, and every control the path crosses that
+/// reacts to the drag adds its swipe risk.
+fn gesture_risk(
+    kind: GestureKind,
+    direction: Direction,
+    element: Option<u32>,
+    screen: &CompactScreen,
+) -> RiskCategory {
+    let finger = finger_direction(kind, direction);
+    let sideways = matches!(finger, Direction::Left | Direction::Right);
+    let target = match element {
+        Some(i) => match screen.get(i) {
+            Some(el) => Some(el),
+            None => return context_of(screen, None).risk,
+        },
+        None => None,
+    };
+    let mut risk = RiskCategory::None;
+    if let Some(el) = target {
+        let own = kind == GestureKind::Swipe || sideways || is_adjustable(el);
+        if own {
+            risk = swipe_risk(el, finger, screen);
+        }
+    }
+    // Without a computable path (unknown screen size, an element in the system-gesture
+    // margin) the runner gets no command at all; nothing more to read.
+    if let Ok(g) = gesture(kind, direction, target.map(|e| e.frame), screen.size) {
+        for el in crossed(screen, g.from, g.to) {
+            if target.is_some_and(|t| t.index == el.index) || !reacts_to_drag(el, finger, screen) {
+                continue;
+            }
+            risk = max_risk(risk, swipe_risk(el, finger, screen));
+        }
+    }
+    risk
+}
+
 /// Risk of swiping on `el`: read like a tap of it (with context); sideways on a cell or
-/// button row it is at least `Delete`. Vertical swipes on other elements only read their
-/// label, since they mostly scroll.
+/// button row it is at least `Delete`. Vertical swipes on adjustable controls are read like
+/// taps too; on other elements they only read their label, since they mostly scroll.
 fn swipe_risk(el: &Element, direction: Direction, screen: &CompactScreen) -> RiskCategory {
     let sideways = matches!(direction, Direction::Left | Direction::Right);
     let row = matches!(el.role, Role::Cell | Role::Button);
     if sideways && row {
         max_risk(RiskCategory::Delete, element_risk(el, screen))
-    } else if sideways || matches!(el.role, Role::Slider | Role::Switch) {
+    } else if sideways || is_adjustable(el) {
         element_risk(el, screen)
     } else {
         match_label(&element_text(el), &action_tables(&screen.app_bundle_id)).category

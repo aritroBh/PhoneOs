@@ -315,6 +315,15 @@ fn login_form_with_keyboard_hides_what_the_keyboard_covers() {
     assert!(user.focused);
     assert!(by_label(&c, "Password").secure);
     assert_eq!(count_label(&c, "Ask"), 0, "tab bar is under the keyboard");
+    // The real tree's return key (`Button "return" id=Return`) becomes a cue, not an
+    // element; a plain "return" is not mentioned to the model.
+    assert_eq!(c.cues.return_key.as_deref(), Some("return"));
+    assert_eq!(count_label(&c, "return"), 0);
+    assert!(!render(&c, 100_000).contains("Return key"));
+    // Screens without a keyboard have no return-key cue.
+    for name in ["settings_root", "springboard_home", "alert_dialog"] {
+        assert_eq!(compact_fixture(name).cues.return_key, None, "{name}");
+    }
 }
 
 #[test]

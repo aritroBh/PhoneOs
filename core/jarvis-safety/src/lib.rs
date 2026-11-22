@@ -43,13 +43,16 @@ mod classify;
 mod confine;
 mod evaluate;
 mod gate;
+pub mod gestures;
 mod phrases;
 mod redact;
 mod sanitize;
 mod text;
 mod validate;
 
-pub use app::{app_level, check_app, is_springboard, matching_rule, mode_level, Verdict};
+pub use app::{
+    app_level, check_app, check_app_name, is_springboard, matching_rule, mode_level, Verdict,
+};
 pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;
 pub use confine::check_confinement;

@@ -801,3 +801,301 @@ fn command_rows_and_buttons_still_match() {
     );
     assert_eq!(classify(&tap(1), &s, None), RiskCategory::Call);
 }
+
+// --- Gestures are classified by the drag they really make --------------------------------
+
+fn at(mut e: jarvis_proto::Element, frame: Rect) -> jarvis_proto::Element {
+    e.frame = frame;
+    e
+}
+
+/// A checkout: total, card line and a "Slide to pay" slider across the middle (y 395-439,
+/// where element-less gestures run).
+fn checkout() -> jarvis_proto::CompactScreen {
+    screen(
+        "com.example.shop",
+        "Shop",
+        vec![
+            at(
+                label(1, "Total $42.10"),
+                Rect::new(16.0, 200.0, 361.0, 30.0),
+            ),
+            at(
+                label(2, "Card ending 4242"),
+                Rect::new(16.0, 240.0, 361.0, 30.0),
+            ),
+            at(
+                el(3, Role::Slider, "Slide to pay"),
+                Rect::new(16.0, 395.0, 361.0, 44.0),
+            ),
+        ],
+    )
+}
+
+fn scroll(direction: Direction, element: Option<u32>) -> Action {
+    Action::Scroll { direction, element }
+}
+
+fn swipe(direction: Direction, element: Option<u32>) -> Action {
+    Action::Swipe { direction, element }
+}
+
+#[test]
+fn a_scroll_on_a_pay_slider_is_classified_like_the_swipe_it_becomes() {
+    let s = checkout();
+    for d in [
+        Direction::Left,
+        Direction::Right,
+        Direction::Up,
+        Direction::Down,
+    ] {
+        assert_eq!(
+            classify(&scroll(d, Some(3)), &s, None),
+            Payment,
+            "scroll {d:?}"
+        );
+    }
+    assert_eq!(
+        classify(&swipe(Direction::Right, Some(3)), &s, None),
+        Payment
+    );
+}
+
+#[test]
+fn an_elementless_sideways_drag_takes_the_risk_of_the_controls_it_crosses() {
+    let s = checkout();
+    for a in [
+        swipe(Direction::Right, None),
+        swipe(Direction::Left, None),
+        scroll(Direction::Left, None),
+        scroll(Direction::Right, None),
+    ] {
+        assert_eq!(classify(&a, &s, None), Payment, "{a:?}");
+    }
+    // A sideways drag over another element whose path crosses the slider (a container).
+    let mut s2 = checkout();
+    s2.elements.push(at(
+        el(4, Role::ScrollView, ""),
+        Rect::new(0.0, 380.0, 393.0, 80.0),
+    ));
+    assert_eq!(
+        classify(&scroll(Direction::Left, Some(4)), &s2, None),
+        Payment
+    );
+}
+
+#[test]
+fn gestures_over_empty_space_plain_text_or_harmless_rows_do_not_ask() {
+    let empty = app_screen(vec![]);
+    let text_only = app_screen(vec![at(
+        label(1, "A long article paragraph"),
+        Rect::new(16.0, 380.0, 361.0, 80.0),
+    )]);
+    for s in [&empty, &text_only] {
+        for d in [
+            Direction::Left,
+            Direction::Right,
+            Direction::Up,
+            Direction::Down,
+        ] {
+            assert_eq!(classify(&swipe(d, None), s, None), NONE, "swipe {d:?}");
+            assert_eq!(classify(&scroll(d, None), s, None), NONE, "scroll {d:?}");
+        }
+    }
+    // A list of harmless rows filling the screen, a switch among them: vertical page
+    // drags only scroll.
+    let mut rows: Vec<_> = (1..=18)
+        .map(|i| {
+            at(
+                el(i, Role::Cell, &format!("Note {i}")),
+                Rect::new(0.0, 44.0 * f64::from(i), 393.0, 44.0),
+            )
+        })
+        .collect();
+    rows.push(at(
+        el(19, Role::Switch, "Show tips"),
+        Rect::new(300.0, 400.0, 60.0, 30.0),
+    ));
+    let list = app_screen(rows);
+    for d in [Direction::Up, Direction::Down] {
+        assert_eq!(classify(&swipe(d, None), &list, None), NONE, "swipe {d:?}");
+        assert_eq!(
+            classify(&scroll(d, None), &list, None),
+            NONE,
+            "scroll {d:?}"
+        );
+    }
+    // A vertical scroll of the list itself stays unclassified too.
+    let mut with_table = list.clone();
+    with_table.elements.push(at(
+        el(20, Role::Table, "Notes"),
+        Rect::new(0.0, 44.0, 393.0, 760.0),
+    ));
+    assert_eq!(
+        classify(&scroll(Direction::Down, Some(20)), &with_table, None),
+        NONE
+    );
+    // A sideways drag across rows reveals their swipe actions: like a swipe on a row.
+    assert_eq!(classify(&swipe(Direction::Left, None), &list, None), Delete);
+}
+
+#[test]
+fn a_sideways_home_screen_swipe_turns_the_page_and_does_not_ask() {
+    let icons: Vec<_> = (0..4)
+        .map(|i| {
+            at(
+                button(i + 1, &format!("App {i}")),
+                Rect::new(20.0 + 90.0 * f64::from(i), 400.0, 64.0, 64.0),
+            )
+        })
+        .collect();
+    let home = screen("com.apple.springboard", "Home", icons);
+    assert_eq!(classify(&swipe(Direction::Left, None), &home, None), NONE);
+    assert_eq!(classify(&scroll(Direction::Right, None), &home, None), NONE);
+}
+
+#[test]
+fn disabled_controls_and_the_gate_for_drags() {
+    let mut s = checkout();
+    s.elements[2].enabled = false;
+    assert_eq!(classify(&swipe(Direction::Right, None), &s, None), NONE);
+    // The default policy asks for the drag across the enabled slider.
+    let d = evaluate(
+        &Policy::default(),
+        &swipe(Direction::Right, None),
+        &checkout(),
+        None,
+    );
+    assert!(
+        matches!(d, Decision::Confirm(ref r) if r.category == Payment),
+        "{d:?}"
+    );
+}
+
+// --- The keyboard's Return key, as a fact of the compact screen ---------------------------
+
+fn composer(
+    return_key: Option<&str>,
+    extra: Vec<jarvis_proto::Element>,
+) -> jarvis_proto::CompactScreen {
+    let mut elements = vec![field(1, Role::TextField, "Write something")];
+    elements.extend(extra);
+    let mut s = screen("com.example.chat", "Chat", elements);
+    s.cues.return_key = return_key.map(str::to_owned);
+    s
+}
+
+fn submit(text: &str) -> Action {
+    Action::Type {
+        element: None,
+        text: text.to_owned(),
+        submit: true,
+    }
+}
+
+#[test]
+fn the_return_key_cue_decides_what_a_submit_risks() {
+    for (key, want) in [
+        ("send", SendMessage),
+        ("Send", SendMessage),
+        ("pay", Payment),
+        ("Post", PublicPost),
+        ("return", NONE),
+        ("search", NONE),
+        ("next", NONE),
+        ("go", NONE),
+        ("done", NONE),
+    ] {
+        assert_eq!(
+            classify(&submit("hi"), &composer(Some(key), vec![]), None),
+            want,
+            "{key}"
+        );
+    }
+    // Without a cue, nothing changes.
+    assert_eq!(classify(&submit("hi"), &composer(None, vec![]), None), NONE);
+    // "done"/"go"/"join" mean what the screen means: on a checkout, they pay.
+    let pay_ctx = || vec![label(2, "Total $42.10"), label(3, "Card ending 4242")];
+    for key in ["done", "go", "join"] {
+        let mut s = composer(Some(key), pay_ctx());
+        s.elements[0].role = Role::SearchField;
+        assert_eq!(classify(&submit("x"), &s, None), Payment, "{key}");
+    }
+    // A search field with a plain "search" key still only searches.
+    let mut s = composer(Some("search"), pay_ctx());
+    s.elements[0].role = Role::SearchField;
+    assert_eq!(classify(&submit("x"), &s, None), NONE);
+}
+
+// --- Display names of denied apps ---------------------------------------------------------
+
+#[test]
+fn denied_apps_are_recognised_by_their_display_names() {
+    use jarvis_proto::{AppInfo, AppRule, TrustLevel};
+    use jarvis_safety::check_app_name;
+    let mut p = Policy::default();
+    p.denied_apps.push("com.examplebank.mobile".to_owned());
+    // The last meaningful component of the id (generic "mobile" skipped).
+    assert!(check_app(&p, "ExampleBank").is_denied());
+    assert!(check_app(&p, "examplebank").is_denied());
+    // A known app's display name, folded for case, whitespace and punctuation.
+    let apps = vec![AppInfo::new("com.examplebank.mobile", "My Bank")];
+    for name in [
+        "My Bank",
+        "my bank",
+        "MY-BANK",
+        "My  Bank!",
+        "My Bank, 2 new",
+    ] {
+        assert!(check_app_name(&p, &apps, name).is_denied(), "{name}");
+    }
+    assert!(!check_app_name(&p, &apps, "My Banking Tips").is_denied());
+    assert!(!check_app_name(&p, &apps, "Notes").is_denied());
+    // A Denied rule carrying the name the owner sees.
+    let mut p = Policy::default();
+    p.app_rules
+        .push(AppRule::new("com.othercorp.x7", TrustLevel::Denied).with_name("Fortune Vault"));
+    assert!(check_app(&p, "Fortune Vault").is_denied());
+    assert!(check_app(&p, "fortune-vault").is_denied());
+    assert!(!check_app(&p, "Fortune").is_denied());
+    // A Trusted rule's name denies nothing.
+    let mut p = Policy::default();
+    p.app_rules
+        .push(AppRule::new("com.othercorp.x7", TrustLevel::Trusted).with_name("Fortune Vault"));
+    assert!(!check_app(&p, "Fortune Vault").is_denied());
+}
+
+#[test]
+fn policy_json_without_display_names_still_loads() {
+    let json = r#"{"denied_apps":["com.examplebank"],"app_rules":[{"bundle_id_prefix":"com.apple.MobileSMS","level":"step_by_step"}],"first_use_approval":true}"#;
+    let p: Policy = serde_json::from_str(json).unwrap();
+    assert_eq!(p.app_rules[0].name, None);
+    // Written back without a name key; with a name it round-trips.
+    assert!(!serde_json::to_string(&p).unwrap().contains("\"name\""));
+    let mut named = p.clone();
+    named.app_rules[0].name = Some("Messages".to_owned());
+    let back: Policy = serde_json::from_str(&serde_json::to_string(&named).unwrap()).unwrap();
+    assert_eq!(back, named);
+}
+
+// --- Confirmation summaries keep the risk visible -----------------------------------------
+
+#[test]
+fn a_long_label_keeps_both_ends_and_its_amount_in_the_summary() {
+    let long = "Confirm your order of the premium noise cancelling headphones with extended warranty for $500";
+    let s = app_screen(vec![button(1, long)]);
+    let sum = summarize(&tap(1), &s, None);
+    assert!(sum.contains("$500"), "{sum}");
+    assert!(sum.contains("Confirm your order"), "{sum}");
+    assert!(sum.contains('…'), "{sum}");
+    // An amount in the middle survives as well.
+    let mid = "Pay now $1,250.00 to Example Corporation International Holdings Limited for the annual subscription renewal";
+    let s = app_screen(vec![button(1, mid)]);
+    let sum = summarize(&tap(1), &s, None);
+    assert!(sum.contains("$1,250.00"), "{sum}");
+    assert!(sum.starts_with("Tap \"Pay now"), "{sum}");
+    assert!(sum.contains("renewal"), "{sum}");
+    // Short labels are untouched.
+    let s = app_screen(vec![button(1, "Pay $5")]);
+    assert_eq!(summarize(&tap(1), &s, None), "Tap \"Pay $5\" in Example");
+}

@@ -362,6 +362,7 @@ fn step_by_step_and_first_use_settings_cross_the_bridge() {
     c.policy.app_rules = vec![AppRule {
         bundle_id_prefix: SETTINGS.to_owned(),
         level: TrustLevel::Trusted,
+        name: Some("Settings".to_owned()),
     }];
     let run = drive_with(c, "", |_| false);
     assert_eq!(run.outcome.unwrap().status, OutcomeStatus::Success);
@@ -501,10 +502,24 @@ fn a_locked_phone_waits_resumes_by_observing_and_can_time_out() {
             },
         },
     );
-    // First use of Settings: approve, then the tap is refused.
+    // First use of Settings: approve, a fresh look (observe-after-approval), then the tap
+    // is refused.
     assert!(matches!(effect, Effect::Confirm { .. }), "{effect:?}");
     assert!(matches!(
         session.step(4, Event::UserDecision { approved: true }),
+        Effect::Observe { .. }
+    ));
+    assert!(matches!(
+        session.step(
+            4,
+            Event::Observed {
+                observation: ScreenObservation {
+                    screen: settings_screen(),
+                    screenshot: None,
+                    device_locked: false,
+                },
+            },
+        ),
         Effect::Act { .. }
     ));
     let refused = RunnerResult {

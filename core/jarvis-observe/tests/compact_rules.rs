@@ -737,3 +737,50 @@ fn long_chain_of_nested_controls_is_followed_in_linear_time() {
     assert_eq!(c.elements[0].frame, r(100.0, 100.0, 50.0, 30.0));
     assert_eq!(c.elements[0].label, "Deep switch");
 }
+
+/// The keyboard's Return key is carried as a fact of the screen (`cues.return_key`): it is
+/// never an element, and the element numbering is the same as without a keyboard.
+#[test]
+fn the_return_key_label_is_a_cue_and_numbering_is_unchanged() {
+    let c = compact(&compose_screen());
+    assert_eq!(c.cues.return_key.as_deref(), Some("send"));
+    assert!(c.elements.iter().all(|e| e.label != "send"));
+    let mut no_kb = compose_screen();
+    no_kb.keyboard_visible = false;
+    fn strip(n: &mut UiNode) {
+        n.children.retain(|c| c.role != Role::Keyboard);
+        n.children.iter_mut().for_each(strip);
+    }
+    strip(&mut no_kb.root);
+    let plain = compact(&no_kb);
+    assert_eq!(plain.cues.return_key, None);
+    let sig = |c: &jarvis_proto::CompactScreen| -> Vec<(u32, String, u64)> {
+        c.elements
+            .iter()
+            .map(|e| (e.index, e.label.clone(), e.fingerprint))
+            .collect()
+    };
+    assert_eq!(sig(&c), sig(&plain));
+    assert_eq!(
+        compact(&login_screen()).cues.return_key.as_deref(),
+        Some("go")
+    );
+    // UIKit's identifier wins over the label list; labels are bounded.
+    let kb = UiNode::new(Role::Keyboard, rect(0.0, 516.0, 393.0, 336.0)).with_children(vec![
+        node(Role::Key, "q", rect(3.0, 527.0, 37.0, 46.0)),
+        node(
+            Role::Button,
+            "Ask the assistant to do it now please",
+            rect(297.0, 689.0, 93.0, 46.0),
+        )
+        .with_identifier("Return"),
+    ]);
+    let mut s = settings_screen();
+    s.root.children.push(kb);
+    let c = compact(&s);
+    let key = c.cues.return_key.unwrap();
+    assert!(
+        key.starts_with("Ask the assistant") && key.chars().count() <= 24,
+        "{key}"
+    );
+}

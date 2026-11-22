@@ -65,7 +65,7 @@ pub struct CompactScreen {
 ///
 /// `jarvis-observe` fills these only where the tree supports the inference (see
 /// `jarvis_observe::compact`); a screen without the signals has none.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ScreenCues {
     /// A scrollable list continues above what is visible.
     #[serde(default)]
@@ -76,12 +76,18 @@ pub struct ScreenCues {
     /// A page indicator: `(current, count)`, 1-based, e.g. the home screen's "Page 1 of 2".
     #[serde(default)]
     pub page: Option<(u32, u32)>,
+    /// The label of the on-screen keyboard's Return key (`"send"`, `"go"`, `"search"`,
+    /// `"return"`), when a keyboard is up. A fact about the screen, not an element: it has no
+    /// index and is never tapped. Screen text: bounded by `jarvis-observe`, sanitised before
+    /// it reaches a prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_key: Option<String>,
 }
 
 impl ScreenCues {
     /// True when there is nothing to say.
     pub fn is_empty(&self) -> bool {
-        !self.more_above && !self.more_below && self.page.is_none()
+        !self.more_above && !self.more_below && self.page.is_none() && self.return_key.is_none()
     }
 }
 

@@ -21,6 +21,12 @@
 //! tool acting on it finishes the session `Blocked`. Learned-flow steps take exactly the same
 //! path as model actions.
 //!
+//! Approvals are not acted on blind: the owner may answer long after the question, so once
+//! the last confirmation of a runner action is approved the session observes again and runs
+//! the action only if its target is still the same control (re-planned on the fresh screen,
+//! see `recheck_approved`); otherwise the model is told it was not done and the action goes
+//! through the full gate again.
+//!
 //! Skills: with `SessionConfig::skill` the prompt carries the owner's guidance, and a skill
 //! with `confine_to_apps` refuses actions outside its apps (`jarvis_safety::check_confinement`;
 //! refused like a deny-list hit, so a second attempt finishes `Blocked`). A skill only
@@ -43,7 +49,7 @@
 //! | the runner, nothing of the action done yet | the action is dropped unexecuted (its step refunded) and decided again |
 //! | the runner, part of the action done | as for verification: result unknown, told, not learned |
 //! | a tool | a result that still arrives while locked is recorded; otherwise its result is unknown |
-//! | a confirmation | kept: asked again after the unlock when the screen is unchanged, else dropped; a decline sent while locked is honoured, an approval is not (the owner approves a screen they can see) |
+//! | a confirmation (or the look after an approval) | kept: asked again after the unlock when the screen is unchanged, else dropped; a decline sent while locked is honoured, an approval is not (the owner approves a screen they can see) |
 //! | an answer | an answer sent while locked is recorded; otherwise the question is dropped and decided again |
 //!
 //! A learned-flow step is never carried across a lock: it is derived again from the fresh
@@ -71,14 +77,15 @@ use jarvis_observe::{compact, diff, marks, screen_hash};
 use std::collections::VecDeque;
 
 use jarvis_proto::{
-    Action, CompactScreen, ConfirmRequest, Effect, Event, ImageRef, Key, ModelRequest, Observation,
-    Outcome, OutcomeStatus, Progress, RequestKind, RiskCategory, RunnerCommand, SessionConfig,
-    Size, TaskSpec, TimedEvent, ToolCall, ToolResult, ToolSpec,
+    Action, AppInfo, CompactScreen, ConfirmRequest, Effect, Element, Event, ImageRef, Key,
+    ModelRequest, Observation, Outcome, OutcomeStatus, Point, Progress, RequestKind, RiskCategory,
+    RunnerCommand, SessionConfig, Size, TaskSpec, TimedEvent, ToolCall, ToolResult, ToolSpec,
 };
+use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
-    check_app, check_confinement, evaluate, first_use_app, first_use_request, is_springboard,
-    redact, redact_screen, sanitize_screen_text, summarize, Budget, BudgetVerdict, Decision,
-    Verdict,
+    check_app, check_app_name, check_confinement, evaluate, first_use_app, first_use_request,
+    is_springboard, redact, redact_screen, sanitize_screen_text, summarize, Budget, BudgetVerdict,
+    Decision, Verdict,
 };
 
 use crate::changes::describe_change;
@@ -119,6 +126,8 @@ const MAX_RESULT_CHARS: usize = 300;
 const MAX_APPS_LISTED: usize = 12;
 /// Times a failed model request is re-sent before the session fails.
 pub const MAX_MODEL_RETRIES: u32 = 2;
+/// Characters of the keyboard's Return-key label shown to the model.
+const MAX_RETURN_KEY_CHARS: usize = 24;
 /// Characters of typed text or field content quoted when typing did not arrive intact.
 const MAX_TYPED_QUOTE: usize = 60;
 /// `AwaitUnlock` reason while nothing needs the owner's attention after the unlock.
@@ -319,7 +328,11 @@ enum Reject {
 }
 
 /// One task's agent loop. See the module docs and `ARCHITECTURE.md`.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is safe for logs: it shows the task id, the state, counters and the memory store
+/// (whose profile hides sensitive values), never screens, history, typed text or the task
+/// text.
+#[derive(Clone)]
 pub struct Session {
     config: SessionConfig,
     task: TaskSpec,
@@ -353,6 +366,9 @@ pub struct Session {
     log_steps: Vec<LogStep>,
     /// The owner's guidance block when the session runs a skill (built once).
     guidance: Option<String>,
+    /// `known_apps` plus the named app rules whose prefix is a whole bundle id: the apps
+    /// whose display names the session can resolve (icons, `open_app`, deny checks).
+    apps: Vec<AppInfo>,
     /// Stuck-detection key of the most recently proposed action (to undo on a refund).
     last_repeat_key: Option<(u64, String)>,
     /// Observations in a row that failed (`Event::ObserveFailed`).
@@ -377,6 +393,23 @@ pub struct Session {
     /// A lock left some action's result unknown: the recording is not trustworthy, so no
     /// learned flow is saved from this session.
     lock_uncertain: bool,
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("task_id", &self.task.id)
+            .field("state", &self.state.name())
+            .field("steps", &self.budget.steps())
+            .field("model_calls", &self.model_calls)
+            .field("app", &self.current.screen.app_bundle_id)
+            .field("declined", &self.declined)
+            .field("approved_apps", &self.approved_apps)
+            .field("declined_apps", &self.declined_apps)
+            .field("replaying", &self.replay.is_some())
+            .field("memory", &self.memory)
+            .finish_non_exhaustive()
+    }
 }
 
 /// How the session learned of a lock.
@@ -421,6 +454,13 @@ fn prompt_safe(screen: &CompactScreen, memory: &MemoryStore) -> CompactScreen {
     }
     safe.app_name = safe.app_name.as_deref().map(|n| clean(n, 60));
     safe.app_bundle_id = clean(&safe.app_bundle_id, 100);
+    // The keyboard's Return-key label is screen text too.
+    safe.cues.return_key = safe
+        .cues
+        .return_key
+        .as_deref()
+        .map(|k| clean(&mask(k, profile), MAX_RETURN_KEY_CHARS))
+        .filter(|k| !k.is_empty());
     safe
 }
 
@@ -430,6 +470,7 @@ impl Session {
         let mut recorder = Recorder::new(task.text.clone());
         recorder.set_sensitive_values(sensitive_texts(&memory.profile));
         let budget = Budget::new(&config.policy, 0);
+        let apps = named_apps(&config);
         let guidance = config
             .skill
             .as_ref()
@@ -466,6 +507,7 @@ impl Session {
             last_action: None,
             log_steps: Vec::new(),
             guidance,
+            apps,
             last_repeat_key: None,
             observe_failures: 0,
             repeat: None,
@@ -636,6 +678,9 @@ impl Session {
             ObservePurpose::Vision => self.infer(RequestKind::Vision),
             ObservePurpose::Verify(pending) => self.verify(now, *pending),
             ObservePurpose::Reconsider(pending) => self.reconsider(now, *pending),
+            ObservePurpose::Approved(pending, approved) => {
+                self.act_approved(now, *pending, approved)
+            }
         }
     }
 
@@ -802,7 +847,7 @@ impl Session {
                 }
                 match then {
                     Some(next) => self.ask_confirm(now, *pending, next, None, None),
-                    None => self.execute(*pending),
+                    None => self.after_approval(*pending, request),
                 }
             }
             Event::UserDecision { approved: false } => {
@@ -891,6 +936,13 @@ impl Session {
             State::AwaitingObservation { purpose } => match purpose {
                 ObservePurpose::Decide | ObservePurpose::Vision => (Resume::Decide, None),
                 ObservePurpose::Reconsider(pending) => (Resume::Reconsider(pending), None),
+                // An approval is never carried across a lock: asked again on the same
+                // screen, else decided again (a flow step is derived again).
+                ObservePurpose::Approved(pending, _) if pending.source == Source::Replay => {
+                    self.set_aside(&pending, prompt::RESULT_LOCK_NOT_DONE);
+                    (Resume::Decide, None)
+                }
+                ObservePurpose::Approved(pending, _) => (Resume::Reconsider(pending), None),
                 ObservePurpose::Verify(pending) => {
                     self.unknown_result(&pending, prompt::RESULT_LOCK_UNVERIFIED);
                     (Resume::Decide, None)
@@ -1074,6 +1126,120 @@ impl Session {
         }
         self.set_aside(&pending, prompt::RESULT_LOCK_SCREEN_CHANGED);
         self.decide(now)
+    }
+
+    /// The owner approved `pending` (the last of its confirmations). The answer may come
+    /// long after the question, so nothing planned on the screen it was asked about is sent
+    /// blind: tools (which do not use the screen) run now, runner actions look at the screen
+    /// once more first ([`Self::act_approved`]).
+    fn after_approval(&mut self, pending: Pending, request: ConfirmRequest) -> Effect {
+        if matches!(pending.exec, Exec::Tool(_)) {
+            return self.execute(pending);
+        }
+        let approved = (request.category != RiskCategory::FirstUse).then_some(request);
+        self.observe(ObservePurpose::Approved(Box::new(pending), approved), false)
+    }
+
+    /// The fresh screen after an approval: run the approved action when its target is still
+    /// the same control, re-planned on this screen; otherwise do not act, tell the model and
+    /// decide again (through the full gate, which asks again if the action is proposed
+    /// again). The step is not refunded and counts as a failure, so a screen that keeps
+    /// changing cannot keep the session asking forever.
+    fn act_approved(
+        &mut self,
+        now: u64,
+        pending: Pending,
+        approved: Option<ConfirmRequest>,
+    ) -> Effect {
+        match self.recheck_approved(&pending, approved.as_ref()) {
+            Some(fresh) => self.execute(fresh),
+            None => {
+                self.record_failure(&pending, prompt::RESULT_APPROVAL_STALE);
+                self.decide(now)
+            }
+        }
+    }
+
+    /// `pending` re-planned on the current screen, when it is still the action the owner
+    /// approved: the same app (for actions inside it); the same target control (same
+    /// fingerprint, role and label) whose frame still contains the point that was planned;
+    /// and a gate decision on the fresh screen that asks for nothing new (no denial, and no
+    /// confirmation other than the one approved). `None` otherwise.
+    fn recheck_approved(
+        &self,
+        pending: &Pending,
+        approved: Option<&ConfirmRequest>,
+    ) -> Option<Pending> {
+        let screen = &self.current.screen;
+        let before = &pending.before;
+        if uses_foreground_app(&pending.action)
+            && !screen
+                .app_bundle_id
+                .trim()
+                .eq_ignore_ascii_case(before.app_bundle_id.trim())
+        {
+            return None;
+        }
+        let mut action = pending.action.clone();
+        if let Some(old) = action_target(&pending.action, before) {
+            let now = screen
+                .find_by_fingerprint(old.fingerprint)
+                .filter(|e| e.role == old.role && e.label == old.label && e.enabled)?;
+            if let Some(p) = planned_point(&pending.exec) {
+                if !now.frame.contains(p) {
+                    return None;
+                }
+            }
+            if let Some(index) = action.element() {
+                if screen.get(index).map(|e| e.fingerprint) != Some(now.fingerprint) {
+                    action = with_element(&action, now.index);
+                }
+            }
+            if action_target(&action, screen).map(|e| e.fingerprint) != Some(old.fingerprint) {
+                return None;
+            }
+        } else if action.element().is_some() {
+            return None;
+        }
+        let executed = match &action {
+            Action::Type {
+                element,
+                text,
+                submit,
+            } => Action::Type {
+                element: *element,
+                text: substitute(text, &self.memory.profile).ok()?,
+                submit: *submit,
+            },
+            other => other.clone(),
+        };
+        match evaluate(&self.config.policy, &executed, screen, None) {
+            Decision::Allow => {}
+            Decision::Deny(_) => return None,
+            Decision::Confirm(mut request) => {
+                if executed != action {
+                    request.summary = summarize(&action, screen, None);
+                }
+                let same = approved.is_some_and(|a| {
+                    a.category == request.category && a.summary == request.summary
+                });
+                if !same {
+                    return None;
+                }
+            }
+        }
+        let queue = plan(&executed, screen).ok()?;
+        let (queue, check) = type_check(&executed, screen, queue);
+        Some(Pending {
+            expect_change: should_change(&action, screen),
+            described: describe(&action, &self.current.safe),
+            action,
+            source: pending.source,
+            before: screen.clone(),
+            before_safe: self.current.safe.clone(),
+            exec: Exec::Runner(queue),
+            check,
+        })
     }
 
     /// An action dropped before any of it ran: its step is refunded (it will be decided
@@ -1465,8 +1631,7 @@ impl Session {
                 return Some(n.clone());
             }
         }
-        self.config
-            .known_apps
+        self.apps
             .iter()
             .find(|a| a.bundle_id == bundle_id)
             .map(|a| a.name.clone())
@@ -1509,10 +1674,10 @@ impl Session {
         // 1. Normalise: resolve app names, check tool calls, gate tap_point on vision.
         let mut tool: Option<&ToolSpec> = None;
         let normalized = match action {
-            Action::OpenApp { app } => match resolve_app(app, &self.config.known_apps) {
+            Action::OpenApp { app } => match resolve_app(app, &self.apps) {
                 AppTarget::Bundle(bundle_id) => {
                     if check_app(policy, &bundle_id).is_denied()
-                        || check_app(policy, app).is_denied()
+                        || check_app_name(policy, &self.apps, app).is_denied()
                     {
                         return Err(Reject::AppDenied(format!(
                             "{} is on the deny list",
@@ -1525,7 +1690,7 @@ impl Session {
                     Action::OpenApp { app: bundle_id }
                 }
                 AppTarget::Unknown => {
-                    if check_app(policy, app).is_denied() {
+                    if check_app_name(policy, &self.apps, app).is_denied() {
                         return Err(Reject::AppDenied(format!(
                             "{} is on the deny list",
                             clean(app, 80)
@@ -1583,13 +1748,14 @@ impl Session {
         // 1a. A tap on the home screen launches what it hits: the icon gets the checks
         //     `open_app` gets, before the tap is sent (see `home_launch`).
         let home = if is_springboard(&screen.app_bundle_id) {
-            home_launch(&normalized, screen, &self.config.known_apps)
+            home_launch(&normalized, screen, &self.apps)
         } else {
             None
         };
         match &home {
             Some(HomeLaunch::App { bundle_id, label }) => {
-                if check_app(policy, bundle_id).is_denied() || check_app(policy, label).is_denied()
+                if check_app(policy, bundle_id).is_denied()
+                    || check_app_name(policy, &self.apps, label).is_denied()
                 {
                     return Err(Reject::AppDenied(format!(
                         "{} is on the deny list",
@@ -1600,7 +1766,9 @@ impl Session {
                     return Err(Reject::Blocked(self.declined_message(bundle_id)));
                 }
             }
-            Some(HomeLaunch::Unknown { label }) if check_app(policy, label).is_denied() => {
+            Some(HomeLaunch::Unknown { label })
+                if check_app_name(policy, &self.apps, label).is_denied() =>
+            {
                 return Err(Reject::AppDenied(format!(
                     "{} is on the deny list",
                     clean(label, 80)
@@ -1846,7 +2014,22 @@ impl Session {
             ),
             None => TypedVerdict::Unverifiable,
         };
+        // The field the text went into is still on screen: found by its fingerprint (or,
+        // when the check had none, the focused input), in the same app.
+        let same_field = screen
+            .app_bundle_id
+            .eq_ignore_ascii_case(&pending.before.app_bundle_id)
+            && match check.field {
+                Some(fp) => screen.find_by_fingerprint(fp).is_some(),
+                None => field.is_some(),
+            };
         let (kind, found) = match verdict {
+            TypedVerdict::Unverifiable if !check.then.is_empty() && !same_field => {
+                // The screen changed after typing: the held-back Return was gated on the
+                // screen it was asked about, not this one. It is not pressed.
+                self.record_failure(&pending, prompt::RESULT_RETURN_HELD);
+                return self.decide(now);
+            }
             TypedVerdict::Match | TypedVerdict::Unverifiable => {
                 let then = std::mem::take(&mut check.then);
                 if then.is_empty() {
@@ -2162,6 +2345,33 @@ fn category_name(c: RiskCategory) -> &'static str {
     }
 }
 
+/// `config.known_apps`, then each app rule that carries a display name and whose prefix is a
+/// whole bundle id (at least two dot-separated parts, no wildcard) and is not known yet.
+fn named_apps(config: &SessionConfig) -> Vec<AppInfo> {
+    let mut apps = config.known_apps.clone();
+    for rule in &config.policy.app_rules {
+        let Some(name) = rule
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+        else {
+            continue;
+        };
+        let id = rule.bundle_id_prefix.trim();
+        let whole =
+            id.split('.').count() >= 2 && id.split('.').all(|p| !p.is_empty()) && !id.contains('*');
+        if whole
+            && !apps
+                .iter()
+                .any(|a| a.bundle_id.trim().eq_ignore_ascii_case(id))
+        {
+            apps.push(AppInfo::new(id, name));
+        }
+    }
+    apps
+}
+
 /// Whether `action` touches or reads the foreground app (leaving it does not).
 fn uses_foreground_app(action: &Action) -> bool {
     matches!(
@@ -2175,6 +2385,64 @@ fn uses_foreground_app(action: &Action) -> bool {
             | Action::TapPoint { .. }
             | Action::Look
     )
+}
+
+/// The control `action` acts on, on `screen`: its element; for `type` without one, the
+/// focused text input; for `tap_point`, the smallest element under the point.
+fn action_target<'a>(action: &Action, screen: &'a CompactScreen) -> Option<&'a Element> {
+    match action {
+        Action::Type { element: None, .. } => screen
+            .elements
+            .iter()
+            .find(|e| e.focused && e.role.is_text_input()),
+        Action::TapPoint { x, y } => {
+            let p = denormalize(*x, *y, screen.size);
+            screen
+                .elements
+                .iter()
+                .filter(|e| e.frame.contains(p))
+                .min_by(|a, b| a.frame.area().total_cmp(&b.frame.area()))
+        }
+        other => other.element().and_then(|i| screen.get(i)),
+    }
+}
+
+/// `action` aimed at element `index` instead (actions without an element are unchanged).
+fn with_element(action: &Action, index: u32) -> Action {
+    let mut a = action.clone();
+    match &mut a {
+        Action::Tap { element } | Action::LongPress { element, .. } | Action::Clear { element } => {
+            *element = index
+        }
+        Action::Type {
+            element: Some(element),
+            ..
+        }
+        | Action::Scroll {
+            element: Some(element),
+            ..
+        }
+        | Action::Swipe {
+            element: Some(element),
+            ..
+        } => *element = index,
+        _ => {}
+    }
+    a
+}
+
+/// The first screen point the planned commands touch (a tap, long press or drag start).
+fn planned_point(exec: &Exec) -> Option<Point> {
+    let Exec::Runner(queue) = exec else {
+        return None;
+    };
+    queue.iter().find_map(|c| match c {
+        RunnerCommand::Tap { x, y } | RunnerCommand::LongPress { x, y, .. } => {
+            Some(Point::new(*x, *y))
+        }
+        RunnerCommand::Swipe { from, .. } => Some(*from),
+        _ => None,
+    })
 }
 
 /// For a `type` with text into a field that is not secure: the runner queue up to and

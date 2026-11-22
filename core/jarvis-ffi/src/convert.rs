@@ -967,10 +967,12 @@ impl From<p::AppRule> for AppRule {
         let p::AppRule {
             bundle_id_prefix,
             level,
+            name,
         } = v;
         AppRule {
             bundle_id_prefix,
             level: level.into(),
+            name,
         }
     }
 }
@@ -980,10 +982,12 @@ impl From<AppRule> for p::AppRule {
         let AppRule {
             bundle_id_prefix,
             level,
+            name,
         } = v;
         p::AppRule {
             bundle_id_prefix,
             level: level.into(),
+            name,
         }
     }
 }

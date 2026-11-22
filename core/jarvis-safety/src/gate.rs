@@ -66,8 +66,8 @@ pub fn gate_in(
 }
 
 /// Whether `action` can change state: everything except `Wait`, `Look`, `Done`, `Fail`,
-/// `AskUser` and a plain vertical `Scroll` (one whose target, if any, is not a picker or
-/// slider, where scrolling changes the value). `PressHome`, `OpenApp`, `OpenUrl`,
+/// `AskUser` and a plain vertical `Scroll` (one whose target, if any, is not a picker,
+/// slider or switch, where dragging changes the value). `PressHome`, `OpenApp`, `OpenUrl`,
 /// `CallTool`, focusing taps and sideways scrolls all count.
 pub fn changes_state(action: &Action, screen: &CompactScreen) -> bool {
     match action {
@@ -80,7 +80,7 @@ pub fn changes_state(action: &Action, screen: &CompactScreen) -> bool {
             let vertical = matches!(direction, Direction::Up | Direction::Down);
             let value_control = element
                 .and_then(|i| screen.get(i))
-                .is_some_and(|e| matches!(e.role, Role::Picker | Role::Slider));
+                .is_some_and(|e| matches!(e.role, Role::Picker | Role::Slider | Role::Switch));
             !vertical || value_control
         }
         _ => true,

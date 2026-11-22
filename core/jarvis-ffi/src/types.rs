@@ -433,6 +433,10 @@ pub struct AppRule {
     pub bundle_id_prefix: String,
     /// Trust level for matching apps.
     pub level: TrustLevel,
+    /// The app's display name as the owner sees it (home-screen icon, app switcher). A
+    /// `denied` rule with a name also refuses an icon, card or `openApp` with that name.
+    #[uniffi(default = None)]
+    pub name: Option<String>,
 }
 
 /// Safety policy and budgets. Start from `defaultPolicy()` in Swift.

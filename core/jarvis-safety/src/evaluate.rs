@@ -9,6 +9,7 @@ use crate::classify::{classify, type_target};
 use crate::gate::{changes_state, gate_in, Gate};
 use crate::redact::{contains_secret, redact};
 use crate::sanitize::sanitize_screen_text_with_limit;
+use crate::text::{has_money, CURRENCY_WORDS};
 use crate::validate::{looks_like_url, validate_action, validate_url};
 
 /// What the agent should do with a proposed action.
@@ -207,6 +208,139 @@ fn clean(s: &str, max: usize) -> String {
     sanitize_screen_text_with_limit(&redact(s), max).replace('"', "'")
 }
 
+/// Most amounts kept from the middle of a shortened label.
+const MAX_KEPT_AMOUNTS: usize = 3;
+/// Longest amount kept from the middle of a shortened label, in characters.
+const MAX_AMOUNT_CHARS: usize = 24;
+
+/// Char ranges (start, end) of the amounts in `chars`: words that read as money on their
+/// own ("$500", "500€") or with their neighbour ("USD 500", "500 EUR").
+fn amount_ranges(chars: &[char]) -> Vec<(usize, usize)> {
+    let mut words: Vec<(usize, usize)> = Vec::new();
+    let mut start = None;
+    for (i, c) in chars.iter().enumerate() {
+        match (c.is_whitespace(), start) {
+            (false, None) => start = Some(i),
+            (true, Some(st)) => {
+                words.push((st, i));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(st) = start {
+        words.push((st, chars.len()));
+    }
+    let text =
+        |a: usize, b: usize| -> String { chars.get(a..b).unwrap_or_default().iter().collect() };
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for (k, &(a, b)) in words.iter().enumerate() {
+        let word = text(a, b);
+        let range = if has_money(&word) {
+            Some((a, b))
+        } else if is_number(&word) {
+            // "USD 500", "500 EUR": a number next to a currency word.
+            let prev = k.checked_sub(1).and_then(|j| words.get(j));
+            let next = words.get(k.saturating_add(1));
+            prev.filter(|&&(pa, pb)| is_currency_word(&text(pa, pb)))
+                .map(|&(pa, _)| (pa, b))
+                .or_else(|| {
+                    next.filter(|&&(na, nb)| is_currency_word(&text(na, nb)))
+                        .map(|&(_, nb)| (a, nb))
+                })
+        } else {
+            None
+        };
+        if let Some(r) = range {
+            match out.last_mut() {
+                Some(last) if r.0 <= last.1 => last.1 = last.1.max(r.1),
+                _ => out.push(r),
+            }
+        }
+    }
+    out
+}
+
+/// A number as written in a label: digits with `,` or `.` separators.
+fn is_number(w: &str) -> bool {
+    w.chars().any(|c| c.is_ascii_digit())
+        && w.chars()
+            .all(|c| c.is_ascii_digit() || c == ',' || c == '.')
+}
+
+/// A currency word ("USD", "euros"), trailing punctuation ignored.
+fn is_currency_word(w: &str) -> bool {
+    let w = w
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase();
+    CURRENCY_WORDS.contains(&w.as_str())
+}
+
+/// A label for the owner's summary: redacted and sanitised like [`clean`], and when longer
+/// than `max` characters shortened from the middle, keeping its start and its end
+/// ("Confirm and pay … $500"), so a trailing amount is never cut off. Amounts in the
+/// part that is cut are kept too (`head … $42.10 … tail`), even if that makes the label a
+/// little longer than `max`.
+fn clean_label(s: &str, max: usize) -> String {
+    let full = clean(s, crate::sanitize::MAX_SCREEN_TEXT_CHARS);
+    let chars: Vec<char> = full.chars().collect();
+    if chars.len() <= max {
+        return full;
+    }
+    let amounts = amount_ranges(&chars);
+    let kept_len: usize = amounts
+        .iter()
+        .take(MAX_KEPT_AMOUNTS)
+        .map(|(a, b)| (b - a).min(MAX_AMOUNT_CHARS) + 3)
+        .sum();
+    let room = max.saturating_sub(kept_len.saturating_add(3)).max(8);
+    let mut head_len = room / 2;
+    let mut tail_start = chars.len().saturating_sub(room - head_len);
+    // Cut at word boundaries when one is near.
+    if let Some(sp) = (head_len / 2..head_len)
+        .rev()
+        .find(|&i| chars.get(i).is_some_and(|c| c.is_whitespace()))
+    {
+        head_len = sp;
+    }
+    if let Some(sp) = (tail_start..tail_start.saturating_add(10).min(chars.len()))
+        .find(|&i| chars.get(i).is_some_and(|c| c.is_whitespace()))
+    {
+        tail_start = sp;
+    }
+    // Never split an amount: one that straddles a cut is kept whole.
+    for &(a, b) in &amounts {
+        if a < head_len && b > head_len {
+            head_len = a;
+        }
+        if a < tail_start && b > tail_start {
+            tail_start = a;
+        }
+    }
+    let piece = |a: usize, b: usize| -> String {
+        chars
+            .get(a..b)
+            .unwrap_or_default()
+            .iter()
+            .collect::<String>()
+            .trim()
+            .to_owned()
+    };
+    let mut parts = vec![piece(0, head_len)];
+    for &(a, b) in amounts
+        .iter()
+        .filter(|(a, b)| *a >= head_len && *b <= tail_start)
+    {
+        if parts.len() > MAX_KEPT_AMOUNTS {
+            break;
+        }
+        parts.push(piece(a, b.min(a.saturating_add(MAX_AMOUNT_CHARS))));
+    }
+    parts.push(piece(tail_start, chars.len()));
+    parts.retain(|p| !p.is_empty());
+    parts.join(" … ")
+}
+
 /// `"label"`, or the role and index when the element has no text.
 fn describe(el: &Element) -> String {
     let text = [Some(el.label.as_str()), el.placeholder.as_deref()]
@@ -214,7 +348,7 @@ fn describe(el: &Element) -> String {
         .flatten()
         .find(|t| !t.trim().is_empty());
     match text {
-        Some(t) => format!("\"{}\"", clean(t, MAX_QUOTE_CHARS)),
+        Some(t) => format!("\"{}\"", clean_label(t, MAX_QUOTE_CHARS)),
         None => format!("{} #{}", el.role.as_str(), el.index),
     }
 }
