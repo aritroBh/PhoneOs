@@ -1,4 +1,39 @@
-//! Sans-IO agent session for the Jarvis core: the observe, decide, gate, act, verify loop driven
-//! by `TimedEvent`s and emitting `Effect`s, plus prompt building and tolerant action parsing.
+//! The Jarvis agent: a sans-IO session state machine that turns screens into actions.
+//!
+//! The shell drives a [`Session`] with [`Session::step`]: every input is a
+//! [`jarvis_proto::TimedEvent`], every output is exactly one [`jarvis_proto::Effect`]. The
+//! loop per step is observe → decide (learned flow or model) → gate (jarvis-safety) → act
+//! (one runner command at a time) → verify.
+//!
+//! Besides the session the crate exports the tolerant model-output parser
+//! ([`parse_model_output`]) and the JSON schema / GBNF grammar of the canonical action form
+//! ([`action_json_schema`], [`action_gbnf`]) so runtimes with constrained decoding can
+//! enforce exactly what the parser's canonical form accepts.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )
+)]
+
+mod commands;
+pub mod gestures;
+mod history;
+mod lenient;
+mod parser;
+mod profile;
+mod prompt;
+mod schema;
+mod session;
+mod state;
+mod tools;
+
+pub use parser::{parse_model_output, ParseError, Parsed};
+pub use prompt::{system_prompt, ACTION_MAX_TOKENS};
+pub use schema::{action_examples, action_gbnf, action_json_schema, action_names};
+pub use session::Session;
