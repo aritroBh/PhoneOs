@@ -1,8 +1,8 @@
 //! The single entry point the agent calls before executing an action.
 
 use jarvis_proto::{
-    Action, BarNode, CompactScreen, ConfirmRequest, Element, Policy, RawNode, RiskCategory, Role,
-    ToolSpec, TrustLevel,
+    Action, BarNode, CompactScreen, ConfirmRequest, Element, Policy, RawInput, RawNode,
+    RiskCategory, Role, ToolSpec, TrustLevel,
 };
 
 use crate::app::{app_level, check_app, is_springboard, mode_level, Verdict};
@@ -61,6 +61,11 @@ pub struct ScreenTree<'a> {
     /// what could take a touch at a point ([`crate::tap_spot`]). `&[]` (a hand-built
     /// screen) falls back to the listed controls.
     pub nodes: &'a [RawNode],
+    /// Every text input whose text the digest hashes, listed or not
+    /// (`jarvis_observe::CompactView::inputs`, values profile-masked by the session like
+    /// the screen): a submit's summary names the fields of its form that are not listed
+    /// (eighth review). `&[]` names only listed ones.
+    pub inputs: &'a [RawInput],
 }
 
 impl ScreenTree<'_> {
@@ -230,6 +235,23 @@ pub fn evaluate_from(
     tool: Option<&ToolSpec>,
     source: ScreenSource,
 ) -> Decision {
+    evaluate_with(policy, action, screen, tool, source, None, &[])
+}
+
+/// [`evaluate_from`], knowing the raw tree's shape (`tree`) and what the session typed
+/// during the task (`typed`). Eighth review: a tap that [`presumed_submit`] (a control in
+/// the same form or composer as a text input Jarvis typed into, not clearly something
+/// else) is classified at least [`RiskCategory::SendMessage`], so it asks and its question
+/// shows what is sent. The summary is built with `tree` and `typed` ([`summary_with`]).
+pub fn evaluate_with(
+    policy: &Policy,
+    action: &Action,
+    screen: &CompactScreen,
+    tool: Option<&ToolSpec>,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+) -> Decision {
     if let Err(e) = validate_action(action, screen) {
         return Decision::Deny(clean(&e.to_string(), MAX_SUMMARY_CHARS));
     }
@@ -293,7 +315,10 @@ pub fn evaluate_from(
         // Leaving a denied app stays possible; how it is gated does not depend on it.
         level = app_level(&without_app_denials(policy), &affected_app);
     }
-    let category = classify_from(action, screen, tool, source);
+    let mut category = classify_from(action, screen, tool, source);
+    if presumed_submit(action, screen, tree, typed) {
+        category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
+    }
     let runner_text =
         source == ScreenSource::RunnerText && !matches!(action, Action::CallTool { .. });
     match gate_on(policy, category, level, action, screen, runner_text) {
@@ -301,7 +326,7 @@ pub fn evaluate_from(
         Gate::Deny => Decision::Deny(format!("{category:?} actions are not allowed")),
         Gate::Confirm => Decision::Confirm(ConfirmRequest {
             category,
-            summary: summary_for(action, screen, category, source, None),
+            summary: summary_with(action, screen, category, source, tree, typed),
             app: affected_app,
         }),
     }
@@ -604,8 +629,9 @@ fn clean_label(s: &str, max: usize) -> String {
 }
 
 /// How long the screen-text parts of a summary may be (characters). A summary is built
-/// with the first set of limits whose result fits [`MAX_SUMMARY_CHARS`]. Amounts shrink
-/// last: every other text is shortened (and then dropped) first.
+/// with the first set of limits whose result fits [`MAX_SUMMARY_CHARS`], shortening in
+/// priority order (eighth review; see `summarize_with`): other facts first, then what is
+/// sent, then amounts and recipients, and the action itself last.
 #[derive(Clone, Copy)]
 struct Limits {
     /// The target's quoted label.
@@ -625,59 +651,6 @@ struct Limits {
     /// Each entry of "Fields" (0: left out).
     field_entry: usize,
 }
-
-const LIMITS: [Limits; 5] = [
-    Limits {
-        label: MAX_QUOTE_CHARS,
-        next_to: MAX_NEIGHBOUR_CHARS,
-        under: MAX_NEIGHBOUR_CHARS,
-        app: MAX_QUOTE_CHARS,
-        amount_entry: 40,
-        recipient_entry: 40,
-        selected_entry: 40,
-        field_entry: 40,
-    },
-    Limits {
-        label: 40,
-        next_to: 24,
-        under: 30,
-        app: 30,
-        amount_entry: 30,
-        recipient_entry: 30,
-        selected_entry: 24,
-        field_entry: 24,
-    },
-    Limits {
-        label: 30,
-        next_to: 16,
-        under: 24,
-        app: 24,
-        amount_entry: 24,
-        recipient_entry: 24,
-        selected_entry: 16,
-        field_entry: 0,
-    },
-    Limits {
-        label: 30,
-        next_to: 16,
-        under: 20,
-        app: 24,
-        amount_entry: 0,
-        recipient_entry: 20,
-        selected_entry: 16,
-        field_entry: 0,
-    },
-    Limits {
-        label: 24,
-        next_to: 0,
-        under: 0,
-        app: 20,
-        amount_entry: 0,
-        recipient_entry: 0,
-        selected_entry: 0,
-        field_entry: 0,
-    },
-];
 
 /// `"label"`, or the role and index when the element has no text.
 fn describe(el: &Element) -> String {
@@ -1677,10 +1650,18 @@ pub fn summary_for(
 /// confirm, save), sends every non-secure text input under the nearest raw ancestor of the
 /// target that holds a text input (its form; without the raw tree, every text input on the
 /// screen): `Tap "Send" in Chat. Sends: Message: "…"; Subject (empty)`. The values pass the
-/// pattern redaction (cards, labelled codes); a credential-like field is `(hidden)`. Other
-/// facts shrink first; a value is cut only when the summary would not fit the bound (480
-/// characters) otherwise, and then says how many characters are not shown. Fields not being
-/// sent keep the rule above.
+/// pattern redaction (cards, labelled codes); a credential-like field is `(hidden)`. Fields
+/// not being sent keep the rule above.
+///
+/// **Eighth review.** A long press and a `tap_point` send like a tap; any asked tap whose
+/// form holds text shows `Sends:`; the form includes its unlisted text inputs (`(not on
+/// screen)`, from [`ScreenTree::inputs`]); Return that submits a form with other fields
+/// says `which submits the form. Sends: …`. Under the bound (480 characters) the summary
+/// keeps, in this priority (`summarize_with`): (a) the action, target and app; (b) the
+/// amounts and recipients (and recipient- or amount-like sent values), never cut while a
+/// sent value can give up characters; (c) the sent values, each cut to 120 characters
+/// first, then the list capped as `Sends: N fields (k shown)`; (d) the other facts. Every
+/// omission is stated in the text.
 pub fn summary_with(
     action: &Action,
     screen: &CompactScreen,
@@ -1731,12 +1712,23 @@ fn with_source(source: ScreenSource, build: impl Fn(usize) -> String) -> String 
     }
 }
 
-/// A field whose whole content an action sends (see [`summary_with`]): its name and its
-/// cleaned, redacted value (`None`: hidden; empty: nothing in it).
+/// A field whose whole content an action sends (see [`summary_with`]): its name, where it
+/// is (listed, or not on screen), its cleaned, redacted value (`None`: hidden; empty:
+/// nothing in it), and whether it is recipient- or amount-like (eighth review: kept like
+/// the amounts and recipients, see [`summarize_with`]).
 struct SentField {
     name: String,
+    note: &'static str,
     value: Option<String>,
+    /// Characters of the value beyond what screen text keeps at all
+    /// ([`crate::sanitize::MAX_SCREEN_TEXT_CHARS`]): counted as not shown.
+    beyond: usize,
+    protected: bool,
 }
+
+/// Longest value of a sent field shown before anything else is shortened (eighth review):
+/// longer values are cut to it first, saying how many characters are not shown.
+const MAX_SENT_VALUE_CHARS: usize = 120;
 
 /// Categories of a tap that sends what the form around it holds.
 const SENDING_CATEGORIES: &[RiskCategory] = &[
@@ -1751,7 +1743,13 @@ const SUBMIT_WORDS: &[&str] = &[
     "submit", "send", "post", "publish", "reply", "confirm", "save",
 ];
 
-/// Whether a tap on `el` in `category` sends the fields of its form.
+/// Return-key labels that submit (eighth review: a multi-line text view's Return submits
+/// only with one of these; a single-line field's Return always may).
+const SUBMIT_RETURN_KEYS: &[&str] = &[
+    "send", "go", "done", "join", "search", "continue", "route", "submit", "post", "reply",
+];
+
+/// Whether a tap on `el` in `category` sends the fields of its form by its own words.
 fn tap_sends(el: &Element, category: RiskCategory) -> bool {
     SENDING_CATEGORIES.contains(&category)
         || crate::text::tokens(&el.label)
@@ -1759,48 +1757,137 @@ fn tap_sends(el: &Element, category: RiskCategory) -> bool {
             .any(|t| SUBMIT_WORDS.contains(&t.as_str()))
 }
 
-/// The text inputs a tap on `target` sends: every non-secure text input under the nearest
-/// raw ancestor of the target that holds any text input (its form); without the raw tree,
-/// or when no ancestor below the root holds one, every non-secure text input on the screen.
-fn form_fields<'a>(
+/// The form of `target`: the listed text inputs (other than the target) and the unlisted
+/// raw text inputs ([`ScreenTree::inputs`]) under the nearest raw ancestor of the target
+/// that holds any text input; without the raw tree, or when no ancestor below the root
+/// holds one, every listed text input on the screen (and no unlisted one). Secure fields
+/// are left out (they are never sent through Jarvis's question; a secure field is typed by
+/// the owner).
+struct Form<'a, 't> {
+    listed: Vec<&'a Element>,
+    unlisted: Vec<&'t RawInput>,
+}
+
+fn form_of<'a, 't>(
     target: &Element,
     screen: &'a CompactScreen,
-    tree: Option<&ScreenTree<'_>>,
-) -> Vec<&'a Element> {
+    tree: Option<&ScreenTree<'t>>,
+) -> Form<'a, 't> {
     let inputs: Vec<&Element> = screen
         .elements
         .iter()
         .filter(|e| e.role.is_text_input() && e.index != target.index)
         .collect();
     if let Some(t) = tree {
+        let own = t.source(target);
+        let listed: std::collections::BTreeSet<u32> = t.sources.iter().copied().collect();
+        let unlisted: Vec<&RawInput> = t
+            .inputs
+            .iter()
+            .filter(|r| Some(r.node) != own && !listed.contains(&r.node))
+            .collect();
         for a in t.ancestors(target) {
             let inside: Vec<&Element> = inputs.iter().copied().filter(|e| t.inside(e, a)).collect();
-            if !inside.is_empty() {
-                return inside.into_iter().filter(|e| !e.secure).collect();
+            let raw: Vec<&RawInput> = unlisted
+                .iter()
+                .copied()
+                .filter(|r| t.node_inside(r.node, a))
+                .collect();
+            if !inside.is_empty() || !raw.is_empty() {
+                return Form {
+                    listed: inside.into_iter().filter(|e| !e.secure).collect(),
+                    unlisted: raw.into_iter().filter(|r| !r.secure).collect(),
+                };
             }
         }
     }
-    inputs.into_iter().filter(|e| !e.secure).collect()
+    Form {
+        listed: inputs.into_iter().filter(|e| !e.secure).collect(),
+        unlisted: Vec::new(),
+    }
 }
 
-/// `el` as a field being sent: hidden when secure or named as a credential.
-fn sent_field(el: &Element) -> SentField {
+impl Form<'_, '_> {
+    /// Whether any field of the form holds text.
+    fn has_filled(&self) -> bool {
+        self.listed.iter().any(|e| field_value(e).is_some())
+            || self
+                .unlisted
+                .iter()
+                .any(|r| r.value.as_deref().is_some_and(|v| !v.trim().is_empty()))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.listed.is_empty() && self.unlisted.is_empty()
+    }
+}
+
+/// An unlisted raw text input as an element (for the field rules: names, credential-like
+/// names, redaction), with the label-aware redaction applied.
+fn raw_input_element(r: &RawInput) -> Element {
+    let label = r
+        .label
+        .clone()
+        .or_else(|| r.placeholder.clone())
+        .or_else(|| r.identifier.clone())
+        .unwrap_or_default();
+    let el = Element {
+        index: 0,
+        role: r.role.clone(),
+        label,
+        value: if r.secure { None } else { r.value.clone() },
+        placeholder: r.placeholder.clone(),
+        frame: jarvis_proto::Rect::new(0.0, 0.0, 0.0, 0.0),
+        enabled: true,
+        focused: false,
+        selected: false,
+        secure: r.secure,
+        fingerprint: 0,
+    };
+    crate::redact::redact_element(&el)
+}
+
+/// Whether a field `el` says who is paid or messaged (recipient wording in its name, or a
+/// phone number, email, `@handle` or masked account in its value) or holds an amount (an
+/// amount-like name, or money in its value).
+fn recipient_or_amount_field(el: &Element) -> bool {
+    let name = field_name(el);
+    let value = field_value(el).unwrap_or_default();
+    has_word(&name, RECIPIENT_WORDS)
+        || value.split_whitespace().any(recipient_word)
+        || has_phone_number(value)
+        || amount_like_field(el)
+        || has_money(value)
+}
+
+/// `el` as a field being sent (`note` says where it is): hidden when secure or named as a
+/// credential.
+fn sent_field(el: &Element, note: &'static str) -> SentField {
     let name = field_name(el);
     let name = if name.is_empty() {
         "A field".to_owned()
     } else {
         name
     };
-    let value = if el.secure || credential_like_field(el) {
+    let hidden = el.secure || credential_like_field(el);
+    let cap = crate::sanitize::MAX_SCREEN_TEXT_CHARS;
+    let beyond = if hidden {
+        0
+    } else {
+        field_value(el).map_or(0, |v| v.chars().count().saturating_sub(cap))
+    };
+    let value = if hidden {
         None
     } else {
-        Some(
-            field_value(el)
-                .map(|v| clean(v, crate::sanitize::MAX_SCREEN_TEXT_CHARS))
-                .unwrap_or_default(),
-        )
+        Some(field_value(el).map(|v| clean(v, cap)).unwrap_or_default())
     };
-    SentField { name, value }
+    SentField {
+        name,
+        note,
+        value,
+        beyond,
+        protected: !hidden && recipient_or_amount_field(el),
+    }
 }
 
 /// `: "value"` (its first `keep` characters when it is longer, followed by how many are
@@ -1811,11 +1898,11 @@ fn sent_value(f: &SentField, keep: usize) -> String {
         Some("") => " (empty)".to_owned(),
         Some(v) => {
             let n = v.chars().count();
-            if n <= keep {
+            if n <= keep && f.beyond == 0 {
                 format!(": \"{v}\"")
             } else {
                 let head: String = v.chars().take(keep).collect();
-                let left = n - keep;
+                let left = n.saturating_sub(keep).saturating_add(f.beyond);
                 format!(
                     ": \"{}…\" ({left} more character{} not shown)",
                     head.trim_end(),
@@ -1826,25 +1913,322 @@ fn sent_value(f: &SentField, keep: usize) -> String {
     }
 }
 
-/// The part of a summary that says what is sent, each value cut to at most `keep[i]`.
-fn sent_part(sent: &[SentField], keep: &[usize], return_only: bool) -> String {
+/// How a summary says what is sent.
+#[derive(Clone, Copy, PartialEq)]
+enum SendMode {
+    /// A tap (or long press, or tap point) that submits its form: `. Sends: …`.
+    Tap,
+    /// Return in a field alone: `, which sends the field's whole content: "…"`.
+    ReturnAlone,
+    /// Return that submits a form (eighth review): `, which submits the form. Sends: …`.
+    ReturnForm,
+}
+
+/// How much of what is sent a summary shows: the first `shown` fields, each value cut to
+/// `keep[i]` characters.
+#[derive(Clone)]
+struct SendShape {
+    keep: Vec<usize>,
+    shown: usize,
+}
+
+/// The part of a summary that says what is sent.
+fn sent_part(sent: &[SentField], shape: &SendShape, mode: SendMode) -> String {
     let value = |i: usize| {
         sent.get(i).map_or_else(String::new, |f| {
-            sent_value(f, keep.get(i).copied().unwrap_or(usize::MAX))
+            sent_value(f, shape.keep.get(i).copied().unwrap_or(usize::MAX))
         })
     };
-    if return_only {
-        format!(", which sends the field's whole content{}", value(0))
-    } else {
-        let items: Vec<String> = sent
-            .iter()
-            .enumerate()
-            .map(|(i, f)| format!("{}{}", clean(&f.name, MAX_QUOTE_CHARS), value(i)))
-            .collect();
-        format!(". Sends: {}", items.join("; "))
+    match mode {
+        SendMode::ReturnAlone => format!(", which sends the field's whole content{}", value(0)),
+        SendMode::Tap | SendMode::ReturnForm => {
+            let items: Vec<String> = sent
+                .iter()
+                .take(shape.shown)
+                .enumerate()
+                .map(|(i, f)| {
+                    let name = clean(&f.name, MAX_QUOTE_CHARS);
+                    format!(
+                        "{}{}{}",
+                        name.trim_end_matches(':').trim_end(),
+                        value(i),
+                        f.note
+                    )
+                })
+                .collect();
+            let head = if shape.shown >= sent.len() {
+                "Sends: ".to_owned()
+            } else if shape.shown == 0 {
+                format!("Sends: {} fields (0 shown)", sent.len())
+            } else {
+                format!("Sends: {} fields ({} shown): ", sent.len(), shape.shown)
+            };
+            let lead = if mode == SendMode::ReturnForm {
+                ", which submits the form. "
+            } else {
+                ". "
+            };
+            format!("{lead}{head}{}", items.join("; "))
+        }
     }
 }
 
+/// Whether Return in `field` submits (eighth review): a single-line field's Return may
+/// always submit; a multi-line text view's only with a submit-labelled key.
+fn submit_return(field: &Element, screen: &CompactScreen) -> bool {
+    if field.role != Role::TextView {
+        return true;
+    }
+    screen.cues.return_key.as_deref().is_some_and(|k| {
+        let k = k.trim().to_lowercase();
+        SUBMIT_RETURN_KEYS.contains(&k.as_str())
+    })
+}
+
+/// What `action` sends, and how the summary says it (see [`summary_with`]): Return sends
+/// its field, or with a submit Return the field and the rest of its form; a tap, long press
+/// or tap point on a control that submits its form by its category or words, or any asked
+/// tap whose form holds text (eighth review), sends the form's text inputs, the listed ones
+/// and the ones not listed (`(not on screen)`). The fields Jarvis typed during the task and
+/// the recipient- and amount-like ones come first.
+#[allow(clippy::too_many_arguments)]
+fn what_is_sent<'a>(
+    action: &Action,
+    target: Option<&'a Element>,
+    screen: &'a CompactScreen,
+    raw: &CompactScreen,
+    category: RiskCategory,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+    return_only: bool,
+) -> (Vec<SentField>, Vec<&'a Element>, SendMode) {
+    let Some(t) = target else {
+        return (Vec::new(), Vec::new(), SendMode::Tap);
+    };
+    let form = || form_of(t, screen, tree);
+    let (form, mode, first) = match action {
+        Action::Type { .. } if return_only => {
+            let f = form();
+            if submit_return(t, screen) && !f.is_empty() {
+                (f, SendMode::ReturnForm, Some(t))
+            } else {
+                return (vec![sent_field(t, "")], vec![t], SendMode::ReturnAlone);
+            }
+        }
+        Action::Tap { .. } | Action::LongPress { .. } | Action::TapPoint { .. } => {
+            // Pressing a field, a switch or a picker sends nothing.
+            if is_value_role(&t.role) || is_switch_like(&t.role) || t.role.is_text_input() {
+                return (Vec::new(), Vec::new(), SendMode::Tap);
+            }
+            let f = form();
+            if !(tap_sends(t, category) || f.has_filled()) {
+                return (Vec::new(), Vec::new(), SendMode::Tap);
+            }
+            (f, SendMode::Tap, None)
+        }
+        _ => return (Vec::new(), Vec::new(), SendMode::Tap),
+    };
+    let typed_in = |e: &Element| {
+        raw.get(e.index)
+            .is_some_and(|r| typed.iter().any(|x| x.field == r.fingerprint))
+    };
+    // (rank, position, field)
+    let mut ranked: Vec<(u8, usize, SentField)> = Vec::new();
+    let mut listed: Vec<&Element> = Vec::new();
+    for (k, e) in form.listed.iter().enumerate() {
+        let f = sent_field(e, "");
+        let rank = if f.protected {
+            0
+        } else if typed_in(e) {
+            1
+        } else {
+            2
+        };
+        ranked.push((rank, k, f));
+        listed.push(e);
+    }
+    let base = ranked.len();
+    for (k, r) in form.unlisted.iter().enumerate() {
+        let note = if r.on_screen {
+            " (not listed)"
+        } else {
+            " (not on screen)"
+        };
+        let f = sent_field(&raw_input_element(r), note);
+        let rank = if f.protected { 0 } else { 2 };
+        ranked.push((rank, base + k, f));
+    }
+    ranked.sort_by_key(|(rank, k, _)| (*rank, *k));
+    let mut sent: Vec<SentField> = Vec::new();
+    if let Some(field) = first {
+        sent.push(sent_field(field, ""));
+        listed.push(field);
+    }
+    sent.extend(ranked.into_iter().map(|(_, _, f)| f));
+    (sent, listed, mode)
+}
+
+/// Whether the session's typing in this task makes a tap `action` a presumed submit
+/// (eighth review, mirroring Return in a text view): the target is a control in the same
+/// form or composer ([`form_of`]) as a text input Jarvis typed into during this task that
+/// still holds text (not a search field, not secure), and it is not clearly something
+/// else: not a text input, switch, slider, picker, stepper or tab, not in a tab bar, and
+/// not labelled like cancel, close, back, clear, emoji, dictation, attach, add, photo,
+/// camera, keyboard switch, formatting, expand/collapse or show/hide password
+/// ([`NOT_SUBMIT_WORDS`]). Taps, long presses and tap points (their riskiest control); not
+/// on the home screen.
+pub fn presumed_submit(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+) -> bool {
+    if typed.is_empty() || is_springboard(&screen.app_bundle_id) {
+        return false;
+    }
+    let target = match action {
+        Action::Tap { element } | Action::LongPress { element, .. } => screen.get(*element),
+        Action::TapPoint { x, y } => crate::classify::tap_point(*x, *y, screen).1,
+        _ => None,
+    };
+    let Some(t) = target else {
+        return false;
+    };
+    if t.role.is_text_input()
+        || is_value_role(&t.role)
+        || is_switch_like(&t.role)
+        || t.role == Role::Tab
+        || not_submit_label(&t.label)
+    {
+        return false;
+    }
+    if let Some(tr) = tree {
+        if tr
+            .bars
+            .iter()
+            .any(|b| b.role == Role::TabBar && tr.inside(t, b.node))
+        {
+            return false;
+        }
+    }
+    form_of(t, screen, tree).listed.iter().any(|e| {
+        let search = e.role == Role::SearchField
+            || has_word(&field_name(e), &["search"])
+            || has_word(e.placeholder.as_deref().unwrap_or_default(), &["search"]);
+        !search
+            && !e.secure
+            && field_value(e).is_some()
+            && typed.iter().any(|x| x.field == e.fingerprint)
+    })
+}
+
+/// Words of a control next to a composer that clearly do not submit it (see
+/// [`presumed_submit`]); SF Symbol names split into these words too (`xmark.circle`,
+/// `face.smiling`, `paperclip`, `mic.fill`).
+const NOT_SUBMIT_WORDS: &[&str] = &[
+    "cancel",
+    "close",
+    "back",
+    "dismiss",
+    "xmark",
+    "clear",
+    "delete",
+    "emoji",
+    "emojis",
+    "smiling",
+    "sticker",
+    "stickers",
+    "dictate",
+    "dictation",
+    "microphone",
+    "mic",
+    "waveform",
+    "attach",
+    "attachment",
+    "attachments",
+    "paperclip",
+    "add",
+    "plus",
+    "photo",
+    "photos",
+    "camera",
+    "keyboard",
+    "globe",
+    "format",
+    "formatting",
+    "textformat",
+    "bold",
+    "italic",
+    "underline",
+    "strikethrough",
+    "expand",
+    "collapse",
+    "chevron",
+    "show",
+    "hide",
+    "eye",
+];
+
+/// Whether `label` names a control that clearly does not submit (see [`NOT_SUBMIT_WORDS`]).
+fn not_submit_label(label: &str) -> bool {
+    label
+        .split(|c: char| !c.is_alphanumeric())
+        .map(str::to_lowercase)
+        .any(|w| NOT_SUBMIT_WORDS.contains(&w.as_str()))
+}
+
+/// The steps a summary is shortened by, in priority order (eighth review), lowest first:
+/// (d) other facts, (c) what is sent, (b) amounts and recipients, (a) the action itself.
+/// `next_to`, `under`, `selected_entry` and `field_entry` (d).
+const D_LEVELS: [(usize, usize, usize, usize); 4] = [
+    (MAX_NEIGHBOUR_CHARS, MAX_NEIGHBOUR_CHARS, 40, 40),
+    (24, 30, 24, 24),
+    (16, 24, 16, 0),
+    (0, 0, 0, 0),
+];
+/// `amount_entry` and `recipient_entry` (b).
+const B_LEVELS: [(usize, usize); 5] = [(40, 40), (30, 30), (24, 24), (0, 20), (0, 0)];
+/// `label` and `app` (a).
+const A_LEVELS: [(usize, usize); 4] = [
+    (MAX_QUOTE_CHARS, MAX_QUOTE_CHARS),
+    (40, 30),
+    (30, 24),
+    (24, 20),
+];
+
+/// The limits of one step.
+fn limits(a: (usize, usize), b: (usize, usize), d: (usize, usize, usize, usize)) -> Limits {
+    Limits {
+        label: a.0,
+        app: a.1,
+        amount_entry: b.0,
+        recipient_entry: b.1,
+        next_to: d.0,
+        under: d.1,
+        selected_entry: d.2,
+        field_entry: d.3,
+    }
+}
+
+/// The largest `v` in `lo..=hi` for which `fits(v)` holds (`fits` is monotone: true up to
+/// some value), or `None` when it fails at `lo`.
+fn largest_fitting(lo: usize, hi: usize, mut fits: impl FnMut(usize) -> bool) -> Option<usize> {
+    if hi < lo || !fits(lo) {
+        return None;
+    }
+    let (mut ok, mut bad) = (lo, hi.saturating_add(1));
+    while bad - ok > 1 {
+        let mid = ok + (bad - ok) / 2;
+        if fits(mid) {
+            ok = mid;
+        } else {
+            bad = mid;
+        }
+    }
+    Some(ok)
+}
+
+#[allow(clippy::too_many_lines)]
 fn summarize_with(
     action: &Action,
     raw: &CompactScreen,
@@ -1869,14 +2253,18 @@ fn summarize_with(
         Action::TapPoint { x, y } => crate::classify::tap_point(*x, *y, screen).1,
         _ => None,
     };
-    // What the action sends (seventh review): Return sends its field; a sending tap sends
-    // the text inputs of its form. Each is shown whole.
-    let sent_fields: Vec<&Element> = match (action, target) {
-        (Action::Type { .. }, Some(t)) if return_only => vec![t],
-        (Action::Tap { .. }, Some(t)) if tap_sends(t, category) => form_fields(t, screen, tree),
-        _ => Vec::new(),
-    };
-    let sent: Vec<SentField> = sent_fields.iter().map(|e| sent_field(e)).collect();
+    // What the action sends (seventh and eighth reviews), each value shown whole up to
+    // its cap.
+    let (sent, sent_fields, mode) = what_is_sent(
+        action,
+        target,
+        screen,
+        raw,
+        category,
+        tree,
+        typed,
+        return_only,
+    );
     let with_facts = uses_foreground_app(action) && !matches!(action, Action::Look);
     let facts = if with_facts {
         let pays = matches!(
@@ -1909,48 +2297,100 @@ fn summarize_with(
         }
         _ => None,
     };
-    let full: Vec<usize> = vec![usize::MAX; sent.len()];
-    let build = |l: Limits, keep: &[usize]| -> String {
+    let build = |l: Limits, shape: &SendShape| -> String {
         let mut line = action_line(action, screen, category, l, tree, return_only);
         if !sent.is_empty() {
-            line.push_str(&sent_part(&sent, keep, return_only));
+            line.push_str(&sent_part(&sent, shape, mode));
         }
         let mut parts = vec![line];
         parts.extend(typed_part.clone());
         parts.extend(facts_suffix(&facts, l));
         parts.join(". ")
     };
-    let mut line = String::new();
-    let mut last = None;
-    for l in LIMITS {
-        line = build(l, &full);
-        last = Some(l);
-        if line.chars().count() <= max {
-            return sanitize_screen_text_with_limit(&line, max);
-        }
-    }
-    // Too long with every other fact at its shortest: the sent values are cut, each to an
-    // equal share of the room left, saying how many characters are not shown.
-    if let Some(last) = last.filter(|_| !sent.is_empty()) {
-        let lens: Vec<usize> = sent
+    let fits = |s: &str| s.chars().count() <= max;
+    let n = sent.len();
+    let lens: Vec<usize> = sent
+        .iter()
+        .map(|f| f.value.as_deref().map_or(0, |v| v.chars().count()))
+        .collect();
+    // The list never drops a protected field (recipients and amounts), nor Return's own
+    // field (first); they come first (see `what_is_sent`).
+    let protected = sent
+        .iter()
+        .rposition(|f| f.protected)
+        .map_or(0, |i| i + 1)
+        .max(usize::from(mode == SendMode::ReturnForm).min(n));
+    let shape = |cap: usize, guard: usize, shown: usize| SendShape {
+        // Protected values keep up to `guard`, the others up to `cap`.
+        keep: sent
             .iter()
-            .map(|f| f.value.as_deref().map_or(0, |v| v.chars().count()))
-            .collect();
-        let total: usize = lens.iter().sum();
-        let over = line.chars().count().saturating_sub(max);
-        let mut budget = total.saturating_sub(over);
-        loop {
-            let share = budget / sent.len().max(1);
-            let keep: Vec<usize> = lens.iter().map(|&n| n.min(share.max(1))).collect();
-            line = build(last, &keep);
-            let n = line.chars().count();
-            if n <= max || budget == 0 {
-                break;
-            }
-            budget = budget.saturating_sub(n - max).saturating_sub(1);
+            .zip(&lens)
+            .map(|(f, len)| (*len).min(if f.protected { guard } else { cap }))
+            .collect(),
+        shown,
+    };
+    let full = shape(MAX_SENT_VALUE_CHARS, MAX_SENT_VALUE_CHARS, n);
+    let (a0, b0) = (A_LEVELS[0], B_LEVELS[0]);
+    // (d): the other facts shrink first.
+    for d in D_LEVELS {
+        let line = build(limits(a0, b0, d), &full);
+        if fits(&line) {
+            return finish_summary(&line, max);
         }
     }
-    sanitize_screen_text_with_limit(&line, max)
+    let d_last = D_LEVELS[3];
+    let l_c = limits(a0, b0, d_last);
+    // (c): what is sent gives up characters: the other values to a common share (down to
+    // 24), then fields from the end of the list (never the protected ones), then the
+    // remaining values to nothing.
+    if n > 0 {
+        let at = |cap: usize, shown: usize| build(l_c, &shape(cap, MAX_SENT_VALUE_CHARS, shown));
+        if let Some(cap) = largest_fitting(24, MAX_SENT_VALUE_CHARS, |c| fits(&at(c, n))) {
+            return finish_summary(&at(cap, n), max);
+        }
+        if let Some(shown) = largest_fitting(protected, n, |k| fits(&at(24, k))) {
+            return finish_summary(&at(24, shown), max);
+        }
+        if let Some(cap) = largest_fitting(0, 24, |c| fits(&at(c, protected))) {
+            return finish_summary(&at(cap, protected), max);
+        }
+    }
+    // (b): amounts and recipients (and the protected sent values) give up characters.
+    let rest = shape(0, MAX_SENT_VALUE_CHARS, protected);
+    for b in B_LEVELS {
+        let line = build(limits(a0, b, d_last), &rest);
+        if fits(&line) {
+            return finish_summary(&line, max);
+        }
+    }
+    let b_last = B_LEVELS[4];
+    if protected > 0 {
+        let at = |guard: usize| build(limits(a0, b_last, d_last), &shape(0, guard, protected));
+        if let Some(guard) = largest_fitting(0, MAX_SENT_VALUE_CHARS, |g| fits(&at(g))) {
+            return finish_summary(&at(guard), max);
+        }
+    }
+    // (a): the action itself, last.
+    let none = shape(0, 0, 0);
+    let mut line = String::new();
+    for a in A_LEVELS {
+        line = build(limits(a, b_last, d_last), &none);
+        if fits(&line) {
+            break;
+        }
+    }
+    finish_summary(&line, max)
+}
+
+/// The final sanitising pass over a composed summary. The composition always fits the
+/// bound, so this cut never removes a fact (checked in debug builds and by tests).
+fn finish_summary(line: &str, max: usize) -> String {
+    debug_assert!(
+        line.chars().count() <= max,
+        "a composed summary exceeds its bound ({} > {max})",
+        line.chars().count()
+    );
+    sanitize_screen_text_with_limit(line, max)
 }
 
 /// What was typed, as a summary says it: quoted, or "a secret (N characters)".

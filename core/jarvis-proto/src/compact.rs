@@ -91,16 +91,16 @@ impl ScreenCues {
     }
 }
 
-/// A raw navigation or tab bar node of the tree a compact screen was built from: bars are
-/// containers, never listed, but they are drawn above scrolling content, which decides
+/// A raw navigation, tab or tool bar node of the tree a compact screen was built from: bars
+/// are containers, never listed, but they are drawn above scrolling content, which decides
 /// where a tap lands (`jarvis_safety::tap_spot`). `jarvis-observe` lists every shown
-/// `NavigationBar`/`TabBar` node outside an alert; `jarvis-safety` decides which of them
+/// `NavigationBar`/`TabBar`/`Toolbar` node outside an alert and outside page content; `jarvis-safety` decides which of them
 /// count (full width, typed tree only). Kept out of the FFI, beside the screen.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BarNode {
     /// The bar's raw node, in the digest's node order (`jarvis_observe::CompactView`).
     pub node: u32,
-    /// Its role (`NavigationBar` or `TabBar`).
+    /// Its role (`NavigationBar`, `TabBar` or `Toolbar`).
     pub role: Role,
     /// Its shown frame (clipped to the screen, as an element's frame is).
     pub frame: Rect,
@@ -128,6 +128,48 @@ pub struct RawNode {
     /// assistant (prediction bar) next to it (see `jarvis_observe`'s layout docs). The
     /// keyboard window's other nodes are not.
     pub keyboard: bool,
+}
+
+/// A text input of the raw tree a compact screen was built from, listed or not (eighth
+/// review): what a submit sends includes the form's fields that scrolled out of view
+/// (`jarvis_safety`'s summaries). `jarvis-observe` lists every text input whose text is
+/// hashed by the digest (not excluded, not inside the keyboard or the input assistant),
+/// shown or not, so nothing here can change under an approval unnoticed. Kept out of the
+/// FFI, beside the screen.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct RawInput {
+    /// The node, in the digest's node order (`jarvis_observe::CompactView`).
+    pub node: u32,
+    /// Its role (a text input).
+    pub role: Role,
+    /// Its label (whitespace collapsed; `None` when blank).
+    pub label: Option<String>,
+    /// Its identifier.
+    pub identifier: Option<String>,
+    /// Its placeholder.
+    pub placeholder: Option<String>,
+    /// Its value (whitespace collapsed); never a secure field's, nor one equal to the
+    /// placeholder.
+    pub value: Option<String>,
+    /// It is a secure field.
+    pub secure: bool,
+    /// Some part of it is drawn on screen (no pruned ancestor, frame on screen).
+    pub on_screen: bool,
+}
+
+impl std::fmt::Debug for RawInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RawInput")
+            .field("node", &self.node)
+            .field("role", &self.role)
+            .field(
+                "value_chars",
+                &self.value.as_ref().map(|v| v.chars().count()),
+            )
+            .field("secure", &self.secure)
+            .field("on_screen", &self.on_screen)
+            .finish()
+    }
 }
 
 impl CompactScreen {

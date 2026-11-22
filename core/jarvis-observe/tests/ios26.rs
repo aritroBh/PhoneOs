@@ -467,7 +467,10 @@ fn switches_render_as_on_or_off_and_keep_the_raw_value() {
 /// One refusal remains, deliberately: `Item 24` ({20, 907.7} 400 × 52, shown to the
 /// screen's bottom at 956) lies wholly under the tab bar ({0, 873} 440 × 83), so every
 /// point of it would go to the tab bar: "covered by the tab bar" is the true answer (the
-/// model scrolls first). The list is exact: any other refusal, or this one passing, fails.
+/// model scrolls first). Eighth review: a full-width bottom `Toolbar` takes precedence like
+/// a tab bar, which adds one genuine refusal, `settings_root`'s `Passcode` row, wholly under
+/// the floating search toolbar. The list is exact: any other refusal, or one of these
+/// passing, fails.
 #[test]
 fn every_listed_control_has_an_uncontested_tap_point() {
     let mut refused: Vec<String> = Vec::new();
@@ -482,6 +485,7 @@ fn every_listed_control_has_an_uncontested_tap_point() {
             ends: &view.ends,
             bars: &view.bars,
             nodes: &view.nodes,
+            inputs: &view.inputs,
         };
         for e in view
             .screen
@@ -536,6 +540,7 @@ fn long_list_scrolled_bar_controls_are_tapped_at_their_centres() {
         ends: &view.ends,
         bars: &view.bars,
         nodes: &view.nodes,
+        inputs: &view.inputs,
     };
     let roles: Vec<&Role> = view.bars.iter().map(|b| &b.role).collect();
     assert_eq!(roles, [&Role::NavigationBar, &Role::TabBar]);
@@ -571,17 +576,27 @@ fn long_list_scrolled_bar_controls_are_tapped_at_their_centres() {
 
 /// Every refusal of the tap-point rule in force on the ten fixtures, with why it is a genuine
 /// cover (read from the fixture). Seventh review follow-up: rule v2 (controls, the keyboard,
-/// labelled content drawn later) refuses nothing v0 did not.
-const KNOWN_REFUSALS: &[(&str, &str)] = &[(
-    "long_list_scrolled: [26] Button \"Item 24\" covered by Bar(Tab)",
-    "row scrolled wholly under the tab bar ({20, 907.7} 400 x 48.3 shown, tab bar {0, 873} 440 x 83)",
-)];
+/// labelled content drawn later) refuses nothing v0 did not. Eighth review: rule v3 (nested
+/// controls contest) refuses nothing v2 did not; toolbar precedence adds `Passcode`.
+const KNOWN_REFUSALS: &[(&str, &str)] = &[
+    (
+        "settings_root: [14] Button \"Passcode\" covered by Bar(Tool)",
+        "row scrolled wholly under the floating search toolbar ({20, 918.3} 400 x 37.7 shown, toolbar {0, 870} 440 x 86)",
+    ),
+    (
+        "long_list_scrolled: [26] Button \"Item 24\" covered by Bar(Tab)",
+        "row scrolled wholly under the tab bar ({20, 907.7} 400 x 48.3 shown, tab bar {0, 873} 440 x 83)",
+    ),
+];
 
 /// The rules measured side by side on the ten fixtures (seventh review follow-up), per
 /// fixture and in total: v0 (the sixth review's rule, listed enabled controls), v2 without
 /// labelled content (controls, enabled or not, and the keyboard), v2 (the rule in force),
-/// and the two narrowings of v2's labelled-content clause the follow-up named. Each gives
-/// exactly the one genuine refusal. Before the keyboard's nodes were clipped to their
+/// and the two narrowings of v2's labelled-content clause the follow-up named, and (eighth
+/// review) v3: v2 plus controls nested inside the target. Each gives exactly the genuine
+/// refusals: one under the tab bar, and since the eighth review one under the bottom
+/// toolbar (bar precedence applies under every rule); without toolbar precedence (the last
+/// row, v3 with only navigation and tab bars) each gives the one under the tab bar. Before the keyboard's nodes were clipped to their
 /// subtree's root (the prediction bar's scroll content reports `{0, 11} 440 x 1244` but is
 /// drawn inside the 44 pt bar, `login_keyboard` fixture line `Other(Other) {{0, 11}, {440,
 /// 1244}}`), v2 without labelled content refused all 5 controls of `login_keyboard` too.
@@ -594,8 +609,10 @@ fn the_tap_rules_measured_side_by_side() {
         R::Labelled,
         R::LabelledNotOwnLabel,
         R::LabelledOtherSubtree,
+        R::LabelledNested,
     ];
     let mut totals = Vec::new();
+    let mut without_toolbars = 0usize;
     for rule in rules {
         let mut per = Vec::new();
         for name in FIXTURES {
@@ -607,6 +624,7 @@ fn the_tap_rules_measured_side_by_side() {
                 ends: &view.ends,
                 bars: &view.bars,
                 nodes: &view.nodes,
+                inputs: &view.inputs,
             };
             let n = view
                 .screen
@@ -618,17 +636,43 @@ fn the_tap_rules_measured_side_by_side() {
                 })
                 .count();
             per.push((name, n));
+            if rule == R::LabelledNested {
+                // The same rule with only navigation and tab bars taking precedence (the
+                // seventh review's bars).
+                let bars: Vec<_> = view
+                    .bars
+                    .iter()
+                    .filter(|b| b.role != Role::Toolbar)
+                    .cloned()
+                    .collect();
+                let tree = jarvis_safety::ScreenTree {
+                    bars: &bars,
+                    ..tree
+                };
+                without_toolbars += view
+                    .screen
+                    .elements
+                    .iter()
+                    .filter(|e| e.enabled && jarvis_safety::takes_taps(&e.role))
+                    .filter(|e| {
+                        jarvis_safety::tap_spot_under(rule, e, &view.screen, Some(&tree), None)
+                            .is_err()
+                    })
+                    .count();
+            }
         }
         let total: usize = per.iter().map(|(_, n)| n).sum();
         println!("{rule:?}: total {total}; {per:?}");
         totals.push(total);
         for (name, n) in per {
-            let want = usize::from(name == "long_list_scrolled");
+            let want = usize::from(name == "long_list_scrolled" || name == "settings_root");
             assert_eq!(n, want, "{rule:?} {name}");
         }
     }
-    assert_eq!(totals, [1, 1, 1, 1, 1]);
-    assert_eq!(jarvis_safety::OCCLUDER_RULE, R::Labelled);
+    println!("LabelledNested without toolbar precedence: total {without_toolbars}");
+    assert_eq!(totals, [2, 2, 2, 2, 2, 2]);
+    assert_eq!(without_toolbars, 1);
+    assert_eq!(jarvis_safety::OCCLUDER_RULE, R::LabelledNested);
 }
 
 /// With the keyboard up every listed control that is not under the `Keyboard` node's own
@@ -644,6 +688,7 @@ fn with_the_keyboard_up_every_control_above_it_is_tappable() {
         ends: &view.ends,
         bars: &view.bars,
         nodes: &view.nodes,
+        inputs: &view.inputs,
     };
     let controls: Vec<_> = view
         .screen

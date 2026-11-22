@@ -11,25 +11,33 @@
 //! full-screen pass-through `Other` nodes after the content: a rule that counted them
 //! refused 92 of 108 controls on the ten iOS 26 fixtures).
 //!
-//! **Rule v2** ([`OCCLUDER_RULE`]). For a target and a point inside its shown frame, a
-//! drawn raw node ([`ScreenTree::nodes`]) whose on-screen frame contains the point and that
-//! is neither an ancestor nor a descendant of the target contests the point when:
+//! **Rule v3** ([`OCCLUDER_RULE`], eighth review). For a target and a point inside its
+//! shown frame, a drawn raw node ([`ScreenTree::nodes`]) whose on-screen frame contains the
+//! point and that is not the target nor an ancestor of it contests the point when:
 //!
 //! 1. it is a **control** ([`takes_taps`]), enabled or disabled, in either document order
-//!    (an unlabelled `Cell` is a container, not a control);
+//!    (an unlabelled `Cell` is a container, not a control). A control **nested inside the
+//!    target** contests too (a card `Button "Wool socks"` holding `Button "Buy now $25.00"`
+//!    at its centre: a tap there lands on the nested button, which is never listed), except
+//!    the target's own refined inner control: a descendant of the same role whose frame
+//!    holds the target's listed frame (1 pt tolerance) and whose label is compatible with
+//!    the target's (absent, or equal ignoring case), which is how compaction refines a
+//!    wrapper to the control inside it (`jarvis_observe`'s `Target::of`). Only controls of
+//!    the target's own subtree contest; its labelled content and its other nodes never do;
 //! 2. it is part of the **keyboard**: the `Keyboard` node or its subtree, or the input
 //!    assistant's (prediction bar) subtree, each clipped to its subtree root's frame, in
 //!    either order; not the keyboard window's containers;
 //! 3. it is **labelled content drawn later**: not a control, with a non-empty label or
-//!    value, after the target's subtree in document order, and not a container role
-//!    (window, application, scroll, table, collection and web views, bars, alerts, sheets).
+//!    value, after the target's subtree in document order, not inside the target, and not
+//!    a container role (window, application, scroll, table, collection and web views, bars,
+//!    alerts, sheets).
 //!
 //! Nothing else contests: unlabelled `Other` nodes, windows, scroll/table/collection/web
 //! views, unlabelled cells and bars never cover a point by themselves.
 //!
-//! * **Bar precedence.** iOS draws navigation and tab bars above scrolling content. A
-//!   *system bar* is a raw `NavigationBar` or `TabBar` node with no web-view, scroll-view,
-//!   table or collection ancestor (WebKit reports an ARIA `tablist` as a tab bar; compaction
+//! * **Bar precedence.** iOS draws navigation, tab and bottom tool bars above scrolling
+//!   content. A *system bar* is a raw `NavigationBar`, `TabBar` or (eighth review)
+//!   `Toolbar` node with no web-view, scroll-view, table or collection ancestor (WebKit reports an ARIA `tablist` as a tab bar; compaction
 //!   does not list those, see `jarvis_observe::CompactView::bars`) whose shown frame spans at
 //!   least [`SYSTEM_BAR_MIN_WIDTH`] of the screen's width, on a typed tree (the session passes
 //!   no bars for runner text). For a target inside a system bar, at points inside the bar's
@@ -40,8 +48,8 @@
 //!   1/6 … 5/6 in each axis, nearest the centre first); the first usable one is used.
 //!   Deterministic: the same screen always gives the same point.
 //! * When every candidate is unusable the action is not sent ([`Covered`]), naming what
-//!   takes the first candidate: another listed element, a bar, the keyboard, or an unlisted
-//!   node by its label.
+//!   takes the first candidate: another listed element, a bar, the keyboard, a control
+//!   nested inside the target, or an unlisted node by its label.
 //! * A raw point (`tap_point`, [`control_at`]) on the keyboard is refused in every app
 //!   ([`PointError::Keyboard`]: Jarvis does not tap keys; `type` enters text). Otherwise it
 //!   resolves to the smallest listed control containing it (inside a system bar, that bar's
@@ -108,6 +116,8 @@ pub enum Bar {
     Navigation,
     /// A full-width `TabBar`.
     Tab,
+    /// A full-width `Toolbar` (a bottom tool bar; eighth review).
+    Tool,
 }
 
 impl Bar {
@@ -116,6 +126,7 @@ impl Bar {
         match self {
             Bar::Navigation => "the navigation bar",
             Bar::Tab => "the tab bar",
+            Bar::Tool => "the toolbar",
         }
     }
 }
@@ -132,6 +143,9 @@ pub enum CoveredBy {
     /// Another raw node that is not a listed control (its index in the raw tree; its
     /// label, if any, is in [`ScreenTree::nodes`]).
     Node(u32),
+    /// A control nested inside the target, which is never listed (its index in the raw
+    /// tree; its label, if any, is in [`ScreenTree::nodes`]).
+    Inner(u32),
 }
 
 /// A tap that would not land on its control alone: the target (compact index) and what
@@ -170,11 +184,18 @@ pub enum OccluderRule {
     /// [`OccluderRule::LabelledNotOwnLabel`], and labelled content only from another
     /// top-level window, or a later subtree of the target's window.
     LabelledOtherSubtree,
+    /// Rule v3 (eighth review): [`OccluderRule::Labelled`], and controls nested inside the
+    /// target contest too, except its own refined inner control.
+    LabelledNested,
 }
 
-/// The rule in force: v2 with labelled content (see the module docs and the sweep in
-/// `jarvis-observe/tests/ios26.rs`).
-pub const OCCLUDER_RULE: OccluderRule = OccluderRule::Labelled;
+/// The rule in force: v3, v2 with labelled content plus nested controls (see the module
+/// docs and the sweep in `jarvis-observe/tests/ios26.rs`).
+pub const OCCLUDER_RULE: OccluderRule = OccluderRule::LabelledNested;
+
+/// How far (points) a refined inner control's frame may differ from the target's listed
+/// frame (compaction's nesting tolerance).
+const NEST_TOLERANCE: f64 = 1.0;
 
 /// `Other` role names that are controls (lower-case, without separators).
 const CONTROL_OTHER_NAMES: &[&str] = &[
@@ -246,6 +267,7 @@ fn system_bar(b: &BarNode, width: f64) -> Option<Bar> {
     let kind = match b.role {
         Role::NavigationBar => Bar::Navigation,
         Role::TabBar => Bar::Tab,
+        Role::Toolbar => Bar::Tool,
         _ => return None,
     };
     (width > 0.0 && b.frame.width >= SYSTEM_BAR_MIN_WIDTH * width).then_some(kind)
@@ -337,11 +359,19 @@ fn contests(
     tree: &ScreenTree<'_>,
     rule: OccluderRule,
 ) -> bool {
-    if own.is_some_and(|t| tree.related_nodes(t, n.node)) {
-        return false;
-    }
     // 1. A control, enabled or not, either order (an unlabelled cell is a container).
     let control = takes_taps(&n.role) && !(n.role == Role::Cell && !n.text);
+    if let Some(t) = own {
+        if t == n.node || tree.node_inside(t, n.node) {
+            // The target itself, or an ancestor of it.
+            return false;
+        }
+        if tree.node_inside(n.node, t) {
+            // Inside the target: only a nested control contests (rule v3), never the
+            // target's own refined inner control.
+            return rule == OccluderRule::LabelledNested && control && !refined_inner(n, target);
+        }
+    }
     // 2. The keyboard: its subtree and the prediction bar's, either order.
     if control || n.keyboard {
         return true;
@@ -384,10 +414,33 @@ fn contests(
     }
 }
 
-/// What a contesting raw node is, as a cover: the keyboard, a listed control, or a node.
-fn cover_of(n: &RawNode, tree: &ScreenTree<'_>) -> CoveredBy {
+/// Whether raw node `n` (inside the target) is the target's own refined inner control: the
+/// same role, a frame holding the target's listed frame (compaction gives a wrapper the
+/// frame of the same control nested in it), and a label compatible with the target's.
+fn refined_inner(n: &RawNode, target: &Element) -> bool {
+    let (f, t) = (n.frame, target.frame);
+    let holds = t.x >= f.x - NEST_TOLERANCE
+        && t.y >= f.y - NEST_TOLERANCE
+        && t.max_x() <= f.max_x() + NEST_TOLERANCE
+        && t.max_y() <= f.max_y() + NEST_TOLERANCE;
+    let compatible = n.label.as_deref().is_none_or(|l| {
+        let (a, b) = (l.trim(), target.label.trim());
+        a.is_empty() || b.is_empty() || a.to_lowercase() == b.to_lowercase()
+    });
+    n.role == target.role && holds && compatible
+}
+
+/// What a contesting raw node is, as a cover: the keyboard, a listed control, a control
+/// nested inside the target, or a node.
+fn cover_of(n: &RawNode, target: &Element, tree: &ScreenTree<'_>) -> CoveredBy {
     if n.keyboard {
         return CoveredBy::Keyboard;
+    }
+    if tree
+        .source(target)
+        .is_some_and(|t| tree.node_inside(n.node, t))
+    {
+        return CoveredBy::Inner(n.node);
     }
     match tree.element_of(n.node) {
         Some(i) => CoveredBy::Control(i),
@@ -429,7 +482,7 @@ fn blocker(
                     .then(a.frame.area().total_cmp(&b.frame.area()))
                     .then(a.node.cmp(&b.node))
             })
-            .map(|n| cover_of(n, t));
+            .map(|n| cover_of(n, target, t));
     }
     screen
         .elements

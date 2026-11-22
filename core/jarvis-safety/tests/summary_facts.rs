@@ -278,7 +278,9 @@ fn a_fact_list_without_room_counts_its_entries() {
         None,
         &typed,
     );
-    assert!(sum.contains("Fields: 2 not shown"), "{sum}");
+    // Eighth review: the asked tap shows the form the two typed fields are in, so they are
+    // sent fields now (was "Fields: 2 not shown"); with no room the list says how many.
+    assert!(sum.contains("Sends: 2 fields (0 shown)"), "{sum}");
     assert!(sum.chars().count() <= 480, "{sum}");
 }
 
@@ -303,6 +305,7 @@ fn under_prefers_the_targets_own_container() {
         ends: &ends,
         bars: &[],
         nodes: &[],
+        inputs: &[],
     };
     let plain = summary_for(&tap(3), &s, RiskCategory::Delete, ScreenSource::Typed, None);
     assert!(

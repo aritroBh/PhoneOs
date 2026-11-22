@@ -92,9 +92,11 @@ fn return_in_a_type_delete_to_confirm_field_asks() {
     }
 }
 
-/// With a tap that sends nothing, an amount-like field shows its value among the amounts
-/// in grouped and locale formats; a plain run of 9 or more digits (an account number) and
-/// card-number groups are "(filled)".
+/// An amount-like field shows its value among the amounts in grouped and locale formats; a
+/// plain run of 9 or more digits (an account number) and card-number groups are not
+/// amounts. Eighth review: the asked tap shows the form it is in (`Sends: Amount: "…"`;
+/// was "(filled)" for the non-amounts; deliberate change), after the pattern redaction
+/// (card groups masked).
 #[test]
 fn amounts_list_grouped_formats_and_not_long_digit_runs() {
     for (v, shown) in [
@@ -124,6 +126,8 @@ fn amounts_list_grouped_formats_and_not_long_digit_runs() {
             ScreenSource::Typed,
             None,
         );
+        assert!(sum.contains("Sends: Amount: \""), "{v}: {sum}");
+        assert!(!sum.contains("4111 1111"), "{v}: {sum}");
         if shown {
             assert!(
                 sum.contains(&format!("Amounts on screen: Amount: {v}")),
@@ -131,7 +135,6 @@ fn amounts_list_grouped_formats_and_not_long_digit_runs() {
             );
             assert!(!sum.contains("Amount (filled)"), "{v}: {sum}");
         } else {
-            assert!(sum.contains("Amount (filled)"), "{v}: {sum}");
             assert!(!sum.contains("Amounts on screen"), "{v}: {sum}");
         }
     }

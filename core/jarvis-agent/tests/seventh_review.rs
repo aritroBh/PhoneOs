@@ -854,9 +854,10 @@ fn send_summary(s: Screen) -> String {
     r.confirms[0].summary.clone()
 }
 
-/// A long draft is cut only to fit the bound (480), saying how many characters are not
-/// shown (the other facts shrink first: the field outside the form is then only counted);
-/// with a short draft the field outside the form stays "(filled)".
+/// A long draft is cut, saying how many characters are not shown; with a short draft the
+/// field outside the form stays "(filled)". Eighth review: a sent value is cut to 120
+/// characters first, so the field outside the form keeps its name (was: the draft filled
+/// the bound and the field was only counted, "Fields: 1 not shown"; deliberate change).
 #[test]
 fn a_long_draft_is_cut_with_a_count_and_fields_outside_the_form_stay_filled() {
     let draft = format!("Dear Alice, {} Love, Bob", "the plan is fine. ".repeat(40));
@@ -868,7 +869,7 @@ fn a_long_draft_is_cut_with_a_count_and_fields_outside_the_form_stay_filled() {
         "{sum}"
     );
     assert!(sum.contains(" more characters not shown)"), "{sum}");
-    assert!(sum.ends_with("Fields: 1 not shown"), "{sum}");
+    assert!(sum.ends_with("Fields: Search notes (filled)"), "{sum}");
     assert!(!sum.contains("Mallory"), "{sum}");
     // Short enough: whole, and the field outside the form is "(filled)".
     let sum = send_summary(compose_form("See you at 7", None));

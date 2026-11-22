@@ -70,6 +70,13 @@ impl std::fmt::Display for PlanError {
                 CoveredBy::Node(n) => {
                     write!(f, "element {} is covered by raw node {n}", c.target)
                 }
+                CoveredBy::Inner(n) => {
+                    write!(
+                        f,
+                        "element {} holds a control (raw node {n}) there",
+                        c.target
+                    )
+                }
             },
             PlanError::Point(PointError::Keyboard) => write!(f, "the point is on the keyboard"),
             PlanError::Point(PointError::Covered(c)) => {

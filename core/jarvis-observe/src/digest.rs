@@ -29,11 +29,14 @@
 //! only the role, frame, `visible` flag and shown bit are hashed, plus, at the `Keyboard`
 //! node, its Return key's label (the cue compaction reads). Inside a node whose identifier
 //! is `SystemInputAssistantView` that is in the same top-level window as a `Keyboard` node
-//! and has no web-view ancestor (the prediction bar) the role, frame, identifier, flags and
-//! shown bit are hashed, not the label, value or placeholder. Nowhere else does that
-//! identifier matter. Prediction candidates, the shift key's state and the dictation and
-//! autofill labels change on their own; their structure and geometry are still hashed, so
-//! nothing can appear, vanish or move there unnoticed. Compaction never lists anything in
+//! and has no web-view ancestor (the prediction bar) only that node's own role, frame,
+//! identifier, flags and shown bit are hashed (eighth review: nothing inside it, so a
+//! different number of candidates after the owner answers does not void an approval; was
+//! every inner node's role, frame and flags). Nowhere else does that identifier matter.
+//! Prediction candidates, the shift key's state and the dictation and autofill labels
+//! change on their own; the keyboard's own structure and geometry are still hashed, so no
+//! key can appear, vanish or move there unnoticed, and the prediction bar's frame bounds
+//! everything in it (a tap point inside it is refused whatever it holds). Compaction never lists anything in
 //! those subtrees, and never reads their text for cues, summaries or classifier context
 //! (*not fully hashed ⇒ not in the compact screen*). An app's own accessory bar next to the
 //! keyboard is ordinary content: hashed whole and listed.
@@ -173,7 +176,7 @@ fn put_frame(sink: &mut impl Sink, frame: Option<Rect>) {
 
 /// Writes the digest input of `screen` (see the module docs) to `sink`.
 fn feed(screen: &Screen, sink: &mut impl Sink) {
-    sink.put(b"jarvis-screen-digest-v4");
+    sink.put(b"jarvis-screen-digest-v5");
     put_str(sink, screen.app_bundle_id.trim());
     put_frame(sink, Some(screen.bounds()));
     let springboard = screen
@@ -182,6 +185,12 @@ fn feed(screen: &Screen, sink: &mut impl Sink) {
         .eq_ignore_ascii_case(SPRINGBOARD_BUNDLE_ID);
     let layout = Layout::of(screen);
     layout.walk(&screen.root, |node, v| {
+        // Inside the prediction bar only its own node is hashed (eighth review): nothing in
+        // it, so a different number of candidates does not void an approval. Its nodes are
+        // never listed, and a tap point anywhere in its frame is refused.
+        if v.quiet == Quiet::Assistant && layout.quiet_root(node) != Some(Quiet::Assistant) {
+            return;
+        }
         let secure = node.secure || node.role == Role::SecureTextField;
         sink.put(b"N");
         sink.put(&v.depth.to_le_bytes());
@@ -198,6 +207,7 @@ fn feed(screen: &Screen, sink: &mut impl Sink) {
                 return;
             }
             Quiet::Assistant => {
+                // The prediction bar's own node: role, frame, identifier and flags.
                 sink.put(b"A");
                 put_opt(sink, node.identifier.as_deref());
                 sink.put(&[

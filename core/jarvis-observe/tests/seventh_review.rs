@@ -93,7 +93,8 @@ fn kb_screen(k: &Kb<'_>) -> Screen {
 }
 
 /// Prediction text, the shift key's label and the dictation key's label change on their
-/// own: the digest stays equal.
+/// own: the digest stays equal. Eighth review: so do the number and places of the
+/// candidates (only the prediction bar's own node is hashed).
 #[test]
 fn keyboard_text_changing_keeps_the_digest() {
     let a = kb_screen(&Kb::default());
@@ -114,13 +115,23 @@ fn keyboard_text_changing_keeps_the_digest() {
             dictation: "Stop dictation",
             ..Kb::default()
         },
+        // Eighth review: moved from the test below (they changed the digest; deliberate
+        // change: the prediction bar's inner structure is no longer hashed).
+        Kb {
+            candidates: &[("\u{201c}Ada\u{201d}", 0.0), ("I'm", 131.0)],
+            ..Kb::default()
+        },
+        Kb {
+            candidates: &[("\u{201c}Ada\u{201d}", 0.0), ("I'm", 140.0), ("The", 262.0)],
+            ..Kb::default()
+        },
     ] {
         assert!(same(&a, &kb_screen(&b)));
     }
 }
 
-/// A key or a candidate that appears, vanishes or moves changes the digest; so does the
-/// Return key's label (a cue).
+/// A key that appears, vanishes or moves changes the digest; so does the Return key's
+/// label (a cue). Eighth review: a candidate no longer does (see above).
 #[test]
 fn keyboard_structure_and_geometry_change_the_digest() {
     let a = kb_screen(&Kb::default());
@@ -131,14 +142,6 @@ fn keyboard_structure_and_geometry_change_the_digest() {
         },
         Kb {
             q_at: 10.0,
-            ..Kb::default()
-        },
-        Kb {
-            candidates: &[("\u{201c}Ada\u{201d}", 0.0), ("I'm", 131.0)],
-            ..Kb::default()
-        },
-        Kb {
-            candidates: &[("\u{201c}Ada\u{201d}", 0.0), ("I'm", 140.0), ("The", 262.0)],
             ..Kb::default()
         },
     ];

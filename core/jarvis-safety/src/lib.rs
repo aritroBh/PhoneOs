@@ -61,9 +61,9 @@ pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;
 pub use confine::check_confinement;
 pub use evaluate::{
-    classify_from, evaluate, evaluate_from, first_use_app, first_use_request, return_summary,
-    summarize, summary_for, summary_with, Decision, ScreenSource, ScreenTree, TypedText,
-    UNVERIFIED_SCREEN_WARNING,
+    classify_from, evaluate, evaluate_from, evaluate_with, first_use_app, first_use_request,
+    presumed_submit, return_summary, summarize, summary_for, summary_with, Decision, ScreenSource,
+    ScreenTree, TypedText, UNVERIFIED_SCREEN_WARNING,
 };
 pub use gate::{changes_state, gate, gate_in, gate_on, Gate, TRUSTED_ALLOWED};
 pub use hit::{

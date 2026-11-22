@@ -111,6 +111,8 @@ pub(crate) struct Visit {
     /// The node is drawn: no pruned ancestor (nor itself), within the depth cap, inside the
     /// alert while one is up. Its frame may still lie off screen.
     pub live: bool,
+    /// Inside the alert while one is up (always, without one).
+    pub in_scope: bool,
     /// How much of its text is hashed (and so may be listed).
     pub quiet: Quiet,
     /// Inside a keyboard or input-assistant subtree: that subtree root's frame, which
@@ -343,6 +345,7 @@ impl<'a> Layout<'a> {
                     depth: fr.depth,
                     shown,
                     live: !cut && in_scope,
+                    in_scope,
                     quiet,
                     quiet_clip,
                     in_content: fr.in_content,

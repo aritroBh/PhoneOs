@@ -76,6 +76,10 @@ pub const ACTION_PHRASES: &[Phrase] = &[
     p("resend", SendMessage),
     p("reply", SendMessage),
     p("reply all", SendMessage),
+    // Eighth review: more send synonyms and icon names.
+    p("forward", SendMessage),
+    p("respond", SendMessage),
+    p("up arrow", SendMessage),
     p("invite", SendMessage),
     p("request", SendMessage),
     p("report", SendMessage),
@@ -693,6 +697,7 @@ pub const SHARE_SAFE_PHRASES: &[Phrase] = &[
 /// the longest matching entry wins.
 pub const SF_SYMBOLS: &[(&str, RiskCategory)] = &[
     ("paperplane", SendMessage),
+    ("arrow.up", SendMessage),
     ("arrow.up.circle", SendMessage),
     ("arrow.up.message", SendMessage),
     ("phone", Call),

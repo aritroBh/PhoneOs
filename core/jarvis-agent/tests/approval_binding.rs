@@ -379,7 +379,10 @@ fn a_status_bar_role_inside_an_app_is_content() {
 /// window its text is left out of the digest, and so (the invariant) out of the compact
 /// screen: content an app wraps in it there cannot be tapped, read or summarised, and its
 /// structure and geometry stay hashed (was: hashed and listed as any content; deliberate
-/// change).
+/// change). Eighth review: only the assistant's own node is hashed (role, frame,
+/// identifier, flags), not its inner structure, so a node moving inside it keeps the
+/// digest (was: changed it; deliberate change); moving the assistant itself still changes
+/// it, and nothing inside it is listed or tappable either way.
 #[test]
 fn an_input_assistant_identifier_hides_nothing() {
     let bar = || {
@@ -399,6 +402,9 @@ fn an_input_assistant_identifier_hides_nothing() {
     );
     let mut moved = wrapped_in(bar(), "$5.00", true);
     moved.root.children[0].children[0].children[1].frame.y += 10.0;
+    assert_eq!(screen_digest(&asked), screen_digest(&moved));
+    let mut moved = wrapped_in(bar(), "$5.00", true);
+    moved.root.children[0].children[0].frame.y += 10.0;
     assert_ne!(screen_digest(&asked), screen_digest(&moved));
 }
 

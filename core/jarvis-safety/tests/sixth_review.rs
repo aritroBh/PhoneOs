@@ -120,7 +120,9 @@ fn field_values_are_not_quoted_in_summaries() {
     // Seventh review: "Pay now" sends the field, and a sent field's whole value is shown
     // after the pattern redaction (cards, labelled codes) and the credential-name rule. The
     // one value those let through is a bare 6-digit number in a neutrally named field
-    // (deliberate; see `summary_with`). A tap that sends nothing still quotes none.
+    // (deliberate; see `summary_with`). Eighth review: every asked tap whose form holds text
+    // shows what the form holds ("Remove card" too; was: a tap that sends nothing quoted
+    // none), so the same one value is let through for both targets; deliberate change.
     let sent_ok = ["482913"];
     for target in ["Pay now", "Remove card"] {
         for (name, value) in fields {
@@ -130,7 +132,7 @@ fn field_values_are_not_quoted_in_summaries() {
                 button(3, target),
             ]);
             let sum = summarize(&tap(3), &s, None);
-            if sum.contains(value) && !(target == "Pay now" && sent_ok.contains(&value)) {
+            if sum.contains(value) && !sent_ok.contains(&value) {
                 leaks.push(format!("{target}: {name}={value}: {sum}"));
             }
             assert!(sum.contains(name.trim_end_matches('.')), "{sum}");
@@ -213,10 +215,30 @@ fn typed_text_amounts_and_other_fields() {
         at(tf(4, "Quantity", "two"), 16.0, 380.0, 361.0, 44.0),
         at(button(5, "Pay"), 16.0, 700.0, 361.0, 50.0),
     ]);
-    // A tap that sends nothing (seventh review: Pay would send the form and show it all).
+    // An action that sends nothing (seventh review: Pay would send the form and show it
+    // all). Eighth review: every asked tap whose form holds text shows the form ("Remove
+    // card" now says `Sends: …`; deliberate change), so the field rule is checked on a
+    // swipe of the same button, which sends nothing.
     let mut amounts = amounts;
     amounts.elements[4].label = "Remove card".to_owned();
     let sum = summarize(&tap(5), &amounts, None);
+    assert!(
+        sum.contains(
+            "Sends: Amount: \"$4,000.00\"; Tip: \"15\"; Note: \"rent $40\"; Quantity: \"two\""
+        ),
+        "{sum}"
+    );
+    let swipe = Action::Swipe {
+        direction: jarvis_proto::Direction::Left,
+        element: Some(5),
+    };
+    let sum = summary_for(
+        &swipe,
+        &amounts,
+        RiskCategory::Delete,
+        ScreenSource::Typed,
+        None,
+    );
     assert!(sum.contains("Amount: $4,000.00"), "{sum}");
     assert!(sum.contains("Tip: 15"), "{sum}");
     assert!(sum.contains("Note (filled)"), "{sum}");
@@ -237,13 +259,22 @@ fn recipient_facts_never_quote_a_field_value() {
     let sum = summarize(&tap(3), &s, None);
     assert!(sum.contains("Sends: To: \"mallory@example.com\""), "{sum}");
     assert!(!sum.contains("To/Account"), "{sum}");
-    // A tap that sends nothing still names the field only.
+    // An action that sends nothing still names the field only. Eighth review: every asked
+    // tap whose form holds text shows the form (a "Remove card" tap now says `Sends: To:
+    // "mallory@example.com"`; deliberate change), so this is checked on a swipe.
     let s = app_screen(vec![
         at(tf(1, "To", "mallory@example.com"), 16.0, 200.0, 361.0, 44.0),
         at(label(2, "Total $5.00"), 16.0, 260.0, 361.0, 22.0),
         at(button(3, "Remove card"), 16.0, 700.0, 361.0, 50.0),
     ]);
     let sum = summary_for(&tap(3), &s, RiskCategory::Delete, ScreenSource::Typed, None);
+    assert!(sum.contains("Sends: To: \"mallory@example.com\""), "{sum}");
+    assert!(!sum.contains("To/Account"), "{sum}");
+    let swipe = Action::Swipe {
+        direction: jarvis_proto::Direction::Left,
+        element: Some(3),
+    };
+    let sum = summary_for(&swipe, &s, RiskCategory::Payment, ScreenSource::Typed, None);
     assert!(!sum.contains("mallory"), "{sum}");
     assert!(sum.contains("To (filled)"), "{sum}");
 }
@@ -331,6 +362,7 @@ fn a_switch_inside_a_cell_and_the_cell() {
         ends: &ends,
         bars: &[],
         nodes: &[],
+        inputs: &[],
     };
     let p = tap_spot(&switch, &s, Some(&tree), None).unwrap();
     assert!(switch.frame.contains(p));
@@ -372,6 +404,7 @@ fn bar_tree(bars: &[BarNode]) -> ScreenTree<'_> {
         ends: &BAR_ENDS,
         bars,
         nodes: &[],
+        inputs: &[],
     }
 }
 
@@ -507,9 +540,11 @@ fn a_row_wholly_under_a_bar_is_refused_naming_it() {
     assert_eq!(Bar::Tab.name(), "the tab bar");
 }
 
-/// No precedence for a `Toolbar` (web content makes those through ARIA), nor for a
-/// navigation or tab bar narrower than 90 % of the screen: the contest rule applies
-/// unchanged, and a row under such a "bar" is not refused for it.
+/// No precedence for a navigation or tab bar narrower than 90 % of the screen, nor for an
+/// `Other("Toolbar")` node: the contest rule applies unchanged, and a row under such a
+/// "bar" is not refused for it. Eighth review: a full-width `Toolbar` (a bottom tool bar;
+/// compaction lists none inside web, scroll, table or collection content, where ARIA makes
+/// them) now takes precedence like a tab bar (was: no precedence; deliberate change).
 #[test]
 fn toolbars_and_narrow_bars_take_no_precedence() {
     let row = at(button(4, "Item 1"), 0.0, 40.0, 393.0, 80.0);
@@ -521,7 +556,8 @@ fn toolbars_and_narrow_bars_take_no_precedence() {
         (Role::NavigationBar, 354.0, true),
         (Role::NavigationBar, 353.0, false),
         (Role::TabBar, 353.0, false),
-        (Role::Toolbar, 393.0, false),
+        (Role::Toolbar, 393.0, true),
+        (Role::Toolbar, 353.0, false),
         (Role::Other("Toolbar".into()), 393.0, false),
     ] {
         let bars = [nav_bar(role.clone(), width)];

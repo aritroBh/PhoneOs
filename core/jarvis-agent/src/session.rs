@@ -103,13 +103,13 @@ use std::collections::VecDeque;
 
 use jarvis_proto::{
     Action, AppInfo, BarNode, CompactScreen, ConfirmRequest, Effect, Element, Event, ImageRef, Key,
-    ModelRequest, Observation, Outcome, OutcomeStatus, Point, Progress, RawNode, RequestKind,
-    RiskCategory, RunnerCommand, SessionConfig, Size, TaskSpec, TimedEvent, ToolCall, ToolResult,
-    ToolSpec,
+    ModelRequest, Observation, Outcome, OutcomeStatus, Point, Progress, RawInput, RawNode,
+    RequestKind, RiskCategory, RunnerCommand, SessionConfig, Size, TaskSpec, TimedEvent, ToolCall,
+    ToolResult, ToolSpec,
 };
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
-    approval_context, check_app, check_app_name, check_confinement, control_at, evaluate_from,
+    approval_context, check_app, check_app_name, check_confinement, control_at, evaluate_with,
     first_use_app, first_use_request, is_springboard, label_names_denied_app, redact,
     redact_screen, return_summary, sanitize_screen_text, search_names_denied_app, summary_with,
     widget_names_denied_app, Budget, BudgetVerdict, Covered, CoveredBy, Decision, PointError,
@@ -202,6 +202,10 @@ struct Current {
     /// Every drawn raw node with its on-screen frame (`jarvis_observe::CompactView::nodes`):
     /// what could take a touch at a point.
     nodes: Vec<RawNode>,
+    /// Every text input whose text the digest hashes, listed or not
+    /// (`jarvis_observe::CompactView::inputs`), with the owner's profile values masked like
+    /// `masked`: a submit's summary names its form's unlisted fields.
+    inputs: Vec<RawInput>,
     /// Where the tree came from: a typed tree, or runner text (unverified, see
     /// `jarvis_safety::ScreenSource`).
     source: ScreenSource,
@@ -236,6 +240,7 @@ impl Default for Current {
             ends: Vec::new(),
             bars: Vec::new(),
             nodes: Vec::new(),
+            inputs: Vec::new(),
             source: ScreenSource::Typed,
             hash: 0,
             digest: ScreenDigest::default(),
@@ -515,6 +520,23 @@ fn minutes(ms: u64) -> String {
     } else {
         format!("{} s", ms / 1_000)
     }
+}
+
+/// The raw text inputs with the owner's profile values masked, as [`profile_masked`] masks
+/// the compact screen (summaries quote them).
+fn masked_inputs(inputs: Vec<RawInput>, memory: &MemoryStore) -> Vec<RawInput> {
+    let profile = &memory.profile;
+    let m = |s: Option<String>| s.map(|t| mask(&t, profile));
+    inputs
+        .into_iter()
+        .map(|r| RawInput {
+            label: m(r.label),
+            identifier: m(r.identifier),
+            placeholder: m(r.placeholder),
+            value: if r.secure { None } else { m(r.value) },
+            ..r
+        })
+        .collect()
 }
 
 /// `screen` with the owner's profile values masked back to placeholders (and secure fields'
@@ -1456,12 +1478,14 @@ impl Session {
         };
         // A4 and the gate: nothing new is asked, and an approved risk is the same category
         // with the identical summary, recomputed for this target on this screen.
-        match evaluate_from(
+        match evaluate_with(
             &self.config.policy,
             &executed,
             screen,
             None,
             self.current.source,
+            Some(&self.tree()),
+            &self.typed,
         ) {
             Decision::Allow => {
                 if approved.is_some() {
@@ -1570,6 +1594,7 @@ impl Session {
             ends: view.ends,
             bars: view.bars,
             nodes: view.nodes,
+            inputs: masked_inputs(view.inputs, &self.memory),
             source: self.incoming_source,
             screen,
             screenshot: obs.screenshot,
@@ -1599,6 +1624,7 @@ impl Session {
             },
             // Occluders only ever refuse more, so runner text keeps them.
             nodes: &self.current.nodes,
+            inputs: &self.current.inputs,
         }
     }
 
@@ -2234,7 +2260,15 @@ impl Session {
         // 3. Safety: validation, deny list, risk classification, confirmation gate. A screen
         //    read from runner text is unverified: every state-changing runner action on it
         //    is at least `Unverified` (asks), with a warning in its summary.
-        let decision = evaluate_from(policy, &executed, screen, tool, self.current.source);
+        let decision = evaluate_with(
+            policy,
+            &executed,
+            screen,
+            tool,
+            self.current.source,
+            Some(&self.tree()),
+            &self.typed,
+        );
         if let Decision::Deny(reason) = &decision {
             return Err(Reject::Failed(format!("not allowed: {reason}")));
         }
@@ -2656,7 +2690,15 @@ impl Session {
             }
         };
         let policy = &self.config.policy;
-        let decision = evaluate_from(policy, &executed, screen, None, self.current.source);
+        let decision = evaluate_with(
+            policy,
+            &executed,
+            screen,
+            None,
+            self.current.source,
+            Some(&self.tree()),
+            &self.typed,
+        );
         let home = if is_springboard(&screen.app_bundle_id) {
             home_launch(&gate, screen, &self.apps)
         } else {
@@ -2774,21 +2816,26 @@ impl Session {
             CoveredBy::Control(i) => self.element_name(i),
             CoveredBy::Bar(bar) => bar.name().to_owned(),
             CoveredBy::Keyboard => "the keyboard".to_owned(),
-            CoveredBy::Node(n) => {
-                let label = self
-                    .current
-                    .nodes
-                    .iter()
-                    .find(|r| r.node == n)
-                    .and_then(|r| r.label.as_deref())
-                    .map(|l| self.safe_text(l, 60))
-                    .filter(|l| !l.trim().is_empty());
-                match label {
-                    Some(l) => format!("an element labelled \"{l}\""),
-                    None => "an unlabelled element".to_owned(),
-                }
-            }
+            CoveredBy::Inner(n) => match self.node_label(n) {
+                Some(l) => format!("a control inside it labelled \"{l}\""),
+                None => "an unlabelled control inside it".to_owned(),
+            },
+            CoveredBy::Node(n) => match self.node_label(n) {
+                Some(l) => format!("an element labelled \"{l}\""),
+                None => "an unlabelled element".to_owned(),
+            },
         }
+    }
+
+    /// The prompt-safe label of raw node `n`, if it has one.
+    fn node_label(&self, n: u32) -> Option<String> {
+        self.current
+            .nodes
+            .iter()
+            .find(|r| r.node == n)
+            .and_then(|r| r.label.as_deref())
+            .map(|l| self.safe_text(l, 60))
+            .filter(|l| !l.trim().is_empty())
     }
 
     /// The refusal of a `tap_point` that does not resolve to one listed control.

@@ -37,7 +37,7 @@ use std::ptr;
 use std::rc::Rc;
 
 use jarvis_proto::{
-    BarNode, CompactScreen, Element, RawNode, Rect, Role, Screen, ScreenCues, UiNode,
+    BarNode, CompactScreen, Element, RawInput, RawNode, Rect, Role, Screen, ScreenCues, UiNode,
 };
 
 use crate::fingerprint::{identity_key, FingerprintAssigner};
@@ -668,9 +668,10 @@ pub struct CompactView {
     /// For each raw node, one past the index of its last descendant: node `j` is inside
     /// node `i`'s subtree when `i < j < ends[i]`.
     pub ends: Vec<u32>,
-    /// Every shown `NavigationBar`/`TabBar` raw node with its shown frame, in node order,
-    /// that has no web-view, scroll-view, table or collection ancestor (seventh review:
-    /// WebKit reports an ARIA `tablist` as a tab bar); none while an alert or sheet is up
+    /// Every shown `NavigationBar`/`TabBar`/`Toolbar` (eighth review) raw node with its
+    /// shown frame, in node order, that has no web-view, scroll-view, table or collection
+    /// ancestor (seventh review: WebKit reports an ARIA `tablist` as a tab bar); none while
+    /// an alert or sheet is up
     /// (only its subtree is listed then). Which of them take precedence over the content
     /// under them is `jarvis_safety::tap_spot`'s call.
     pub bars: Vec<BarNode>,
@@ -680,6 +681,12 @@ pub struct CompactView {
     /// (`jarvis_safety::tap_spot`'s candidate covers). The `Keyboard` subtree and the input
     /// assistant's are flagged `keyboard`; a node whose text is not hashed carries no label.
     pub nodes: Vec<RawNode>,
+    /// Every text input whose text the digest hashes (not excluded, not inside the
+    /// keyboard or the input assistant), listed or not, shown or not, in node order (eighth
+    /// review): a submit's summary names the fields of its form that are not listed (a
+    /// compose view's `To:` scrolled out of view). Secure fields carry no value. While an
+    /// alert or sheet is up, only those inside it.
+    pub inputs: Vec<RawInput>,
 }
 
 /// Flattens a screen to its indexed, ordered, deduplicated actionable/informative elements.
@@ -730,10 +737,25 @@ pub fn compact_view(screen: &Screen) -> CompactView {
 
     let mut bars = Vec::new();
     let mut nodes = Vec::new();
+    let mut inputs = Vec::new();
     layout.walk(&screen.root, |node, v| {
         let Some(&i) = index.by_addr.get(&addr(node)) else {
             return;
         };
+        // While an alert or sheet is up the fields behind it are not what its buttons send.
+        if v.quiet == Quiet::No && v.in_scope && node.role.is_text_input() {
+            let placeholder = non_empty(&node.placeholder);
+            inputs.push(RawInput {
+                node: i,
+                role: node.role.clone(),
+                label: non_empty(&node.label),
+                identifier: non_empty(&node.identifier),
+                value: shown_value(node).filter(|v| placeholder.as_ref() != Some(v)),
+                placeholder,
+                secure: is_secure(node),
+                on_screen: v.live && layout.on_screen(node.frame).is_some(),
+            });
+        }
         if v.live {
             let drawn = layout
                 .on_screen(node.frame)
@@ -763,7 +785,10 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         if alert.is_some()
             || !v.shown
             || v.in_content
-            || !matches!(node.role, Role::NavigationBar | Role::TabBar)
+            || !matches!(
+                node.role,
+                Role::NavigationBar | Role::TabBar | Role::Toolbar
+            )
         {
             return;
         }
@@ -845,6 +870,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         ends: index.ends,
         bars,
         nodes,
+        inputs,
     }
 }
 /// `(pages, percent)` of an iOS scroll indicator: label `Vertical scroll bar, N pages`
