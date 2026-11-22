@@ -72,12 +72,19 @@ final class LockedPhoneAgentTests: QATestCase {
         XCTAssertEqual(outcome.result.outcome.status, .success, "\(history)\n\(outcome.explanation)")
         XCTAssertEqual(app.staticTexts["toggles.status"].label, "Tips are on", "\(history)\n\(outcome.explanation)")
 
-        // Order: after the wait ended, an observation comes before any command.
-        guard let ended = entries.lastIndex(where: { $0.kind == "lock" && $0.title == "unlock wait ended" }) else {
-            XCTFail("the unlock wait never ended\n\(history)\n\(outcome.explanation)")
+        XCTAssertTrue(entries.contains { $0.kind == "lock" && $0.title == "unlock wait ended" },
+                      "the unlock wait never ended\n\(history)\n\(outcome.explanation)")
+
+        // Order: after the unlock, the screen is read before any command is sent. The
+        // owner's unlock entry, observations and commands are all recorded where they
+        // happen, so their order in the transcript is the real one. (Driver updates such
+        // as "unlock wait ended" arrive through a stream and can be recorded late: run 10
+        // failed on an order taken from them although the run itself was right.)
+        guard let unlocked = entries.lastIndex(where: { $0.kind == "owner" && $0.title.hasPrefix("unlock:") }) else {
+            XCTFail("the owner's unlock was never recorded\n\(history)\n\(outcome.explanation)")
             return
         }
-        let after = entries[(ended + 1)...]
+        let after = entries[(unlocked + 1)...]
         let firstCommand = after.firstIndex { $0.kind == "command" }
         let firstObservation = after.firstIndex { $0.kind == "observation" }
         if let firstCommand {

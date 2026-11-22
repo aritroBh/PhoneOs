@@ -42,8 +42,31 @@ final class WorkflowRemoteUITests: QATestCase {
         let field = app.textFields[identifier]
         require(field, "the field \(identifier)", in: app)
         bringAboveKeyboard(field, in: app)
-        field.tap()
+        XCTAssertTrue(focus(field), "the field \(identifier) never took the keyboard focus")
         field.typeText(text)
+    }
+
+    /// Taps `field` until it has the keyboard focus. A tap made while the editor is still
+    /// redrawing (a step's kind was just chosen, which replaces its text field) can leave
+    /// the focus nowhere; `typeText` then fails the test at once (simulator runs 9 and 10).
+    @MainActor
+    private func focus(_ field: XCUIElement) -> Bool {
+        let readsFocus = field.responds(to: NSSelectorFromString("hasKeyboardFocus"))
+        for _ in 0..<4 {
+            guard field.waitForExistence(timeout: 3) else { return false }
+            field.tap()
+            guard readsFocus else {
+                // No way to ask: give the editor time to settle after the tap.
+                RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+                return true
+            }
+            let deadline = Date().addingTimeInterval(1.5)
+            while Date() < deadline {
+                if (field.value(forKey: "hasKeyboardFocus") as? Bool) == true { return true }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+        }
+        return false
     }
 
     /// Scrolls the editor until `field` is clear of the keyboard. A field that appears while
@@ -82,6 +105,8 @@ final class WorkflowRemoteUITests: QATestCase {
             require(kind, "the \(step.0) kind of step \(index + 1)", in: app)
             if !kind.isHittable { app.swipeUp() }
             kind.tap()
+            // Choosing a kind redraws the step (its text field is replaced).
+            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
             type(step.1, into: "workflow.edit.step.\(index).text", in: app)
         }
         toolbarButton("workflow.edit.save", label: "Save", in: app).tap()
