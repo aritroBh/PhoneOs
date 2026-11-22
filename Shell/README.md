@@ -299,10 +299,22 @@ any moment of a step (glide, press, drag), `ViewerMapping` maps screen points in
 (`App/Jarvis/Views/LiveScreenView.swift`) only draws what these return. The backdrop is a
 wireframe of the typed tree, or, with "Show real screen in Live view" on
 (`DriverConfiguration.viewerScreenshots`, off by default), screenshots kept in a
-`ViewerFrameStore` (memory only, capped by count and bytes). The core's own screenshots are
-unchanged by the option. Typed text is shown only from the model's action, never into a secure
-field, with stored profile values masked; URLs show their host only. iOS does not let an app
-draw over other apps, so the cursor is shown inside Jarvis, not over the app being driven.
+`ViewerFrameStore` (memory only, capped by count and bytes). The option never changes the run:
+the core's observation is taken exactly as with it off; while it is on and the store is enabled
+(checked on every observation), a separate best-effort `PhoneRunner.viewerScreenshot()` follows
+an observation the core asked no pixels for (its own deadline, `viewerScreenshotTimeout`; errors
+ignored with at most one note per run; never retried; outside every failure count, deadline and
+effect budget), and pixels the core asked for are reused. Fail closed on the lock: frames only
+for an observation the runner reported unlocked (`RunnerObservation.lockState`), still unlocked
+after the capture, never in an unlock wait, dropped when the core answers with an unlock wait; a
+runner that cannot report its lock state gets none. Frames of a run that ends with no Live view on
+screen are dropped. One privacy rule, decided by the core: every label, placeholder and caption
+label goes through the core's redaction (`redactScreenText`) before it is kept; typed text is
+shown only for a field resolved from a typed tree that is not secure, not credential-like
+(`fieldValueIsHidden`), when the core's redaction leaves the text unchanged and it is what was
+typed (else "Type into “<field>”" or "Type text"); never on runner-text screens; links show the
+host of http(s) URLs and only `<scheme>:` otherwise. iOS does not let an app draw over other
+apps, so the cursor is shown inside Jarvis, not over the app being driven.
 
 ## SessionDriver
 

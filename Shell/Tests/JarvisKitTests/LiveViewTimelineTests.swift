@@ -181,7 +181,7 @@ struct PointerTimelineTests {
             (.launch("Settings"), "Open Settings"),
             (.launch("com.example.unknown"), "Open com.example.unknown"),
             (.openURL(host: "example.com"), "Open example.com"),
-            (.openURL(host: ""), "Open a link"),
+            (.openURL(host: "tel:"), "Open a tel: link"),
             (.wait(ms: 300), "Wait 300 ms"),
             (.wait(ms: 1_500), "Wait 1.5 s"),
             (.wait(ms: 2_000), "Wait 2 s"),
@@ -459,7 +459,8 @@ struct ViewerTypingPrivacyTests {
             run.observe(observed(loginTree(focus: focus)))
             run.act(.typeText(text: "hunter2"), action: .type(element: nil, text: "hunter2", submit: true))
             let (step, encoded) = try typed(run)
-            #expect(step.caption == "Type \u{201C}••••\u{201D}", "\(focus)")
+            #expect(step.caption == "Type into \u{201C}\(focus == "pin" ? "PIN" : "Password")\u{201D}", "\(focus)")
+            #expect(step.gesture == .type(text: nil))
             #expect(!encoded.contains("hunter2") && !encoded.contains(secretValue) && !encoded.contains("4321-PIN"))
         }
     }
@@ -471,7 +472,7 @@ struct ViewerTypingPrivacyTests {
         run.act(.tap(x: 100, y: 280))
         run.act(.typeText(text: "hunter2"), action: .type(element: 4, text: "hunter2", submit: false))
         let (step, encoded) = try typed(run)
-        #expect(step.caption == "Type \u{201C}••••\u{201D}")
+        #expect(step.caption == "Type into \u{201C}Password\u{201D}")
         #expect(!encoded.contains("hunter2"))
     }
 
@@ -494,12 +495,14 @@ struct ViewerTypingPrivacyTests {
             run.prompt(prompt)
             run.act(.typeText(text: "hunter2"), action: .type(element: element, text: "hunter2", submit: false))
             let (step, encoded) = try typed(run)
-            #expect(step.caption == "Type \u{201C}••••\u{201D}")
+            #expect(step.caption == "Type into \u{201C}Password\u{201D}")
             #expect(!encoded.contains("hunter2"))
         }
     }
 
-    @Test("a prompt naming a plain TextField on a text screen shows the text; the next decision's list is not reused")
+    // Before the review this showed "abc": a runner-text prompt line carries no secure
+    // marker, so the text is never shown on a text screen now; the field is named instead.
+    @Test("a prompt naming a plain TextField on a text screen names the field, never the text; the next decision's list is not reused")
     func promptPlain() throws {
         let prompt = """
         <<<SCREEN_DATA>>>
@@ -519,8 +522,11 @@ struct ViewerTypingPrivacyTests {
         run.observe(text)
         run.act(.typeText(text: "def"), action: .type(element: 1, text: "def", submit: false))
         let t = run.reduce().timeline
-        #expect(t.steps[0].caption == "Type \u{201C}abc\u{201D}")
+        #expect(t.steps[0].caption == "Type into \u{201C}Email\u{201D}")
+        #expect(t.steps[0].gesture == .type(text: nil))
         #expect(t.steps[1].caption == "Type text")
+        let encoded = try json(t)
+        #expect(!encoded.contains("\"abc\"") && !encoded.contains("\"def\""))
     }
 
     @Test("stored values typed through placeholders are masked; the runner's text never shows")
@@ -548,13 +554,15 @@ struct ViewerTypingPrivacyTests {
         mismatch.observe(observed(loginTree(focus: "email")))
         mismatch.act(.typeText(text: "something else"), action: .type(element: nil, text: "abc", submit: false))
         let (step, encoded) = try typed(mismatch)
-        #expect(step.caption == "Type text")
+        #expect(step.caption == "Type into \u{201C}Email\u{201D}", "the field is named, the text is not shown")
+        #expect(step.gesture == .type(text: nil))
         #expect(!encoded.contains("something else") && !encoded.contains("\"abc\""))
 
         var noProgress = Run()
         noProgress.observe(observed(loginTree(focus: "email")))
         noProgress.act(.typeText(text: "abc"), action: .tap(element: 3))
-        #expect(try typed(noProgress).0.caption == "Type text")
+        #expect(try typed(noProgress).0.caption == "Type into \u{201C}Email\u{201D}")
+        #expect(try typed(noProgress).0.gesture == .type(text: nil))
 
         var noScreen = Run()
         noScreen.act(.typeText(text: "abc"), action: .type(element: nil, text: "abc", submit: false))
@@ -583,14 +591,22 @@ struct ViewerTypingPrivacyTests {
 
 // MARK: - The driver's frame option
 
-/// A phone that counts screenshot requests and returns pixels when asked.
+/// A phone that counts screenshot requests and returns pixels when asked (in a snapshot or
+/// through the Live view's own capture).
 private final class CountingPhone: PhoneRunner {
     let inner: any PhoneRunner
     private let requests = Mutex<[Bool]>([])
+    private let viewerCalls = Mutex(0)
 
     init(_ inner: any PhoneRunner) { self.inner = inner }
 
     var screenshotRequests: [Bool] { requests.withLock { $0 } }
+    var viewerScreenshotCalls: Int { viewerCalls.withLock { $0 } }
+
+    func viewerScreenshot() async throws -> CapturedScreenshot? {
+        viewerCalls.withLock { $0 += 1 }
+        return CapturedScreenshot(data: Data(repeating: 2, count: 64), mimeType: "image/jpeg", pixelWidth: 393, pixelHeight: 852)
+    }
 
     func snapshot(includeScreenshot: Bool) async throws -> RunnerObservation {
         requests.withLock { $0.append(includeScreenshot) }
@@ -674,7 +690,10 @@ struct ViewerFrameDriverTests {
         }
     }
 
-    @Test("on: every observation is asked for pixels, but the core gets an ImageRef only when it asked")
+    // Before the review every observation asked the runner for pixels when the option was
+    // on; now the core's observation is taken exactly as with the option off and the
+    // viewer's pixels come from a separate capture (or reuse the core's own).
+    @Test("on: the core's observations are as with the option off; the viewer gets a frame of each, the core an ImageRef only when it asked")
     func onKeepsCoreUnchanged() async throws {
         for vision in [false, true] {
             let phone = CountingPhone(DemoPhone())
@@ -685,7 +704,9 @@ struct ViewerFrameDriverTests {
             let seen = observations(run.updates)
             #expect(!seen.isEmpty)
             if vision { #expect(seen.contains { $0.asked }, "the core asked for a screenshot of the thin demo screen") }
-            #expect(phone.screenshotRequests.allSatisfy { $0 })
+            #expect(phone.screenshotRequests == seen.map(\.asked), "the runner is asked for pixels exactly when the core asks")
+            #expect(phone.viewerScreenshotCalls == seen.filter { !$0.asked }.count,
+                    "one separate capture per observation the core asked no pixels for; the core's own pixels are reused")
             for o in seen {
                 #expect(o.gotRef == o.asked, "observation #\(o.number): the core asked \(o.asked)")
             }
@@ -783,8 +804,13 @@ struct ViewerEncodingTests {
             let decoded = try JSONDecoder().decode(ViewerActivity.self, from: try JSONEncoder().encode(activity))
             #expect(decoded == activity)
         }
+        // An unknown kind (from a newer sender) is kept as such and re-encoded with its tag;
+        // a gesture without a kind is still an error.
+        let teleport = try JSONDecoder().decode(ViewerGesture.self, from: Data(#"{"kind":"teleport"}"#.utf8))
+        #expect(teleport == .unknown("teleport"))
+        #expect(try JSONDecoder().decode(ViewerGesture.self, from: try JSONEncoder().encode(teleport)) == teleport)
         #expect(throws: (any Error).self) {
-            try JSONDecoder().decode(ViewerGesture.self, from: Data(#"{"kind":"teleport"}"#.utf8))
+            try JSONDecoder().decode(ViewerGesture.self, from: Data(#"{"point":{"x":1,"y":2}}"#.utf8))
         }
         let kind = try JSONDecoder().decode([ViewerElementKind].self, from: Data(#"["control","hologram"]"#.utf8))
         #expect(kind == [.control, .container], "an unknown kind from a newer sender reads as a container")

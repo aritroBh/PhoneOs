@@ -31,12 +31,22 @@ public struct DriverConfiguration: Sendable, Equatable {
     /// a tool or the owner; a lock interrupts the wait with `Event.deviceLocked`. `nil`
     /// turns the watch off.
     public var lockWatchInterval: Duration?
-    /// The Live view's real-screen option ("Show real screen in Live view", off by default):
-    /// every observation also asks the runner for a screenshot, kept in
-    /// `DriverDependencies.viewerFrames` (memory only). What the core receives does not
-    /// change: it gets an `ImageRef` only for an observation it asked a screenshot for. No
-    /// frame is kept for a locked observation. Without `viewerFrames` this does nothing.
+    /// The Live view's real-screen option ("Show real screen in Live view", off by default).
+    /// It never changes the run: the core's observation is taken exactly as with the option
+    /// off. While the option is on and `DriverDependencies.viewerFrames` is enabled (checked
+    /// on every observation, so turning it off mid-run stops it at once), an observation the
+    /// core asked no pixels for is followed by a separate best-effort
+    /// `PhoneRunner.viewerScreenshot()` with its own deadline (`viewerScreenshotTimeout`);
+    /// pixels the core asked for are reused. Errors and timeouts are ignored (one `.note`
+    /// per run at most), never retried, and count toward no failure, deadline or effect
+    /// budget. Fail closed on the lock: pixels only for an observation the runner reported
+    /// unlocked, with the runner still reporting unlocked after the capture, never in or
+    /// out of an unlock wait, and dropped when the core answers the observation with an
+    /// unlock wait. Frames are kept in `viewerFrames` (memory only). Without
+    /// `viewerFrames` this does nothing.
     public var viewerScreenshots: Bool
+    /// Deadline for one Live view capture (the screenshot plus the lock check after it).
+    public var viewerScreenshotTimeout: Duration
 
     /// The defaults, each overridable.
     public init(
@@ -52,7 +62,8 @@ public struct DriverConfiguration: Sendable, Equatable {
         updateBufferSize: Int = 1_024,
         unlockPollInterval: Duration = .seconds(2),
         lockWatchInterval: Duration? = .seconds(3),
-        viewerScreenshots: Bool = false
+        viewerScreenshots: Bool = false,
+        viewerScreenshotTimeout: Duration = .seconds(1)
     ) {
         self.observeTimeout = observeTimeout
         self.observeAttempts = observeAttempts
@@ -67,5 +78,6 @@ public struct DriverConfiguration: Sendable, Equatable {
         self.unlockPollInterval = unlockPollInterval
         self.lockWatchInterval = lockWatchInterval
         self.viewerScreenshots = viewerScreenshots
+        self.viewerScreenshotTimeout = viewerScreenshotTimeout
     }
 }

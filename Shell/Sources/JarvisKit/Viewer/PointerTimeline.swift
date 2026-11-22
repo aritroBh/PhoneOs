@@ -10,14 +10,21 @@ import JarvisCore
 /// contains the point, so the viewer can outline it and name it in the caption. It is never
 /// used to decide anything; the core alone decides what to do and what needs the owner's OK.
 ///
-/// Privacy (each rule is tested):
+/// Privacy (each rule is tested; the core decides, through `ViewerPrivacy`):
+/// - Every label, placeholder and caption label goes through the core's redaction
+///   (`redactScreenText`) before it is kept, so the timeline (and its encoding) never holds
+///   the raw text. The wireframe keeps labels and placeholders, never values.
 /// - Typed text is never taken from the runner command (which carries the owner's stored
-///   values filled in). The caption uses the text the model or the learned flow asked for
-///   (`SessionProgress.lastAction`), with `{{profile.…}}` placeholders masked, and only when
-///   the field is known not to be secure; a secure field, or any doubt, shows `••••` or no
-///   text at all.
-/// - The wireframe keeps labels and placeholders, never values.
-/// - `openUrl` keeps the host only.
+///   values filled in). The caption shows the text the model or the learned flow asked for
+///   (`SessionProgress.lastAction`), with `{{profile.…}}` placeholders masked, only when ALL
+///   hold: the field was resolved from a typed tree (never runner text, whose prompt line
+///   carries no secure marker), it is not secure, the core says it is not credential-like
+///   (`fieldValueIsHidden`), the core's redaction leaves the text unchanged, and it is
+///   exactly what was typed. Otherwise the caption is `Type into “<field>”` (the field's
+///   redacted label) or `Type text`.
+/// - On runner-text screens labels come only from the prompt the core rendered (redacted
+///   again).
+/// - `openUrl` keeps the host of an `http`/`https` URL, only `<scheme>:` otherwise.
 /// - A locked observation keeps nothing of the screen.
 /// - Runner error texts are not kept (they may quote what was typed).
 public struct PointerTimeline: Sendable, Equatable {
@@ -48,11 +55,35 @@ public struct PointerTimeline: Sendable, Equatable {
     /// A typing step waiting for the model's text (the `.progress` right after its effect).
     private var pendingType: PendingType?
     private var nextScreenID = 1
+    /// What the current screen's typed tree says about its focused field.
+    private var focusedField: FieldEvidence?
+    /// The field under the latest pointer step's point, from the typed tree.
+    private var pointerField: PointerField?
+
+    /// What a typed tree says about a field typing may go into (display only).
+    struct FieldEvidence: Sendable, Equatable {
+        /// The core hides its value (secure, or credential-like).
+        var hidden: Bool
+        /// An entry field.
+        var input: Bool
+        /// Its label (else placeholder), redacted and capped.
+        var label: String?
+    }
+
+    private struct PointerField: Sendable, Equatable {
+        var number: Int
+        var screenID: Int?
+        var field: FieldEvidence
+    }
 
     private struct PendingType: Sendable, Equatable {
         var number: Int
-        var secure: Bool
+        /// The core would hide the field's value (or the field is secure).
+        var hidden: Bool
+        /// A typed tree vouches for a plain entry field.
         var plain: Bool
+        /// The field's redacted label, for "Type into …".
+        var label: String?
         /// Length and in-process hash of the runner's text: the model's text is shown only if
         /// it is exactly what was typed (or the core filled placeholders into it).
         var rawCount: Int
@@ -130,6 +161,9 @@ public struct PointerTimeline: Sendable, Equatable {
                 ingest(snapshot)
             case .actResult(let result):
                 if case .act = effect { complete(result) }
+            case .cancel:
+                // Stopped while the command was in flight: nothing is claimed about it.
+                if case .act = effect { markStopped() }
             default:
                 break
             }
@@ -137,8 +171,9 @@ public struct PointerTimeline: Sendable, Equatable {
             if case .act = effect { sight = [] }
         case .finished(let result):
             timeline.activity = .finished(Self.outcome(result.outcome.status))
+            let stopped = result.outcome.status == .cancelled
             for i in timeline.steps.indices where timeline.steps[i].state == .running {
-                timeline.steps[i].state = .failed("Not finished")
+                timeline.steps[i].state = stopped ? .stopped : .failed("Not finished")
             }
             pendingType = nil
         }
@@ -163,12 +198,14 @@ public struct PointerTimeline: Sendable, Equatable {
         let size = ViewerSize(width: screen.size.width, height: screen.size.height)
         if observation.deviceLocked {
             tree = nil
+            focusedField = nil
             addScreen(ViewerScreen(id: id, size: size, appName: nil, bundleId: "", source: .locked, elements: [],
                                    elementsTruncated: false, frameKey: nil, focusedInputSecure: nil))
             return
         }
         let wire = Self.wireframe(screen.root, size: size)
         tree = screen.root
+        focusedField = Self.focusedField(screen.root)
         addScreen(ViewerScreen(
             id: id, size: size, appName: ViewerPrivacy.label(screen.appName), bundleId: screen.appBundleId, source: .tree,
             elements: wire.elements, elementsTruncated: wire.truncated, frameKey: frameKey(),
@@ -180,6 +217,7 @@ public struct PointerTimeline: Sendable, Equatable {
         let id = nextScreenID
         nextScreenID += 1
         tree = nil
+        focusedField = nil
         let size = ViewerSize(width: snapshot.size.width, height: snapshot.size.height)
         if snapshot.deviceLocked {
             addScreen(ViewerScreen(id: id, size: size, appName: nil, bundleId: "", source: .locked, elements: [],
@@ -250,7 +288,8 @@ public struct PointerTimeline: Sendable, Equatable {
         let raw = ViewerRect(x: node.frame.x, y: node.frame.y, width: node.frame.width, height: node.frame.height)
         guard let clipped = raw.intersection(bounds) else { return nil }
         let secure = node.secure || node.role == .secureTextField
-        // Label, else placeholder; never the value (whatever the role).
+        // Label, else placeholder (both through the core's redaction); never the value
+        // (whatever the role).
         let label = ViewerPrivacy.label(node.label) ?? ViewerPrivacy.label(node.placeholder)
         return ViewerElement(frame: clipped, role: roleName(node.role), kind: kind(node.role), label: label, secure: secure,
                              depth: depth)
@@ -273,12 +312,45 @@ public struct PointerTimeline: Sendable, Equatable {
         return found
     }
 
+    /// What the tree says about `node` as a field typing may go into; the core decides
+    /// whether its value is hidden.
+    static func field(_ node: UiNode) -> FieldEvidence {
+        let secure = node.secure || node.role == .secureTextField
+        let hidden = ViewerPrivacy.fieldValueHidden(role: node.role, label: node.label, placeholder: node.placeholder,
+                                                    identifier: node.identifier, secure: secure)
+        return FieldEvidence(hidden: hidden, input: kind(node.role) == .input,
+                             label: ViewerPrivacy.label(node.label) ?? ViewerPrivacy.label(node.placeholder))
+    }
+
+    /// The focused field of the tree: a hidden one wins; `nil` when no entry field (or
+    /// secure node) is focused.
+    static func focusedField(_ root: UiNode) -> FieldEvidence? {
+        var found: FieldEvidence?
+        var visited = 0
+        var stack = [root]
+        while let node = stack.popLast(), visited < maxVisitedNodes {
+            visited += 1
+            if node.focused, node.secure || kind(node.role) == .input {
+                let evidence = field(node)
+                if evidence.hidden { return evidence }
+                if found == nil { found = evidence }
+            }
+            stack.append(contentsOf: node.children)
+        }
+        return found
+    }
+
     /// The deepest shown element (topmost among equals) whose frame contains `point`, or
     /// `nil`. Display only.
     static func target(at point: ViewerPoint, in root: UiNode, size: ViewerSize) -> ViewerElement? {
+        targetNode(at: point, in: root, size: size)?.element
+    }
+
+    /// `target(at:in:size:)` with its tree node.
+    static func targetNode(at point: ViewerPoint, in root: UiNode, size: ViewerSize) -> (element: ViewerElement, node: UiNode)? {
         guard point.isFinite else { return nil }
         let bounds = ViewerRect(x: 0, y: 0, width: size.usable.width, height: size.usable.height)
-        var best: ViewerElement?
+        var best: (element: ViewerElement, node: UiNode)?
         var visited = 0
         var stack: [(node: UiNode, depth: Int)] = [(root, 0)]
         while let (node, depth) = stack.popLast(), visited < maxVisitedNodes {
@@ -288,8 +360,8 @@ public struct PointerTimeline: Sendable, Equatable {
                 childDepth = depth + 1
                 let frame = ViewerRect(x: node.frame.x, y: node.frame.y, width: node.frame.width, height: node.frame.height)
                 // Pre-order visits later siblings later, so `>=` keeps the one drawn on top.
-                if frame.contains(point), element.depth >= (best?.depth ?? -1) {
-                    best = element
+                if frame.contains(point), element.depth >= (best?.element.depth ?? -1) {
+                    best = (element, node)
                 }
             }
             for child in node.children.reversed() {
@@ -307,17 +379,22 @@ public struct PointerTimeline: Sendable, Equatable {
         let size = screen?.size ?? ViewerSize.fallbackPhone
         let gesture: ViewerGesture
         var target: ViewerElement?
+        var targetField: FieldEvidence?
         let caption: String
         switch command {
         case .tap(let x, let y):
             let p = ViewerPoint(x: x, y: y)
             gesture = .tap(p)
-            target = tree.flatMap { Self.target(at: p, in: $0, size: size) }
+            let hit = tree.flatMap { Self.targetNode(at: p, in: $0, size: size) }
+            target = hit?.element
+            targetField = hit.map { Self.field($0.node) }
             caption = Self.pointerCaption("Tap", target)
         case .longPress(let x, let y, let ms):
             let p = ViewerPoint(x: x, y: y)
             gesture = .longPress(p, durationMs: ms)
-            target = tree.flatMap { Self.target(at: p, in: $0, size: size) }
+            let hit = tree.flatMap { Self.targetNode(at: p, in: $0, size: size) }
+            target = hit?.element
+            targetField = hit.map { Self.field($0.node) }
             caption = Self.pointerCaption("Press and hold", target)
         case .swipe(let from, let to, let ms):
             let a = ViewerPoint(x: from.x, y: from.y), b = ViewerPoint(x: to.x, y: to.y)
@@ -326,11 +403,10 @@ public struct PointerTimeline: Sendable, Equatable {
             caption = Self.swipeCaption(from: a, to: b)
         case .typeText(let raw):
             let evidence = typingEvidence(screen: screen)
-            pendingType = PendingType(number: number, secure: evidence.secure, plain: evidence.plain,
+            pendingType = PendingType(number: number, hidden: evidence.hidden, plain: evidence.plain, label: evidence.label,
                                       rawCount: raw.count, rawHash: raw.hashValue)
-            let shown: String? = evidence.secure ? ViewerPrivacy.mask : nil
-            gesture = .type(text: shown)
-            caption = Self.typeCaption(shown)
+            gesture = .type(text: nil)
+            caption = Self.typeCaption(nil, into: evidence.label)
         case .pressKey(let key):
             let name = Self.keyName(key)
             gesture = .key(name)
@@ -340,15 +416,16 @@ public struct PointerTimeline: Sendable, Equatable {
             gesture = .launch(name)
             caption = "Open \(name)"
         case .openUrl(let url):
-            let host = ViewerPrivacy.host(of: url)
-            gesture = .openURL(host: host ?? "")
-            caption = host.map { "Open \($0)" } ?? "Open a link"
+            let link = ViewerPrivacy.link(of: url)
+            gesture = .openURL(host: link ?? "")
+            caption = Self.linkCaption(link)
         case .wait(let ms):
             gesture = .wait(ms: ms)
             caption = Self.waitCaption(ms)
         }
         timeline.steps.append(ViewerStep(number: number, coreStep: coreStep, screenID: screen?.id, gesture: gesture,
                                          target: target, caption: caption, state: .running))
+        pointerField = targetField.map { PointerField(number: number, screenID: screen?.id, field: $0) }
         actStep = number
         if timeline.steps.count > maxSteps {
             let drop = timeline.steps.count - maxSteps
@@ -358,28 +435,35 @@ public struct PointerTimeline: Sendable, Equatable {
         }
     }
 
-    /// What is known about the field text goes into: secure evidence wins; "plain" needs
-    /// positive evidence of a non-secure input.
-    private func typingEvidence(screen: ViewerScreen?) -> (secure: Bool, plain: Bool) {
-        var secure = false
-        var plain = false
-        if let focused = screen?.focusedInputSecure {
-            if focused { secure = true } else { plain = true }
-        }
-        // A tap on a field just before, on the same screen, puts the focus there.
-        if let screen, let previous = timeline.steps.last, previous.screenID == screen.id, previous.gesture.isPointer,
-           let target = previous.target {
-            if target.secure {
-                secure = true
-            } else if target.kind == .input {
-                plain = true
+    /// What is known about the field text goes into. Hidden evidence (secure, or the core
+    /// calls the field credential-like) wins; "plain" needs a typed tree naming an entry
+    /// field (the field tapped just before on the same screen, or the focused one). The
+    /// prompt's element list never makes a field plain: its line has no secure marker.
+    private func typingEvidence(screen: ViewerScreen?) -> (hidden: Bool, plain: Bool, label: String?) {
+        var fields: [FieldEvidence] = []
+        if let screen, screen.source == .tree {
+            // A tap on a field just before, on the same screen, puts the focus there.
+            if let previous = timeline.steps.last, let tapped = pointerField, tapped.number == previous.number,
+               tapped.screenID == screen.id, tapped.field.input || tapped.field.hidden {
+                fields.append(tapped.field)
             }
+            if let focused = focusedField { fields.append(focused) }
         }
-        if sight.contains(where: { Self.isSecureRole($0.role) && $0.flags.contains("focused") }) {
-            secure = true
+        var hidden = fields.contains { $0.hidden }
+        var promptLabel: String?
+        for e in sight where e.flags.contains("focused") && (Self.inputRoles.contains(e.role) || Self.isSecureRole(e.role)) {
+            if Self.promptFieldHidden(e) { hidden = true }
+            if promptLabel == nil { promptLabel = ViewerPrivacy.label(e.label) }
         }
-        if screen == nil || screen?.source == .locked { plain = false }
-        return (secure, plain)
+        let plain = !hidden && fields.contains { $0.input }
+        return (hidden, plain, fields.first?.label ?? promptLabel)
+    }
+
+    /// Whether the core hides the value of a field the prompt names (its role and label as
+    /// the core rendered them).
+    static func promptFieldHidden(_ e: PromptScreen.Element) -> Bool {
+        isSecureRole(e.role) || ViewerPrivacy.fieldValueHidden(role: role(named: e.role), label: e.label,
+                                                                placeholder: e.placeholder, identifier: nil, secure: false)
     }
 
     /// Sets a pending typing step's text from the model's (or flow's) `type` action.
@@ -388,28 +472,34 @@ public struct PointerTimeline: Sendable, Equatable {
         pendingType = nil
         guard case .type(let element, let text, _) = action,
               let i = timeline.steps.lastIndex(where: { $0.number == pending.number }) else { return }
-        var secure = pending.secure
+        var hidden = pending.hidden
         var plain = pending.plain
+        var label = pending.label
         if let element, let e = sight.first(where: { $0.index == element }) {
-            if Self.isSecureRole(e.role) {
-                secure = true
-            } else if Self.inputRoles.contains(e.role) {
-                plain = true
-            }
+            if Self.promptFieldHidden(e) { hidden = true }
+            if !Self.inputRoles.contains(e.role) { plain = false }
+            // The field the core named for this action.
+            if let named = ViewerPrivacy.label(e.label) { label = named }
         }
         // Shown only when it is exactly what was typed, or the core filled stored values
-        // into placeholders (which are then masked).
+        // into placeholders (which are then masked), and the core's redaction would not
+        // change a character of it.
         let consistent = ViewerPrivacy.hasPlaceholder(text) || (text.count == pending.rawCount && text.hashValue == pending.rawHash)
         let shown: String?
-        if secure {
-            shown = ViewerPrivacy.mask
-        } else if plain && consistent {
+        if plain && !hidden && consistent && ViewerPrivacy.isUnchangedByRedaction(text) {
             shown = ViewerPrivacy.typedText(text, secure: false)
         } else {
             shown = nil
         }
         timeline.steps[i].gesture = .type(text: shown)
-        timeline.steps[i].caption = Self.typeCaption(shown)
+        timeline.steps[i].caption = Self.typeCaption(shown, into: label)
+    }
+
+    /// The command in flight when the run was stopped.
+    private mutating func markStopped() {
+        guard let number = actStep, let i = timeline.steps.lastIndex(where: { $0.number == number }),
+              timeline.steps[i].state == .running else { return }
+        timeline.steps[i].state = .stopped
     }
 
     private mutating func complete(_ result: RunnerResult) {
@@ -437,9 +527,19 @@ public struct PointerTimeline: Sendable, Equatable {
         return "\(verb) \u{201C}\(label)\u{201D}"
     }
 
-    static func typeCaption(_ shown: String?) -> String {
-        guard let shown else { return "Type text" }
-        return "Type \u{201C}\(shown)\u{201D}"
+    /// "Type “hello”" when the text may be shown, else "Type into “Email”" when the field's
+    /// label is known, else "Type text".
+    static func typeCaption(_ shown: String?, into label: String? = nil) -> String {
+        if let shown { return "Type \u{201C}\(shown)\u{201D}" }
+        if let label { return "Type into \u{201C}\(label)\u{201D}" }
+        return "Type text"
+    }
+
+    /// "Open example.com", "Open a tel: link", "Open a link".
+    static func linkCaption(_ link: String?) -> String {
+        guard let link, !link.isEmpty else { return "Open a link" }
+        if link.hasSuffix(":") { return "Open a \(link) link" }
+        return "Open \(link)"
     }
 
     static func swipeCaption(from a: ViewerPoint, to b: ViewerPoint) -> String {
@@ -471,6 +571,18 @@ public struct PointerTimeline: Sendable, Equatable {
         let known = KnownApps.common + DemoPhone.knownApps
         if let app = known.first(where: { $0.bundleId == bundleId }), !app.name.isEmpty { return app.name }
         return ViewerPrivacy.capped(bundleId, 64)
+    }
+
+    /// Every role with a fixed name (all but `.other`).
+    static let namedRoles: [Role] = [
+        .button, .link, .textField, .secureTextField, .textView, .searchField, .staticText, .image, .cell, .`switch`,
+        .slider, .picker, .tab, .navigationBar, .tabBar, .toolbar, .alert, .sheet, .keyboard, .key, .scrollView, .table,
+        .collectionView, .webView, .window, .application,
+    ]
+
+    /// The role a prompt line names (`TextField` → `.textField`); unknown names are `.other`.
+    static func role(named name: String) -> Role {
+        namedRoles.first { roleName($0) == name } ?? .other(name: name)
     }
 
     static func roleName(_ role: Role) -> String {

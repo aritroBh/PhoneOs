@@ -33,6 +33,10 @@ public struct ReplayState: Sendable, Equatable {
     public private(set) var speed: Speed = .normal
     /// When the shown step's animation started (seconds).
     public private(set) var startedAt: Double = 0
+    /// Where the cursor starts the shown step: set when, following live, a new step
+    /// arrived while the cursor was still moving (it continues from there instead of
+    /// jumping); `nil` starts from the end of the previous pointer step.
+    public private(set) var origin: ViewerPoint?
 
     public init() {}
 
@@ -42,15 +46,18 @@ public struct ReplayState: Sendable, Equatable {
         return seconds * 1_000 * (isFollowing ? 1 : speed.rawValue)
     }
 
-    /// The timeline changed (a step was added, finished or dropped).
-    public mutating func sync(numbers: [Int], now: Double) {
+    /// The timeline changed (a step was added, finished or dropped). While following, a
+    /// new step starts from `cursor` (where the cursor is now, see
+    /// `LiveViewScene.synced(_:timeline:now:reduceMotion:)`) when given.
+    public mutating func sync(numbers: [Int], now: Double, cursor: ViewerPoint? = nil) {
         guard let last = numbers.last, let first = numbers.first else {
             current = nil
             isPlaying = false
+            origin = nil
             return
         }
         if isFollowing {
-            if current != last { show(last, now: now) }
+            if current != last { show(last, now: now, from: cursor) }
             return
         }
         guard let shown = current else {
@@ -157,8 +164,9 @@ public struct ReplayState: Sendable, Equatable {
         return numbers.count - 1
     }
 
-    private mutating func show(_ number: Int, now: Double) {
+    private mutating func show(_ number: Int, now: Double, from cursor: ViewerPoint? = nil) {
         current = number
         startedAt = now.isFinite ? now : 0
+        origin = cursor.flatMap { $0.isFinite ? $0 : nil }
     }
 }

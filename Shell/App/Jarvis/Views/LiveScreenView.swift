@@ -9,7 +9,9 @@ import JarvisKit
 /// Everything it shows is decided in JarvisKit: `LiveViewScene` (which screen, which step,
 /// the caption), `CursorPath` (where the cursor is at each moment) and `ViewerMapping`
 /// (screen points to view points). This view only draws, once per frame of
-/// `TimelineView(.animation)`.
+/// `TimelineView(.animation)`, which is paused whenever nothing moves
+/// (`LiveViewScene.needsFrames`). The real screen is never drawn while the app is not
+/// active, so the app switcher's snapshot never holds it.
 ///
 /// iOS does not let an app draw over other apps, so this viewer lives inside Jarvis.
 struct LiveScreenView: View {
@@ -17,8 +19,14 @@ struct LiveScreenView: View {
     var frames: ViewerFrameStore
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @State private var replay = ReplayState()
     @State private var images = FrameImageCache()
+    /// Bumped by the last animation frame before nothing moves, so `body` runs again and
+    /// pauses the `TimelineView`.
+    @State private var settleTick = 0
+    /// This view is on screen (between `onAppear` and `onDisappear`).
+    @State private var appeared = false
 
     var body: some View {
         VStack(spacing: Theme.gap) {
@@ -33,18 +41,25 @@ struct LiveScreenView: View {
             }
             .padding(.horizontal, 6)
 
-            TimelineView(.animation) { context in
-                let now = context.date.timeIntervalSinceReferenceDate
+            let paused = isPaused(settleTick)
+            TimelineView(.animation(minimumInterval: nil, paused: paused)) { context in
+                // A paused schedule may hand an old date: draw the present.
+                let now = paused ? Self.now() : context.date.timeIntervalSinceReferenceDate
                 let scene = LiveViewScene.make(timeline: timeline, replay: replay, now: now, reduceMotion: reduceMotion)
                 PhoneScreen(
                     scene: scene,
                     tone: tone(for: scene),
-                    image: images.image(for: scene.screen?.frameKey, in: frames),
+                    // Never the real screen while the app is not active (app switcher).
+                    image: scenePhase == .active ? images.image(for: scene.screen?.frameKey, in: frames) : nil,
                     now: now,
                     reduceMotion: reduceMotion
                 )
                 .onChange(of: context.date) { _, date in
-                    advancePlayback(now: date.timeIntervalSinceReferenceDate)
+                    let t = date.timeIntervalSinceReferenceDate
+                    advancePlayback(now: t)
+                    if !LiveViewScene.needsFrames(timeline: timeline, replay: replay, now: t, reduceMotion: reduceMotion) {
+                        settleTick &+= 1
+                    }
                 }
             }
             .frame(maxWidth: .infinity)
@@ -53,9 +68,19 @@ struct LiveScreenView: View {
         }
         .padding(EdgeInsets(top: 14, leading: 10, bottom: 10, trailing: 10))
         .card(fill: Theme.well)
-        .onAppear { replay.sync(numbers: timeline.stepNumbers, now: Self.now()) }
-        .onChange(of: timeline.stepNumbers) { _, numbers in
-            replay.sync(numbers: numbers, now: Self.now())
+        .onAppear {
+            replay.sync(numbers: timeline.stepNumbers, now: Self.now())
+            appeared = true
+            reportShown()
+        }
+        .onDisappear {
+            appeared = false
+            reportShown()
+        }
+        .onChange(of: scenePhase) { _, _ in reportShown() }
+        .onChange(of: timeline.stepNumbers) { _, _ in
+            // A step arriving mid-animation continues from where the cursor is.
+            replay = LiveViewScene.synced(replay, timeline: timeline, now: Self.now(), reduceMotion: reduceMotion)
         }
         .onChange(of: timeline.taskId) { _, _ in
             // A new run: follow it live, whatever the last replay was doing.
@@ -66,6 +91,19 @@ struct LiveScreenView: View {
     }
 
     private static func now() -> Double { Date().timeIntervalSinceReferenceDate }
+
+    /// Whether the `TimelineView` is paused: nothing moves, or the app is not active.
+    /// `tick` only makes `body` depend on `settleTick`.
+    private func isPaused(_ tick: Int) -> Bool {
+        guard scenePhase == .active else { return true }
+        return !LiveViewScene.needsFrames(timeline: timeline, replay: replay, now: Self.now(), reduceMotion: reduceMotion)
+    }
+
+    /// Tells the frame store whether this Live view is on screen (a run that ends unwatched
+    /// drops its real-screen frames).
+    private func reportShown() {
+        frames.isShown = appeared && scenePhase == .active
+    }
 
     /// While playing: on to the next step once the shown one has played out.
     private func advancePlayback(now: Double) {
@@ -82,6 +120,7 @@ struct LiveScreenView: View {
     /// The caption dot's colour: acting, failed, waiting on the owner, done.
     private func tone(for scene: LiveViewScene) -> Color {
         if let step = scene.step {
+            if step.state == .stopped { return Theme.textTertiary }
             return step.state.isFailed ? Theme.error : Theme.tally
         }
         switch timeline.activity {
@@ -93,7 +132,7 @@ struct LiveScreenView: View {
             case .failed, .blocked: return Theme.error
             }
         case .acting: return Theme.tally
-        case .idle, .looking, .thinking, .usingTool: return Theme.textTertiary
+        case .idle, .looking, .thinking, .usingTool, .unknown: return Theme.textTertiary
         }
     }
 
@@ -262,11 +301,15 @@ private struct PhoneScreen: View {
     @ViewBuilder private func backdrop(_ mapping: ViewerMapping) -> some View {
         let content = mapping.contentRect.cgRect
         if let image {
+            // Aspect-fit in the screen's rect: never stretched.
+            let fit = mapping.contentRect
+                .aspectFit(ViewerSize(width: Double(image.size.width), height: Double(image.size.height)))
+                .cgRect
             Image(uiImage: image)
                 .resizable()
                 .interpolation(.medium)
-                .frame(width: content.width, height: content.height)
-                .position(x: content.midX, y: content.midY)
+                .frame(width: fit.width, height: fit.height)
+                .position(x: fit.midX, y: fit.midY)
         } else if scene.screen?.source == .locked {
             VStack(spacing: Theme.gapSmall) {
                 Image.decorative(.lock, size: Theme.iconDisplay)
@@ -346,7 +389,7 @@ private struct PhoneScreen: View {
                     .frame(width: Theme.pressRing, height: Theme.pressRing)
                     .position(at)
                 }
-            case .type, .key, .launch, .openURL, .wait:
+            case .type, .key, .launch, .openURL, .wait, .unknown:
                 EmptyView()
             }
         }

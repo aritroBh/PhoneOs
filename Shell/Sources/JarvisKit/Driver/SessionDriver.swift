@@ -95,6 +95,11 @@ public actor SessionDriver {
     private var waitingForUnlock = false
     /// The number of the effect being carried out (names the Live view's frames).
     private var currentEffectNumber = 0
+    /// A Live view frame of the last observation, kept only once the core's answer to that
+    /// observation is known not to be an unlock wait.
+    private var pendingViewerFrame: (key: ViewerFrameKey, frame: CapturedScreenshot)?
+    /// A failed Live view capture was reported (`.note`, once per run).
+    private var viewerFailureNoted = false
 
     /// Creates the session. Throws when the core rejects `memoryJSON` (corrupt or from an
     /// incompatible core); quarantine that memory and retry with `""` (fresh memory).
@@ -166,6 +171,7 @@ public actor SessionDriver {
             let effect = session.step(nowMs: deps.clock.nowMs(), event: event)
             effectCount += 1
             currentEffectNumber = effectCount
+            keepOrDropViewerFrame(answeredWith: effect)
             if parsedRunnerText { reportObservationIssue() }
             emit(.effect(effect, number: effectCount))
             if let progress = try? session.progress() {
@@ -231,27 +237,25 @@ public actor SessionDriver {
         }
     }
 
-    private func observe(screenshot: Bool) async -> Event {
+    /// `forViewer`: the observation answers `Effect.observe` (not an unlock-wait poll), so
+    /// the Live view may get a frame of it.
+    private func observe(screenshot: Bool, forViewer: Bool = true) async -> Event {
         let runner = deps.runner
         let attempts = max(1, configuration.observeAttempts)
-        // The Live view's frames: pixels on every observation, without changing what the
-        // core is given (below).
-        let viewerFrames = configuration.viewerScreenshots ? deps.viewerFrames : nil
-        let forViewerOnly = viewerFrames != nil && !screenshot
-        let requestPixels = screenshot || viewerFrames != nil
         var lastError = "no attempt made"
         for attempt in 1...attempts {
             do {
+                // Exactly what the core asked for, whatever the Live view option says.
                 let observation = try await io(.observe, configuration.observeTimeout) {
-                    try await runner.snapshot(includeScreenshot: requestPixels)
+                    try await runner.snapshot(includeScreenshot: screenshot)
                 }
                 for note in observation.notes { emit(.note(note)) }
-                if let viewerFrames, let frame = observation.screenshot, !observation.deviceLocked {
-                    viewerFrames.put(frame, for: ViewerFrameKey(taskId: task.id, observation: currentEffectNumber))
+                let ref = screenshot ? observation.screenshot.map { deps.screenshots.store($0) } : nil
+                let event = observation.event(screenshot: ref)
+                if forViewer {
+                    await captureViewerFrame(of: observation, coreAsked: screenshot)
                 }
-                // Pixels taken only for the viewer never reach the core or its store.
-                let ref = forViewerOnly ? nil : observation.screenshot.map { deps.screenshots.store($0) }
-                return observation.event(screenshot: ref)
+                return event
             } catch let error where isOurCancellation(error) {
                 return stop(.cancelled)
             } catch {
@@ -387,9 +391,71 @@ public actor SessionDriver {
         switch state {
         case .locked: return .tick
         case .unlocked: return .deviceUnlocked
-        // The runner cannot tell: a fresh observation answers (locked: keep waiting).
-        case .unknown: return await observe(screenshot: false)
+        // The runner cannot tell: a fresh observation answers (locked: keep waiting). No
+        // Live view frame while the session waits for an unlock.
+        case .unknown: return await observe(screenshot: false, forViewer: false)
         }
+    }
+
+    // MARK: - Live view frames
+
+    /// The Live view's store when the option is on and the store takes frames now.
+    private var activeViewerFrames: ViewerFrameStore? {
+        guard configuration.viewerScreenshots, let store = deps.viewerFrames, store.isEnabled else { return nil }
+        return store
+    }
+
+    /// Takes the Live view's pixels of `observation`, best effort, after the observation
+    /// succeeded: never changes the event the core gets, never retried, its own deadline,
+    /// every error ignored (one note per run). Fail closed on the lock: only for an
+    /// observation the runner reported unlocked, outside unlock waits, and only when the
+    /// runner still reports unlocked after the capture. The frame is held until the core's
+    /// answer to this observation is known (`keepOrDropViewerFrame`).
+    private func captureViewerFrame(of observation: RunnerObservation, coreAsked: Bool) async {
+        pendingViewerFrame = nil
+        guard activeViewerFrames != nil, !waitingForUnlock, observation.isKnownUnlocked else { return }
+        let runner = deps.runner
+        // Pixels the core asked for are reused: no second capture.
+        let reused = coreAsked ? observation.screenshot : nil
+        if coreAsked && reused == nil { return }
+        let key = ViewerFrameKey(taskId: task.id, observation: currentEffectNumber)
+        do {
+            let frame = try await io(.viewerScreenshot, configuration.viewerScreenshotTimeout) { () -> CapturedScreenshot? in
+                let taken: CapturedScreenshot?
+                if let reused {
+                    taken = reused
+                } else {
+                    taken = try await runner.viewerScreenshot()
+                }
+                guard let frame = taken else { return nil }
+                // The phone may have locked since the observation: then nothing is kept.
+                guard try await runner.lockState() == .unlocked else { return nil }
+                return frame
+            }
+            if let frame { pendingViewerFrame = (key, frame) }
+        } catch let error where isOurCancellation(error) {
+            return
+        } catch {
+            guard !viewerFailureNoted else { return }
+            viewerFailureNoted = true
+            emit(.note("Live view: the real screen could not be captured (\(describe(error))); the wireframe is shown instead."))
+        }
+    }
+
+    /// The core answered the last observation with `effect`: a held Live view frame is kept
+    /// unless that answer is an unlock wait (or the option was turned off meanwhile).
+    private func keepOrDropViewerFrame(answeredWith effect: Effect) {
+        guard let pending = pendingViewerFrame else { return }
+        pendingViewerFrame = nil
+        guard Self.viewerFrameSurvives(answer: effect) else { return }
+        activeViewerFrames?.put(pending.frame, for: pending.key)
+    }
+
+    /// Whether a Live view frame of an observation is kept when the core answers that
+    /// observation with `answer`: never when the answer is an unlock wait.
+    static func viewerFrameSurvives(answer: Effect) -> Bool {
+        if case .awaitUnlock = answer { return false }
+        return true
     }
 
     private func endUnlockWait() async {

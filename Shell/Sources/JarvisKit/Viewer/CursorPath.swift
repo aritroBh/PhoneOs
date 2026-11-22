@@ -93,7 +93,7 @@ public enum CursorPath {
                           actionMs: clamped(Double(ms), swipeRangeMs))
         case .wait(let ms):
             return Timing(glideMs: 0, actionMs: clamped(Double(ms), waitRangeMs))
-        case .type, .key, .launch, .openURL:
+        case .type, .key, .launch, .openURL, .unknown:
             return Timing(glideMs: 0, actionMs: parkedMs)
         }
     }
@@ -176,17 +176,23 @@ public enum CursorPath {
     }
 
     /// The pose of step `number` of `timeline` at `t` ms (the view's one call per frame).
-    public static func pose(step number: Int, in timeline: ViewerTimeline, atMs t: Double, reduceMotion: Bool = false) -> Pose? {
+    /// `origin` is where the cursor starts (`ReplayState.origin`: where it was when a live
+    /// step interrupted the one before); `nil` starts from `restingPoint(before:in:)`.
+    public static func pose(step number: Int, in timeline: ViewerTimeline, atMs t: Double, from origin: ViewerPoint? = nil,
+                            reduceMotion: Bool = false) -> Pose? {
         guard let step = timeline.step(number: number) else { return nil }
         let size = timeline.screen(for: step)?.size ?? ViewerSize.fallbackPhone
-        let rest = restingPoint(before: number, in: timeline)
+        let rest = origin ?? restingPoint(before: number, in: timeline)
         return pose(step.gesture, from: rest, screen: size, atMs: t, reduceMotion: reduceMotion)
     }
 
-    /// How long replay shows step `number` of `timeline`.
-    public static func playMs(step number: Int, in timeline: ViewerTimeline, reduceMotion: Bool = false) -> Double {
+    /// How long replay shows step `number` of `timeline` (starting at `origin`, see
+    /// `pose(step:in:atMs:from:reduceMotion:)`).
+    public static func playMs(step number: Int, in timeline: ViewerTimeline, from origin: ViewerPoint? = nil,
+                              reduceMotion: Bool = false) -> Double {
         guard let step = timeline.step(number: number) else { return settleMs }
         let size = timeline.screen(for: step)?.size ?? ViewerSize.fallbackPhone
-        return playMs(step.gesture, from: restingPoint(before: number, in: timeline), screen: size, reduceMotion: reduceMotion)
+        return playMs(step.gesture, from: origin ?? restingPoint(before: number, in: timeline), screen: size,
+                      reduceMotion: reduceMotion)
     }
 }

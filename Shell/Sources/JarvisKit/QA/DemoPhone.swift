@@ -68,7 +68,8 @@ public final class DemoPhone: PhoneRunner {
             root: Self.tree(for: page),
             appBundleId: Self.bundleId,
             appName: Self.appName,
-            screenSize: Self.screenSize
+            screenSize: Self.screenSize,
+            lockState: .unlocked
         )
     }
 

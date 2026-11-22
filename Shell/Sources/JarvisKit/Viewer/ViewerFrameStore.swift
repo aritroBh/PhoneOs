@@ -36,6 +36,7 @@ public final class ViewerFrameStore: Sendable {
         var entries: [Entry] = []
         var bytes = 0
         var enabled = true
+        var shown = false
     }
 
     /// At most this many frames are kept (at least 1).
@@ -99,6 +100,26 @@ public final class ViewerFrameStore: Sendable {
 
     /// Encoded bytes held.
     public var byteCount: Int { state.withLock { $0.bytes } }
+
+    /// Whether a Live view showing these frames is on screen now (the run view is up and
+    /// the app is active). The app sets it; nothing else depends on it.
+    public var isShown: Bool {
+        get { state.withLock { $0.shown } }
+        set { state.withLock { $0.shown = newValue } }
+    }
+
+    /// A run ended: when no Live view is on screen (a run started remotely or by a schedule
+    /// that nobody watches), its real-screen frames go now. The wireframe timeline is not
+    /// in here and stays. Returns whether the frames were dropped.
+    @discardableResult
+    public func runEnded() -> Bool {
+        state.withLock { s in
+            guard !s.shown else { return false }
+            s.entries.removeAll()
+            s.bytes = 0
+            return true
+        }
+    }
 
     /// Drops every frame (a new run starts, or the owner turned the option off).
     public func removeAll() {

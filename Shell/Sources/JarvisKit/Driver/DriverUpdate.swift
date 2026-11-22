@@ -54,6 +54,8 @@ public enum IOKind: String, Sendable, Equatable, CaseIterable {
     case awaitUnlock
     /// Telling the owner (`OwnerAttention`).
     case attention
+    /// The Live view's best-effort screenshot (never reported as an IO failure).
+    case viewerScreenshot
 }
 
 /// How a run ended.

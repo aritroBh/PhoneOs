@@ -84,7 +84,8 @@ public final class LoopCtrlRunner: PhoneRunner {
                 screenSize: configuration.screenSize ?? learnedSize.withLock({ $0 }) ?? Size(width: 0, height: 0),
                 orientation: info.orientation,
                 deviceLocked: true,
-                notes: notes
+                notes: notes,
+                lockState: .locked
             )
         }
         let (bundleID, reportedName, orientation) = (info.bundleID, info.name, info.orientation)
@@ -115,8 +116,17 @@ public final class LoopCtrlRunner: PhoneRunner {
             keyboardVisible: keyboardVisible,
             orientation: orientation,
             screenshot: screenshot,
-            notes: notes
+            notes: notes,
+            // `device_info` was read for this observation: unlocked only when it said so.
+            lockState: info.locked == false ? .unlocked : .unknown
         )
+    }
+
+    /// The Live view's screenshot: the `screenshot` call only (no `device_info`, no
+    /// `page_source`). The screen size it may teach is learned as usual.
+    public func viewerScreenshot() async throws -> CapturedScreenshot? {
+        var notes: [String] = []
+        return try await takeScreenshot(notes: &notes)
     }
 
     private func pageSource(notes: inout [String]) async throws -> (String, Bool) {

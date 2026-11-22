@@ -3,8 +3,13 @@ import Foundation
 // The Live view's data: what Jarvis did, step by step, on which screen. Plain values,
 // `Sendable` and `Codable` with explicit, stable keys (snake_case, enums tagged by "kind"),
 // so the timeline can later be streamed as is to the paired remote controller. Nothing in
-// here is raw: typed text is already redacted (`ViewerPrivacy`), URLs are hosts only and
-// element values are never kept.
+// here is raw: screen text went through the core's redaction, typed text is shown only when
+// the core's rules allow it (`ViewerPrivacy`), links are hosts or schemes only and element
+// values are never kept.
+//
+// Forward compatible: a gesture, step state, activity or screen source this reader does not
+// know (from a newer sender) decodes as `.unknown(<its tag>)`, re-encodes with the same tag,
+// and is drawn as neutrally as possible, so one new value never fails the whole timeline.
 
 /// How the viewer tints an element.
 public enum ViewerElementKind: String, Sendable, Equatable, Codable, CaseIterable {
@@ -56,13 +61,43 @@ public struct ViewerElement: Sendable, Equatable, Codable {
 
 /// One observed screen.
 public struct ViewerScreen: Sendable, Equatable, Codable, Identifiable {
-    public enum Source: String, Sendable, Equatable, Codable {
+    public enum Source: Sendable, Equatable, Codable {
         /// A typed tree: the wireframe is available.
         case tree
         /// The runner's text format: no frames, so no wireframe (cursor and caption only).
-        case runnerText = "runner_text"
+        case runnerText
         /// The phone was locked: nothing of the screen is kept.
         case locked
+        /// A source from a newer sender (its tag); drawn like `runnerText`.
+        case unknown(String)
+
+        /// The coding tag.
+        public var tag: String {
+            switch self {
+            case .tree: "tree"
+            case .runnerText: "runner_text"
+            case .locked: "locked"
+            case .unknown(let tag): tag
+            }
+        }
+
+        public init(tag: String) {
+            switch tag {
+            case "tree": self = .tree
+            case "runner_text": self = .runnerText
+            case "locked": self = .locked
+            default: self = .unknown(tag)
+            }
+        }
+
+        public init(from decoder: any Decoder) throws {
+            self.init(tag: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(tag)
+        }
     }
 
     /// Unique within a timeline.
@@ -126,9 +161,12 @@ public enum ViewerGesture: Sendable, Equatable {
     case key(String)
     /// Opening an app (its name, else its bundle id).
     case launch(String)
-    /// Opening a URL: the host only (empty when the URL has none).
+    /// Opening a URL: the host of an `http`/`https` URL, only `<scheme>:` for any other
+    /// scheme, empty when there is neither.
     case openURL(host: String)
     case wait(ms: UInt64)
+    /// A gesture from a newer sender (its kind): no cursor movement, a parked step.
+    case unknown(String)
 
     /// Where the pointer goes down, for pointer gestures.
     public var pressPoint: ViewerPoint? {
@@ -162,6 +200,7 @@ public enum ViewerGesture: Sendable, Equatable {
         case .launch: "launch"
         case .openURL: "open_url"
         case .wait: "wait"
+        case .unknown(let kind): kind
         }
     }
 }
@@ -196,6 +235,8 @@ extension ViewerGesture: Codable {
             try c.encode(host, forKey: .host)
         case .wait(let ms):
             try c.encode(ms, forKey: .ms)
+        case .unknown:
+            break
         }
     }
 
@@ -214,7 +255,7 @@ extension ViewerGesture: Codable {
         case "open_url": self = .openURL(host: try c.decode(String.self, forKey: .host))
         case "wait": self = .wait(ms: try c.decode(UInt64.self, forKey: .ms))
         case let other:
-            throw DecodingError.dataCorruptedError(forKey: .kind, in: c, debugDescription: "unknown gesture \"\(other)\"")
+            self = .unknown(other)
         }
     }
 }
@@ -224,10 +265,25 @@ public enum ViewerStepState: Sendable, Equatable {
     case running
     case done
     case failed(String)
+    /// The run was stopped while the command was in flight: whether the phone did it is not
+    /// known, so nothing is claimed ("Stopped").
+    case stopped
+    /// A state from a newer sender (its tag): neither running nor failed.
+    case unknown(String)
 
     public var isFailed: Bool {
         if case .failed = self { return true }
         return false
+    }
+
+    /// A short word for the state ("Stopped" for a step stopped mid-command), `nil` when
+    /// there is nothing to say (running, done, unknown).
+    public var title: String? {
+        switch self {
+        case .running, .done, .unknown: nil
+        case .failed(let why): why
+        case .stopped: "Stopped"
+        }
     }
 }
 
@@ -239,9 +295,12 @@ extension ViewerStepState: Codable {
         switch self {
         case .running: try c.encode("running", forKey: .kind)
         case .done: try c.encode("done", forKey: .kind)
+        case .stopped: try c.encode("stopped", forKey: .kind)
         case .failed(let error):
             try c.encode("failed", forKey: .kind)
             try c.encode(error, forKey: .error)
+        case .unknown(let tag):
+            try c.encode(tag, forKey: .kind)
         }
     }
 
@@ -250,9 +309,10 @@ extension ViewerStepState: Codable {
         switch try c.decode(String.self, forKey: .kind) {
         case "running": self = .running
         case "done": self = .done
+        case "stopped": self = .stopped
         case "failed": self = .failed(try c.decodeIfPresent(String.self, forKey: .error) ?? "failed")
         case let other:
-            throw DecodingError.dataCorruptedError(forKey: .kind, in: c, debugDescription: "unknown step state \"\(other)\"")
+            self = .unknown(other)
         }
     }
 }
@@ -322,6 +382,9 @@ public enum ViewerActivity: Sendable, Equatable {
     case waitingForAnswer
     case locked
     case finished(ViewerOutcome)
+    /// An activity from a newer sender (its tag, or `finished` with an outcome this reader
+    /// does not know): a neutral caption, the cursor idles.
+    case unknown(String)
 
     /// The pill text (`.acting` shows the step's caption instead).
     public var caption: String {
@@ -335,6 +398,7 @@ public enum ViewerActivity: Sendable, Equatable {
         case .waitingForAnswer: "Waiting for your answer"
         case .locked: "Unlock to continue"
         case .finished(let outcome): outcome.title
+        case .unknown: "Working…"
         }
     }
 
@@ -368,6 +432,8 @@ extension ViewerActivity: Codable {
         case .finished(let outcome):
             try c.encode("finished", forKey: .kind)
             try c.encode(outcome, forKey: .outcome)
+        case .unknown(let tag):
+            try c.encode(tag, forKey: .kind)
         }
     }
 
@@ -382,9 +448,15 @@ extension ViewerActivity: Codable {
         case "waiting_for_approval": self = .waitingForApproval(try c.decode(String.self, forKey: .text))
         case "waiting_for_answer": self = .waitingForAnswer
         case "locked": self = .locked
-        case "finished": self = .finished(try c.decode(ViewerOutcome.self, forKey: .outcome))
+        case "finished":
+            // An outcome this reader does not know reads as an unknown activity.
+            if let outcome = try? c.decode(ViewerOutcome.self, forKey: .outcome) {
+                self = .finished(outcome)
+            } else {
+                self = .unknown("finished")
+            }
         case let other:
-            throw DecodingError.dataCorruptedError(forKey: .kind, in: c, debugDescription: "unknown activity \"\(other)\"")
+            self = .unknown(other)
         }
     }
 }

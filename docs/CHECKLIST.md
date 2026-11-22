@@ -51,7 +51,7 @@ Verified on a macOS runner (Xcode 26.6, iPhone 17 Pro Max simulator, iOS 26.5):
 - [x] Artifacts per step: compact screen, raw tree, screenshot, transcript
 - [x] Green run on an iPhone 17 Pro Max simulator (run 3: 13/13; run 6: 20/21, the lock-mid-task test)
 - [x] App with Workflows + Remote screens builds; lock-mid-task resumes and finishes after the unlock (run 10: 25 of 27)
-- [ ] All 27 green: the two run-10 failures were in the tests and are changed; rerun blocked (Actions jobs are not being started for this private repository, see the PR)
+- [ ] All UI tests green on the Mac. The two run-10 failures were in the tests and are changed. The repository is public now, so the Mac workflow runs on every push again; run 71 stopped in the package tests (a Live view test freed a 5,000-level hand-built tree and overflowed the 512 KB test thread; test changed), next run pending
 
 Waiting for a Mac build (app code changed after `18bc128`, the last commit compiled on a Mac; the JarvisKit side of each change is tested on Linux):
 
@@ -91,8 +91,10 @@ Waiting for a Mac build (app code changed after `18bc128`, the last commit compi
 Watch Jarvis act: a phone-shaped viewer in the run screen shows the screen Jarvis acts on, with a "Jarvis" cursor that glides to each target and shows the tap, long press or swipe, and a caption ("Tap “Send”"). iOS does not let Jarvis (or any app) draw a cursor over other apps, so the viewer lives inside Jarvis; it is not an overlay on the app being driven.
 
 - [x] JarvisKit `Viewer/` (Linux-tested): `PointerTimeline` reducer over the run's events (one step per runner command, the screen it acted on, the element under the pointer as a display aid only, caption, running/done/failed; capped at 200 steps), `CursorPath` (glide, press, drag; clamping, NaN, landscape), `ViewerMapping` (aspect fit, letterbox), `ReplayState` (step, play 1×/2×, scrub, Live without being yanked forward), `LiveViewScene` (what the view draws at a moment). All `Sendable`; the timeline is `Codable` with stable keys for the remote stream
-- [x] Backdrop: wireframe from the typed tree (shown elements, labels and placeholders, never values, at most 400); real screenshots only with "Show real screen in Live view" (off by default): `DriverConfiguration.viewerScreenshots` asks the runner for pixels on every observation and keeps them in `ViewerFrameStore` (memory only, capped by count and bytes, emptied per run and when the option is turned off); the core still gets an `ImageRef` only when it asked; nothing is kept for a locked observation
-- [x] Privacy: typed text comes from the model's (or flow's) action, never the runner command; `{{profile.…}}` values and anything typed into a secure field or a field that cannot be shown to be plain show as `••••` or not at all; URLs show the host only; runner error texts are not kept. Tests assert on the encoded JSON
+- [x] Backdrop: wireframe from the typed tree (shown elements, labels and placeholders, never values, at most 400); real screenshots only with "Show real screen in Live view" (off by default): the core's observation is unchanged (pixels only when the core asks); `DriverConfiguration.viewerScreenshots` adds a separate best-effort `PhoneRunner.viewerScreenshot()` with its own deadline (errors ignored, one note per run, no retry, no effect on failure counts or budgets), reuses pixels the core asked for, and checks the store is enabled on every observation; frames only for an observation the runner reported unlocked and still unlocked after the capture, never in an unlock wait, dropped when the core answers with an unlock wait (a runner that cannot report its lock state gets none); kept in `ViewerFrameStore` (memory only, capped by count and bytes, emptied per run, when the option is turned off, and when a run ends with no Live view on screen)
+- [x] Privacy, decided by the core: every label, placeholder and caption label goes through the core's redaction (`redactScreenText`) before it is kept; typed text comes from the model's (or flow's) action, never the runner command, and is shown only for a field resolved from a typed tree that is not secure and not credential-like (`fieldValueIsHidden`), when the core's redaction leaves it unchanged and it is what was typed (`{{profile.…}}` values masked); otherwise "Type into “<field>”" or "Type text"; never on runner-text screens; links show the host of http(s) URLs, only `<scheme>:` otherwise; runner error texts are not kept. Tests assert on the encoded JSON
+- [x] Forward-compatible decoding: unknown gestures, step states, activities and screen sources decode as `.unknown(<tag>)` and re-encode unchanged; a step stopped mid-command reads "Stopped"
+- [~] App view: `TimelineView` paused unless something moves (`LiveViewScene.needsFrames`), the real screen hidden while the app is not active, screenshots aspect-fit, a live step arriving mid-animation continues from the cursor (`LiveViewScene.synced`). **Not compiled yet**: needs the Mac CI
 - [~] App: `Views/LiveScreenView.swift` (viewer, cursor, ripple, long-press ring, swipe trail, target outline, caption, replay controls; Reduce Motion, VoiceOver, Dynamic Type), Screen / Elements switch on the run screen, the setting in Control. **Not compiled yet**: needs the Mac CI
 - [~] UI test `testLiveViewFollowsAndReplaysDemoTask` (demo run: viewer present, caption changes, step back/forward/Live). **Unverified** until the Mac CI runs it
 - [ ] Check on the Mac: `backward.frame.fill` / `forward.frame.fill` symbols render; Canvas text in small rectangles; the viewer's height on small phones; the workflow run view still shows the element list only
@@ -111,7 +113,8 @@ Watch Jarvis act: a phone-shaped viewer in the run screen shows the screen Jarvi
 - [x] Second review, of that fix itself: 8 more proven defects (4 critical), fixed. An approval is tied to the target's state, its row, the amounts on screen and what the classifier read; summaries name the neighbouring item, the total, on/off
 - [x] Spotlight, widgets and suggestions cannot open a denied app; classifier scans cannot be padded past a risky control
 - [x] Third, fourth and fifth reviews of the approval path: each broke the version before it. The binding is now the raw digest (with what is shown), the compact content in order, the raw node the target comes from, and the category with the full summary; exclusions apply to digest and compaction alike
-- [ ] Sixth review of that binding: in progress. Until a review passes without a critical finding, treat the approval path as not yet proven
+- [x] Sixth and seventh reviews: the binding held under a 200,000-tree property test; the defects were around it (taps landing on a covering control, Return not re-checked, keyboard keys tapped unasked, questions hiding the text sent). Fixed: tap points refuse covered targets by a rule measured on real iOS 26 trees (1 refusal in 108 controls), digest v4 includes layout, questions show what is sent
+- [ ] Eighth review: does not hold. 2 high (a tap on a card can land on a control nested in it; many form fields push the amount and payee out of the question), 4 medium (long note pushes out the payee; Return shows only its own field; scrolled-out recipient missing; `tap_point` on Send hides the text), 1 low (icon-only and synonym send buttons). Fixes in progress, then a ninth pass. Until a review passes without a high finding, treat the approval path as not yet proven
 - [x] Screens read through the third-party runner's text format always ask (the format can be forged by on-screen text)
 - [ ] Typed runner for the device: Jarvis's own XCUITest runner serving typed trees to the app (today it exists only inside the UI test bundle); needed before hands-off use, because the text path now asks before every action
 - [x] Denied apps are refused by display name (home-screen icon, switcher card, `open_app`)
@@ -138,3 +141,14 @@ Watch Jarvis act: a phone-shaped viewer in the run screen shows the screen Jarvi
 - [ ] Vision fallback on device, learned-flow replay on device
 - [ ] Personal eval set (30 tasks)
 - [ ] Hardening: injection tests, audit log, recovery
+
+## Performance (Rust core)
+
+- [ ] Benchmark harness (`jarvis-sim bench`): every stage of a step on the real iOS 26 trees and on 1k–50k-node synthetic trees; prompt size per screen
+- [ ] Budgets and a scaling check enforced in CI
+- [ ] Hotspot fixes from the measurements
+
+## Checks
+
+- [x] `core.yml` and `shell.yml` steps run locally on a clean checkout of the pushed commit before and after every push (GitHub Actions also runs them again now that the repository is public)
+- [x] Core changes are committed only from a clean snapshot that passed fmt, clippy, tests, the iOS check, the scripted eval and both Swift smoke runs

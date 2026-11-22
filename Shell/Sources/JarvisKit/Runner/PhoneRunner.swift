@@ -19,11 +19,21 @@ public protocol PhoneRunner: Sendable {
     /// wait). Runners that cannot tell return `.unknown` (the default); the driver then
     /// relies on `RunnerObservation.deviceLocked` and `RunnerFailure.deviceLocked`.
     func lockState() async throws -> DeviceLockState
+
+    /// A screenshot for the Live view only ("Show real screen in Live view"): the screenshot
+    /// call alone, no tree read. `SessionDriver` calls it best-effort after an observation
+    /// the core asked no pixels for, with its own short deadline; every error is ignored and
+    /// nothing of it reaches the core. Runners that cannot take one return `nil` (the
+    /// default): the Live view shows the wireframe.
+    func viewerScreenshot() async throws -> CapturedScreenshot?
 }
 
 extension PhoneRunner {
     /// Default: the runner cannot tell.
     public func lockState() async throws -> DeviceLockState { .unknown }
+
+    /// Default: no Live view screenshots.
+    public func viewerScreenshot() async throws -> CapturedScreenshot? { nil }
 }
 
 /// The phone's lock state as a runner reports it.
@@ -71,9 +81,17 @@ public struct RunnerObservation: Sendable, Equatable {
     /// The runner reports the phone locked: the tree is of the lock screen and the core
     /// ignores it and waits for an unlock.
     public var deviceLocked: Bool
+    /// The lock state the runner read for this observation: `.unlocked` only when the
+    /// runner positively reported the phone unlocked (LoopCtrl's `device_info`), `.unknown`
+    /// when it cannot tell (the default). The Live view takes real-screen pixels only for a
+    /// known-unlocked observation (`isKnownUnlocked`).
+    public var lockState: DeviceLockState
     /// Things the runner adapter had to assume or default (shown in the driver's updates,
     /// so nothing is guessed silently).
     public var notes: [String]
+
+    /// Not locked, and the runner said so.
+    public var isKnownUnlocked: Bool { !deviceLocked && lockState == .unlocked }
 
     /// An observation carrying the runner's text tree.
     public init(
@@ -85,12 +103,13 @@ public struct RunnerObservation: Sendable, Equatable {
         orientation: Orientation = .portrait,
         screenshot: CapturedScreenshot? = nil,
         deviceLocked: Bool = false,
-        notes: [String] = []
+        notes: [String] = [],
+        lockState: DeviceLockState? = nil
     ) {
         self.init(
             ui: .runnerText(source), appBundleId: appBundleId, appName: appName, screenSize: screenSize,
             keyboardVisible: keyboardVisible, orientation: orientation, screenshot: screenshot,
-            deviceLocked: deviceLocked, notes: notes
+            deviceLocked: deviceLocked, notes: notes, lockState: lockState
         )
     }
 
@@ -104,12 +123,13 @@ public struct RunnerObservation: Sendable, Equatable {
         orientation: Orientation = .portrait,
         screenshot: CapturedScreenshot? = nil,
         deviceLocked: Bool = false,
-        notes: [String] = []
+        notes: [String] = [],
+        lockState: DeviceLockState? = nil
     ) {
         self.init(
             ui: .tree(root), appBundleId: appBundleId, appName: appName, screenSize: screenSize,
             keyboardVisible: keyboardVisible, orientation: orientation, screenshot: screenshot,
-            deviceLocked: deviceLocked, notes: notes
+            deviceLocked: deviceLocked, notes: notes, lockState: lockState
         )
     }
 
@@ -123,8 +143,10 @@ public struct RunnerObservation: Sendable, Equatable {
         orientation: Orientation,
         screenshot: CapturedScreenshot?,
         deviceLocked: Bool = false,
-        notes: [String]
+        notes: [String],
+        lockState: DeviceLockState? = nil
     ) {
+        self.lockState = lockState ?? (deviceLocked ? .locked : .unknown)
         self.ui = ui
         self.appBundleId = appBundleId
         self.appName = appName
@@ -255,5 +277,9 @@ public final class LockCheckingRunner: PhoneRunner {
 
     public func lockState() async throws -> DeviceLockState {
         try await inner.lockState()
+    }
+
+    public func viewerScreenshot() async throws -> CapturedScreenshot? {
+        try await inner.viewerScreenshot()
     }
 }

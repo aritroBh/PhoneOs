@@ -315,6 +315,9 @@ public final class JarvisCoordinator: Sendable {
             Task { await driver.cancel() }
         }
         let apps = await forward.value
+        // Nobody watches this run's Live view (started remotely or by a schedule, or the app
+        // is in the background): its real-screen frames go now; the wireframe stays.
+        viewerFrames.runEnded()
         _ = try? TaskHistoryStore(fileURL: paths.history).append(TaskRecord(task: task, result: result, apps: apps, skill: skill, origin: origin))
         return .finished(task, result)
     }

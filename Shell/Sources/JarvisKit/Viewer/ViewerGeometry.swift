@@ -113,6 +113,17 @@ public struct ViewerRect: Sendable, Equatable, Hashable, Codable {
         hasArea && p.isFinite && p.x >= x && p.x < maxX && p.y >= y && p.y < maxY
     }
 
+    /// Where content of `size` lands when it is fitted into this rectangle keeping its
+    /// aspect ratio, centred (letterboxed, never stretched or cropped). Content without a
+    /// usable size, or a rectangle without area, gives this rectangle.
+    public func aspectFit(_ size: ViewerSize) -> ViewerRect {
+        guard hasArea, size.isUsable else { return self }
+        let scale = min(width / size.width, height / size.height)
+        guard scale.isFinite, scale > 0 else { return self }
+        let w = size.width * scale, h = size.height * scale
+        return ViewerRect(x: x + (width - w) / 2, y: y + (height - h) / 2, width: w, height: h)
+    }
+
     /// The overlap with `other`, `nil` when they do not overlap with a positive area.
     public func intersection(_ other: ViewerRect) -> ViewerRect? {
         guard hasArea, other.hasArea else { return nil }
