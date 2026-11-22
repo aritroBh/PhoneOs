@@ -57,6 +57,21 @@ public struct RawElement: Sendable, Equatable {
         self.children = children
     }
 
+    /// Whether some element in this subtree has focus: `true` / `false` when at least one
+    /// element's focus was readable, `nil` when none was (the runner then cannot tell).
+    public var subtreeFocus: Bool? {
+        var readable = false
+        var stack = [self]
+        while let e = stack.popLast() {
+            if let f = e.hasFocus {
+                readable = true
+                if f { return true }
+            }
+            stack.append(contentsOf: e.children)
+        }
+        return readable ? false : nil
+    }
+
     /// Number of elements in this subtree (itself included).
     public var count: Int {
         children.reduce(1) { $0 + $1.count }

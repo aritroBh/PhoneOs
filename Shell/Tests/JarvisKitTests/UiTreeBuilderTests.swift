@@ -106,6 +106,14 @@ struct UiTreeBuilderTests {
         #expect(!result.keyboardVisible)
     }
 
+    @Test("subtree focus: found, readable but none, unreadable")
+    func subtreeFocus() {
+        #expect(loginSnapshot.subtreeFocus == true)
+        let none = raw(T.window, full, [raw(T.textField, "A", Rect(x: 0, y: 0, width: 10, height: 10), focus: false)])
+        #expect(none.subtreeFocus == false)
+        #expect(raw(T.window, full).subtreeFocus == nil)
+    }
+
     @Test("dumps are readable and carry the raw type numbers")
     func dumps() {
         let result = UiTreeBuilder.build(loginSnapshot, screenSize: Size(width: 393, height: 852))
