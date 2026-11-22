@@ -184,6 +184,7 @@ struct RemoteControlTests {
         try await eventually("the hub to know it") { (try? r.probe?.pendingRequestId()) != nil }
         let id = try #require(try r.probe?.pendingRequestId())
         let device = String(repeating: "0", count: 32)
+        FileHandle.standardError.write(Data("DIAG test took hub id=\(id) seen=\(r.base.owner.confirmCategories)\n".utf8))
 
         // An approval of a never-remote category, even if the hub asked for it: refused.
         r.probe?.injectOnTick.withLock { $0 = [.decide(requestId: id, approved: true, category: .delete, deviceId: device)] }
