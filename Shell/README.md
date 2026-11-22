@@ -8,6 +8,7 @@ depends on it for the runner client, the model client, the stores and the tools.
 ```
 Shell/
 ├─ Package.swift
+├─ project.yml                   XcodeGen: app Jarvis + UI tests JarvisUITests, scheme Jarvis
 ├─ scripts/bootstrap.sh          builds the Rust library, generates the bindings
 ├─ Sources/
 │  ├─ JarvisCoreMissing/         stand-in whose #error says "run bootstrap.sh"
@@ -15,13 +16,22 @@ Shell/
 │  └─ JarvisKit/
 │     ├─ Driver/                 SessionDriver, IORace, DriverUpdate, DriverConfiguration,
 │     │                          HumanGate, MonotonicClock
-│     ├─ Runner/                 PhoneRunner, LoopCtrlRunner, LoopCtrlAPI (every LoopCtrl
-│     │                          string), LoopCtrlRPCClient, LoopCtrlError, RequestSealer
+│     ├─ Runner/                 PhoneRunner (+ ObservedUI), LoopCtrlRunner, LoopCtrlAPI,
+│     │                          LoopCtrlRPCClient, LoopCtrlError, RequestSealer
+│     │  └─ UITree/              RawElement, XCUIElementTypeCode, UiTreeBuilder (snapshot → UiNode)
 │     ├─ Model/                  ModelProvider + ModelCapabilities, OpenAICompatibleModel,
 │     │                          ModelError, ScreenshotAnnotator
 │     ├─ Store/                  MemoryPersisting, FileMemoryStore, ScreenshotStore
 │     ├─ Tools/                  ToolHost, ToolRegistry, ToolSpecs, SampleTools
-│     └─ Support/                JSONValue, HTTPTransport, SessionConfigBuilder
+│     ├─ Support/                JSONValue, HTTPTransport, SessionConfigBuilder
+│     ├─ QA/                     PromptScreen, ScriptedModel (+ ElementQuery, ScriptStep),
+│     │                          Transcript + RecordingModel, FormCaptureServer, DemoPhone
+│     └─ App/                    JarvisSettings (+ Codable mirrors), SettingsStore, TaskHistory,
+│                                MemorySnapshot, HumanPromptBroker, LiveRun, JarvisCoordinator,
+│                                ModelBackendFactory, ConnectionProbe
+├─ App/                          Apple-only, outside Sources/ (never in the Linux build)
+│  ├─ Jarvis/                    SwiftUI app: Design/, Views/, Playground/, Intents/
+│  └─ JarvisUITests/             Runner/ (XCUITestPhoneRunner), Support/ (QA harness), tests
 ├─ Tests/JarvisKitTests/         swift-testing; drives the real Rust core
 ├─ Generated/                    C module + host static library      (gitignored)
 └─ Frameworks/                   JarvisCoreFFI.xcframework (macOS)   (gitignored)
@@ -85,10 +95,10 @@ JARVIS_LINK=host swift test          # tests on macOS link the host static libra
 
 | Protocol | Method(s) | Implementations here |
 |---|---|---|
-| `PhoneRunner` | `snapshot(includeScreenshot:) -> RunnerObservation`, `perform(RunnerCommand) -> RunnerResult` | `LoopCtrlRunner` |
-| `ModelProvider` | `capabilities: ModelCapabilities`, `generate(ModelRequest) -> String` | `OpenAICompatibleModel` |
+| `PhoneRunner` | `snapshot(includeScreenshot:) -> RunnerObservation` (runner text or a typed `UiNode` tree, `ObservedUI`), `perform(RunnerCommand) -> RunnerResult` | `LoopCtrlRunner` (text), `DemoPhone` (typed), `XCUITestPhoneRunner` (typed, UI-test target) |
+| `ModelProvider` | `capabilities: ModelCapabilities`, `generate(ModelRequest) -> String` | `OpenAICompatibleModel`; `ScriptedModel` (QA/demo); wrappers `RecordingModel`, `TappedModel` |
 | `ToolHost` | `toolSpecs()`, `execute(ToolCall) -> ToolResult` (non-throwing) | `ToolRegistry` (+ `SampleTools.clock_now`, `echo`) |
-| `HumanGate` | `confirm(ConfirmRequest) -> Bool`, `answer(String) -> String` | app |
+| `HumanGate` | `confirm(ConfirmRequest) -> Bool`, `answer(String) -> String` | `HumanPromptBroker` (the app's sheets), `QAOwner` (UI tests) |
 | `MemoryPersisting` | `save(String)` | `FileMemoryStore` |
 | `MonotonicClock` | `nowMs() -> UInt64` | `SystemMonotonicClock` (named so it does not shadow `Swift.Clock`) |
 | `RequestSealer` | `seal(body:into:)`, `unseal(body:response:)` | `PlaintextSealer` (pass-through) |
@@ -117,7 +127,7 @@ and retry with `""`. `run() async -> RunResult` never throws. `cancel()` stops t
 
 | Effect | IO | Event on success | Event on error / timeout |
 |---|---|---|---|
-| `observe` | `runner.snapshot` | `observedRunnerText` (screenshot put in `ScreenshotStore`, handle passed) | retried `observeAttempts` times. Then `cancel`, `endReason = .runnerUnavailable` (the core has no "observe failed" event) |
+| `observe` | `runner.snapshot` | `observedRunnerText` for runner text, `observed` for a typed tree (screenshot put in `ScreenshotStore`, handle passed) | retried `observeAttempts` times. Then `cancel`, `endReason = .runnerUnavailable` (the core has no "observe failed" event) |
 | `infer` | `model.generate` | `modelOutput` | `modelFailed(error:)` |
 | `act` | `runner.perform` | `actResult` | `actResult(ok: false, error:)` |
 | `callTool` | `tools.execute` | `toolResult` | `toolResult(ok: false, …)` (timeout) |
@@ -139,6 +149,38 @@ Further guarantees:
 - `step` is synchronous and fast, so the driver calls it directly. File IO runs on a private
   dispatch queue, never on the cooperative pool.
 - The update order is documented on `DriverUpdate` and checked by a test.
+
+## iOS app and simulator QA (written on Linux; first compiled by CI on macOS)
+
+```sh
+cd Shell
+scripts/bootstrap.sh                 # on a Mac: also builds Frameworks/JarvisCoreFFI.xcframework
+xcodegen generate                    # Jarvis.xcodeproj (gitignored)
+xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO
+```
+
+- `project.yml`: app `Jarvis` (`dev.jarvis.app`, `App/Jarvis/`), UI tests `JarvisUITests`
+  (`dev.jarvis.app.uitests`, `App/JarvisUITests/`), shared scheme `Jarvis`, local package `.`
+  (products `JarvisKit`, `JarvisCore`). Both targets use **Swift 5 language mode** with complete
+  concurrency checking as warnings (JarvisKit stays Swift 6): XCTest UI APIs are main-actor
+  bound and this code was never compiled before CI. For a device, fill in `DEVELOPMENT_TEAM`
+  (marked in `project.yml`); a free Apple ID works.
+- The app: tabs Ask / Activity / Apps / Rules over JarvisKit (`AppModel` → `JarvisCoordinator`),
+  the run view (what Jarvis sees, step timeline, Stop), confirmation and question sheets
+  (`HumanPromptBroker`), App Intent `AskJarvisIntent` + `JarvisShortcuts`. Tokens in
+  `App/Jarvis/Design/Theme.swift`, icons in `JarvisIcon`. Launch arguments:
+  `-jarvis-playground` (Playground fixture tab + demo backend: `DemoPhone` and a scripted
+  model, separate data folder), `-jarvis-reset` (fresh settings, memory, history).
+- The model backend is chosen in one place: `ModelBackendKind` / `ModelBackendFactory`.
+- `XCUITestPhoneRunner` (UI-test target) is a `PhoneRunner` over public XCUITest API: it copies
+  `XCUIElementSnapshot` into `RawElement`, and `UiTreeBuilder` (JarvisKit, Linux-tested) makes
+  the typed tree. The QA tests run the real core + `SessionDriver` + `ScriptedModel`, which
+  picks elements by reading the prompt's screen block. Tier A drives the Playground
+  fixtures; Tier B drives Settings, SpringBoard and Safari (form served by
+  `FormCaptureServer` on the shared loopback); `LockScreenProbeTests` gathers evidence about
+  the lock screen. Every observation attaches `<run>/NN-screen.txt`, `NN-tree.txt`, `NN.png`;
+  every run attaches `<run>-transcript.json` and `<run>-result.txt` (`.keepAlways`).
 
 ## Not verified on a device
 

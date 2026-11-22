@@ -195,6 +195,9 @@ echo "$name|$ios_version|$udid" > "$qa/device.txt"
 endgroup
 
 group "boot simulator"
+# The UI tests type through the software keyboard; with a hardware keyboard "connected"
+# the simulator hides it and typing can fail. Set before the Simulator app starts.
+defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false || true
 # bootstatus -b boots the device if needed and returns once it is usable; the watchdog
 # stops a hung boot from eating the whole job timeout.
 boot_timeout=420

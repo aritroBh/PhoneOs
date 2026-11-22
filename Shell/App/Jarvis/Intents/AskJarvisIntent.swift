@@ -5,7 +5,6 @@ import SwiftUI
 /// and the confirmation sheets live there (a risky step must be approved on screen).
 struct AskJarvisIntent: AppIntent {
     static var title: LocalizedStringResource = "Ask Jarvis"
-    static var description = IntentDescription("Give Jarvis a task to do on this iPhone.")
     static var openAppWhenRun: Bool = true
 
     @Parameter(title: "Task", requestValueDialog: "What should Jarvis do?")

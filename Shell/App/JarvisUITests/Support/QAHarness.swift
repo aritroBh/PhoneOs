@@ -63,6 +63,18 @@ final class QAOwner: HumanGate {
     }
 }
 
+/// Prompts (user parts) by the observation number they were built from; written from the
+/// driver's executor, read on the main actor.
+final class PromptLog: Sendable {
+    private let byObservation = Mutex<[Int: [String]]>([:])
+
+    func add(_ user: String, observation: Int) {
+        byObservation.withLock { $0[observation, default: []].append(user) }
+    }
+
+    var all: [Int: [String]] { byObservation.withLock { $0 } }
+}
+
 /// What one QA run produced.
 struct QAOutcome {
     var result: RunResult
@@ -107,7 +119,7 @@ final class QARun {
     let transcript: Transcript
     let runner: XCUITestPhoneRunner
     private weak var testCase: XCTestCase?
-    private let prompts = Mutex<[Int: [String]]>([:])
+    private let prompts = PromptLog()
     private var observationNumbers: [Int] = []
 
     init(name: String, testCase: XCTestCase, runner: XCUITestPhoneRunner = XCUITestPhoneRunner()) {
@@ -136,7 +148,7 @@ final class QARun {
         let prompts = prompts
         let model = RecordingModel(inner, transcript: transcript) { request in
             let n = runner.observationCounter.withLock { $0 }
-            prompts.withLock { $0[n, default: []].append(request.user) }
+            prompts.add(request.user, observation: n)
         }
         let owner = owner ?? QAOwner(transcript: transcript)
         let memory = CapturedMemory()
@@ -212,7 +224,7 @@ final class QARun {
     }
 
     private func attachScreens() {
-        let byObservation = prompts.withLock { $0 }
+        let byObservation = prompts.all
         for number in observationNumbers {
             let n = String(format: "%02d", number)
             let text: String
@@ -244,7 +256,7 @@ class QATestCase: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         continueAfterFailure = false
-        addUIInterruptionMonitor(withDescription: "System alert (logged; the agent handles it)") { [weak self] element in
+        _ = addUIInterruptionMonitor(withDescription: "System alert (logged; the agent handles it)") { [weak self] element in
             let text = element.label
             MainActor.assumeIsolated { self?.currentRun?.recordInterruption(text) }
             return false

@@ -74,6 +74,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
     private var lastActivated: String?
     private var applications: [String: XCUIApplication] = [:]
     private var settlePending = false
+    private var focusNoteGiven = false
 
     init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
@@ -127,7 +128,8 @@ final class XCUITestPhoneRunner: PhoneRunner {
             notes.append("the application element has no frame; screen size taken from UIScreen (\(size.width)x\(size.height))")
         }
         let built = UiTreeBuilder.build(raw, screenSize: size)
-        if raw.hasFocus == nil {
+        if raw.subtreeFocus == nil, !focusNoteGiven {
+            focusNoteGiven = true
             notes.append("keyboard focus is not readable from snapshots on this iOS; focused flags are false")
         }
         let shot = XCUIScreen.main.screenshot()

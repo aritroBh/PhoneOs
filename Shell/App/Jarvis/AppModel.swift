@@ -43,6 +43,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastTask: String?
     /// Whether the run view is up (a run is going or its result is shown).
     @Published var showingRun = false
+    /// A run is going (the composer and suggestions are disabled).
+    @Published private(set) var isRunning = false
 
     let launch: LaunchOptions
     let coordinator: JarvisCoordinator
@@ -70,7 +72,6 @@ final class AppModel: ObservableObject {
         self.history = historyStore.load()
     }
 
-    var isRunning: Bool { runTask != nil }
 
     /// Learned flows by their task key, for the Ask screen and Activity.
     var learnedFlowKeys: [String] { memory.flows.map(\.intentKey) }
@@ -115,10 +116,12 @@ final class AppModel: ObservableObject {
             return outcome
         }
         runTask = task
+        isRunning = true
         Task { @MainActor [weak self] in
             let outcome = await task.value
             guard let self else { return }
             self.runTask = nil
+            self.isRunning = false
             self.broker.cancelAll()
             if case .notStarted(let why) = outcome {
                 self.setupError = why
