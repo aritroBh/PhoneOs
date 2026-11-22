@@ -667,6 +667,7 @@ dependencies = [
 name = "jarvis-viewer"
 version = "0.1.0"
 dependencies = [
+ "jarvis-observe",
  "jarvis-proto",
  "jarvis-safety",
  "serde",

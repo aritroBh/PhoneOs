@@ -31,6 +31,12 @@ fn viewer() -> std::sync::Arc<JarvisViewer> {
 /// shell's driver reports them: `.started`, then per effect `.effect`, `.progress`, the
 /// effect's own update, `.effectCompleted`; `.finished` last. Returns the feed count.
 fn drive_viewer(viewer: &JarvisViewer) -> usize {
+    drive_viewer_with(viewer, |_| {})
+}
+
+/// [`drive_viewer`], calling `on_confirm` with the viewer right after each
+/// `.confirmationPending` was fed.
+fn drive_viewer_with(viewer: &JarvisViewer, mut on_confirm: impl FnMut(&JarvisViewer)) -> usize {
     let session = JarvisSession::new(config(), task(), String::new()).unwrap();
     let mut feeds = 0;
     let mut feed = |u: CoreViewerUpdate| {
@@ -106,6 +112,7 @@ fn drive_viewer(viewer: &JarvisViewer) -> usize {
                 feed(CoreViewerUpdate::ConfirmationPending {
                     request: request.clone(),
                 });
+                on_confirm(viewer);
                 Event::UserDecision { approved: true }
             }
             Effect::Finished { outcome } => {
@@ -355,7 +362,8 @@ fn secrets_on_screen_never_reach_the_records_or_bytes() {
         },
     })
     .unwrap();
-    // Runner text with a secret in its raw source: never parsed, never kept.
+    // Runner text with a secret in its raw source: parsed for approval lookups only, never
+    // kept in the timeline, a screen or the bytes.
     v.feed(CoreViewerUpdate::EffectCompleted {
         effect: Effect::Observe { screenshot: false },
         event: Event::ObservedRunnerText {
@@ -375,4 +383,58 @@ fn secrets_on_screen_never_reach_the_records_or_bytes() {
     for secret in ["482913", "4111 1111", "hunter2", "GB82 WEST"] {
         assert!(!all.contains(secret), "{secret}");
     }
+}
+
+/// The approval sheet's picture: a real session's confirmation on a runner-text screen
+/// outlines the switch the core will tap (indexed as the core indexed it), bound to the
+/// observation the confirmation was computed from; it is gone once the owner answered, and
+/// never in the encoded bytes.
+#[test]
+fn a_confirmation_on_runner_text_outlines_its_target() {
+    let v = viewer();
+    let mut seen = Vec::new();
+    drive_viewer_with(&v, |viewer| {
+        let t = viewer.timeline().unwrap();
+        let target = viewer.approval_target().unwrap();
+        let bytes = String::from_utf8(viewer.encode().unwrap()).unwrap();
+        seen.push((t, target, bytes));
+    });
+    assert!(!seen.is_empty(), "the Wi-Fi switch on runner text is asked");
+    let mut runner_text_confirmations = 0;
+    for (t, target, bytes) in &seen {
+        let target = target.as_ref().expect("a picture while pending");
+        let current = t.current_screen_id.unwrap();
+        assert_eq!(target.screen_id, current);
+        assert_eq!(target.frame_key.task_id, "t1");
+        let info = t.screens.iter().find(|s| s.id == current).unwrap();
+        assert_eq!(info.frame_key.as_ref(), Some(&target.frame_key));
+        // The Wi-Fi row on the typed Settings screen, the switch on the runner-text one.
+        let (frame, label) = if info.source == CoreViewerSource::RunnerText {
+            runner_text_confirmations += 1;
+            ((312.0, 166.0, 51.0, 31.0), "Outlined: Switch")
+        } else {
+            ((16.0, 200.0, 361.0, 44.0), "Outlined: ")
+        };
+        assert_eq!(
+            target.mark,
+            CoreApprovalMark::Outline {
+                frame: rect(frame.0, frame.1, frame.2, frame.3),
+                unit: Rect {
+                    x: frame.0 / 393.0,
+                    y: frame.1 / 852.0,
+                    width: frame.2 / 393.0,
+                    height: frame.3 / 852.0,
+                },
+            }
+        );
+        assert!(
+            target.accessibility_label.starts_with(label),
+            "{}",
+            target.accessibility_label
+        );
+        assert!(!bytes.contains(&target.caption));
+        assert!(!bytes.contains("Outlined"));
+    }
+    assert!(runner_text_confirmations > 0);
+    assert_eq!(v.approval_target().unwrap(), None, "cleared once answered");
 }

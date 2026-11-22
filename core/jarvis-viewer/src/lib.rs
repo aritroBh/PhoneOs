@@ -15,6 +15,8 @@
 //! - [`replay`]: the scrubber (live, step, scrub, play, speed).
 //! - [`scene`]: what the view draws at one moment, and whether it must keep redrawing.
 //! - [`geometry`]: points, sizes, rectangles and the screen → view mapping.
+//! - [`approval`]: the approval sheet's picture of a pending confirmation (the evaluated
+//!   observation's key and the target's frame), never part of the timeline.
 //! - [`live`]: all of the above behind one value ([`LiveView`]): one call per driver
 //!   update, one per drawn frame.
 
@@ -29,6 +31,7 @@
     )
 )]
 
+pub mod approval;
 pub mod cursor;
 pub mod geometry;
 pub mod live;
@@ -39,6 +42,7 @@ pub mod replay;
 pub mod scene;
 pub mod wire;
 
+pub use approval::{ApprovalMark, ApprovalTarget};
 pub use cursor::{Phase, Pose, Timing};
 pub use geometry::{ViewerMapping, ViewerPoint, ViewerRect, ViewerSize};
 pub use live::{Frame, LiveView, ReplayAction, ViewGeometry};

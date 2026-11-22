@@ -80,11 +80,12 @@ pub use session::JarvisSession;
 pub use skills::JarvisSkills;
 pub use types::*;
 pub use viewer::{
-    viewer_wire_version, CoreCursorPhase, CoreLiveScene, CoreReplayAction, CoreReplaySpeed,
-    CoreReplayStatus, CoreSceneQuery, CoreSceneTone, CoreViewerActivity, CoreViewerChange,
-    CoreViewerConfig, CoreViewerElement, CoreViewerElementKind, CoreViewerFrameKey,
-    CoreViewerGesture, CoreViewerOutcome, CoreViewerScreen, CoreViewerScreenInfo, CoreViewerSource,
-    CoreViewerStep, CoreViewerStepState, CoreViewerTimeline, CoreViewerUpdate, JarvisViewer,
+    viewer_wire_version, CoreApprovalMark, CoreApprovalTarget, CoreCursorPhase, CoreLiveScene,
+    CoreReplayAction, CoreReplaySpeed, CoreReplayStatus, CoreSceneQuery, CoreSceneTone,
+    CoreViewerActivity, CoreViewerChange, CoreViewerConfig, CoreViewerElement,
+    CoreViewerElementKind, CoreViewerFrameKey, CoreViewerGesture, CoreViewerOutcome,
+    CoreViewerScreen, CoreViewerScreenInfo, CoreViewerSource, CoreViewerStep, CoreViewerStepState,
+    CoreViewerTimeline, CoreViewerUpdate, JarvisViewer,
 };
 pub use workflows::{
     default_run_limits, resolve_utterance, schedule_is_due, schedule_minutes_since_last,

@@ -15,7 +15,9 @@
 //!   still needed. It syncs the scrubber and advances playback itself.
 //! - **On demand**: `timeline()` (steps and screen summaries, no wireframes), `screen(id:)`
 //!   (one wireframe; screens never change once made, so the shell caches them by id),
-//!   `encode()` (the versioned wire bytes for the remote stream), `replay(action:…)`.
+//!   `encode()` (the versioned wire bytes for the remote stream), `replay(action:…)`,
+//!   `approval_target()` (the approval sheet's picture of the pending confirmation; never
+//!   encoded), fetched when `feed` says it changed.
 //!
 //! Every method runs inside [`guarded`]; a poisoned mutex (a panic that escaped while the
 //! lock was held) resets the viewer to an empty one with the same configuration: losing a
@@ -32,6 +34,7 @@ use jarvis_viewer::{self as v, LiveView, ReducerConfig};
 use crate::convert::event_into_proto;
 use crate::error::JarvisError;
 use crate::guard::guarded;
+use crate::runner::snapshot_to_observation;
 use crate::types::{
     Action, AppInfo, ConfirmRequest, Effect, Event, OutcomeStatus, Point, Rect, SessionProgress,
     Size,
@@ -92,6 +95,41 @@ pub struct CoreViewerChange {
     pub activity: bool,
     /// Bumped by every update that changed something.
     pub generation: u64,
+    /// The approval picture was set, replaced or cleared (`approvalTarget()`).
+    #[uniffi(default = false)]
+    pub approval: bool,
+}
+
+/// What the approval sheet marks on the evaluated screen.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum CoreApprovalMark {
+    /// The target's frame, clipped to the screen: screen points and unit coordinates
+    /// (0…1 of the screen's width and height).
+    Outline { frame: Rect, unit: Rect },
+    /// A `tap_point`: screen points and unit coordinates.
+    Point { point: Point, unit: Point },
+    /// Nothing to mark; the caption says why.
+    Nothing,
+}
+
+/// The approval sheet's picture of the confirmation pending now (`approvalTarget()`).
+/// Never part of the timeline: not encoded, not streamed.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct CoreApprovalTarget {
+    /// The observation the confirmation was computed from (a real-screen frame is shown
+    /// only under exactly this key).
+    pub frame_key: CoreViewerFrameKey,
+    /// That screen in the timeline (`screen(id:)` gives its wireframe).
+    pub screen_id: u32,
+    /// Its size in points, as reported.
+    pub screen_size: Size,
+    /// The confirmation this picture belongs to.
+    pub request: ConfirmRequest,
+    pub mark: CoreApprovalMark,
+    /// One short line under the picture.
+    pub caption: String,
+    /// For VoiceOver ("Outlined: Button 'Pay $512.40'").
+    pub accessibility_label: String,
 }
 
 /// How the viewer tints an element.
@@ -462,10 +500,16 @@ fn effect_for_viewer(e: Effect) -> p::Effect {
     }
 }
 
-/// An event for the viewer: a runner-text snapshot is not parsed (the viewer only reads
-/// its size, app and lock flag), so the raw text is dropped right here.
+/// An event for the viewer. A runner-text snapshot is parsed exactly as for the session
+/// (`snapshot_to_observation`), so a pending confirmation's target is found on the same
+/// tree the core indexed; the viewer holds that tree for approval lookups only (no
+/// wireframe of runner text) and the raw text goes no further. A locked snapshot is not
+/// parsed.
 fn event_for_viewer(e: Event) -> p::Event {
     match e {
+        Event::ObservedRunnerText { snapshot } if !snapshot.device_locked => {
+            p::Event::ObservedRunnerText(snapshot_to_observation(snapshot).0)
+        }
         Event::ObservedRunnerText { snapshot } => {
             let size: p::Size = snapshot.size.into();
             p::Event::ObservedRunnerText(p::Observation {
@@ -621,6 +665,31 @@ fn gesture(g: &v::Gesture) -> CoreViewerGesture {
         v::Gesture::OpenUrl(host) => CoreViewerGesture::OpenUrl { host: host.clone() },
         v::Gesture::Wait(ms) => CoreViewerGesture::Wait { ms: *ms },
         v::Gesture::Unknown(kind) => CoreViewerGesture::Unknown { kind: kind.clone() },
+    }
+}
+
+fn approval_target(a: &v::ApprovalTarget) -> CoreApprovalTarget {
+    CoreApprovalTarget {
+        frame_key: CoreViewerFrameKey {
+            task_id: a.frame_key.task_id.clone(),
+            observation: a.frame_key.observation,
+        },
+        screen_id: a.screen_id,
+        screen_size: size(a.size),
+        request: a.request.clone().into(),
+        mark: match a.mark {
+            v::ApprovalMark::Outline { frame, unit } => CoreApprovalMark::Outline {
+                frame: rect(frame),
+                unit: rect(unit),
+            },
+            v::ApprovalMark::Point { point, unit } => CoreApprovalMark::Point {
+                point: pt(point),
+                unit: pt(unit),
+            },
+            v::ApprovalMark::Nothing => CoreApprovalMark::Nothing,
+        },
+        caption: a.caption.clone(),
+        accessibility_label: a.accessibility_label.clone(),
     }
 }
 
@@ -837,6 +906,7 @@ impl JarvisViewer {
                 screens: change.screens,
                 activity: change.activity,
                 generation: live.generation(),
+                approval: change.approval,
             })
         })
     }
@@ -871,6 +941,15 @@ impl JarvisViewer {
                 info: screen_info(s),
                 elements: s.elements.iter().map(element).collect(),
             }))
+        })
+    }
+
+    /// The approval sheet's picture of the confirmation pending now: the evaluated
+    /// observation's key and screen, and the action's target on it. `None` when no
+    /// confirmation is pending or no unlocked screen was observed. Never encoded.
+    pub fn approval_target(&self) -> Result<Option<CoreApprovalTarget>, JarvisError> {
+        self.with("JarvisViewer.approval_target", |live| {
+            Ok(live.reducer().approval().map(approval_target))
         })
     }
 

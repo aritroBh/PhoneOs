@@ -41,14 +41,22 @@
 //! # Memory
 //!
 //! At most [`MAX_STEPS`] steps; screens no step refers to (other than the current one) are
-//! dropped as soon as that happens; one typed tree (the current screen's) is held for
-//! target lookups.
+//! dropped as soon as that happens; one tree (the current screen's: typed, or parsed
+//! runner text, which is used only for the approval picture) is held for target lookups.
+//!
+//! # Approval picture
+//!
+//! On `ConfirmationPending` the reducer computes [`Reducer::approval`] (see
+//! [`crate::approval`]): the evaluated observation's key, its screen and the proposed
+//! action's target on it. Cleared by the next update of any other kind; never part of the
+//! timeline.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use jarvis_proto as p;
 
+use crate::approval::{self, ApprovalTarget, Evaluated};
 use crate::geometry::{ViewerPoint, ViewerRect, ViewerSize};
 use crate::privacy::{self, LabelCache};
 use crate::prompt::{prompt_elements, PromptElement};
@@ -164,12 +172,14 @@ pub struct Change {
     pub screens: bool,
     /// The activity changed.
     pub activity: bool,
+    /// The approval picture was set, replaced or cleared ([`Reducer::approval`]).
+    pub approval: bool,
 }
 
 impl Change {
     /// Anything changed.
     pub fn any(&self) -> bool {
-        self.steps || self.screens || self.activity
+        self.steps || self.screens || self.activity || self.approval
     }
 }
 
@@ -197,6 +207,16 @@ pub struct Reducer {
     pointer_field: Option<PointerField>,
     /// Display labels already produced (no raw text; see `LabelCache`).
     labels: LabelCache,
+    /// The current (unlocked) screen with a placeholder root, the number of the effect that
+    /// observed it, and whether it is a typed tree: what a pending confirmation was
+    /// evaluated on. Its tree is `tree` (typed) or `text_root` (parsed runner text).
+    evaluated: Option<(p::Screen, u64, bool)>,
+    /// The current runner-text screen's parsed tree: approval lookups only, never drawn.
+    text_root: Option<p::UiNode>,
+    /// The action the core proposed last (`Progress::last_action`).
+    last_action: Option<p::Action>,
+    /// The approval sheet's picture of the confirmation pending now (not in the timeline).
+    approval: Option<ApprovalTarget>,
 }
 
 impl Default for Reducer {
@@ -222,7 +242,96 @@ impl Reducer {
             focused_field: None,
             pointer_field: None,
             labels: LabelCache::new(),
+            evaluated: None,
+            text_root: None,
+            last_action: None,
+            approval: None,
         }
+    }
+
+    /// The approval sheet's picture of the confirmation pending now: set by
+    /// `ConfirmationPending` (when an unlocked screen was observed), cleared by the next
+    /// update of any other kind. Never part of the timeline, so never encoded.
+    pub fn approval(&self) -> Option<&ApprovalTarget> {
+        self.approval.as_ref()
+    }
+
+    /// Computes [`Self::approval`] for `request` on the current screen.
+    fn make_approval(&mut self, request: p::ConfirmRequest) -> Option<ApprovalTarget> {
+        let (mut screen, observation, typed) = self.evaluated.take()?;
+        let screen_id = self.timeline.current_screen_id;
+        let slot = if typed {
+            &mut self.tree
+        } else {
+            &mut self.text_root
+        };
+        let Some(root) = slot.take() else {
+            self.evaluated = Some((screen, observation, typed));
+            return None;
+        };
+        screen.root = root;
+        // The Return part of a `type … submit`: the typing of this core step already ran.
+        let return_pending = matches!(self.last_action, Some(p::Action::Type { submit: true, .. }))
+            && self.core_step.is_some()
+            && self
+                .timeline
+                .steps
+                .iter()
+                .rev()
+                .take_while(|s| s.core_step == self.core_step)
+                .any(|s| matches!(s.gesture, Gesture::Type(_)));
+        let (mark, caption, accessibility_label) = approval::mark_for(
+            &Evaluated {
+                screen: &screen,
+                typed,
+                sight: &self.sight,
+                return_pending,
+            },
+            self.last_action.as_ref(),
+            &mut self.labels,
+        );
+        let size = ViewerSize::from(screen.size);
+        let placeholder = p::UiNode::new(p::Role::Application, screen.size.to_rect());
+        let root = std::mem::replace(&mut screen.root, placeholder);
+        if typed {
+            self.tree = Some(root);
+        } else {
+            self.text_root = Some(root);
+        }
+        self.evaluated = Some((screen, observation, typed));
+        Some(ApprovalTarget {
+            frame_key: FrameKey {
+                task_id: self.timeline.task_id.clone(),
+                observation,
+            },
+            screen_id: screen_id?,
+            size,
+            request,
+            mark,
+            caption,
+            accessibility_label,
+        })
+    }
+
+    /// Remembers `screen` (its tree goes to `tree` or `text_root`) as the current one.
+    fn remember_screen(&mut self, mut screen: p::Screen, typed: bool) {
+        let placeholder = p::UiNode::new(p::Role::Application, screen.size.to_rect());
+        let root = std::mem::replace(&mut screen.root, placeholder);
+        if typed {
+            self.tree = Some(root);
+            self.text_root = None;
+        } else {
+            self.tree = None;
+            self.text_root = Some(root);
+        }
+        self.evaluated = Some((screen, self.effect_number, typed));
+    }
+
+    /// No current screen to evaluate (locked).
+    fn forget_screen(&mut self) {
+        self.tree = None;
+        self.text_root = None;
+        self.evaluated = None;
     }
 
     /// A reducer continuing from a decoded timeline (e.g. on a remote controller). Typing
@@ -261,6 +370,10 @@ impl Reducer {
         let before_screens = self.screens_signature();
         let before_activity = self.timeline.activity.clone();
         let mut steps_touched = false;
+        let had_approval = self.approval.is_some();
+        if !matches!(update, Update::ConfirmationPending(_)) {
+            self.approval = None;
+        }
         match update {
             Update::Started { task_id } => {
                 let config = self.config.clone();
@@ -309,6 +422,7 @@ impl Reducer {
                         steps_touched = true;
                     }
                 }
+                self.last_action.clone_from(&progress.last_action);
                 if let Some(action) = progress.last_action {
                     if self.resolve_pending(action) {
                         steps_touched = true;
@@ -318,6 +432,7 @@ impl Reducer {
             Update::ConfirmationPending(request) => {
                 self.timeline.activity =
                     Activity::WaitingForApproval(risk_category_title(request.category).to_owned());
+                self.approval = self.make_approval(request);
             }
             Update::QuestionPending => self.timeline.activity = Activity::WaitingForAnswer,
             Update::AwaitingUnlock => self.timeline.activity = Activity::Locked,
@@ -326,7 +441,7 @@ impl Reducer {
                 let is_act = matches!(effect, p::Effect::Act(_));
                 match event {
                     p::Event::Observed(observation) => self.ingest_tree(observation),
-                    p::Event::ObservedRunnerText(observation) => self.ingest_text(&observation),
+                    p::Event::ObservedRunnerText(observation) => self.ingest_text(observation),
                     p::Event::ActResult(result) if is_act => {
                         self.complete(&result);
                         steps_touched = true;
@@ -363,6 +478,7 @@ impl Reducer {
             steps: steps_touched || before_steps != self.steps_signature(),
             screens: before_screens != self.screens_signature(),
             activity: before_activity != self.timeline.activity,
+            approval: had_approval || self.approval.is_some(),
         }
     }
 
@@ -413,7 +529,7 @@ impl Reducer {
         } = observation;
         let size = ViewerSize::from(screen.size);
         if device_locked {
-            self.tree = None;
+            self.forget_screen();
             self.focused_field = None;
             self.add_screen(Self::locked_screen(id, size));
             return;
@@ -423,7 +539,7 @@ impl Reducer {
         let focused_input_secure = focused_input_secure(&screen.root);
         let app_name = self.labels.label(screen.app_name.as_deref());
         let bundle_id = privacy::capped(&screen.app_bundle_id, MAX_BUNDLE_ID_CHARACTERS);
-        self.tree = Some(screen.root);
+        self.remember_screen(screen, true);
         let frame_key = self.frame_key();
         self.add_screen(ViewerScreen {
             id,
@@ -438,11 +554,11 @@ impl Reducer {
         });
     }
 
-    fn ingest_text(&mut self, observation: &p::Observation) {
+    fn ingest_text(&mut self, observation: p::Observation) {
         let id = self.take_screen_id();
-        self.tree = None;
+        self.forget_screen();
         self.focused_field = None;
-        let screen = &observation.screen;
+        let screen = observation.screen;
         let size = ViewerSize::from(screen.size);
         if observation.device_locked {
             self.add_screen(Self::locked_screen(id, size));
@@ -450,11 +566,14 @@ impl Reducer {
         }
         let frame_key = self.frame_key();
         let app_name = self.labels.label(screen.app_name.as_deref());
+        let bundle_id = privacy::capped(&screen.app_bundle_id, MAX_BUNDLE_ID_CHARACTERS);
+        // The parsed tree is held for approval lookups only: no wireframe of runner text.
+        self.remember_screen(screen, false);
         self.add_screen(ViewerScreen {
             id,
             size,
             app_name,
-            bundle_id: privacy::capped(&screen.app_bundle_id, MAX_BUNDLE_ID_CHARACTERS),
+            bundle_id,
             source: ScreenSource::RunnerText,
             elements: Vec::new(),
             elements_truncated: false,
