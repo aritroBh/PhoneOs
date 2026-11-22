@@ -41,17 +41,22 @@ final class XCUITestPhoneRunner: PhoneRunner {
         var keyboardWait: TimeInterval
         /// Longest wait for a launched app to reach the foreground.
         var launchWait: TimeInterval
+        /// Put both raw lock readings in every observation's notes and in
+        /// `lockSignalHistory` (the lock tests), not only when they change.
+        var noteLockSignalsEveryObservation: Bool
 
         init(
             knownBundleIds: [String] = XCUITestPhoneRunner.defaultKnownApps,
             settleAfterAction: Duration = .milliseconds(700),
             keyboardWait: TimeInterval = 3,
-            launchWait: TimeInterval = 15
+            launchWait: TimeInterval = 15,
+            noteLockSignalsEveryObservation: Bool = false
         ) {
             self.knownBundleIds = knownBundleIds
             self.settleAfterAction = settleAfterAction
             self.keyboardWait = keyboardWait
             self.launchWait = launchWait
+            self.noteLockSignalsEveryObservation = noteLockSignalsEveryObservation
         }
     }
 
@@ -76,8 +81,12 @@ final class XCUITestPhoneRunner: PhoneRunner {
     private var settlePending = false
     private var focusNoteGiven = false
     private var notifyToken: Int32?
-    private var lockEvidenceSeen: Set<String> = []
+    private var lastLockEvidence: String?
     private var pendingLockNotes: [String] = []
+    private let started = Date()
+    /// Lock readings with the time since the runner was made: every change, and every
+    /// reading with `noteLockSignalsEveryObservation` (for failure messages).
+    private(set) var lockSignalHistory: [String] = []
 
     init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
@@ -110,7 +119,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
             // Give a keyboard that is still animating in time to appear (off the main actor).
             if !(await keyboardIsUp()) { try await Task.sleep(for: .milliseconds(500)) }
         }
-        if await lockStateOnMain() == .locked {
+        if await lockSignals().forCommands == .locked {
             await noteRefusal(command)
             return .deviceLocked("the device is locked; \(Transcript.describe(command)) was not performed")
         }
@@ -142,7 +151,15 @@ final class XCUITestPhoneRunner: PhoneRunner {
             notes.append("the application element has no frame; screen size taken from a screenshot (\(size.width.compactText)x\(size.height.compactText))")
         }
         let built = UiTreeBuilder.build(raw, screenSize: size)
-        let locked = lockVerdict(notify: notifyLockState(), lockScreen: bundleId == Self.springboard ? LockScreenSignature.matches(raw) : nil) == .locked
+        let signals = LockSignals(
+            notify: notifyLockState(),
+            lockScreen: bundleId == Self.springboard ? LockScreenSignature.matches(raw) : nil,
+            front: bundleId == Self.springboard ? .springBoard : .app(bundleId)
+        )
+        record(signals, everyTime: configuration.noteLockSignalsEveryObservation)
+        // The resume rule: a stale notify state must not keep an observation "locked" while
+        // an app or the home screen is in front (commands are still refused on either signal).
+        let locked = signals.forResume == .locked
         notes += pendingLockNotes
         pendingLockNotes = []
         if built.sanitizedFrames > 0 {
@@ -229,35 +246,44 @@ final class XCUITestPhoneRunner: PhoneRunner {
 
     // MARK: - Lock state (main actor)
     //
-    // Two signals, both recorded in the artifacts when first seen:
+    // Two readings, combined by `LockSignals` (JarvisKit, Linux-tested):
     // 1. Darwin notify state of "com.apple.springboard.lockstate" (non-zero = locked),
     //    looked up with dlsym so nothing here depends on how the SDK exposes notify.h;
     //    whether the simulator's notifyd publishes it to the test runner is [unverified].
     // 2. SpringBoard in front showing the lock screen (`LockScreenSignature`, from the
     //    run-16 probe trees).
-    // Locked when either says so; unlocked when one was readable and neither says locked.
+    // Commands are refused when either says locked; `lockState()` (unlock polls and the
+    // lock watch) answers with the resume rule, so a stale reading cannot latch a wait.
+    // Every change of the readings goes into the next observation's notes.
 
     private func lockStateOnMain() -> DeviceLockState {
-        var notes: [String] = []
-        let notify = notifyLockState()
-        var lockScreen: Bool?
-        if foregroundBundleId(notes: &notes) == Self.springboard, let snapshot = try? application(Self.springboard).snapshot() {
-            lockScreen = LockScreenSignature.matches(SnapshotCopy.copy(snapshot))
-        } else {
-            lockScreen = false // an app is in front: the lock screen is not up
-        }
-        return lockVerdict(notify: notify, lockScreen: lockScreen)
+        lockSignals().forResume
     }
 
-    private func lockVerdict(notify: Bool?, lockScreen: Bool?) -> DeviceLockState {
-        let evidence = "lock signals: notify(com.apple.springboard.lockstate)=\(notify.map(String.init) ?? "unavailable"), lock screen=\(lockScreen.map(String.init) ?? "not checked")"
-        if !lockEvidenceSeen.contains(evidence) {
-            lockEvidenceSeen.insert(evidence)
-            pendingLockNotes.append(evidence)
+    /// Reads both signals now.
+    private func lockSignals() -> LockSignals {
+        var notes: [String] = []
+        let front = foregroundBundleId(notes: &notes)
+        let notify = notifyLockState()
+        let signals: LockSignals
+        if front == Self.springboard {
+            let lockScreen = (try? application(Self.springboard).snapshot()).map { LockScreenSignature.matches(SnapshotCopy.copy($0)) }
+            signals = LockSignals(notify: notify, lockScreen: lockScreen, front: .springBoard)
+        } else {
+            signals = LockSignals(notify: notify, lockScreen: nil, front: .app(front))
         }
-        if notify == true || lockScreen == true { return .locked }
-        if notify != nil || lockScreen != nil { return .unlocked }
-        return .unknown
+        record(signals, everyTime: false)
+        return signals
+    }
+
+    private func record(_ signals: LockSignals, everyTime: Bool) {
+        let evidence = signals.description
+        let changed = evidence != lastLockEvidence
+        lastLockEvidence = evidence
+        guard changed || everyTime else { return }
+        pendingLockNotes.append(evidence)
+        let seconds = String(format: "%.1f", Date().timeIntervalSince(started))
+        lockSignalHistory.append("t+\(seconds)s \(evidence)")
     }
 
     private func notifyLockState() -> Bool? {

@@ -37,7 +37,10 @@ final class LockedPhoneAgentTests: QATestCase {
     @MainActor
     func testLockMidTaskWaitsAndResumesAfterUnlock() async throws {
         let app = launchPlayground()
-        let run = makeRun("lock-mid-task")
+        // Both raw lock readings go into every observation's notes for this test.
+        let run = makeRun("lock-mid-task", runner: XCUITestPhoneRunner(
+            configuration: XCUITestPhoneRunner.Configuration(noteLockSignalsEveryObservation: true)
+        ))
         run.runner.noteActivated(Self.appBundleId)
         let transcript = run.transcript
         let scripted = ScriptedModel(steps: PlaygroundAgentTests.toggleScript)
@@ -50,17 +53,28 @@ final class LockedPhoneAgentTests: QATestCase {
                 transcript.record("owner", "unlock: \(SimulatorLock.unlock(returningTo: app))")
             }
         }
-        let outcome = try await run.run(task: "Turn on tips in the playground", model: model)
+        // A lock reading that never clears ends the run as Interrupted after 20 s (the
+        // harness default), and the whole run is capped at 60 s.
+        let outcome = try await run.run(task: "Turn on tips in the playground", model: model, maxDurationMs: 60_000)
         let entries = transcript.entries
+        let history = "lock signal history:\n" + run.runner.lockSignalHistory.joined(separator: "\n")
+
+        // After the unlock the app must be back in front and show the result within 30 s.
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30),
+                      "the Jarvis app is not in front after the unlock (state \(app.state.rawValue))\n\(history)")
+        XCTAssertTrue(app.staticTexts["toggles.status"].waitForExistence(timeout: 30),
+                      "the toggles screen is not showing after the unlock\n\(history)\n\(outcome.explanation)")
+        XCTAssertNotEqual(outcome.result.outcome.status, .interrupted,
+                          "the session stayed in its unlock wait until the limit: a lock reading never cleared\n\(history)\n\(outcome.explanation)")
 
         XCTAssertTrue(entries.contains { $0.kind == "lock" && $0.title.hasPrefix("awaiting unlock") },
-                      "the driver never reported waiting for an unlock\n\(outcome.explanation)")
-        XCTAssertEqual(outcome.result.outcome.status, .success, outcome.explanation)
-        XCTAssertEqual(app.staticTexts["toggles.status"].label, "Tips are on", outcome.explanation)
+                      "the driver never reported waiting for an unlock\n\(history)\n\(outcome.explanation)")
+        XCTAssertEqual(outcome.result.outcome.status, .success, "\(history)\n\(outcome.explanation)")
+        XCTAssertEqual(app.staticTexts["toggles.status"].label, "Tips are on", "\(history)\n\(outcome.explanation)")
 
         // Order: after the wait ended, an observation comes before any command.
         guard let ended = entries.lastIndex(where: { $0.kind == "lock" && $0.title == "unlock wait ended" }) else {
-            XCTFail("the unlock wait never ended\n\(outcome.explanation)")
+            XCTFail("the unlock wait never ended\n\(history)\n\(outcome.explanation)")
             return
         }
         let after = entries[(ended + 1)...]

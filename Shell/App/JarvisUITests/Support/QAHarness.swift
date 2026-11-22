@@ -145,7 +145,12 @@ final class QARun {
         firstUseApproval: Bool = false,
         knownApps: [AppInfo] = KnownApps.common,
         maxSteps: UInt32 = 40,
-        maxDurationMs: UInt64 = 240_000
+        // Under the per-test limit of the CI invocation (180 s by default), so the core ends
+        // a stuck run itself and the artifacts are written.
+        maxDurationMs: UInt64 = 150_000,
+        // A wrong lock signal must end the run as Interrupted within seconds, not after the
+        // core's 30-minute default.
+        maxLockedWaitMs: UInt64 = 20_000
     ) async throws -> QAOutcome {
         let transcript = transcript
         let runner = runner
@@ -168,15 +173,19 @@ final class QARun {
                 policy.firstUseApproval = firstUseApproval
                 policy.maxSteps = maxSteps
                 policy.maxDurationMs = maxDurationMs
+                policy.maxLockedWaitMs = maxLockedWaitMs
             }
         )
         let deps = DriverDependencies(
             runner: runner, model: model, tools: ToolRegistry(), human: owner, memory: memory,
             screenshots: ScreenshotStore()
         )
+        // Every wait is bounded at 30 s or less; lock polls and the lock watch run every
+        // second or faster so a lock (or a wrong lock reading) shows up at once.
         let configuration = DriverConfiguration(
-            observeTimeout: .seconds(45), observeAttempts: 2, actTimeout: .seconds(45),
-            inferTimeout: .seconds(30), humanTimeout: .seconds(60)
+            observeTimeout: .seconds(30), observeAttempts: 2, actTimeout: .seconds(30),
+            inferTimeout: .seconds(30), humanTimeout: .seconds(30),
+            unlockPollInterval: .milliseconds(500), lockWatchInterval: .seconds(1)
         )
         transcript.record("task", "run \(name)", task)
         let driver = try SessionDriver(
