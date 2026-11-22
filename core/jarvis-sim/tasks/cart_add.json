@@ -1,0 +1,12 @@
+{
+  "id": "cart_add",
+  "task": "Add the Wireless Headphones to my cart",
+  "start_app": "shop",
+  "success": "shop.cart.len == 1 && shop.ordered == false",
+  "max_steps": 10,
+  "script": [
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Cell:Wireless Headphones\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Add to Cart\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Added to cart\"}"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "id": "login_hands_over",
+  "task": "Sign in to Acme with alex@example.com",
+  "start_app": "acme",
+  "success": "acme.signed_in == true",
+  "max_steps": 14,
+  "human": {
+    "type_on_ask": [
+      "hunter2"
+    ],
+    "answers": [
+      "I typed the password"
+    ]
+  },
+  "script": [
+    "{\"thought\":\"type\",\"action\":\"type\",\"element\":\"@TextField:Email\",\"text\":\"alex@example.com\"}",
+    "{\"thought\":\"type\",\"action\":\"type\",\"element\":\"@SecureTextField:Password\",\"text\":\"secret\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Sign in\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Signed in\"}"
+  ]
+}

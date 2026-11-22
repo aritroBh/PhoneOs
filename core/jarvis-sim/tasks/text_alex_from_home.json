@@ -1,0 +1,17 @@
+{
+  "id": "text_alex_from_home",
+  "task": "Open Messages and tell Alex I am on my way",
+  "start_app": "home",
+  "success": "messages.thread[\"Alex\"].last == \"on my way\"",
+  "expect_confirm": [
+    "send_message"
+  ],
+  "max_steps": 14,
+  "script": [
+    "{\"thought\":\"open the app\",\"action\":\"open_app\",\"app\":\"Messages\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Cell:Alex\"}",
+    "{\"thought\":\"type\",\"action\":\"type\",\"element\":\"@TextView:Message\",\"text\":\"on my way\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Send\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Sent\"}"
+  ]
+}

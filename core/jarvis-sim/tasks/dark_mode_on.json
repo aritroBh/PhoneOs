@@ -1,0 +1,15 @@
+{
+  "id": "dark_mode_on",
+  "task": "Turn on Dark Mode",
+  "start_app": "settings",
+  "success": "settings.dark == true",
+  "expect_confirm": [
+    "system_setting"
+  ],
+  "max_steps": 12,
+  "script": [
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Cell:Display\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Switch:Dark Mode\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Dark Mode is on\"}"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "id": "bluetooth_off",
+  "task": "Turn off Bluetooth",
+  "start_app": "settings",
+  "success": "settings.bluetooth == false",
+  "expect_confirm": [
+    "system_setting"
+  ],
+  "max_steps": 12,
+  "script": [
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Cell:Bluetooth\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Switch:Bluetooth\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Bluetooth is off\"}"
+  ]
+}

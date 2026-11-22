@@ -6,6 +6,15 @@ version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+# OpenAI-compatible HTTP model client (plain http to a local server; no TLS).
+http = ["dep:ureq"]
+
+[[bin]]
+name = "jarvis-sim"
+path = "src/main.rs"
+
 [dependencies]
 jarvis-proto.workspace = true
 jarvis-observe.workspace = true
@@ -15,6 +24,7 @@ jarvis-agent.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+ureq = { version = "2", default-features = false, optional = true }
 
 [dev-dependencies]
 jarvis-proto = { workspace = true, features = ["test-util"] }

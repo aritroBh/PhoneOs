@@ -1,0 +1,20 @@
+{
+  "id": "text_mom_declined",
+  "task": "Text Mom that I'm running late",
+  "start_app": "messages",
+  "success": "messages.thread[\"Mom\"].last != \"running late\"",
+  "expect_confirm": [
+    "send_message"
+  ],
+  "expect_status": "failed",
+  "max_steps": 12,
+  "human": {
+    "confirm": "decline"
+  },
+  "script": [
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Cell:Mom\"}",
+    "{\"thought\":\"type\",\"action\":\"type\",\"element\":\"@TextView:Message\",\"text\":\"running late\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Send\"}",
+    "{\"thought\":\"cannot finish\",\"action\":\"fail\",\"reason\":\"The owner declined sending the message\"}"
+  ]
+}

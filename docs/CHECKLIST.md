@@ -15,7 +15,7 @@ Updated as work lands. `[x]` = done and verified, `[~]` = written but not verifi
 - [x] `jarvis-safety` (risk classification, gates, deny list, budgets, text hygiene)
 - [x] `jarvis-memory` (learned flows, profile, task log, JSON snapshot)
 - [x] `jarvis-agent` (session state machine, prompts, parser, schema/grammar, router)
-- [ ] `jarvis-sim` (simulated phone, scripted model, HTTP model, eval CLI)
+- [x] `jarvis-sim` (simulated phone, scripted model, HTTP model, eval CLI)
 - [ ] `jarvis-ffi` (UniFFI surface, Swift bindings generate, iOS target check)
 - [x] CI: fmt + clippy + test on Linux
 
