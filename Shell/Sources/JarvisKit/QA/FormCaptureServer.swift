@@ -162,7 +162,12 @@ public final class FormCaptureServer: Sendable {
             guard poll(&pfd, 1, 50) > 0 else { continue }
             if stopped.withLock({ $0 }) { continue }
             let client = accept(listenFD, nil, nil)
-            if client < 0 { continue }
+            if client < 0 {
+                // A persistent failure (for example no file descriptors left) keeps the socket
+                // readable, so without a pause this loop would spin a core.
+                usleep(10_000)
+                continue
+            }
             #if canImport(Darwin)
             var one: Int32 = 1
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
