@@ -24,7 +24,9 @@ if [ "$rc" = 0 ] && [ "${JARVIS_HOST_TEST_DIAGNOSE:-0}" != 1 ]; then
   exit 0
 fi
 
+echo
 echo "::group::per-suite rerun (the whole run exited $rc)"
+swift --version 2>&1 | head -n 2
 swift test list --skip-build 2>/dev/null \
   | sed -n 's/^\(JarvisKitTests\.[A-Za-z0-9_]*\).*/\1/p' | sort -u > "$log.suites"
 echo "suites: $(wc -l < "$log.suites" | tr -d ' ')"
@@ -63,7 +65,8 @@ if [ "$(uname -s)" = Darwin ]; then
   newest="$(ls -t "$reports"/*.ips 2>/dev/null | head -n 1)"
   if [ -n "$newest" ]; then
     echo "::group::crash report $(basename "$newest")"
-    python3 -I - "$newest" <<'PY' | { xcrun swift-demangle 2>/dev/null || cat; }
+    bundle="$(find .build -path '*JarvisKitPackageTests.xctest/Contents/MacOS/JarvisKitPackageTests' -type f 2>/dev/null | head -n 1)"
+    python3 -I - "$newest" "$bundle" <<'PY' | { xcrun swift-demangle 2>/dev/null || cat; }
 import json, subprocess, sys
 
 path = sys.argv[1]
@@ -90,7 +93,8 @@ try:
                if 0 <= f.get("imageIndex", -1) < len(images)
                and "JarvisKit" in images[f["imageIndex"]].get("name", "")][:2]
         for frame in own:
-            binary = images[frame["imageIndex"]].get("path", "")
+            # The report hides the user's path; the script passes the bundle it built.
+            binary = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else images[frame["imageIndex"]].get("path", "")
             at = frame.get("imageOffset", 0)
             print("--- code before image offset 0x%x in %s" % (at, binary))
             try:

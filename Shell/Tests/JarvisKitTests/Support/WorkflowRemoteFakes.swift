@@ -77,7 +77,8 @@ final class AppHarness {
     let runner: WorkflowRunner
 
     init(_ name: String, rules: ScriptedOwner.Rules = ScriptedOwner.Rules(), limits: RunLimits? = nil,
-         libraryNow: @escaping @Sendable () -> Date = Date.init) {
+         libraryNow: @escaping @Sendable () -> Date = Date.init,
+         sleep: (@Sendable (Duration) async throws -> Void)? = nil) {
         dir = scratchDirectory(name)
         owner = ScriptedOwner(rules)
         let paths = JarvisPaths(directory: dir)
@@ -85,7 +86,11 @@ final class AppHarness {
         center = TaskCenter(coordinator: coordinator, broker: owner.broker, settings: { JarvisSettings() })
         skills = SkillLibrary(fileURL: paths.skills)
         library = WorkflowLibrary(fileURL: paths.workflows, skills: skills, now: libraryNow)
-        runner = WorkflowRunner(library: library, center: center, notifier: notifier, limits: limits)
+        if let sleep {
+            runner = WorkflowRunner(library: library, center: center, notifier: notifier, limits: limits, sleep: sleep)
+        } else {
+            runner = WorkflowRunner(library: library, center: center, notifier: notifier, limits: limits)
+        }
     }
 
     /// Stops whatever a test left running (a failed test must not leave a session waiting
