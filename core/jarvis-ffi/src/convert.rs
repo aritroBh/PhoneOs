@@ -6,7 +6,9 @@
 //! Swift as JSON text) are `TryFrom`; everything else is `From`.
 
 use jarvis_proto as p;
+use jarvis_remote as r;
 use jarvis_skills as sk;
+use zeroize::Zeroizing;
 
 use crate::error::JarvisError;
 use crate::runner::snapshot_to_observation;
@@ -1619,5 +1621,1230 @@ impl From<SkillMatch> for sk::SkillMatch {
             missing,
             exact,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Workflows.
+// ---------------------------------------------------------------------------------------
+
+impl From<sk::Weekday> for Weekday {
+    fn from(v: sk::Weekday) -> Self {
+        match v {
+            sk::Weekday::Mon => Weekday::Mon,
+            sk::Weekday::Tue => Weekday::Tue,
+            sk::Weekday::Wed => Weekday::Wed,
+            sk::Weekday::Thu => Weekday::Thu,
+            sk::Weekday::Fri => Weekday::Fri,
+            sk::Weekday::Sat => Weekday::Sat,
+            sk::Weekday::Sun => Weekday::Sun,
+        }
+    }
+}
+
+impl From<Weekday> for sk::Weekday {
+    fn from(v: Weekday) -> Self {
+        match v {
+            Weekday::Mon => sk::Weekday::Mon,
+            Weekday::Tue => sk::Weekday::Tue,
+            Weekday::Wed => sk::Weekday::Wed,
+            Weekday::Thu => sk::Weekday::Thu,
+            Weekday::Fri => sk::Weekday::Fri,
+            Weekday::Sat => sk::Weekday::Sat,
+            Weekday::Sun => sk::Weekday::Sun,
+        }
+    }
+}
+
+impl From<sk::Schedule> for Schedule {
+    fn from(v: sk::Schedule) -> Self {
+        let sk::Schedule { days, hour, minute } = v;
+        Schedule {
+            days: days.into_iter().map(Into::into).collect(),
+            hour,
+            minute,
+        }
+    }
+}
+
+impl From<Schedule> for sk::Schedule {
+    fn from(v: Schedule) -> Self {
+        let Schedule { days, hour, minute } = v;
+        sk::Schedule {
+            days: days.into_iter().map(Into::into).collect(),
+            hour,
+            minute,
+        }
+    }
+}
+
+impl From<sk::Trigger> for Trigger {
+    fn from(v: sk::Trigger) -> Self {
+        match v {
+            sk::Trigger::Manual => Trigger::Manual,
+            sk::Trigger::Phrase { text } => Trigger::Phrase { text },
+            sk::Trigger::Schedule(s) => Trigger::Schedule { schedule: s.into() },
+            sk::Trigger::External { key } => Trigger::External { key },
+        }
+    }
+}
+
+impl From<Trigger> for sk::Trigger {
+    fn from(v: Trigger) -> Self {
+        match v {
+            Trigger::Manual => sk::Trigger::Manual,
+            Trigger::Phrase { text } => sk::Trigger::Phrase { text },
+            Trigger::Schedule { schedule } => sk::Trigger::Schedule(schedule.into()),
+            Trigger::External { key } => sk::Trigger::External { key },
+        }
+    }
+}
+
+impl From<sk::Condition> for Condition {
+    fn from(v: sk::Condition) -> Self {
+        match v {
+            sk::Condition::LastSucceeded => Condition::LastSucceeded,
+            sk::Condition::LastSummaryContains { text } => Condition::LastSummaryContains { text },
+            sk::Condition::OwnerSaidYes => Condition::OwnerSaidYes,
+        }
+    }
+}
+
+impl From<Condition> for sk::Condition {
+    fn from(v: Condition) -> Self {
+        match v {
+            Condition::LastSucceeded => sk::Condition::LastSucceeded,
+            Condition::LastSummaryContains { text } => sk::Condition::LastSummaryContains { text },
+            Condition::OwnerSaidYes => sk::Condition::OwnerSaidYes,
+        }
+    }
+}
+
+impl From<sk::Step> for Step {
+    fn from(v: sk::Step) -> Self {
+        match v {
+            sk::Step::RunSkill { skill_id, args } => Step::RunSkill {
+                skill_id,
+                args: args.into_iter().collect(),
+            },
+            sk::Step::RunTask { text } => Step::RunTask { text },
+            sk::Step::AskOwner { question } => Step::AskOwner { question },
+            sk::Step::Notify { text } => Step::Notify { text },
+            sk::Step::Wait { ms } => Step::Wait { ms },
+            sk::Step::StopUnless { condition } => Step::StopUnless {
+                condition: condition.into(),
+            },
+        }
+    }
+}
+
+impl From<Step> for sk::Step {
+    fn from(v: Step) -> Self {
+        match v {
+            Step::RunSkill { skill_id, args } => sk::Step::RunSkill {
+                skill_id,
+                args: args.into_iter().collect(),
+            },
+            Step::RunTask { text } => sk::Step::RunTask { text },
+            Step::AskOwner { question } => sk::Step::AskOwner { question },
+            Step::Notify { text } => sk::Step::Notify { text },
+            Step::Wait { ms } => sk::Step::Wait { ms },
+            Step::StopUnless { condition } => sk::Step::StopUnless {
+                condition: condition.into(),
+            },
+        }
+    }
+}
+
+impl From<sk::OnFailure> for OnFailure {
+    fn from(v: sk::OnFailure) -> Self {
+        match v {
+            sk::OnFailure::Stop => OnFailure::Stop,
+            sk::OnFailure::Continue => OnFailure::Continue,
+        }
+    }
+}
+
+impl From<OnFailure> for sk::OnFailure {
+    fn from(v: OnFailure) -> Self {
+        match v {
+            OnFailure::Stop => sk::OnFailure::Stop,
+            OnFailure::Continue => sk::OnFailure::Continue,
+        }
+    }
+}
+
+impl From<sk::WorkflowStatus> for WorkflowStatus {
+    fn from(v: sk::WorkflowStatus) -> Self {
+        match v {
+            sk::WorkflowStatus::Succeeded => WorkflowStatus::Succeeded,
+            sk::WorkflowStatus::CompletedWithFailures => WorkflowStatus::CompletedWithFailures,
+            sk::WorkflowStatus::Failed => WorkflowStatus::Failed,
+            sk::WorkflowStatus::Stopped => WorkflowStatus::Stopped,
+            sk::WorkflowStatus::Cancelled => WorkflowStatus::Cancelled,
+            sk::WorkflowStatus::Blocked => WorkflowStatus::Blocked,
+            sk::WorkflowStatus::Interrupted => WorkflowStatus::Interrupted,
+        }
+    }
+}
+
+impl From<WorkflowStatus> for sk::WorkflowStatus {
+    fn from(v: WorkflowStatus) -> Self {
+        match v {
+            WorkflowStatus::Succeeded => sk::WorkflowStatus::Succeeded,
+            WorkflowStatus::CompletedWithFailures => sk::WorkflowStatus::CompletedWithFailures,
+            WorkflowStatus::Failed => sk::WorkflowStatus::Failed,
+            WorkflowStatus::Stopped => sk::WorkflowStatus::Stopped,
+            WorkflowStatus::Cancelled => sk::WorkflowStatus::Cancelled,
+            WorkflowStatus::Blocked => sk::WorkflowStatus::Blocked,
+            WorkflowStatus::Interrupted => sk::WorkflowStatus::Interrupted,
+        }
+    }
+}
+
+impl From<sk::WorkflowOutcome> for WorkflowOutcome {
+    fn from(v: sk::WorkflowOutcome) -> Self {
+        let sk::WorkflowOutcome {
+            status,
+            steps_run,
+            summary,
+            failed_step,
+        } = v;
+        WorkflowOutcome {
+            status: status.into(),
+            steps_run,
+            summary,
+            failed_step,
+        }
+    }
+}
+
+impl From<WorkflowOutcome> for sk::WorkflowOutcome {
+    fn from(v: WorkflowOutcome) -> Self {
+        let WorkflowOutcome {
+            status,
+            steps_run,
+            summary,
+            failed_step,
+        } = v;
+        sk::WorkflowOutcome {
+            status: status.into(),
+            steps_run,
+            summary,
+            failed_step,
+        }
+    }
+}
+
+impl From<sk::Workflow> for Workflow {
+    fn from(v: sk::Workflow) -> Self {
+        let sk::Workflow {
+            id,
+            name,
+            enabled,
+            trigger,
+            steps,
+            on_failure,
+            created_ms,
+            updated_ms,
+            runs,
+            last_run_ms,
+            last_outcome,
+        } = v;
+        Workflow {
+            id,
+            name,
+            enabled,
+            trigger: trigger.into(),
+            steps: steps.into_iter().map(Into::into).collect(),
+            on_failure: on_failure.into(),
+            created_ms,
+            updated_ms,
+            runs,
+            last_run_ms,
+            last_outcome: last_outcome.map(Into::into),
+        }
+    }
+}
+
+impl From<Workflow> for sk::Workflow {
+    fn from(v: Workflow) -> Self {
+        let Workflow {
+            id,
+            name,
+            enabled,
+            trigger,
+            steps,
+            on_failure,
+            created_ms,
+            updated_ms,
+            runs,
+            last_run_ms,
+            last_outcome,
+        } = v;
+        sk::Workflow {
+            id,
+            name,
+            enabled,
+            trigger: trigger.into(),
+            steps: steps.into_iter().map(Into::into).collect(),
+            on_failure: on_failure.into(),
+            created_ms,
+            updated_ms,
+            runs,
+            last_run_ms,
+            last_outcome: last_outcome.map(Into::into),
+        }
+    }
+}
+
+impl From<sk::RunLimits> for RunLimits {
+    fn from(v: sk::RunLimits) -> Self {
+        let sk::RunLimits {
+            max_steps,
+            max_total_ms,
+            max_wait_ms,
+        } = v;
+        RunLimits {
+            max_steps,
+            max_total_ms,
+            max_wait_ms,
+        }
+    }
+}
+
+impl From<RunLimits> for sk::RunLimits {
+    fn from(v: RunLimits) -> Self {
+        let RunLimits {
+            max_steps,
+            max_total_ms,
+            max_wait_ms,
+        } = v;
+        sk::RunLimits {
+            max_steps,
+            max_total_ms,
+            max_wait_ms,
+        }
+    }
+}
+
+impl From<sk::WorkflowEvent> for WorkflowEvent {
+    fn from(v: sk::WorkflowEvent) -> Self {
+        match v {
+            sk::WorkflowEvent::Start => WorkflowEvent::Start,
+            sk::WorkflowEvent::SessionFinished { status, summary } => {
+                WorkflowEvent::SessionFinished {
+                    status: status.into(),
+                    summary,
+                }
+            }
+            sk::WorkflowEvent::OwnerAnswered { yes, text } => {
+                WorkflowEvent::OwnerAnswered { yes, text }
+            }
+            sk::WorkflowEvent::Notified => WorkflowEvent::Notified,
+            sk::WorkflowEvent::WaitElapsed => WorkflowEvent::WaitElapsed,
+            sk::WorkflowEvent::Cancel => WorkflowEvent::Cancel,
+        }
+    }
+}
+
+impl From<WorkflowEvent> for sk::WorkflowEvent {
+    fn from(v: WorkflowEvent) -> Self {
+        match v {
+            WorkflowEvent::Start => sk::WorkflowEvent::Start,
+            WorkflowEvent::SessionFinished { status, summary } => {
+                sk::WorkflowEvent::SessionFinished {
+                    status: status.into(),
+                    summary,
+                }
+            }
+            WorkflowEvent::OwnerAnswered { yes, text } => {
+                sk::WorkflowEvent::OwnerAnswered { yes, text }
+            }
+            WorkflowEvent::Notified => sk::WorkflowEvent::Notified,
+            WorkflowEvent::WaitElapsed => sk::WorkflowEvent::WaitElapsed,
+            WorkflowEvent::Cancel => sk::WorkflowEvent::Cancel,
+        }
+    }
+}
+
+impl From<sk::WorkflowEffect> for WorkflowEffect {
+    fn from(v: sk::WorkflowEffect) -> Self {
+        match v {
+            sk::WorkflowEffect::StartSession { task, skill } => WorkflowEffect::StartSession {
+                task,
+                skill: skill.map(Into::into),
+            },
+            sk::WorkflowEffect::AskOwner { question } => WorkflowEffect::AskOwner { question },
+            sk::WorkflowEffect::Notify { text } => WorkflowEffect::Notify { text },
+            sk::WorkflowEffect::Wait { until_ms } => WorkflowEffect::Wait { until_ms },
+            sk::WorkflowEffect::Finished { outcome } => WorkflowEffect::Finished {
+                outcome: outcome.into(),
+            },
+        }
+    }
+}
+
+impl From<WorkflowEffect> for sk::WorkflowEffect {
+    fn from(v: WorkflowEffect) -> Self {
+        match v {
+            WorkflowEffect::StartSession { task, skill } => sk::WorkflowEffect::StartSession {
+                task,
+                skill: skill.map(Into::into),
+            },
+            WorkflowEffect::AskOwner { question } => sk::WorkflowEffect::AskOwner { question },
+            WorkflowEffect::Notify { text } => sk::WorkflowEffect::Notify { text },
+            WorkflowEffect::Wait { until_ms } => sk::WorkflowEffect::Wait { until_ms },
+            WorkflowEffect::Finished { outcome } => sk::WorkflowEffect::Finished {
+                outcome: outcome.into(),
+            },
+        }
+    }
+}
+
+impl From<sk::Awaiting> for Awaiting {
+    fn from(v: sk::Awaiting) -> Self {
+        match v {
+            sk::Awaiting::Start => Awaiting::Start,
+            sk::Awaiting::Session => Awaiting::Session,
+            sk::Awaiting::Answer => Awaiting::Answer,
+            sk::Awaiting::Notified => Awaiting::Notified,
+            sk::Awaiting::WaitElapsed => Awaiting::WaitElapsed,
+            sk::Awaiting::Nothing => Awaiting::Nothing,
+        }
+    }
+}
+
+impl From<Awaiting> for sk::Awaiting {
+    fn from(v: Awaiting) -> Self {
+        match v {
+            Awaiting::Start => sk::Awaiting::Start,
+            Awaiting::Session => sk::Awaiting::Session,
+            Awaiting::Answer => sk::Awaiting::Answer,
+            Awaiting::Notified => sk::Awaiting::Notified,
+            Awaiting::WaitElapsed => sk::Awaiting::WaitElapsed,
+            Awaiting::Nothing => sk::Awaiting::Nothing,
+        }
+    }
+}
+
+impl From<sk::Resolution> for Resolution {
+    fn from(v: sk::Resolution) -> Self {
+        match v {
+            sk::Resolution::RunWorkflow { workflow_id } => Resolution::RunWorkflow { workflow_id },
+            sk::Resolution::RunSkill(m) => Resolution::RunSkill {
+                skill_match: m.into(),
+            },
+            sk::Resolution::OwnerChoice => Resolution::OwnerChoice,
+            sk::Resolution::NoMatch => Resolution::NoMatch,
+        }
+    }
+}
+
+impl From<Resolution> for sk::Resolution {
+    fn from(v: Resolution) -> Self {
+        match v {
+            Resolution::RunWorkflow { workflow_id } => sk::Resolution::RunWorkflow { workflow_id },
+            Resolution::RunSkill { skill_match } => sk::Resolution::RunSkill(skill_match.into()),
+            Resolution::OwnerChoice => sk::Resolution::OwnerChoice,
+            Resolution::NoMatch => sk::Resolution::NoMatch,
+        }
+    }
+}
+
+impl From<sk::UtteranceMatch> for UtteranceMatch {
+    fn from(v: sk::UtteranceMatch) -> Self {
+        let sk::UtteranceMatch {
+            workflows,
+            skills,
+            resolution,
+        } = v;
+        UtteranceMatch {
+            needs_owner_choice: resolution == sk::Resolution::OwnerChoice,
+            workflows,
+            skills: skills.into_iter().map(Into::into).collect(),
+            resolution: resolution.into(),
+        }
+    }
+}
+
+impl From<UtteranceMatch> for sk::UtteranceMatch {
+    /// `needsOwnerChoice` is derived from `resolution`, so it is not carried back.
+    fn from(v: UtteranceMatch) -> Self {
+        let UtteranceMatch {
+            workflows,
+            skills,
+            resolution,
+            needs_owner_choice: _,
+        } = v;
+        sk::UtteranceMatch {
+            workflows,
+            skills: skills.into_iter().map(Into::into).collect(),
+            resolution: resolution.into(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Remote control.
+// ---------------------------------------------------------------------------------------
+
+/// Parses a device id from Swift (32 hex characters). Anything else is an unknown device.
+pub(crate) fn device_id_from(s: &str) -> Result<r::DeviceId, JarvisError> {
+    r::DeviceId::from_hex(s.trim()).ok_or_else(|| JarvisError::RemoteUnknownDevice {
+        device_id: s.chars().take(64).collect(),
+    })
+}
+
+fn opt_device_id_from(s: Option<String>) -> Result<Option<r::DeviceId>, JarvisError> {
+    s.as_deref().map(device_id_from).transpose()
+}
+
+impl From<r::EntropyError> for EntropyProblem {
+    fn from(v: r::EntropyError) -> Self {
+        match v {
+            r::EntropyError::TooShort => EntropyProblem::TooShort,
+            r::EntropyError::NotRandom => EntropyProblem::NotRandom,
+        }
+    }
+}
+
+impl From<EntropyProblem> for r::EntropyError {
+    fn from(v: EntropyProblem) -> Self {
+        match v {
+            EntropyProblem::TooShort => r::EntropyError::TooShort,
+            EntropyProblem::NotRandom => r::EntropyError::NotRandom,
+        }
+    }
+}
+
+impl From<r::RemotePermissions> for RemotePermissions {
+    fn from(v: r::RemotePermissions) -> Self {
+        let r::RemotePermissions {
+            start_tasks,
+            see_progress,
+            see_screen_text,
+            approve,
+        } = v;
+        RemotePermissions {
+            start_tasks,
+            see_progress,
+            see_screen_text,
+            approve,
+        }
+    }
+}
+
+impl From<RemotePermissions> for r::RemotePermissions {
+    fn from(v: RemotePermissions) -> Self {
+        let RemotePermissions {
+            start_tasks,
+            see_progress,
+            see_screen_text,
+            approve,
+        } = v;
+        r::RemotePermissions {
+            start_tasks,
+            see_progress,
+            see_screen_text,
+            approve,
+        }
+    }
+}
+
+impl From<r::DeviceInfo> for DeviceInfo {
+    fn from(v: r::DeviceInfo) -> Self {
+        let r::DeviceInfo {
+            id,
+            name,
+            permissions,
+            paired_at_ms,
+        } = v;
+        DeviceInfo {
+            id: id.to_hex(),
+            name,
+            permissions: permissions.into(),
+            paired_at_ms,
+        }
+    }
+}
+
+impl TryFrom<DeviceInfo> for r::DeviceInfo {
+    type Error = JarvisError;
+
+    fn try_from(v: DeviceInfo) -> Result<Self, JarvisError> {
+        let DeviceInfo {
+            id,
+            name,
+            permissions,
+            paired_at_ms,
+        } = v;
+        Ok(r::DeviceInfo {
+            id: device_id_from(&id)?,
+            name,
+            permissions: permissions.into(),
+            paired_at_ms,
+        })
+    }
+}
+
+impl From<r::CatalogEntry> for CatalogEntry {
+    fn from(v: r::CatalogEntry) -> Self {
+        let r::CatalogEntry { id, name, summary } = v;
+        CatalogEntry { id, name, summary }
+    }
+}
+
+impl From<CatalogEntry> for r::CatalogEntry {
+    fn from(v: CatalogEntry) -> Self {
+        let CatalogEntry { id, name, summary } = v;
+        r::CatalogEntry { id, name, summary }
+    }
+}
+
+impl From<r::PairingOffer> for PairingOffer {
+    /// Copies the secret out of its zeroizing wrappers (which zeroize on drop); the copy is
+    /// what Swift receives.
+    fn from(v: r::PairingOffer) -> Self {
+        let r::PairingOffer {
+            code,
+            qr_payload,
+            expires_at_ms,
+        } = v;
+        PairingOffer {
+            code: code.as_str().to_owned(),
+            qr_payload: qr_payload.as_str().to_owned(),
+            expires_at_ms,
+        }
+    }
+}
+
+impl From<PairingOffer> for r::PairingOffer {
+    fn from(v: PairingOffer) -> Self {
+        let PairingOffer {
+            code,
+            qr_payload,
+            expires_at_ms,
+        } = v;
+        r::PairingOffer {
+            code: Zeroizing::new(code),
+            qr_payload: Zeroizing::new(qr_payload),
+            expires_at_ms,
+        }
+    }
+}
+
+impl From<r::CloseReason> for CloseReason {
+    fn from(v: r::CloseReason) -> Self {
+        match v {
+            r::CloseReason::AuthFailed => CloseReason::AuthFailed,
+            r::CloseReason::Replayed => CloseReason::Replayed,
+            r::CloseReason::LockedOut => CloseReason::LockedOut,
+            r::CloseReason::HandshakeTimeout => CloseReason::HandshakeTimeout,
+            r::CloseReason::IdleTimeout => CloseReason::IdleTimeout,
+            r::CloseReason::TooManyConnections => CloseReason::TooManyConnections,
+            r::CloseReason::DuplicateConnection => CloseReason::DuplicateConnection,
+            r::CloseReason::TooLarge => CloseReason::TooLarge,
+            r::CloseReason::Revoked => CloseReason::Revoked,
+            r::CloseReason::TooManyDevices => CloseReason::TooManyDevices,
+            r::CloseReason::BadEntropy => CloseReason::BadEntropy,
+            r::CloseReason::PeerClosed => CloseReason::PeerClosed,
+            r::CloseReason::Internal => CloseReason::Internal,
+        }
+    }
+}
+
+impl From<CloseReason> for r::CloseReason {
+    fn from(v: CloseReason) -> Self {
+        match v {
+            CloseReason::AuthFailed => r::CloseReason::AuthFailed,
+            CloseReason::Replayed => r::CloseReason::Replayed,
+            CloseReason::LockedOut => r::CloseReason::LockedOut,
+            CloseReason::HandshakeTimeout => r::CloseReason::HandshakeTimeout,
+            CloseReason::IdleTimeout => r::CloseReason::IdleTimeout,
+            CloseReason::TooManyConnections => r::CloseReason::TooManyConnections,
+            CloseReason::DuplicateConnection => r::CloseReason::DuplicateConnection,
+            CloseReason::TooLarge => r::CloseReason::TooLarge,
+            CloseReason::Revoked => r::CloseReason::Revoked,
+            CloseReason::TooManyDevices => r::CloseReason::TooManyDevices,
+            CloseReason::BadEntropy => r::CloseReason::BadEntropy,
+            CloseReason::PeerClosed => r::CloseReason::PeerClosed,
+            CloseReason::Internal => r::CloseReason::Internal,
+        }
+    }
+}
+
+impl From<r::DenyReason> for DenyReason {
+    fn from(v: r::DenyReason) -> Self {
+        match v {
+            r::DenyReason::NotPermitted => DenyReason::NotPermitted,
+            r::DenyReason::Busy => DenyReason::Busy,
+            r::DenyReason::NotRunning => DenyReason::NotRunning,
+            r::DenyReason::StaleRequest => DenyReason::StaleRequest,
+            r::DenyReason::NotRemotelyApprovable => DenyReason::NotRemotelyApprovable,
+            r::DenyReason::UnknownSkill => DenyReason::UnknownSkill,
+        }
+    }
+}
+
+impl From<DenyReason> for r::DenyReason {
+    fn from(v: DenyReason) -> Self {
+        match v {
+            DenyReason::NotPermitted => r::DenyReason::NotPermitted,
+            DenyReason::Busy => r::DenyReason::Busy,
+            DenyReason::NotRunning => r::DenyReason::NotRunning,
+            DenyReason::StaleRequest => r::DenyReason::StaleRequest,
+            DenyReason::NotRemotelyApprovable => r::DenyReason::NotRemotelyApprovable,
+            DenyReason::UnknownSkill => r::DenyReason::UnknownSkill,
+        }
+    }
+}
+
+impl From<r::ErrorCode> for RemoteErrorCode {
+    fn from(v: r::ErrorCode) -> Self {
+        match v {
+            r::ErrorCode::Malformed => RemoteErrorCode::Malformed,
+            r::ErrorCode::UnknownMessage => RemoteErrorCode::UnknownMessage,
+            r::ErrorCode::RateLimited => RemoteErrorCode::RateLimited,
+            r::ErrorCode::InvalidRequest => RemoteErrorCode::InvalidRequest,
+            r::ErrorCode::TooLarge => RemoteErrorCode::TooLarge,
+        }
+    }
+}
+
+impl From<RemoteErrorCode> for r::ErrorCode {
+    fn from(v: RemoteErrorCode) -> Self {
+        match v {
+            RemoteErrorCode::Malformed => r::ErrorCode::Malformed,
+            RemoteErrorCode::UnknownMessage => r::ErrorCode::UnknownMessage,
+            RemoteErrorCode::RateLimited => r::ErrorCode::RateLimited,
+            RemoteErrorCode::InvalidRequest => r::ErrorCode::InvalidRequest,
+            RemoteErrorCode::TooLarge => r::ErrorCode::TooLarge,
+        }
+    }
+}
+
+impl From<r::AuditEvent> for AuditEvent {
+    fn from(v: r::AuditEvent) -> Self {
+        match v {
+            r::AuditEvent::PairingExpired => AuditEvent::PairingExpired,
+            r::AuditEvent::Paired { name } => AuditEvent::Paired { name },
+            r::AuditEvent::PairingAbandoned => AuditEvent::PairingAbandoned,
+            r::AuditEvent::Connected => AuditEvent::Connected,
+            r::AuditEvent::Closed { reason } => AuditEvent::Closed {
+                reason: reason.into(),
+            },
+            r::AuditEvent::ConnectionRefused { reason } => AuditEvent::ConnectionRefused {
+                reason: reason.into(),
+            },
+            r::AuditEvent::HandshakeFailed { failures } => AuditEvent::HandshakeFailed { failures },
+            r::AuditEvent::PreAuthSuppressed { count, since_ms } => {
+                AuditEvent::PreAuthSuppressed { count, since_ms }
+            }
+            r::AuditEvent::LockedOut { until_ms } => AuditEvent::LockedOut { until_ms },
+            r::AuditEvent::Accepted { request, detail } => AuditEvent::Accepted { request, detail },
+            r::AuditEvent::Denied { request, reason } => AuditEvent::Denied {
+                request,
+                reason: reason.into(),
+            },
+            r::AuditEvent::Rejected { request, code } => AuditEvent::Rejected {
+                request,
+                code: code.into(),
+            },
+            r::AuditEvent::Revoked => AuditEvent::Revoked,
+            r::AuditEvent::PermissionsChanged { permissions } => AuditEvent::PermissionsChanged {
+                permissions: permissions.into(),
+            },
+        }
+    }
+}
+
+impl From<AuditEvent> for r::AuditEvent {
+    fn from(v: AuditEvent) -> Self {
+        match v {
+            AuditEvent::PairingExpired => r::AuditEvent::PairingExpired,
+            AuditEvent::Paired { name } => r::AuditEvent::Paired { name },
+            AuditEvent::PairingAbandoned => r::AuditEvent::PairingAbandoned,
+            AuditEvent::Connected => r::AuditEvent::Connected,
+            AuditEvent::Closed { reason } => r::AuditEvent::Closed {
+                reason: reason.into(),
+            },
+            AuditEvent::ConnectionRefused { reason } => r::AuditEvent::ConnectionRefused {
+                reason: reason.into(),
+            },
+            AuditEvent::HandshakeFailed { failures } => r::AuditEvent::HandshakeFailed { failures },
+            AuditEvent::PreAuthSuppressed { count, since_ms } => {
+                r::AuditEvent::PreAuthSuppressed { count, since_ms }
+            }
+            AuditEvent::LockedOut { until_ms } => r::AuditEvent::LockedOut { until_ms },
+            AuditEvent::Accepted { request, detail } => r::AuditEvent::Accepted { request, detail },
+            AuditEvent::Denied { request, reason } => r::AuditEvent::Denied {
+                request,
+                reason: reason.into(),
+            },
+            AuditEvent::Rejected { request, code } => r::AuditEvent::Rejected {
+                request,
+                code: code.into(),
+            },
+            AuditEvent::Revoked => r::AuditEvent::Revoked,
+            AuditEvent::PermissionsChanged { permissions } => r::AuditEvent::PermissionsChanged {
+                permissions: permissions.into(),
+            },
+        }
+    }
+}
+
+impl From<r::AuditEntry> for AuditEntry {
+    fn from(v: r::AuditEntry) -> Self {
+        let r::AuditEntry {
+            at_ms,
+            conn_id,
+            device_id,
+            event,
+        } = v;
+        AuditEntry {
+            at_ms,
+            conn_id,
+            device_id: device_id.map(|d| d.to_hex()),
+            event: event.into(),
+        }
+    }
+}
+
+impl TryFrom<AuditEntry> for r::AuditEntry {
+    type Error = JarvisError;
+
+    fn try_from(v: AuditEntry) -> Result<Self, JarvisError> {
+        let AuditEntry {
+            at_ms,
+            conn_id,
+            device_id,
+            event,
+        } = v;
+        Ok(r::AuditEntry {
+            at_ms,
+            conn_id,
+            device_id: opt_device_id_from(device_id)?,
+            event: event.into(),
+        })
+    }
+}
+
+impl From<r::HubEffect> for HubEffect {
+    fn from(v: r::HubEffect) -> Self {
+        match v {
+            r::HubEffect::Send { conn_id, bytes } => HubEffect::Send { conn_id, bytes },
+            r::HubEffect::Close { conn_id, reason } => HubEffect::Close {
+                conn_id,
+                reason: reason.into(),
+            },
+            r::HubEffect::StoreChanged => HubEffect::StoreChanged,
+            r::HubEffect::StartTask {
+                task_id,
+                device_id,
+                text,
+            } => HubEffect::StartTask {
+                task_id,
+                device_id: device_id.to_hex(),
+                text,
+            },
+            r::HubEffect::RunSkill {
+                task_id,
+                device_id,
+                id,
+                args,
+            } => HubEffect::RunSkill {
+                task_id,
+                device_id: device_id.to_hex(),
+                id,
+                args: args.into_iter().collect(),
+            },
+            r::HubEffect::RunWorkflow {
+                task_id,
+                device_id,
+                id,
+            } => HubEffect::RunWorkflow {
+                task_id,
+                device_id: device_id.to_hex(),
+                id,
+            },
+            r::HubEffect::CancelTask { device_id, task_id } => HubEffect::CancelTask {
+                device_id: device_id.to_hex(),
+                task_id,
+            },
+            r::HubEffect::Decide {
+                request_id,
+                approved,
+                category,
+                device_id,
+            } => HubEffect::Decide {
+                request_id,
+                approved,
+                category: category.into(),
+                device_id: device_id.to_hex(),
+            },
+            r::HubEffect::DevicePaired { device } => HubEffect::DevicePaired {
+                device: device.into(),
+            },
+            r::HubEffect::Audit { entry } => HubEffect::Audit {
+                entry: entry.into(),
+            },
+        }
+    }
+}
+
+impl TryFrom<HubEffect> for r::HubEffect {
+    type Error = JarvisError;
+
+    fn try_from(v: HubEffect) -> Result<Self, JarvisError> {
+        Ok(match v {
+            HubEffect::Send { conn_id, bytes } => r::HubEffect::Send { conn_id, bytes },
+            HubEffect::Close { conn_id, reason } => r::HubEffect::Close {
+                conn_id,
+                reason: reason.into(),
+            },
+            HubEffect::StoreChanged => r::HubEffect::StoreChanged,
+            HubEffect::StartTask {
+                task_id,
+                device_id,
+                text,
+            } => r::HubEffect::StartTask {
+                task_id,
+                device_id: device_id_from(&device_id)?,
+                text,
+            },
+            HubEffect::RunSkill {
+                task_id,
+                device_id,
+                id,
+                args,
+            } => r::HubEffect::RunSkill {
+                task_id,
+                device_id: device_id_from(&device_id)?,
+                id,
+                args: args.into_iter().collect(),
+            },
+            HubEffect::RunWorkflow {
+                task_id,
+                device_id,
+                id,
+            } => r::HubEffect::RunWorkflow {
+                task_id,
+                device_id: device_id_from(&device_id)?,
+                id,
+            },
+            HubEffect::CancelTask { device_id, task_id } => r::HubEffect::CancelTask {
+                device_id: device_id_from(&device_id)?,
+                task_id,
+            },
+            HubEffect::Decide {
+                request_id,
+                approved,
+                category,
+                device_id,
+            } => r::HubEffect::Decide {
+                request_id,
+                approved,
+                category: category.into(),
+                device_id: device_id_from(&device_id)?,
+            },
+            HubEffect::DevicePaired { device } => r::HubEffect::DevicePaired {
+                device: device.try_into()?,
+            },
+            HubEffect::Audit { entry } => r::HubEffect::Audit {
+                entry: entry.try_into()?,
+            },
+        })
+    }
+}
+
+/// The text remotes with `see_screen_text` get for a screen: built from the compacted,
+/// redacted screen (`jarvis_safety::redact_screen`: secure fields emptied, credential
+/// fields masked, secrets in labels and values masked), one `label: value` item per
+/// element. The hub normalises, redacts again and caps it before sending.
+pub(crate) fn remote_screen_text(screen: &p::Screen) -> String {
+    let safe = jarvis_safety::redact_screen(&jarvis_observe::compact(screen));
+    let mut items: Vec<String> = Vec::new();
+    for e in &safe.elements {
+        let label = e.label.trim();
+        let value = e.value.as_deref().map(str::trim).unwrap_or_default();
+        let item = match (label.is_empty(), value.is_empty()) {
+            (true, true) => continue,
+            (false, true) => label.to_owned(),
+            (true, false) => value.to_owned(),
+            (false, false) => format!("{label}: {value}"),
+        };
+        items.push(item);
+    }
+    items.join(" · ")
+}
+
+impl TryFrom<LocalEvent> for r::LocalEvent {
+    type Error = JarvisError;
+
+    fn try_from(v: LocalEvent) -> Result<Self, JarvisError> {
+        Ok(match v {
+            LocalEvent::SessionStarted { task_id } => r::LocalEvent::SessionStarted { task_id },
+            LocalEvent::Progress { progress, screen } => r::LocalEvent::Progress {
+                progress: progress.try_into()?,
+                screen_text: screen.map(|s| remote_screen_text(&s.into())),
+            },
+            LocalEvent::ConfirmRequested { request } => r::LocalEvent::ConfirmRequested {
+                request: request.into(),
+            },
+            LocalEvent::ConfirmResolved {
+                request_id,
+                approved,
+            } => r::LocalEvent::ConfirmResolved {
+                request_id,
+                approved,
+            },
+            LocalEvent::SessionFinished { task_id, outcome } => r::LocalEvent::SessionFinished {
+                task_id,
+                outcome: outcome.into(),
+            },
+            LocalEvent::DeviceRevoked { device_id } => r::LocalEvent::DeviceRevoked {
+                device_id: device_id_from(&device_id)?,
+            },
+            LocalEvent::PermissionsChanged {
+                device_id,
+                permissions,
+            } => r::LocalEvent::PermissionsChanged {
+                device_id: device_id_from(&device_id)?,
+                permissions: permissions.into(),
+            },
+            LocalEvent::CatalogChanged { skills, workflows } => r::LocalEvent::CatalogChanged {
+                skills: skills.into_iter().map(Into::into).collect(),
+                workflows: workflows.into_iter().map(Into::into).collect(),
+            },
+        })
+    }
+}
+
+impl From<r::ClientMessage> for ClientMessage {
+    fn from(v: r::ClientMessage) -> Self {
+        match v {
+            r::ClientMessage::Hello => ClientMessage::Hello,
+            r::ClientMessage::StartTask { text } => ClientMessage::StartTask { text },
+            r::ClientMessage::RunSkill { id, args } => ClientMessage::RunSkill {
+                id,
+                args: args.into_iter().collect(),
+            },
+            r::ClientMessage::RunWorkflow { id } => ClientMessage::RunWorkflow { id },
+            r::ClientMessage::Cancel => ClientMessage::Cancel,
+            r::ClientMessage::Decision {
+                request_id,
+                approved,
+            } => ClientMessage::Decision {
+                request_id,
+                approved,
+            },
+            r::ClientMessage::Subscribe => ClientMessage::Subscribe,
+            r::ClientMessage::Unsubscribe => ClientMessage::Unsubscribe,
+            r::ClientMessage::ListSkills => ClientMessage::ListSkills,
+            r::ClientMessage::Ping => ClientMessage::Ping,
+        }
+    }
+}
+
+impl From<ClientMessage> for r::ClientMessage {
+    fn from(v: ClientMessage) -> Self {
+        match v {
+            ClientMessage::Hello => r::ClientMessage::Hello,
+            ClientMessage::StartTask { text } => r::ClientMessage::StartTask { text },
+            ClientMessage::RunSkill { id, args } => r::ClientMessage::RunSkill {
+                id,
+                args: args.into_iter().collect(),
+            },
+            ClientMessage::RunWorkflow { id } => r::ClientMessage::RunWorkflow { id },
+            ClientMessage::Cancel => r::ClientMessage::Cancel,
+            ClientMessage::Decision {
+                request_id,
+                approved,
+            } => r::ClientMessage::Decision {
+                request_id,
+                approved,
+            },
+            ClientMessage::Subscribe => r::ClientMessage::Subscribe,
+            ClientMessage::Unsubscribe => r::ClientMessage::Unsubscribe,
+            ClientMessage::ListSkills => r::ClientMessage::ListSkills,
+            ClientMessage::Ping => r::ClientMessage::Ping,
+        }
+    }
+}
+
+impl From<r::ServerMessage> for ServerMessage {
+    fn from(v: r::ServerMessage) -> Self {
+        match v {
+            r::ServerMessage::Welcome {
+                protocol_version,
+                permissions,
+                phone_name,
+                busy,
+            } => ServerMessage::Welcome {
+                protocol_version,
+                permissions: permissions.into(),
+                phone_name,
+                busy,
+            },
+            r::ServerMessage::TaskStarted => ServerMessage::TaskStarted,
+            r::ServerMessage::Progress {
+                step,
+                phase,
+                app,
+                last_action,
+                screen_text,
+                waiting_for_unlock,
+            } => ServerMessage::Progress {
+                step,
+                phase: phase.into(),
+                app,
+                last_action,
+                screen_text,
+                waiting_for_unlock,
+            },
+            r::ServerMessage::ConfirmPending {
+                request_id,
+                category,
+                summary,
+                can_approve,
+            } => ServerMessage::ConfirmPending {
+                request_id,
+                category: category.into(),
+                summary,
+                can_approve,
+            },
+            r::ServerMessage::ConfirmResolved { request_id } => {
+                ServerMessage::ConfirmResolved { request_id }
+            }
+            r::ServerMessage::Finished { status, summary } => ServerMessage::Finished {
+                status: status.into(),
+                summary,
+            },
+            r::ServerMessage::Skills { skills, workflows } => ServerMessage::Skills {
+                skills: skills.into_iter().map(Into::into).collect(),
+                workflows: workflows.into_iter().map(Into::into).collect(),
+            },
+            r::ServerMessage::PermissionsChanged { permissions } => {
+                ServerMessage::PermissionsChanged {
+                    permissions: permissions.into(),
+                }
+            }
+            r::ServerMessage::Denied { reason } => ServerMessage::Denied {
+                reason: reason.into(),
+            },
+            r::ServerMessage::Error { code } => ServerMessage::Error { code: code.into() },
+            r::ServerMessage::Pong => ServerMessage::Pong,
+        }
+    }
+}
+
+impl From<ServerMessage> for r::ServerMessage {
+    fn from(v: ServerMessage) -> Self {
+        match v {
+            ServerMessage::Welcome {
+                protocol_version,
+                permissions,
+                phone_name,
+                busy,
+            } => r::ServerMessage::Welcome {
+                protocol_version,
+                permissions: permissions.into(),
+                phone_name,
+                busy,
+            },
+            ServerMessage::TaskStarted => r::ServerMessage::TaskStarted,
+            ServerMessage::Progress {
+                step,
+                phase,
+                app,
+                last_action,
+                screen_text,
+                waiting_for_unlock,
+            } => r::ServerMessage::Progress {
+                step,
+                phase: phase.into(),
+                app,
+                last_action,
+                screen_text,
+                waiting_for_unlock,
+            },
+            ServerMessage::ConfirmPending {
+                request_id,
+                category,
+                summary,
+                can_approve,
+            } => r::ServerMessage::ConfirmPending {
+                request_id,
+                category: category.into(),
+                summary,
+                can_approve,
+            },
+            ServerMessage::ConfirmResolved { request_id } => {
+                r::ServerMessage::ConfirmResolved { request_id }
+            }
+            ServerMessage::Finished { status, summary } => r::ServerMessage::Finished {
+                status: status.into(),
+                summary,
+            },
+            ServerMessage::Skills { skills, workflows } => r::ServerMessage::Skills {
+                skills: skills.into_iter().map(Into::into).collect(),
+                workflows: workflows.into_iter().map(Into::into).collect(),
+            },
+            ServerMessage::PermissionsChanged { permissions } => {
+                r::ServerMessage::PermissionsChanged {
+                    permissions: permissions.into(),
+                }
+            }
+            ServerMessage::Denied { reason } => r::ServerMessage::Denied {
+                reason: reason.into(),
+            },
+            ServerMessage::Error { code } => r::ServerMessage::Error { code: code.into() },
+            ServerMessage::Pong => r::ServerMessage::Pong,
+        }
+    }
+}
+
+impl From<r::ClientEvent> for ClientEvent {
+    /// `paired` copies the credentials JSON out of its zeroizing wrapper.
+    fn from(v: r::ClientEvent) -> Self {
+        match v {
+            r::ClientEvent::Send { bytes } => ClientEvent::Send { bytes },
+            r::ClientEvent::Paired { credentials } => ClientEvent::Paired {
+                device_id: credentials.device_id.to_hex(),
+                credentials_json: credentials.to_json().as_str().to_owned(),
+            },
+            r::ClientEvent::Connected => ClientEvent::Connected,
+            r::ClientEvent::Message(m) => ClientEvent::Message { message: m.into() },
+            r::ClientEvent::Undecodable(e) => ClientEvent::Undecodable {
+                reason: e.to_string(),
+            },
+        }
+    }
+}
+
+impl TryFrom<ClientEvent> for r::ClientEvent {
+    type Error = JarvisError;
+
+    /// `undecodable` comes back as `MessageError::Malformed` with the reason text.
+    fn try_from(v: ClientEvent) -> Result<Self, JarvisError> {
+        Ok(match v {
+            ClientEvent::Send { bytes } => r::ClientEvent::Send { bytes },
+            ClientEvent::Paired {
+                device_id: _,
+                credentials_json,
+            } => {
+                let json = Zeroizing::new(credentials_json);
+                r::ClientEvent::Paired {
+                    credentials: r::ClientCredentials::from_json(&json)
+                        .map_err(crate::remote::persist_error)?,
+                }
+            }
+            ClientEvent::Connected => r::ClientEvent::Connected,
+            ClientEvent::Message { message } => r::ClientEvent::Message(message.into()),
+            ClientEvent::Undecodable { reason } => {
+                r::ClientEvent::Undecodable(r::MessageError::Malformed(reason))
+            }
+        })
     }
 }

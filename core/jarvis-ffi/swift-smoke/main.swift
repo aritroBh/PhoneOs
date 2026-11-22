@@ -589,5 +589,193 @@ do {
     check("lock awareness checks", false, "\(error)")
 }
 
+// 10. Workflows: the store, utterance resolution and a short run driven end to end.
+do {
+    let skills = try JarvisSkills(json: "")
+    _ = try skills.upsert(skill: Skill(id: "wifi-off", name: "Wi-Fi off", summary: "", kind: .written,
+                                       triggers: ["turn off wi-fi"], instructions: "Use the switch.",
+                                       apps: [settingsBundle], confineToApps: true, params: [],
+                                       flowKeys: [], enabled: true, createdMs: 1, updatedMs: 1,
+                                       runs: 0, lastRunMs: nil))
+    let workflows = try JarvisWorkflows(json: "")
+    let morning = Workflow(id: "morning", name: "Morning", enabled: true,
+                           trigger: .phrase(text: "good morning"),
+                           steps: [.runSkill(skillId: "wifi-off", args: [:]),
+                                   .askOwner(question: "Tell me when done?"),
+                                   .stopUnless(condition: .ownerSaidYes),
+                                   .notify(text: "Wi-Fi is off")],
+                           onFailure: .continue, createdMs: 0, updatedMs: 0, runs: 0,
+                           lastRunMs: nil, lastOutcome: nil)
+    check("JarvisWorkflows.upsert inserts", try workflows.upsert(workflow: morning, nowMs: 10))
+    check("no warnings for a workflow whose skills exist",
+          try workflows.warnings(workflow: morning, skills: skills).isEmpty)
+    var broken = morning
+    broken.steps = [.runSkill(skillId: "missing", args: [:])]
+    check("a step naming a missing skill is a warning",
+          try workflows.warnings(workflow: broken, skills: skills).count == 1)
+    broken.steps = []
+    do {
+        _ = try workflows.upsert(workflow: broken, nowMs: 11)
+        check("a workflow without steps throws InvalidWorkflow", false, "accepted")
+    } catch JarvisError.InvalidWorkflow {
+        check("a workflow without steps throws InvalidWorkflow", true)
+    }
+    let resolved = try resolveUtterance(skills: skills, workflows: workflows, text: "Good morning")
+    check("resolveUtterance prefers the exact workflow phrase",
+          resolved.resolution == .runWorkflow(workflowId: "morning") && !resolved.needsOwnerChoice,
+          "\(resolved)")
+
+    let run = try JarvisWorkflowRun(workflow: morning, limits: try defaultRunLimits())
+    var effect = try run.step(nowMs: 100, event: .start, skills: skills)
+    if case let .startSession(task, skill) = effect {
+        check("a skill step starts a session with its SkillContext",
+              task == "turn off wi-fi" && skill?.id == "wifi-off" && skill?.confineToApps == true,
+              "\(effect)")
+    } else {
+        check("a skill step starts a session with its SkillContext", false, "\(effect)")
+    }
+    do {
+        _ = try run.step(nowMs: 101, event: .notified, skills: skills)
+        check("a wrong answer throws WorkflowProtocol", false, "accepted")
+    } catch let JarvisError.WorkflowProtocol(got, expected) {
+        check("a wrong answer throws WorkflowProtocol and changes nothing",
+              try got == "notified" && expected == "session_finished" && (try run.awaiting()) == .session,
+              "\(got) \(expected)")
+    }
+    effect = try run.step(nowMs: 200, event: .sessionFinished(status: .success, summary: "Wi-Fi off"),
+                          skills: skills)
+    check("then the question", effect == .askOwner(question: "Tell me when done?"), "\(effect)")
+    effect = try run.step(nowMs: 300, event: .ownerAnswered(yes: true, text: ""), skills: skills)
+    check("a yes passes stopUnless(ownerSaidYes)", effect == .notify(text: "Wi-Fi is off"), "\(effect)")
+    effect = try run.step(nowMs: 400, event: .notified, skills: skills)
+    if case let .finished(outcome) = effect {
+        check("the run succeeds", outcome.status == .succeeded && outcome.stepsRun == 4, "\(outcome)")
+        try workflows.recordRun(id: "morning", nowMs: 400, outcome: outcome)
+        let reloaded = try JarvisWorkflows(json: try workflows.toJson())
+        check("recordRun survives a JSON round trip",
+              try reloaded.get(id: "morning")?.runs == 1 && (try reloaded.loadIssues()).isEmpty)
+    } else {
+        check("the run succeeds", false, "\(effect)")
+    }
+    do {
+        _ = try weekdayFromIndex(index: 7)
+        check("weekday 7 throws InvalidSchedule", false, "accepted")
+    } catch JarvisError.InvalidSchedule {
+        check("weekday 7 throws InvalidSchedule", true)
+    }
+} catch {
+    check("workflow checks", false, "\(error)")
+}
+
+// 11. Remote control: pair, reconnect and start a task between a hub and a client in-process.
+do {
+    func entropy() -> Data {
+        var g = SystemRandomNumberGenerator()
+        return Data((0..<32).map { _ in UInt8.random(in: 0...255, using: &g) })
+    }
+    let hub = try JarvisRemoteHub(storeJson: "", phoneName: "Smoke phone")
+    do {
+        _ = try hub.openPairing(nowMs: 1, entropy: Data(count: 32))
+        check("all-zero entropy throws RemoteEntropy", false, "accepted")
+    } catch let JarvisError.RemoteEntropy(problem) {
+        check("all-zero entropy throws RemoteEntropy(.notRandom)", problem == .notRandom)
+    }
+    var keychain = ""
+    var log: [HubEffect] = []
+    var now: UInt64 = 1_000
+    // Carries out hub effects in order; returns the bytes for the client.
+    func apply(_ fx: [HubEffect]) throws -> [Data] {
+        var out: [Data] = []
+        for e in fx {
+            switch e {
+            case let .send(_, bytes): out.append(bytes)
+            case .storeChanged: keychain = try hub.toJson(); log.append(e)
+            default: log.append(e)
+            }
+        }
+        return out
+    }
+    func pump(_ conn: UInt64, _ client: JarvisRemoteClient, _ first: [Data]) throws -> [ClientEvent] {
+        var toClient = first
+        var seen: [ClientEvent] = []
+        for _ in 0..<50 {
+            var toPhone: [Data] = []
+            for bytes in toClient {
+                for ev in try client.receive(bytes: bytes) {
+                    if case let .send(b) = ev { toPhone.append(b) } else { seen.append(ev) }
+                }
+            }
+            toClient = []
+            if toPhone.isEmpty { break }
+            for b in toPhone {
+                now += 10
+                toClient += try apply(try hub.receive(connId: conn, bytes: b, nowMs: now))
+            }
+        }
+        return seen
+    }
+    func messages(_ events: [ClientEvent]) -> [ServerMessage] {
+        events.compactMap { if case let .message(m) = $0 { return m } else { return nil } }
+    }
+
+    let offer = try hub.openPairing(nowMs: now, entropy: entropy())
+    check("a pairing offer has a 39-character code", offer.code.count == 39 && offer.qrPayload.hasPrefix("jarvis-remote:2:"))
+    let pairing = try JarvisRemoteClient.pair(code: offer.code, deviceName: "Smoke Mac", entropy: entropy())
+    now += 10
+    var events = try pump(1, pairing, try apply(try hub.connectionOpened(connId: 1, nowMs: now, entropy: entropy())))
+    let credentials = events.compactMap { e -> String? in
+        if case let .paired(_, json) = e { return json } else { return nil }
+    }.first
+    let devices = try hub.devices()
+    check("pairing over the in-process protocol", try credentials != nil && devices.count == 1
+          && devices.first?.name == "Smoke Mac" && (try pairing.isConnected()), "\(devices)")
+    check("the store was persisted on storeChanged", keychain.contains(devices.first?.id ?? "?"))
+    check("a new device gets the new-device permissions",
+          devices.first?.permissions == (try newDeviceRemotePermissions()))
+
+    now += 10
+    _ = try apply(try hub.connectionClosed(connId: 1, nowMs: now))
+    let client = try JarvisRemoteClient.connect(credentialsJson: credentials ?? "", entropy: entropy())
+    now += 10
+    events = try pump(2, client, try apply(try hub.connectionOpened(connId: 2, nowMs: now, entropy: entropy())))
+    check("reconnecting with stored credentials", try events.contains(.connected) && (try hub.isAuthenticated(connId: 2)))
+
+    func command(_ m: ClientMessage) throws -> [ServerMessage] {
+        now += 10
+        let fx = try hub.receive(connId: 2, bytes: try client.send(message: m), nowMs: now)
+        return messages(try pump(2, client, try apply(fx)))
+    }
+    func local(_ e: LocalEvent) throws -> [ServerMessage] {
+        now += 10
+        return messages(try pump(2, client, try apply(try hub.localEvent(nowMs: now, event: e))))
+    }
+    _ = try command(.subscribe)
+    log = []
+    _ = try command(.startTask(text: "Turn off Wi-Fi"))
+    let taskId = log.compactMap { e -> UInt64? in
+        if case let .startTask(id, _, text) = e, text == "Turn off Wi-Fi" { return id } else { return nil }
+    }.first
+    check("a remote startTask becomes a startTask effect", try taskId != nil && (try hub.isBusy()), "\(log)")
+    check("sessionStarted reaches the remote",
+          try local(.sessionStarted(taskId: taskId)) == [.taskStarted])
+    let finished = try local(.sessionFinished(taskId: taskId,
+        outcome: Outcome(status: .success, summary: "Wi-Fi is off", steps: 3, durationMs: 900)))
+    if case let .finished(status, _)? = finished.first {
+        check("sessionFinished reaches the remote", try status == .success && !(try hub.isBusy()))
+    } else {
+        check("sessionFinished reaches the remote", false, "\(finished)")
+    }
+    check("payment can never be approved remotely",
+          try neverRemoteApprove().contains(.payment) && !(try remotelyApprovable(category: .payment)))
+    let restored = try JarvisRemoteHub(storeJson: keychain, phoneName: "Smoke phone")
+    check("the hub restores from the Keychain JSON", try restored.devices() == devices)
+    log = []
+    _ = try apply(try hub.revokeDevice(nowMs: now + 10, deviceId: devices.first?.id ?? ""))
+    check("revoking closes the device's connection",
+          try log.contains(.close(connId: 2, reason: .revoked)) && (try hub.devices()).isEmpty, "\(log)")
+} catch {
+    check("remote checks", false, "\(error)")
+}
+
 print("\(failures == 0 ? "PASS" : "FAIL") swift smoke: \(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -61,6 +61,20 @@ impl WorkflowStore {
         !self.issues.is_empty()
     }
 
+    /// Ids of entries kept verbatim because they could not be loaded (`None` for an entry
+    /// without a readable id), like `SkillStore::damaged_ids`.
+    pub fn damaged_ids(&self) -> Vec<Option<String>> {
+        self.damaged.iter().map(|d| d.id.clone()).collect()
+    }
+
+    /// Drops the damaged entries with this id; returns whether there were any (like
+    /// `SkillStore::discard_damaged`).
+    pub fn discard_damaged(&mut self, id: &str) -> bool {
+        let before = self.damaged.len();
+        self.damaged.retain(|d| d.id.as_deref() != Some(id));
+        before != self.damaged.len()
+    }
+
     fn position(&self, id: &str) -> Option<usize> {
         self.workflows
             .binary_search_by(|w| w.id.as_str().cmp(id))

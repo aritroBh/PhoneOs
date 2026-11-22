@@ -63,6 +63,12 @@ impl JarvisSkills {
         }
     }
 
+    /// Runs `f` with the store locked (no guard of its own: callers are guarded).
+    pub(crate) fn with_store<T>(&self, f: impl FnOnce(&SkillStore) -> T) -> T {
+        let inner = self.lock();
+        f(&inner.store)
+    }
+
     fn with<T>(
         &self,
         what: &str,

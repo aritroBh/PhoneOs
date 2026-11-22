@@ -44,9 +44,12 @@ jarvis-observe.workspace = true
 jarvis-agent.workspace = true
 jarvis-memory.workspace = true
 jarvis-skills.workspace = true
+jarvis-remote.workspace = true
+jarvis-safety.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 uniffi.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 jarvis-proto = { workspace = true, features = ["test-util"] }

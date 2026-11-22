@@ -565,10 +565,13 @@ dependencies = [
  "jarvis-memory",
  "jarvis-observe",
  "jarvis-proto",
+ "jarvis-remote",
+ "jarvis-safety",
  "jarvis-skills",
  "serde_json",
  "thiserror",
  "uniffi",
+ "zeroize",
 ]
 
 [[package]]
