@@ -309,3 +309,31 @@ class QATestCase: XCTestCase {
         XCTFail("\(what) did not appear within \(timeout) s. Screen:\n\(tree)", file: file, line: line)
     }
 }
+
+/// Locking and waking the simulator (no passcode). Shared by the lock probe and the
+/// lock tests.
+enum SimulatorLock {
+    /// Presses the side button. PRIVATE API, QA only: `pressLockButton` is not public
+    /// XCTest API; it is used here and nowhere in the app, guarded by `responds(to:)`.
+    /// Returns what happened, for the artifacts.
+    @MainActor
+    static func lock() -> String {
+        let selector = NSSelectorFromString("pressLockButton")
+        guard XCUIDevice.shared.responds(to: selector) else {
+            return "XCUIDevice does not respond to pressLockButton; no way to lock"
+        }
+        _ = XCUIDevice.shared.perform(selector)
+        return "pressLockButton performed"
+    }
+
+    /// Wakes and unlocks a simulator without a passcode the way the probe found works (one
+    /// home press), then brings `app` back to the front, as unlocking a phone returns to the
+    /// app that was in front.
+    @MainActor
+    static func unlock(returningTo app: XCUIApplication) -> String {
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        let front = app.wait(for: .runningForeground, timeout: 10)
+        return front ? "home pressed; app back in front" : "home pressed; app not in front (state \(app.state.rawValue))"
+    }
+}

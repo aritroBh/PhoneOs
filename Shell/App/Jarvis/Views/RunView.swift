@@ -30,6 +30,9 @@ struct RunView: View {
 
             ScrollView {
                 VStack(spacing: Theme.gutter) {
+                    if live.status == .locked {
+                        UnlockCard(reason: live.lockReason, waitedMs: live.lockedWaitMs)
+                    }
                     if let result = live.result {
                         ResultCard(result: result)
                     }
@@ -77,17 +80,60 @@ struct RunView: View {
     }
 }
 
+/// "Unlock to continue": the needs-you treatment, the lock symbol, the time waited.
+private struct UnlockCard: View {
+    var reason: String?
+    var waitedMs: UInt64
+
+    private var waited: String {
+        let seconds = Int(waitedMs / 1_000)
+        return "Waiting \(seconds / 60):" + String(format: "%02d", seconds % 60)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.gapSmall) {
+            HStack(spacing: Theme.gapSmall) {
+                Image.decorative(.lock, size: Theme.iconProminent)
+                    .foregroundStyle(Theme.warning)
+                Text("Unlock to continue")
+                    .font(Theme.rowTitle)
+                    .foregroundStyle(Theme.textPrimary)
+                    .accessibilityIdentifier("run.lock.title")
+                Spacer()
+                StatusDot(color: Theme.warning, pulsing: true)
+            }
+            Text(reason ?? "The phone is locked. Jarvis never enters a passcode; unlock it and the task goes on.")
+                .font(Theme.body)
+                .foregroundStyle(Theme.textSoft)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("run.lock.reason")
+            Text(waited)
+                .font(Theme.mono)
+                .foregroundStyle(Theme.textTertiary)
+                .accessibilityIdentifier("run.lock.waited")
+        }
+        .padding(Theme.gutter)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card(fill: Theme.warningFill)
+        .accessibilityElement(children: .contain)
+    }
+}
+
 /// The finished run: status in icon, colour and words.
 private struct ResultCard: View {
     var result: RunResult
 
     private var success: Bool { result.outcome.status == .success }
+    private var interrupted: Bool { result.outcome.status == .interrupted }
+
+    private var icon: JarvisIcon { success ? .success : interrupted ? .lock : .error }
+    private var iconColor: Color { success ? Theme.connected : interrupted ? Theme.warning : Theme.errorText }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.gapSmall) {
             HStack(spacing: Theme.gapSmall) {
-                Image.decorative(success ? .success : .error, size: Theme.iconProminent)
-                    .foregroundStyle(success ? Theme.connected : Theme.errorText)
+                Image.decorative(icon, size: Theme.iconProminent)
+                    .foregroundStyle(iconColor)
                 Text(statusWord)
                     .font(Theme.rowTitle)
                     .foregroundStyle(Theme.textPrimary)

@@ -132,6 +132,7 @@ public final class JarvisCoordinator: Sendable {
     private let tools: ToolRegistry
     private let configuration: DriverConfiguration
     private let demoDelay: Duration
+    private let demoLockedPolls: Int
 
     public init(
         paths: JarvisPaths,
@@ -139,13 +140,15 @@ public final class JarvisCoordinator: Sendable {
         agentBundleId: String = "dev.jarvis.app",
         tools: ToolRegistry? = nil,
         configuration: DriverConfiguration = DriverConfiguration(),
-        demoDelay: Duration = .milliseconds(350)
+        demoDelay: Duration = .milliseconds(350),
+        demoLockedPolls: Int = 0
     ) {
         self.paths = paths
         self.selection = selection
         self.agentBundleId = agentBundleId
         self.configuration = configuration
         self.demoDelay = demoDelay
+        self.demoLockedPolls = demoLockedPolls
         if let tools {
             self.tools = tools
         } else {
@@ -173,6 +176,7 @@ public final class JarvisCoordinator: Sendable {
         task text: String,
         settings: JarvisSettings,
         human: any HumanGate,
+        attention: any OwnerAttention = NoOwnerAttention(),
         onEvent: @escaping @Sendable (RunEvent) -> Void
     ) async -> TaskRunOutcome {
         let task = TaskSpec(id: UUID().uuidString, text: text)
@@ -182,7 +186,7 @@ public final class JarvisCoordinator: Sendable {
         let knownApps: [AppInfo]
         switch selection {
         case .demo:
-            runner = DemoPhone(delay: demoDelay)
+            runner = DemoPhone(delay: demoDelay, lockedPolls: demoLockedPolls)
             baseModel = ScriptedModel(steps: Self.demoScript(for: text))
             knownApps = DemoPhone.knownApps
         case .live:
@@ -217,7 +221,8 @@ public final class JarvisCoordinator: Sendable {
         let memory = FileMemoryStore(fileURL: memoryURL)
         let memoryJSON = (try? await memory.load()) ?? ""
         let deps = DriverDependencies(
-            runner: runner, model: model, tools: tools, human: human, memory: memory, screenshots: screenshots
+            runner: runner, model: model, tools: tools, human: human, memory: memory, screenshots: screenshots,
+            attention: attention
         )
         let driver: SessionDriver
         do {

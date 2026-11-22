@@ -73,8 +73,22 @@ public final class LoopCtrlRunner: PhoneRunner {
 
     public func snapshot(includeScreenshot: Bool) async throws -> RunnerObservation {
         var notes: [String] = []
+        // device_info first: when the screen is locked the tree is the lock screen's and the
+        // core ignores it, so page_source is not read at all.
+        let info = try await deviceInfo(notes: &notes)
+        if info.locked == true {
+            return RunnerObservation(
+                source: "",
+                appBundleId: info.bundleID,
+                appName: info.name,
+                screenSize: configuration.screenSize ?? learnedSize.withLock({ $0 }) ?? Size(width: 0, height: 0),
+                orientation: info.orientation,
+                deviceLocked: true,
+                notes: notes
+            )
+        }
+        let (bundleID, reportedName, orientation) = (info.bundleID, info.name, info.orientation)
         let (source, keyboardVisible) = try await pageSource(notes: &notes)
-        let (bundleID, reportedName, orientation) = try await deviceInfo(notes: &notes)
 
         var screenshot: CapturedScreenshot?
         if includeScreenshot {
@@ -134,12 +148,39 @@ public final class LoopCtrlRunner: PhoneRunner {
         return (source, sniffed)
     }
 
-    private func deviceInfo(notes: inout [String]) async throws -> (String, String?, Orientation) {
+    private struct Info {
+        var bundleID: String
+        var name: String?
+        var orientation: Orientation
+        /// `system.screen_locked`, when reported.
+        var locked: Bool?
+    }
+
+    /// `device_info.system.screen_locked` (`nil` when the runner does not report it).
+    private static func screenLocked(_ info: [String: JSONValue]) -> Bool? {
+        info[LoopCtrlAPI.DeviceInfo.system]?[LoopCtrlAPI.DeviceInfo.screenLocked]?.boolValue
+    }
+
+    public func lockState() async throws -> DeviceLockState {
+        let info = try await client.result(LoopCtrlAPI.Method.deviceInfo)
+        switch Self.screenLocked(info) {
+        case true?: return .locked
+        case false?: return .unlocked
+        case nil: return .unknown
+        }
+    }
+
+    private func deviceInfo(notes: inout [String]) async throws -> Info {
         typealias K = LoopCtrlAPI.DeviceInfo
         let method = LoopCtrlAPI.Method.deviceInfo
         let info = try await client.result(method)
+        let locked = Self.screenLocked(info)
         let field = "\(K.system).\(K.foregroundApp)"
         guard let foreground = info[K.system]?[K.foregroundApp] else {
+            if locked == true {
+                notes.append("device_info: locked and no '\(field)'; reporting SpringBoard")
+                return Info(bundleID: "com.apple.springboard", name: nil, orientation: .portrait, locked: true)
+            }
             throw LoopCtrlError.missingField(method: method, field: field)
         }
         let bundleID: String
@@ -172,7 +213,7 @@ public final class LoopCtrlRunner: PhoneRunner {
             notes.append("device_info: orientation is \(other.typeName); assuming portrait")
             orientation = .portrait
         }
-        return (bundleID, name, orientation)
+        return Info(bundleID: bundleID, name: name, orientation: orientation, locked: locked)
     }
 
     private func takeScreenshot(notes: inout [String]) async throws -> CapturedScreenshot {
@@ -222,7 +263,12 @@ public final class LoopCtrlRunner: PhoneRunner {
             // Success is a result dictionary (usually with `message`) [source].
             return RunnerResult(ok: true, error: nil)
         case .failure(let code, let message):
-            return RunnerResult(ok: false, error: "\(message) (\(method) error \(code))")
+            let text = "\(message) (\(method) error \(code))"
+            let lowered = message.lowercased()
+            if LoopCtrlAPI.lockedRefusalWords.contains(where: lowered.contains) {
+                return .deviceLocked(text)
+            }
+            return RunnerResult(ok: false, error: text)
         }
     }
 

@@ -84,4 +84,31 @@ final class JarvisAppUITests: QATestCase {
         XCTAssertTrue(app.descendants(matching: .any)["run.step.2"].exists, "the step log has no second step")
         XCTAssertTrue(app.buttons["run.newTask"].exists)
     }
+
+    /// The demo phone starts locked: the run view shows "Unlock to continue" with the time
+    /// waited, then the phone "unlocks", the run asks for first use and finishes.
+    @MainActor
+    func testRunViewShowsUnlockToContinue() {
+        let app = launch(["-jarvis-playground", "-jarvis-reset", "-jarvis-demo-locked"])
+        tab("Ask", in: app).tap()
+        let composer = app.textFields["ask.composer"]
+        require(composer, "the composer", in: app)
+        composer.tap()
+        composer.typeText("Turn off Wi-Fi")
+        app.buttons["ask.send"].tap()
+
+        let lockTitle = app.staticTexts["run.lock.title"]
+        require(lockTitle, "the Unlock to continue card", timeout: 15, in: app)
+        XCTAssertEqual(lockTitle.label, "Unlock to continue")
+        XCTAssertTrue(app.staticTexts["run.lock.waited"].label.hasPrefix("Waiting "))
+        XCTAssertTrue(app.descendants(matching: .any)["status.pill"].firstMatch.label.contains("Unlock to continue"))
+
+        let approve = app.buttons["confirm.approve"]
+        require(approve, "the first-use confirmation after the unlock", timeout: 30, in: app)
+        XCTAssertFalse(lockTitle.exists, "the lock card stayed after the unlock")
+        approve.tap()
+        let status = app.staticTexts["run.status"]
+        require(status, "the run result", timeout: 30, in: app)
+        XCTAssertEqual(status.label, "Done")
+    }
 }

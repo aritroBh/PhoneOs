@@ -46,13 +46,16 @@ struct SettingsTests {
         #expect(policy.confirm.contains(.payment))
         #expect(policy.maxSteps == 12)
         #expect(policy.maxDurationMs == 180_000)
+        #expect(policy.maxLockedWaitMs == 30 * 60_000, "the default lock wait")
         #expect(policy.deniedApps == defaults.deniedApps, "Passwords and Wallet stay denied")
         #expect(policy.appRules.contains(AppRule(bundleIdPrefix: "com.apple.MobileSMS", level: .stepByStep)))
         #expect(policy.appRules.contains(AppRule(bundleIdPrefix: "com.apple.Passbook", level: .denied)))
 
         settings.maxSteps = 0
         settings.maxMinutes = 10_000
+        settings.maxLockedWaitMinutes = 0
         settings.apply(to: &policy)
+        #expect(policy.maxLockedWaitMs == 60_000)
         #expect(policy.maxSteps == 1)
         #expect(policy.maxDurationMs == 120 * 60_000)
     }
@@ -266,6 +269,36 @@ struct CoordinatorTests {
         }
         #expect(result.endReason == .cancelled)
         #expect(live.withLock { $0.status } == .stopped)
+    }
+
+    @Test("a demo run on a locked phone waits, tells the owner, and finishes after the unlock")
+    func demoLocked() async throws {
+        let dir = tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let coordinator = JarvisCoordinator(
+            paths: JarvisPaths(directory: dir), selection: .demo,
+            configuration: DriverConfiguration(unlockPollInterval: .milliseconds(1)),
+            demoDelay: .zero, demoLockedPolls: 3
+        )
+        let attention = RecordingAttention()
+        let live = Mutex(LiveRun())
+        let sawLocked = Mutex(false)
+        let outcome = await coordinator.run(task: "Turn off Wi-Fi", settings: JarvisSettings(), human: autoApprovingBroker(),
+                                            attention: attention) { e in
+            live.withLock { l in
+                l.apply(e)
+                if l.status == .locked { sawLocked.withLock { $0 = true } }
+            }
+        }
+        guard case .finished(_, let result) = outcome else {
+            Issue.record("not started")
+            return
+        }
+        #expect(result.outcome.status == .success, "\(result.outcome.summary)")
+        #expect(sawLocked.withLock { $0 }, "the run view state went to Unlock to continue")
+        #expect(live.withLock { $0.lockWaits } == 1)
+        #expect(attention.log == ["await", "ended"])
+        #expect(LiveRun.Status.locked.title == "Unlock to continue")
     }
 
     @Test("bad settings do not start a live run")

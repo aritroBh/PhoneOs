@@ -75,6 +75,9 @@ final class XCUITestPhoneRunner: PhoneRunner {
     private var applications: [String: XCUIApplication] = [:]
     private var settlePending = false
     private var focusNoteGiven = false
+    private var notifyToken: Int32?
+    private var lockEvidenceSeen: Set<String> = []
+    private var pendingLockNotes: [String] = []
 
     init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
@@ -94,6 +97,10 @@ final class XCUITestPhoneRunner: PhoneRunner {
         return try await observe(includeScreenshot: includeScreenshot)
     }
 
+    nonisolated func lockState() async throws -> DeviceLockState {
+        await lockStateOnMain()
+    }
+
     nonisolated func perform(_ command: RunnerCommand) async throws -> RunnerResult {
         if case .wait(let ms) = command {
             try await Task.sleep(for: .milliseconds(Int(min(ms, 60_000))))
@@ -102,6 +109,10 @@ final class XCUITestPhoneRunner: PhoneRunner {
         if case .typeText = command {
             // Give a keyboard that is still animating in time to appear (off the main actor).
             if !(await keyboardIsUp()) { try await Task.sleep(for: .milliseconds(500)) }
+        }
+        if await lockStateOnMain() == .locked {
+            await noteRefusal(command)
+            return .deviceLocked("the device is locked; \(Transcript.describe(command)) was not performed")
         }
         return await act(command)
     }
@@ -131,6 +142,9 @@ final class XCUITestPhoneRunner: PhoneRunner {
             notes.append("the application element has no frame; screen size taken from a screenshot (\(size.width.compactText)x\(size.height.compactText))")
         }
         let built = UiTreeBuilder.build(raw, screenSize: size)
+        let locked = lockVerdict(notify: notifyLockState(), lockScreen: bundleId == Self.springboard ? LockScreenSignature.matches(raw) : nil) == .locked
+        notes += pendingLockNotes
+        pendingLockNotes = []
         if built.sanitizedFrames > 0 {
             notes.append("\(built.sanitizedFrames) element frame(s) were non-finite, huge or negative and were sanitised (raw values in the tree dump)")
         }
@@ -166,6 +180,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
             keyboardVisible: built.keyboardVisible,
             orientation: orientation(),
             screenshot: captured,
+            deviceLocked: locked,
             notes: notes
         )
     }
@@ -210,6 +225,63 @@ final class XCUITestPhoneRunner: PhoneRunner {
     private func keyboardIsUp() -> Bool {
         var notes: [String] = []
         return application(foregroundBundleId(notes: &notes)).keyboards.count > 0
+    }
+
+    // MARK: - Lock state (main actor)
+    //
+    // Two signals, both recorded in the artifacts when first seen:
+    // 1. Darwin notify state of "com.apple.springboard.lockstate" (non-zero = locked),
+    //    looked up with dlsym so nothing here depends on how the SDK exposes notify.h;
+    //    whether the simulator's notifyd publishes it to the test runner is [unverified].
+    // 2. SpringBoard in front showing the lock screen (`LockScreenSignature`, from the
+    //    run-16 probe trees).
+    // Locked when either says so; unlocked when one was readable and neither says locked.
+
+    private func lockStateOnMain() -> DeviceLockState {
+        var notes: [String] = []
+        let notify = notifyLockState()
+        var lockScreen: Bool?
+        if foregroundBundleId(notes: &notes) == Self.springboard, let snapshot = try? application(Self.springboard).snapshot() {
+            lockScreen = LockScreenSignature.matches(SnapshotCopy.copy(snapshot))
+        } else {
+            lockScreen = false // an app is in front: the lock screen is not up
+        }
+        return lockVerdict(notify: notify, lockScreen: lockScreen)
+    }
+
+    private func lockVerdict(notify: Bool?, lockScreen: Bool?) -> DeviceLockState {
+        let evidence = "lock signals: notify(com.apple.springboard.lockstate)=\(notify.map(String.init) ?? "unavailable"), lock screen=\(lockScreen.map(String.init) ?? "not checked")"
+        if !lockEvidenceSeen.contains(evidence) {
+            lockEvidenceSeen.insert(evidence)
+            pendingLockNotes.append(evidence)
+        }
+        if notify == true || lockScreen == true { return .locked }
+        if notify != nil || lockScreen != nil { return .unlocked }
+        return .unknown
+    }
+
+    private func notifyLockState() -> Bool? {
+        typealias Register = @convention(c) (UnsafePointer<CChar>?, UnsafeMutablePointer<Int32>?) -> UInt32
+        typealias GetState = @convention(c) (Int32, UnsafeMutablePointer<UInt64>?) -> UInt32
+        guard let handle = dlopen(nil, RTLD_NOW),
+              let registerSymbol = dlsym(handle, "notify_register_check"),
+              let getSymbol = dlsym(handle, "notify_get_state") else { return nil }
+        let register = unsafeBitCast(registerSymbol, to: Register.self)
+        let getState = unsafeBitCast(getSymbol, to: GetState.self)
+        if notifyToken == nil {
+            var token: Int32 = 0
+            let status = "com.apple.springboard.lockstate".withCString { register($0, &token) }
+            guard status == 0 else { return nil }
+            notifyToken = token
+        }
+        guard let token = notifyToken else { return nil }
+        var state: UInt64 = 0
+        guard getState(token, &state) == 0 else { return nil }
+        return state != 0
+    }
+
+    private func noteRefusal(_ command: RunnerCommand) {
+        onCommand?(command, .deviceLocked())
     }
 
     // MARK: - Commands (main actor)

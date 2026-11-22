@@ -127,7 +127,9 @@ and retry with `""`. `run() async -> RunResult` never throws. `cancel()` stops t
 
 | Effect | IO | Event on success | Event on error / timeout |
 |---|---|---|---|
-| `observe` | `runner.snapshot` | `observedRunnerText` for runner text, `observed` for a typed tree (screenshot put in `ScreenshotStore`, handle passed) | retried `observeAttempts` times. Then `cancel`, `endReason = .runnerUnavailable` (the core has no "observe failed" event) |
+| `observe` | `runner.snapshot` | `observedRunnerText` for runner text, `observed` for a typed tree (screenshot put in `ScreenshotStore`, handle passed; `deviceLocked` passed through) | retried `observeAttempts` times, then `observeFailed(reason:)`; the core finishes Failed after `max_consecutive_failures` |
+| `awaitUnlock` | `OwnerAttention.awaitUnlock` once per wait, then every `unlockPollInterval` `runner.lockState()` | `tick` (locked), `deviceUnlocked`, or a fresh observation when the runner cannot tell | a failed poll is an `ioFailed` update and the observation answers |
+| `infer`, `callTool`, `confirm`, `askUser` while the runner reports a lock (`lockWatchInterval`) | the wait is abandoned | `deviceLocked` (`.lockDetected` update) | (none) |
 | `infer` | `model.generate` | `modelOutput` | `modelFailed(error:)` |
 | `act` | `runner.perform` | `actResult` | `actResult(ok: false, error:)` |
 | `callTool` | `tools.execute` | `toolResult` | `toolResult(ok: false, …)` (timeout) |
@@ -179,7 +181,10 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   picks elements by reading the prompt's screen block. Tier A drives the Playground
   fixtures; Tier B drives Settings, SpringBoard and Safari (form served by
   `FormCaptureServer` on the shared loopback); `LockScreenProbeTests` gathers evidence about
-  the lock screen. Every observation attaches `<run>.NN-screen.txt`, `<run>.NN-tree.txt`, `<run>.NN.png`;
+  the lock screen and `LockedPhoneAgentTests` locks mid-task. The XCUITest runner reads the
+  lock from Darwin notify `com.apple.springboard.lockstate` (looked up with `dlsym`,
+  availability in the simulator [unverified]) or from SpringBoard showing the lock screen
+  (`LockScreenSignature`, from the run-16 probe trees); both readings go into the notes. Every observation attaches `<run>.NN-screen.txt`, `<run>.NN-tree.txt`, `<run>.NN.png`;
   every run attaches `<run>.transcript.json` and `<run>.result.txt` (`.keepAlways`). Names
   use `.`, not `/`: the result-bundle export drops `/`.
 
@@ -225,7 +230,12 @@ first device test (spike S1) must confirm the following assumptions:
     available through `LaunchStrategy`.
 14. **Success / failure**: any `result` counts as success. A JSON-RPC `error` becomes
     `RunnerResult(ok: false)`, and business errors come with HTTP 200 [source].
-15. **Tree text**: parsed in Rust (`parseRunnerText`), not here. Labels containing quotes,
+15. **Lock state** [unverified]: `device_info.system.screen_locked` (boolean). `true` makes
+    the snapshot a locked observation (page_source is not read) and `lockState()` report
+    `.locked`; absent means `.unknown` (the driver then answers waits with observations).
+    A business error whose message contains "locked", "lock screen" or "passcode" becomes
+    `RunnerFailure.deviceLocked`. `device_info` is now read before `page_source`.
+16. **Tree text**: parsed in Rust (`parseRunnerText`), not here. Labels containing quotes,
     commas or braces are untested against real output.
 
 Also untested: Apple `URLSession` behaviour (only the Linux FoundationNetworking path ran),
@@ -238,8 +248,5 @@ xcframework as a SwiftPM binary target. Clang should find its module map in the
 - In the generated bindings, `JarvisError` is `internal`, not `public`. Swift callers can
   only catch it as `any Error`. This is why `SessionDriver.init` documents "throws when the
   memory is rejected" without naming a type.
-- There is no event for "observation failed". The driver retries, then cancels the session
-  with `endReason = .runnerUnavailable`, so the core logs that run as Cancelled. A
-  `ObserveFailed { error }` event would let the core count it as a failure instead.
 - Set-of-marks drawing is the shell's job (`ScreenshotAnnotator`). No annotator that draws
   exists yet.

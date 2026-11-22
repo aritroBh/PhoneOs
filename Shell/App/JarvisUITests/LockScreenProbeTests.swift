@@ -36,18 +36,10 @@ final class LockScreenProbeTests: QATestCase {
 
         // 2. Lock.
         var locked = false
-        record("2-lock", "lock the device") { details in
-            // PRIVATE API, probe only: `pressLockButton` is not public XCTest API. It is used
-            // here and nowhere else, guarded by responds(to:).
-            let selector = NSSelectorFromString("pressLockButton")
-            guard XCUIDevice.shared.responds(to: selector) else {
-                details["available"] = "XCUIDevice does not respond to pressLockButton; no public way to lock exists"
-                return "no lock method available"
-            }
-            details["available"] = "XCUIDevice.pressLockButton (private selector)"
-            _ = XCUIDevice.shared.perform(selector)
-            locked = true
-            return "pressLockButton performed"
+        record("2-lock", "lock the device") { _ in
+            let what = SimulatorLock.lock()
+            locked = what == "pressLockButton performed"
+            return what
         }
         try await Task.sleep(for: .seconds(2))
 

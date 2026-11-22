@@ -23,14 +23,29 @@ public final class DemoPhone: PhoneRunner {
         var page = Page.home
         var commands: [RunnerCommand] = []
         var snapshots = 0
+        /// Lock-state polls left before the simulated phone unlocks (0: unlocked).
+        var lockedPolls = 0
     }
 
     private let state = Mutex(State())
     private let delay: Duration
 
-    /// `delay` is spent in every call, so the demo is watchable.
-    public init(delay: Duration = .zero) {
+    /// `delay` is spent in every call, so the demo is watchable. With `lockedPolls > 0` the
+    /// phone starts locked and unlocks itself after that many lock-state polls (the app's
+    /// "Unlock to continue" demo and its UI test).
+    public init(delay: Duration = .zero, lockedPolls: Int = 0) {
         self.delay = delay
+        state.withLock { $0.lockedPolls = max(0, lockedPolls) }
+    }
+
+    public var isLocked: Bool { state.withLock { $0.lockedPolls > 0 } }
+
+    public func lockState() async throws -> DeviceLockState {
+        state.withLock { s in
+            guard s.lockedPolls > 0 else { return .unlocked }
+            s.lockedPolls -= 1
+            return s.lockedPolls > 0 ? .locked : .unlocked
+        }
     }
 
     public var page: Page { state.withLock { $0.page } }
@@ -39,9 +54,15 @@ public final class DemoPhone: PhoneRunner {
 
     public func snapshot(includeScreenshot: Bool) async throws -> RunnerObservation {
         if delay > .zero { try await Task.sleep(for: delay) }
-        let page = state.withLock { s -> Page in
+        let (page, locked) = state.withLock { s -> (Page, Bool) in
             s.snapshots += 1
-            return s.page
+            return (s.page, s.lockedPolls > 0)
+        }
+        if locked {
+            return RunnerObservation(
+                root: Self.node(.application, "SpringBoard", Rect(x: 0, y: 0, width: Self.screenSize.width, height: Self.screenSize.height)),
+                appBundleId: "com.apple.springboard", appName: nil, screenSize: Self.screenSize, deviceLocked: true
+            )
         }
         return RunnerObservation(
             root: Self.tree(for: page),
@@ -54,6 +75,7 @@ public final class DemoPhone: PhoneRunner {
     public func perform(_ command: RunnerCommand) async throws -> RunnerResult {
         if delay > .zero { try await Task.sleep(for: delay) }
         return state.withLock { s in
+            if s.lockedPolls > 0 { return .deviceLocked() }
             s.commands.append(command)
             guard case .tap(let x, let y) = command else {
                 if case .wait = command { return RunnerResult(ok: true, error: nil) }

@@ -88,13 +88,13 @@ struct LoopCtrlRunnerTests {
         #expect(first.orientation == .portrait)
         #expect(first.screenshot == nil)
         #expect(first.notes.contains { $0.contains("learned from a screenshot") })
-        #expect(try stub.methods() == ["page_source", "device_info", "screenshot"])
+        #expect(try stub.methods() == ["device_info", "page_source", "screenshot"])
 
         let second = try await runner.snapshot(includeScreenshot: false)
         #expect(second.notes.isEmpty)
-        #expect(try stub.methods() == ["page_source", "device_info", "screenshot", "page_source", "device_info"])
+        #expect(try stub.methods() == ["device_info", "page_source", "screenshot", "device_info", "page_source"])
 
-        let request = try #require(stub.server.requests.first)
+        let request = try #require(stub.server.requests.dropFirst().first, "the page_source request")
         #expect(request.method == "POST")
         #expect(request.path == "/rpc")
         #expect(request.headers["content-type"] == "application/json")
@@ -116,7 +116,7 @@ struct LoopCtrlRunnerTests {
         #expect(shot.pixelWidth == 786 && shot.pixelHeight == 1704)
         #expect(shot.scale == 2)
         #expect(observation.screenSize == Size(width: 393, height: 852))
-        #expect(try stub.methods() == ["page_source", "device_info", "screenshot"])
+        #expect(try stub.methods() == ["device_info", "page_source", "screenshot"])
     }
 
     @Test("a configured screen size needs no screenshot")
@@ -124,7 +124,7 @@ struct LoopCtrlRunnerTests {
         let stub = try LoopCtrlStub(standardReplies)
         let observation = try await stub.runner { $0.screenSize = Size(width: 440, height: 956) }.snapshot(includeScreenshot: false)
         #expect(observation.screenSize == Size(width: 440, height: 956))
-        #expect(try stub.methods() == ["page_source", "device_info"])
+        #expect(try stub.methods() == ["device_info", "page_source"])
     }
 
     @Test("lenient decoding: object foreground_app, missing keyboard and orientation become notes")
@@ -143,6 +143,34 @@ struct LoopCtrlRunnerTests {
         #expect(observation.notes.contains { $0.contains("no 'format'") })
         #expect(observation.notes.contains { $0.contains("judged from the tree") })
         #expect(observation.notes.contains { $0.contains("assuming portrait") })
+    }
+
+    @Test("screen_locked: a locked snapshot skips page_source; lockState reads it; a locked refusal is typed")
+    func lockedRunner() async throws {
+        let locked = Mutex(true)
+        let stub = try LoopCtrlStub(replies(["device_info": { _ in
+            ok(["system": ["foreground_app": "com.apple.springboard", "screen_locked": .bool(locked.withLock { $0 })], "orientation": "portrait"])
+        }, "tap": { _ in rpcError(-32000, "Device is locked") }]))
+        let runner = stub.runner { $0.screenSize = Size(width: 393, height: 852) }
+        let observation = try await runner.snapshot(includeScreenshot: false)
+        #expect(observation.deviceLocked)
+        #expect(observation.appBundleId == "com.apple.springboard")
+        #expect(try stub.methods() == ["device_info"], "no page_source while locked")
+        #expect(try await runner.lockState() == .locked)
+        let refused = try await runner.perform(.tap(x: 1, y: 2))
+        #expect(refused.failure == .deviceLocked)
+        #expect(!refused.ok)
+        locked.withLock { $0 = false }
+        #expect(try await runner.lockState() == .unlocked)
+        #expect(try await runner.snapshot(includeScreenshot: false).deviceLocked == false)
+    }
+
+    @Test("no screen_locked key: the lock state is unknown and snapshots are unlocked")
+    func lockUnknown() async throws {
+        let stub = try LoopCtrlStub(standardReplies)
+        let runner = stub.runner { $0.screenSize = Size(width: 393, height: 852) }
+        #expect(try await runner.lockState() == .unknown)
+        #expect(try await runner.snapshot(includeScreenshot: false).deviceLocked == false)
     }
 
     @Test("landscape orientation strings are mapped")

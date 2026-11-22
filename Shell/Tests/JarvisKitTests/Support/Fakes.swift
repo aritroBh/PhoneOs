@@ -246,6 +246,13 @@ final class FakeGate: HumanGate {
     let confirmReply: Reply
     let answerReply: Reply
     private let log = Mutex<(confirms: [ConfirmRequest], questions: [String])>(([], []))
+    private let hook = Mutex<(@Sendable () async -> Void)?>(nil)
+
+    /// Runs at the start of every `confirm` (after it is recorded).
+    var beforeConfirm: (@Sendable () async -> Void)? {
+        get { hook.withLock { $0 } }
+        set { hook.withLock { $0 = newValue } }
+    }
 
     init(approve: Bool = true, answer: String = "HomeNet", confirmReply: Reply = .value, answerReply: Reply = .value) {
         self.approve = approve
@@ -259,6 +266,7 @@ final class FakeGate: HumanGate {
 
     func confirm(_ request: ConfirmRequest) async throws -> Bool {
         log.withLock { $0.confirms.append(request) }
+        if let beforeConfirm { await beforeConfirm() }
         switch confirmReply {
         case .value: return approve
         case .fail: throw InjectedError(message: "no confirmation UI")

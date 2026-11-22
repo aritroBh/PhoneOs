@@ -123,7 +123,15 @@ public enum LoopCtrlAPI {
         static let foregroundAppName = "name"
         /// `device_info.orientation` [readme]; its value strings are [unverified].
         static let orientation = "orientation"
+        /// `device_info.system.screen_locked`, a boolean [unverified: named by the planner
+        /// from the LoopCtrl lineage; not seen in the code read for RUNNER.md, where only an
+        /// `is_locked` method is listed]. Absent → the lock state is unknown.
+        static let screenLocked = "screen_locked"
     }
+
+    /// Words in a JSON-RPC business error that mean "refused: the device is locked"
+    /// [unverified: the refusal text was never seen]. Matched case-insensitively.
+    static let lockedRefusalWords = ["locked", "lock screen", "passcode"]
 
     /// Orientation strings we accept [unverified]: snake_case and camelCase of UIKit names.
     static let orientations: [String: Orientation] = [

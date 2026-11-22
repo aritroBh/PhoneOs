@@ -203,7 +203,7 @@ struct StatusTile: View {
         case .failed: (.error, Theme.errorText, Theme.errorFill)
         case .blocked: (.denied, Theme.errorText, Theme.errorFill)
         // Not an error: the phone stayed locked; running it again after an unlock is fine.
-        case .interrupted: (.lock, Theme.warning, Theme.warningFill)
+        case .interrupted: (.lock, Theme.textSoft, Theme.raisedHigh)
         }
     }
 

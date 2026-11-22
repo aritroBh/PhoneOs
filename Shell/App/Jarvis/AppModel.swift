@@ -10,12 +10,16 @@ struct LaunchOptions {
     var playground: Bool
     /// `-jarvis-reset`: start from empty settings, memory and history.
     var reset: Bool
+    /// `-jarvis-demo-locked` (with `-jarvis-playground`): the demo phone starts locked and
+    /// unlocks itself after a few polls, to show "Unlock to continue".
+    var demoLocked: Bool
 
     static let current = LaunchOptions(arguments: ProcessInfo.processInfo.arguments)
 
     init(arguments: [String]) {
         playground = arguments.contains("-jarvis-playground")
         reset = arguments.contains("-jarvis-reset")
+        demoLocked = arguments.contains("-jarvis-demo-locked")
     }
 }
 
@@ -68,7 +72,10 @@ final class AppModel: ObservableObject {
         self.settingsStore = SettingsStore(fileURL: paths.settings)
         self.historyStore = TaskHistoryStore(fileURL: paths.history)
         self.settings = settingsStore.load()
-        self.coordinator = JarvisCoordinator(paths: paths, selection: launch.playground ? .demo : .live)
+        self.coordinator = JarvisCoordinator(
+            paths: paths, selection: launch.playground ? .demo : .live,
+            demoLockedPolls: launch.playground && launch.demoLocked ? 4 : 0
+        )
         self.history = historyStore.load()
     }
 
@@ -104,13 +111,19 @@ final class AppModel: ObservableObject {
         // the main actor (separate Tasks per event would not).
         let (events, sink) = AsyncStream.makeStream(of: RunEvent.self)
         let consumer = Task { @MainActor [weak self] in
-            for await event in events { self?.live.apply(event) }
+            for await event in events {
+                // A lock abandoned the pending question or confirmation: take the sheet
+                // away (the core asks again after the unlock).
+                if case .update(.lockDetected) = event { self?.broker.cancelAll() }
+                self?.live.apply(event)
+            }
         }
         let coordinator = coordinator
         let settings = settings
         let broker = broker
         let task = Task { () -> TaskRunOutcome in
-            let outcome = await coordinator.run(task: trimmed, settings: settings, human: broker) { _ = sink.yield($0) }
+            let outcome = await coordinator.run(task: trimmed, settings: settings, human: broker,
+                                                attention: UnlockNotifier()) { _ = sink.yield($0) }
             sink.finish()
             await consumer.value
             return outcome

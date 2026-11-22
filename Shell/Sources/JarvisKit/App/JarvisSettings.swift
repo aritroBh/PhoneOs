@@ -179,6 +179,9 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     public var maxSteps: Int
     /// Time budget per task, in minutes.
     public var maxMinutes: Int
+    /// How long a run waits for the owner to unlock the phone before it ends Interrupted,
+    /// in minutes (the core's `max_locked_wait_ms`).
+    public var maxLockedWaitMinutes: Int
     public var modelBackend: ModelBackendKind
     /// OpenAI-compatible server base URL.
     public var modelBaseURL: String
@@ -206,6 +209,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         denyCategories: [RiskCategoryOption] = [],
         maxSteps: Int = 40,
         maxMinutes: Int = 10,
+        maxLockedWaitMinutes: Int = 30,
         modelBackend: ModelBackendKind = .openAICompatible,
         modelBaseURL: String = "http://127.0.0.1:8080",
         modelName: String = "local-model",
@@ -219,6 +223,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         self.denyCategories = denyCategories
         self.maxSteps = maxSteps
         self.maxMinutes = maxMinutes
+        self.maxLockedWaitMinutes = maxLockedWaitMinutes
         self.modelBackend = modelBackend
         self.modelBaseURL = modelBaseURL
         self.modelName = modelName
@@ -234,6 +239,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         case denyCategories = "deny_categories"
         case maxSteps = "max_steps"
         case maxMinutes = "max_minutes"
+        case maxLockedWaitMinutes = "max_locked_wait_minutes"
         case modelBackend = "model_backend"
         case modelBaseURL = "model_base_url"
         case modelName = "model_name"
@@ -251,6 +257,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         denyCategories = Self.lenientList(c, .denyCategories) ?? d.denyCategories
         maxSteps = (try? c.decodeIfPresent(Int.self, forKey: .maxSteps)) ?? d.maxSteps
         maxMinutes = (try? c.decodeIfPresent(Int.self, forKey: .maxMinutes)) ?? d.maxMinutes
+        maxLockedWaitMinutes = (try? c.decodeIfPresent(Int.self, forKey: .maxLockedWaitMinutes)) ?? d.maxLockedWaitMinutes
         modelBackend = (try? c.decodeIfPresent(ModelBackendKind.self, forKey: .modelBackend)) ?? d.modelBackend
         modelBaseURL = (try? c.decodeIfPresent(String.self, forKey: .modelBaseURL)) ?? d.modelBaseURL
         modelName = (try? c.decodeIfPresent(String.self, forKey: .modelName)) ?? d.modelName
@@ -272,6 +279,9 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     /// `maxMinutes` clamped to 1…120, in milliseconds.
     public var maxDurationMs: UInt64 { UInt64(min(max(maxMinutes, 1), 120)) * 60_000 }
 
+    /// `maxLockedWaitMinutes` clamped to 1…240, in milliseconds.
+    public var maxLockedWaitMs: UInt64 { UInt64(min(max(maxLockedWaitMinutes, 1), 240)) * 60_000 }
+
     /// Applies the settings on top of the core's default policy. The core's own defaults
     /// stay for everything not exposed here (the denied Passwords and Wallet apps, failure
     /// and parse-retry caps, categories added to the core later).
@@ -287,6 +297,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         policy.denyCategories = deny
         policy.maxSteps = clampedMaxSteps
         policy.maxDurationMs = maxDurationMs
+        policy.maxLockedWaitMs = maxLockedWaitMs
         policy.appRules = appTrust
             .filter { !$0.bundleIdPrefix.trimmingCharacters(in: .whitespaces).isEmpty }
             .map { AppRule(bundleIdPrefix: $0.bundleIdPrefix.trimmingCharacters(in: .whitespaces), level: $0.level.core) }

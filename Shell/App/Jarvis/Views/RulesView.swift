@@ -88,6 +88,9 @@ struct RulesView: View {
                         Divider().overlay(Theme.bezel)
                         StepperRow(title: "or after", value: $model.settings.maxMinutes, range: 1...60, step: 1,
                                    unit: "min", identifier: "rules.maxMinutes")
+                        Divider().overlay(Theme.bezel)
+                        StepperRow(title: "Wait for an unlock up to", value: $model.settings.maxLockedWaitMinutes,
+                                   range: 1...240, step: 5, unit: "min", identifier: "rules.maxLockedWait")
                     }
                     .card()
                 }

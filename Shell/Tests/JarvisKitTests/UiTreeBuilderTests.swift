@@ -169,6 +169,25 @@ struct UiTreeBuilderTests {
         #expect(1e9.finiteClamped(5) == 5)
     }
 
+    @Test("lock-screen signature: the probe's lock screen matches, the home screen does not")
+    func lockSignature() {
+        let f = Rect(x: 0, y: 0, width: 10, height: 10)
+        let locked = RawElement(elementType: T.application, frame: full, children: [
+            RawElement(elementType: T.other, identifier: "jindo-container-view:1,client-identifier:com.apple.springboard,element-identifier:systemApertureElementIdentifierLock", frame: f),
+        ])
+        let swipe = RawElement(elementType: T.application, frame: full, children: [
+            RawElement(elementType: T.other, label: "Swipe up to unlock", identifier: "regular.view", frame: f),
+        ])
+        let home = RawElement(elementType: T.application, frame: full, children: [
+            RawElement(elementType: T.icon, label: "Settings", identifier: "Settings", frame: f),
+            RawElement(elementType: T.other, label: "Unlock the potential", frame: f),
+        ])
+        #expect(LockScreenSignature.matches(locked))
+        #expect(LockScreenSignature.matches(swipe))
+        #expect(!LockScreenSignature.matches(home))
+        #expect(!LockScreenSignature.matches(loginSnapshot))
+    }
+
     @Test("subtree focus: found, readable but none, unreadable")
     func subtreeFocus() {
         #expect(loginSnapshot.subtreeFocus == true)
