@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "jarvis-proto",
+    "jarvis-observe",
+    "jarvis-safety",
+    "jarvis-memory",
+    "jarvis-agent",
+    "jarvis-sim",
+    "jarvis-ffi",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+jarvis-proto = { path = "jarvis-proto" }
+jarvis-observe = { path = "jarvis-observe" }
+jarvis-safety = { path = "jarvis-safety" }
+jarvis-memory = { path = "jarvis-memory" }
+jarvis-agent = { path = "jarvis-agent" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+indexing_slicing = "warn"
