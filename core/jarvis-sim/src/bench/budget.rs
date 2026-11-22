@@ -130,7 +130,8 @@ pub(crate) const ABSOLUTE: &[Absolute] = &[
         "render.budget",
         300.0,
         Curve::new(300.0, 6.0, 0.0),
-        Curve::new(30000.0, 9410.0, 0.0),
+        // Measured once rendered from line lengths: 0.26 us a node (web, dense) p50.
+        Curve::new(3000.0, 1500.0, 0.0),
     ),
     abs(
         "tap.one",
@@ -220,7 +221,7 @@ pub(crate) const ABSOLUTE: &[Absolute] = &[
         "step.observe_infer",
         7500.0,
         Curve::new(15000.0, 6863.0, 0.0),
-        Curve::new(150000.0, 115572.0, 0.0),
+        Curve::new(75000.0, 50000.0, 0.0),
     ),
     abs(
         "step.reply_act",
@@ -232,13 +233,13 @@ pub(crate) const ABSOLUTE: &[Absolute] = &[
         "step.round",
         7500.0,
         Curve::new(20000.0, 2200.0, 0.0),
-        Curve::new(100000.0, 144593.0, 0.0),
+        Curve::new(75000.0, 50000.0, 0.0),
     ),
     abs(
         "step.verify_infer",
         7500.0,
         Curve::new(15000.0, 2407.0, 0.0),
-        Curve::new(150000.0, 156084.0, 0.0),
+        Curve::new(75000.0, 50000.0, 0.0),
     ),
     abs(
         "step.approved_look",
@@ -248,9 +249,11 @@ pub(crate) const ABSOLUTE: &[Absolute] = &[
     ),
     abs(
         "render.zero",
-        750.0,
-        Curve::new(750.0, 34.0, 0.0),
-        Curve::new(10000.0, 7069.0, 0.0),
+        // Only the header and footer now: every candidate starts with the header, so a
+        // budget the header does not fit in gives the last resort without a search.
+        100.0,
+        Curve::new(100.0, 1.0, 0.0),
+        Curve::new(200.0, 10.0, 0.0),
     ),
 ];
 
@@ -284,21 +287,20 @@ pub(crate) const RATIOS: &[Ratio] = &[
     // Dense layouts, super-linear today. Measured (fastest run, three runs): 20k/10k and
     // 50k/10k in the comments; the limits are about 1.5 times the worst.
     //
-    // The sweep is quadratic: every control scans every drawn node (`hit.rs` `blocker`).
-    // Measured 2.6 to 6.5 and 32 to 57.
+    // The sweep is quadratic by construction: one `tap_spot` per control, and each reads
+    // every drawn node once for its first candidate point (`hit.rs`; the other candidates
+    // read only the nodes that reach them since the hotspot fixes). Measured 4.1 to 6.6 and
+    // 29 to 72 (the 10k sweep gained more than the 50k one).
     ratio("tap.sweep", Some(View::Dense), 10.0, 90.0),
-    // `changes.rs` `element_changes` looks every element up by a linear scan. 1.8 to 4.3 and
-    // 8 to 20.
-    ratio("step.verify_infer", Some(View::Dense), 6.5, 32.0),
-    // `classify.rs` `beside_siblings`: the window of rows within 2 pt grows with density.
-    // 1.7 to 3.9 and 5 to 20.
-    ratio("classify.swipe", Some(View::Dense), 5.0, 32.0),
-    ratio("evaluate.swipe", Some(View::Dense), 5.0, 25.0),
-    ratio("classify.return", Some(View::Dense), 3.2, 28.0),
-    ratio("evaluate.return", Some(View::Dense), 3.2, 20.0),
-    // One scan over every drawn node per call (`hit.rs`), plus more candidate points when
-    // the first is covered. 1.3 to 2.5 and 5 to 10.5.
+    // One scan over every drawn node per call (`hit.rs`) for the first candidate point.
+    // 2.1 to 2.7 and 6 to 11 (under the floor at 10k nodes: not checked today).
     ratio("tap.one", Some(View::Dense), 4.0, 16.0),
+    // (Fixed, entries removed: `step.verify_infer`, whose change detection looked every
+    // element up by a linear scan, now 1.7 to 2.6 and 5.7 to 6.4; `classify.swipe`,
+    // `evaluate.swipe`, `classify.return` and `evaluate.return`, whose carousel-neighbour
+    // search compared every pair of a row, now 1.4 to 2.9 and 4.1 to 5.3; `render.budget`
+    // and `render.zero`, which built the screen text about 2 log2(n) times, now 2.0 to 2.2
+    // and 3.4 to 4.5, and a few microseconds.)
     // Allocation-bound (the tree is thousands of small blocks): cache and allocator, not the
     // algorithm. 1.8 to 4.1 and 5 to 10.
     ratio("ingest.drop_tree", None, 5.5, 16.0),
@@ -307,10 +309,6 @@ pub(crate) const RATIOS: &[Ratio] = &[
     // and 5.8 to 10.4.
     ratio("step.reply_act", Some(View::Dense), 4.0, 16.0),
     ratio("render.full", Some(View::Dense), 4.0, 14.0),
-    // The over-budget path builds the screen text about 2 log2(n) times (`render.rs`
-    // `smallest_fitting`), so it is n log n. 2.0 to 3.8 and 4.6 to 6.7.
-    ratio("render.budget", Some(View::Dense), 4.6, 14.0),
-    ratio("render.zero", Some(View::Dense), 4.6, 14.0),
     // Everything else should be linear: 2 and 5 are the ideal; the limits leave room for
     // cache effects and a noisy machine, and stay far below a quadratic's 4 and 25.
     ratio("*", None, 3.4, 10.0),

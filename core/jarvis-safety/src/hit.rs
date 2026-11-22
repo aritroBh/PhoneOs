@@ -648,6 +648,42 @@ fn blocker(
     tree: Option<&ScreenTree<'_>>,
     rule: OccluderRule,
 ) -> Option<CoveredBy> {
+    blocker_among(p, target, screen, tree, rule, tree.map(|t| t.nodes.iter()))
+        .map(|b| b.cover(target, tree))
+}
+
+/// What [`blocker`] found, before a contesting raw node is named as a cover (which looks
+/// the node up among the listed elements: only the first candidate's cover is ever named).
+enum Blocker<'n> {
+    /// Named already: a system bar or a listed control.
+    Cover(CoveredBy),
+    /// The contesting raw node.
+    Node(&'n RawNode),
+}
+
+impl Blocker<'_> {
+    fn cover(self, target: &Element, tree: Option<&ScreenTree<'_>>) -> CoveredBy {
+        match (self, tree) {
+            (Blocker::Cover(c), _) => c,
+            (Blocker::Node(n), Some(t)) => cover_of(n, target, t),
+            (Blocker::Node(n), None) => CoveredBy::Node(n.node),
+        }
+    }
+}
+
+/// [`blocker`], looking only at `drawn` among the tree's drawn nodes: every drawn node that
+/// could contain `p`, in node order (all of them, or the ones [`near`] a set of points).
+/// The rule and its order are [`blocker`]'s: with drawn nodes in the tree, a contesting
+/// node is looked for among them (and none found means `p` is clear); without, the listed
+/// controls stand in.
+fn blocker_among<'n>(
+    p: Point,
+    target: &Element,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+    rule: OccluderRule,
+    drawn: Option<impl Iterator<Item = &'n RawNode>>,
+) -> Option<Blocker<'n>> {
     // Precedence holds only where the bar is drawn: a control the tree puts inside a bar but
     // that lies outside the bar's frame at `p` is ordinary content there.
     let home = bar_of(target, screen, tree).filter(|(h, _)| h.frame.contains(p));
@@ -656,7 +692,7 @@ fn blocker(
     if let Some((_, kind, _)) = system_bars(screen, tree)
         .find(|(b, _, _)| b.frame.contains(p) && !tree.is_some_and(|t| t.inside(target, b.node)))
     {
-        return Some(CoveredBy::Bar(kind));
+        return Some(Blocker::Cover(CoveredBy::Bar(kind)));
     }
     // Inside its bar, a target gives way to everything but page content scrolled under the
     // bar (ninth review): the bar's own nodes, the keyboard, overlays drawn over the bar.
@@ -665,11 +701,12 @@ fn blocker(
             t.node_inside(n, h.node) || !scrolled_under(n, h, edge, screen, t)
         })
     };
-    if let Some(t) = tree.filter(|t| !t.nodes.is_empty() && rule != OccluderRule::V0) {
+    if let (Some(t), Some(drawn)) = (
+        tree.filter(|t| !t.nodes.is_empty() && rule != OccluderRule::V0),
+        drawn,
+    ) {
         let own = t.source(target);
-        return t
-            .nodes
-            .iter()
+        return drawn
             .filter(|n| n.frame.contains(p) && contests(n, target, own, t, rule))
             .filter(|n| n.keyboard || yields(n.node, t))
             .min_by(|a, b| {
@@ -678,7 +715,7 @@ fn blocker(
                     .then(a.frame.area().total_cmp(&b.frame.area()))
                     .then(a.node.cmp(&b.node))
             })
-            .map(|n| cover_of(n, target, t));
+            .map(Blocker::Node);
     }
     screen
         .elements
@@ -691,7 +728,30 @@ fn blocker(
                 && !related(target, e, tree)
                 && tree.is_none_or(|t| t.source(e).is_none_or(|n| yields(n, t)))
         })
-        .map(|e| CoveredBy::Control(e.index))
+        .map(|e| Blocker::Cover(CoveredBy::Control(e.index)))
+}
+
+/// The drawn nodes of `tree` that could contain any of `points`, in node order: those whose
+/// frame reaches the points' bounding box (a node that contains a point reaches every box
+/// holding the point, so none is left out).
+fn near<'t>(tree: &ScreenTree<'t>, points: &[Point]) -> Vec<&'t RawNode> {
+    let Some(first) = points.first() else {
+        return Vec::new();
+    };
+    let (mut x0, mut x1, mut y0, mut y1) = (first.x, first.x, first.y, first.y);
+    for p in points {
+        x0 = x0.min(p.x);
+        x1 = x1.max(p.x);
+        y0 = y0.min(p.y);
+        y1 = y1.max(p.y);
+    }
+    tree.nodes
+        .iter()
+        .filter(|n| {
+            let f = n.frame;
+            !(f.x > x1 || f.max_x() <= x0 || f.y > y1 || f.max_y() <= y0)
+        })
+        .collect()
 }
 
 /// The point to tap or press `target` at (see the module docs): `preferred` (the action's
@@ -724,21 +784,33 @@ pub fn tap_spot_under(
     let grid = GRID
         .iter()
         .map(|(fx, fy)| Point::new(f.x + f.width * fx, f.y + f.height * fy));
-    let mut first_blocker: Option<CoveredBy> = None;
-    for p in std::iter::once(first).chain(grid) {
-        if !f.contains(p) {
-            continue;
-        }
-        match blocker(p, target, screen, tree, rule) {
-            None => return Ok(p),
-            Some(b) => {
-                first_blocker.get_or_insert(b);
-            }
+    let mut candidates = std::iter::once(first)
+        .chain(grid)
+        .filter(|p| f.contains(*p));
+    let Some(p0) = candidates.next() else {
+        return Err(Covered {
+            target: target.index,
+            by: CoveredBy::Control(target.index),
+        });
+    };
+    // The first candidate against every drawn node; it is the one a refusal names.
+    let all = tree.map(|t| t.nodes.iter());
+    let Some(first_blocker) = blocker_among(p0, target, screen, tree, rule, all) else {
+        return Ok(p0);
+    };
+    // The others (up to 25, inside the target's frame) only against the drawn nodes that
+    // reach them: the same nodes in the same order as a scan of all would find.
+    let rest: Vec<Point> = candidates.collect();
+    let reach = tree.map(|t| near(t, &rest)).unwrap_or_default();
+    for p in rest {
+        let drawn = tree.map(|_| reach.iter().copied());
+        if blocker_among(p, target, screen, tree, rule, drawn).is_none() {
+            return Ok(p);
         }
     }
     Err(Covered {
         target: target.index,
-        by: first_blocker.unwrap_or(CoveredBy::Control(target.index)),
+        by: first_blocker.cover(target, tree),
     })
 }
 
@@ -794,5 +866,94 @@ pub fn control_at<'a>(
             target: smallest.index,
             by,
         })),
+    }
+}
+
+/// The tap-point search as it was before the candidates after the first were checked only
+/// against the drawn nodes near them and only the first cover was named: the reference the
+/// differential test (`jarvis-observe/tests/perf_equivalence.rs`) holds [`tap_spot_under`]
+/// to. Built for tests only (feature `reference`).
+#[cfg(feature = "reference")]
+pub mod reference {
+    use super::*;
+
+    fn blocker(
+        p: Point,
+        target: &Element,
+        screen: &CompactScreen,
+        tree: Option<&ScreenTree<'_>>,
+        rule: OccluderRule,
+    ) -> Option<CoveredBy> {
+        let home = bar_of(target, screen, tree).filter(|(h, _)| h.frame.contains(p));
+        if let Some((_, kind, _)) = system_bars(screen, tree).find(|(b, _, _)| {
+            b.frame.contains(p) && !tree.is_some_and(|t| t.inside(target, b.node))
+        }) {
+            return Some(CoveredBy::Bar(kind));
+        }
+        let yields = |n: u32, t: &ScreenTree<'_>| {
+            home.is_none_or(|(h, edge)| {
+                t.node_inside(n, h.node) || !scrolled_under(n, h, edge, screen, t)
+            })
+        };
+        if let Some(t) = tree.filter(|t| !t.nodes.is_empty() && rule != OccluderRule::V0) {
+            let own = t.source(target);
+            return t
+                .nodes
+                .iter()
+                .filter(|n| n.frame.contains(p) && contests(n, target, own, t, rule))
+                .filter(|n| n.keyboard || yields(n.node, t))
+                .min_by(|a, b| {
+                    b.keyboard
+                        .cmp(&a.keyboard)
+                        .then(a.frame.area().total_cmp(&b.frame.area()))
+                        .then(a.node.cmp(&b.node))
+                })
+                .map(|n| cover_of(n, target, t));
+        }
+        screen
+            .elements
+            .iter()
+            .find(|e| {
+                e.index != target.index
+                    && (e.enabled || rule != OccluderRule::V0)
+                    && takes_taps(&e.role)
+                    && e.frame.contains(p)
+                    && !related(target, e, tree)
+                    && tree.is_none_or(|t| t.source(e).is_none_or(|n| yields(n, t)))
+            })
+            .map(|e| CoveredBy::Control(e.index))
+    }
+
+    /// [`super::tap_spot_under`] as it was.
+    pub fn tap_spot_under(
+        rule: OccluderRule,
+        target: &Element,
+        screen: &CompactScreen,
+        tree: Option<&ScreenTree<'_>>,
+        preferred: Option<Point>,
+    ) -> Result<Point, Covered> {
+        let f = target.frame;
+        let first = preferred
+            .filter(|p| f.contains(*p))
+            .unwrap_or_else(|| f.center());
+        let grid = GRID
+            .iter()
+            .map(|(fx, fy)| Point::new(f.x + f.width * fx, f.y + f.height * fy));
+        let mut first_blocker: Option<CoveredBy> = None;
+        for p in std::iter::once(first).chain(grid) {
+            if !f.contains(p) {
+                continue;
+            }
+            match blocker(p, target, screen, tree, rule) {
+                None => return Ok(p),
+                Some(b) => {
+                    first_blocker.get_or_insert(b);
+                }
+            }
+        }
+        Err(Covered {
+            target: target.index,
+            by: first_blocker.unwrap_or(CoveredBy::Control(target.index)),
+        })
     }
 }

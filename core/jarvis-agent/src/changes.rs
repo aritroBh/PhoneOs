@@ -18,7 +18,7 @@
 //!
 //! The whole suffix is capped at [`MAX_CHANGE_CHARS`] characters.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use jarvis_observe::{role_name, switch_state};
 use jarvis_proto::{Action, CompactScreen, Element, Role};
@@ -108,10 +108,15 @@ fn place(screen: &CompactScreen) -> String {
 fn element_changes(before: &CompactScreen, after: &CompactScreen) -> (Vec<String>, usize) {
     let before_fp: BTreeSet<u64> = listed(before).map(|e| e.fingerprint).collect();
     let after_fp: BTreeSet<u64> = listed(after).map(|e| e.fingerprint).collect();
+    // The first listed element of `before` with each fingerprint.
+    let mut first_before: HashMap<u64, &Element> = HashMap::new();
+    for b in listed(before) {
+        first_before.entry(b.fingerprint).or_insert(b);
+    }
     let mut items = Vec::new();
     // Same control, new value or state.
     for a in listed(after) {
-        let Some(b) = listed(before).find(|b| b.fingerprint == a.fingerprint) else {
+        let Some(b) = first_before.get(&a.fingerprint).copied() else {
             continue;
         };
         if a.value != b.value {
@@ -140,11 +145,19 @@ fn element_changes(before: &CompactScreen, after: &CompactScreen) -> (Vec<String
     // pair them in order and show the relabel.
     let mut paired_new = vec![false; new.len()];
     let mut unpaired_gone = Vec::new();
+    // Per role, the positions in `new` of its elements in order, and how many of them are
+    // paired: pairing always takes the first unpaired one of the role, so they are paired
+    // in order.
+    let mut by_role: HashMap<&Role, (Vec<usize>, usize)> = HashMap::new();
+    for (i, n) in new.iter().enumerate() {
+        by_role.entry(&n.role).or_default().0.push(i);
+    }
     for g in &gone {
-        let partner = new
-            .iter()
-            .enumerate()
-            .find(|(i, n)| !paired_new.get(*i).copied().unwrap_or(true) && n.role == g.role);
+        let partner = by_role.get_mut(&g.role).and_then(|(at, taken)| {
+            let i = *at.get(*taken)?;
+            *taken += 1;
+            new.get(i).map(|n| (i, n))
+        });
         match partner {
             Some((i, n)) => {
                 if let Some(slot) = paired_new.get_mut(i) {
@@ -218,8 +231,9 @@ pub(crate) fn describe_change(
         return "screen unchanged".to_owned();
     }
     if churn > MANY_CHANGES {
+        let before_fp: HashSet<u64> = listed(before).map(|e| e.fingerprint).collect();
         let new = listed(after)
-            .filter(|a| !listed(before).any(|b| b.fingerprint == a.fingerprint))
+            .filter(|a| !before_fp.contains(&a.fingerprint))
             .count();
         return format!("screen changed: {new} new, {} gone", churn - new);
     }
@@ -229,6 +243,171 @@ pub(crate) fn describe_change(
         out.push_str(&format!("; +{} more", items.len() - MAX_ITEMS));
     }
     cap(out)
+}
+
+/// The change description as it was before elements were looked up by fingerprint in a map:
+/// the reference the differential test holds [`describe_change`] to.
+#[cfg(test)]
+mod reference {
+    use super::*;
+
+    pub(super) fn element_changes(
+        before: &CompactScreen,
+        after: &CompactScreen,
+    ) -> (Vec<String>, usize) {
+        let before_fp: BTreeSet<u64> = listed(before).map(|e| e.fingerprint).collect();
+        let after_fp: BTreeSet<u64> = listed(after).map(|e| e.fingerprint).collect();
+        let mut items = Vec::new();
+        for a in listed(after) {
+            let Some(b) = listed(before).find(|b| b.fingerprint == a.fingerprint) else {
+                continue;
+            };
+            if a.value != b.value {
+                items.push(format!(
+                    "{} {} -> {}",
+                    name(a),
+                    shown_value(b),
+                    shown_value(a)
+                ));
+            } else if a.selected != b.selected {
+                let s = if a.selected { "selected" } else { "unselected" };
+                items.push(format!("{} {s}", name(a)));
+            } else if a.enabled != b.enabled {
+                let s = if a.enabled { "enabled" } else { "disabled" };
+                items.push(format!("{} {s}", name(a)));
+            }
+        }
+        let gone: Vec<&Element> = listed(before)
+            .filter(|e| !after_fp.contains(&e.fingerprint))
+            .collect();
+        let new: Vec<&Element> = listed(after)
+            .filter(|e| !before_fp.contains(&e.fingerprint))
+            .collect();
+        let churn = gone.len() + new.len();
+        let mut paired_new = vec![false; new.len()];
+        let mut unpaired_gone = Vec::new();
+        for g in &gone {
+            let partner = new
+                .iter()
+                .enumerate()
+                .find(|(i, n)| !paired_new.get(*i).copied().unwrap_or(true) && n.role == g.role);
+            match partner {
+                Some((i, n)) => {
+                    if let Some(slot) = paired_new.get_mut(i) {
+                        *slot = true;
+                    }
+                    items.push(format!(
+                        "{} {} -> {}",
+                        role_name(&n.role),
+                        quoted(&g.label),
+                        quoted(&n.label)
+                    ));
+                }
+                None => unpaired_gone.push(*g),
+            }
+        }
+        for (n, paired) in new.iter().zip(&paired_new) {
+            if !paired {
+                items.push(format!("new {}", name(n)));
+            }
+        }
+        for g in unpaired_gone {
+            items.push(format!("gone {}", name(g)));
+        }
+        (items, churn)
+    }
+
+    pub(super) fn describe_change(
+        action: &Action,
+        before: &CompactScreen,
+        after: &CompactScreen,
+    ) -> String {
+        if !before
+            .app_bundle_id
+            .eq_ignore_ascii_case(&after.app_bundle_id)
+        {
+            return cap(format!("now in {}", place(after)));
+        }
+        let title_changed = title(before) != title(after);
+        if let Action::Type { element, .. } = action {
+            let target = match element {
+                Some(i) => before.get(*i),
+                None => before.elements.iter().find(|e| e.focused),
+            };
+            let field = target
+                .filter(|t| !t.secure)
+                .and_then(|t| after.find_by_fingerprint(t.fingerprint))
+                .filter(|f| !f.secure);
+            if let (Some(f), false) = (field, title_changed) {
+                return cap(match f.value.as_deref().filter(|v| !v.is_empty()) {
+                    Some(v) => format!("field now {}", quoted(v)),
+                    None => "field now empty".to_owned(),
+                });
+            }
+        }
+        let (items, churn) = element_changes(before, after);
+        if title_changed && title(after).is_some() {
+            return cap(format!("now in {}", place(after)));
+        }
+        if items.is_empty() {
+            return "screen unchanged".to_owned();
+        }
+        if churn > MANY_CHANGES {
+            let new = listed(after)
+                .filter(|a| !listed(before).any(|b| b.fingerprint == a.fingerprint))
+                .count();
+            return format!("screen changed: {new} new, {} gone", churn - new);
+        }
+        let shown: Vec<&str> = items.iter().take(MAX_ITEMS).map(String::as_str).collect();
+        let mut out = format!("changed: {}", shown.join("; "));
+        if items.len() > MAX_ITEMS {
+            out.push_str(&format!("; +{} more", items.len() - MAX_ITEMS));
+        }
+        cap(out)
+    }
+}
+
+#[cfg(test)]
+mod differential {
+    use super::*;
+    use jarvis_proto::fixtures::random::{random_compact_screen, random_next_screen, Rng};
+
+    /// [`element_changes`] and [`describe_change`] give exactly the reference's output on
+    /// thousands of random before/after pairs (duplicate fingerprints, relabels, elements
+    /// gone and new, value and state changes, other apps), for taps and typing.
+    #[test]
+    fn changes_match_the_reference() {
+        for seed in 0..4_000u64 {
+            let before = random_compact_screen(seed);
+            let after = random_next_screen(&before, seed);
+            let mut r = Rng::new(seed);
+            let action = match r.below(3) {
+                0 => Action::Tap { element: 1 },
+                1 => Action::Type {
+                    element: Some(u32::try_from(r.below(8)).unwrap_or(0)),
+                    text: "late".into(),
+                    submit: false,
+                },
+                _ => Action::Type {
+                    element: None,
+                    text: "late".into(),
+                    submit: true,
+                },
+            };
+            for (b, a) in [(&before, &after), (&after, &before), (&before, &before)] {
+                assert_eq!(
+                    element_changes(b, a),
+                    reference::element_changes(b, a),
+                    "seed {seed}"
+                );
+                assert_eq!(
+                    describe_change(&action, b, a),
+                    reference::describe_change(&action, b, a),
+                    "seed {seed}"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

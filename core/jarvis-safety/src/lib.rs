@@ -72,6 +72,13 @@ pub use hit::{
     PAGE_MIN_BAR_HEIGHTS, PAGE_MIN_WIDTH, SYSTEM_BAR_BOTTOM_REGION, SYSTEM_BAR_MAX_BOTTOM_HEIGHT,
     SYSTEM_BAR_MAX_TOP_HEIGHT, SYSTEM_BAR_MIN_CAP, SYSTEM_BAR_MIN_WIDTH, SYSTEM_BAR_TOP_REGION,
 };
+/// The implementations faster code replaced, kept so differential tests in other crates can
+/// hold the new code to them. Tests only (feature `reference`).
+#[cfg(feature = "reference")]
+#[doc(hidden)]
+pub mod reference {
+    pub use crate::hit::reference::tap_spot_under;
+}
 pub use phrases::{
     label_risk, AppRule, Phrase, RuleTarget, ACTION_PHRASES, APP_PHRASES, APP_RULES,
     APP_STORE_BUNDLE_ID, COMPOSE_FIELD_PHRASES, CONTEXT_PHRASES, CREDENTIAL_FIELD_PHRASES,

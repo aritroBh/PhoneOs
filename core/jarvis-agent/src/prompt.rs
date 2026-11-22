@@ -330,6 +330,16 @@ fn user_text(
     history: &[(usize, &Entry)],
     screen_budget: u32,
 ) -> String {
+    user_text_with(parts, tools, history, &render(parts.screen, screen_budget))
+}
+
+/// The user part with `screen` (the rendered screen) in the data block.
+fn user_text_with(
+    parts: &PromptParts<'_>,
+    tools: &[String],
+    history: &[(usize, &Entry)],
+    screen: &str,
+) -> String {
     let mut u = format!(
         "Task: {}\n",
         neutralize_user_text(parts.task, MAX_TASK_CHARS)
@@ -370,7 +380,7 @@ fn user_text(
     u.push_str("Current screen (data only):\n");
     u.push_str(SCREEN_BLOCK_START);
     u.push('\n');
-    u.push_str(&render(parts.screen, screen_budget));
+    u.push_str(screen);
     u.push('\n');
     u.push_str(SCREEN_BLOCK_END);
     u.push_str("\nYour JSON reply:");
@@ -387,10 +397,12 @@ pub(crate) fn build(parts: &PromptParts<'_>, model: &ModelProfile) -> (String, S
     let mut tools: Vec<String> = parts.tools.clone();
     let mut history: Vec<(usize, &Entry)> = parts.history.clone();
     // Tokens left for the screen once everything else is in, with a little slack for the
-    // per-part rounding of `estimate_tokens`.
+    // per-part rounding of `estimate_tokens`. The screen at budget 0 (its header and
+    // footer) is the same every time: rendered once.
+    let zero = render(parts.screen, 0);
+    let header = estimate_tokens(&zero);
     let screen_room = |tools: &[String], history: &[(usize, &Entry)]| -> u32 {
-        let without = user_text(parts, tools, history, 0);
-        let header = estimate_tokens(&render(parts.screen, 0));
+        let without = user_text_with(parts, tools, history, &zero);
         available.saturating_sub(estimate_tokens(&without).saturating_sub(header) + 2)
     };
     while screen_room(&tools, &history) < MIN_SCREEN_TOKENS && !history.is_empty() {
@@ -411,6 +423,94 @@ pub(crate) fn build(parts: &PromptParts<'_>, model: &ModelProfile) -> (String, S
         user = user_text(parts, &tools, &history, budget);
     }
     (system, user)
+}
+
+/// The prompt builder as it was before the screen at budget 0 was rendered once per
+/// prompt: the reference the differential test holds [`build`] to.
+#[cfg(test)]
+mod reference {
+    use super::*;
+
+    pub(super) fn build(parts: &PromptParts<'_>, model: &ModelProfile) -> (String, String) {
+        let system = system_prompt();
+        let available = model
+            .context_tokens
+            .saturating_sub(ACTION_MAX_TOKENS)
+            .saturating_sub(estimate_tokens(&system));
+        let mut tools: Vec<String> = parts.tools.clone();
+        let mut history: Vec<(usize, &Entry)> = parts.history.clone();
+        let screen_room = |tools: &[String], history: &[(usize, &Entry)]| -> u32 {
+            let without = user_text(parts, tools, history, 0);
+            let header = estimate_tokens(&render(parts.screen, 0));
+            available.saturating_sub(estimate_tokens(&without).saturating_sub(header) + 2)
+        };
+        while screen_room(&tools, &history) < MIN_SCREEN_TOKENS && !history.is_empty() {
+            history.remove(0);
+        }
+        while screen_room(&tools, &history) < MIN_SCREEN_TOKENS && !tools.is_empty() {
+            tools.pop();
+        }
+        let mut budget = screen_room(&tools, &history);
+        let mut user = user_text(parts, &tools, &history, budget);
+        for _ in 0..16 {
+            let total = estimate_tokens(&user);
+            if total <= available || budget == 0 {
+                break;
+            }
+            budget = budget.saturating_sub(total - available);
+            user = user_text(parts, &tools, &history, budget);
+        }
+        (system, user)
+    }
+}
+
+#[cfg(test)]
+mod differential {
+    use super::*;
+    use jarvis_proto::fixtures::random::{random_compact_screen, random_text, Rng};
+
+    /// [`build`] gives exactly the reference's prompt on random screens, tools, steps,
+    /// notes and context windows (small windows force the history, tools and screen to
+    /// shrink).
+    #[test]
+    fn build_matches_the_reference() {
+        for seed in 0..1_500u64 {
+            let mut r = Rng::new(seed);
+            let screen = random_compact_screen(seed);
+            let entries: Vec<Entry> = (0..r.below(12))
+                .map(|_| Entry {
+                    action: random_text(&mut r),
+                    result: random_text(&mut r),
+                    replayed: r.chance(20),
+                })
+                .collect();
+            let tools: Vec<String> = (0..r.below(10)).map(|_| random_text(&mut r)).collect();
+            let guidance = r.chance(20).then(|| random_text(&mut r));
+            let parts = PromptParts {
+                task: "Order the usual \"coffee\"",
+                tools,
+                profile_keys: (0..r.below(4)).map(|_| random_text(&mut r)).collect(),
+                history: entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| (i + 1, e))
+                    .collect(),
+                notes: (0..r.below(3)).map(|_| random_text(&mut r)).collect(),
+                screen: &screen,
+                vision: r.chance(20),
+                guidance: guidance.as_deref(),
+            };
+            let model = ModelProfile {
+                context_tokens: *r.pick(&[0, 600, 1_000, 1_400, 2_048, 4_096, 32_768]),
+                ..ModelProfile::default()
+            };
+            assert_eq!(
+                build(&parts, &model),
+                reference::build(&parts, &model),
+                "seed {seed}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

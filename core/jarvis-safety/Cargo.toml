@@ -6,6 +6,11 @@ version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Test-only: `jarvis_safety::reference`, the implementations faster code replaced, for the
+# differential tests of other crates (jarvis-observe's dev-dependency turns it on).
+reference = []
+
 [dependencies]
 jarvis-proto.workspace = true
 serde.workspace = true

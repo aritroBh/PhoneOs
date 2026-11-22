@@ -16,7 +16,7 @@ thiserror.workspace = true
 jarvis-proto = { workspace = true, features = ["test-util"] }
 # Test-only: the tap-point sweep over the real iOS 26 fixtures (no cycle: jarvis-safety
 # does not depend on jarvis-observe).
-jarvis-safety.workspace = true
+jarvis-safety = { workspace = true, features = ["reference"] }
 serde_json.workspace = true
 
 [lints]

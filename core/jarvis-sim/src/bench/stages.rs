@@ -353,8 +353,8 @@ pub fn run_case(id: &str, screen: &Screen, cfg: &Cfg) -> CaseResult {
         let s = measure(plan, || (), |()| render(&safe, u32::MAX));
         put(&mut out.rows, "render.full", s, None);
     }
-    // `prompt::build` renders at budget 0 (to learn the size of the header and footer) twice
-    // per `screen_room` call, three calls per prompt.
+    // `prompt::build` renders at budget 0 once per prompt, to learn the size of the header
+    // and footer.
     if cfg.wants("render.zero") {
         let s = measure(plan, || (), |()| render(&safe, 0));
         put(&mut out.rows, "render.zero", s, None);

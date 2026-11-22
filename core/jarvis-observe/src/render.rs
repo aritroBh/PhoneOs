@@ -7,8 +7,12 @@ const LABEL_CAPS: [usize; 4] = [48, 32, 20, 12];
 
 /// Estimated tokens of `text`: ceil(UTF-8 bytes / 4).
 pub fn estimate_tokens(text: &str) -> u32 {
-    let n = text.len().div_ceil(4);
-    u32::try_from(n).unwrap_or(u32::MAX)
+    tokens_of_len(text.len())
+}
+
+/// [`estimate_tokens`] of a text of `len` UTF-8 bytes.
+fn tokens_of_len(len: usize) -> u32 {
+    u32::try_from(len.div_ceil(4)).unwrap_or(u32::MAX)
 }
 
 /// The role as the rendered screen names it (`Button`, `Cell`, ...).
@@ -163,43 +167,13 @@ pub const MORE_ABOVE: &str = "… more above; scroll up";
 /// Cue line when a list continues below the visible part.
 pub const MORE_BELOW: &str = "… more below; scroll down";
 
-/// How much of the screen to show.
-struct Plan<'a> {
-    /// Label/value character cap.
-    cap: Option<usize>,
-    /// Static texts to omit, in omission order (positions in `elements`).
-    omitted_texts: &'a [usize],
-    /// Number of bottom elements to cut after omitting texts.
-    cut: usize,
-}
-
-fn build(screen: &CompactScreen, plan: &Plan<'_>) -> String {
-    let mut omitted = vec![false; screen.elements.len()];
-    for &i in plan.omitted_texts {
-        if let Some(slot) = omitted.get_mut(i) {
-            *slot = true;
-        }
+/// The footer lines of a rendering that omits `omitted` static texts and cuts `cut` shown
+/// elements from the bottom.
+fn footer(screen: &CompactScreen, omitted: usize, cut: usize) -> String {
+    let mut out = String::new();
+    if omitted > 0 {
+        out.push_str(&format!("\n… {omitted} static texts omitted"));
     }
-    let shown: Vec<&Element> = screen
-        .elements
-        .iter()
-        .zip(&omitted)
-        .filter(|(_, o)| !**o)
-        .map(|(e, _)| e)
-        .collect();
-    let keep = shown.len().saturating_sub(plan.cut);
-    let mut out = header(screen);
-    for e in shown.iter().take(keep) {
-        out.push('\n');
-        out.push_str(&element_line(e, plan.cap));
-    }
-    if !plan.omitted_texts.is_empty() {
-        out.push_str(&format!(
-            "\n… {} static texts omitted",
-            plan.omitted_texts.len()
-        ));
-    }
-    let cut = shown.len() - keep;
     if cut > 0 {
         out.push_str(&format!("\n… {cut} more elements below; scroll down"));
     } else if screen.cues.more_below {
@@ -207,6 +181,41 @@ fn build(screen: &CompactScreen, plan: &Plan<'_>) -> String {
         out.push_str(MORE_BELOW);
     }
     out
+}
+
+/// One rendering: the header, each of `lines` on a line of its own, then `footer`.
+fn assemble<'s>(header: &str, lines: impl Iterator<Item = &'s str>, footer: &str) -> String {
+    let mut out = header.to_owned();
+    for line in lines {
+        out.push('\n');
+        out.push_str(line);
+    }
+    out.push_str(footer);
+    out
+}
+
+/// The header, every element's line at `cap` and `footer`, or `None` as soon as the text
+/// is over budget (`fits` of its length is false).
+fn text_within(
+    screen: &CompactScreen,
+    header: &str,
+    cap: Option<usize>,
+    footer: &str,
+    fits: impl Fn(usize) -> bool,
+) -> Option<String> {
+    let mut out = header.to_owned();
+    for e in &screen.elements {
+        out.push('\n');
+        out.push_str(&element_line(e, cap));
+        if !fits(out.len() + footer.len()) {
+            return None;
+        }
+    }
+    if !fits(out.len() + footer.len()) {
+        return None;
+    }
+    out.push_str(footer);
+    Some(out)
 }
 
 /// Smallest `n` in `0..=max` with `fits(n)`, assuming `fits` is monotone; `None` if even `max` fails.
@@ -274,51 +283,253 @@ fn static_text_omission_order(screen: &CompactScreen) -> Vec<usize> {
 /// the next page)` and `… more above; scroll up` after the header, `… more below; scroll
 /// down` at the end (the budget-cut line says the same when elements were dropped).
 pub fn render(screen: &CompactScreen, budget_tokens: u32) -> String {
-    let fits = |s: &str| estimate_tokens(s) <= budget_tokens;
-    let none: [usize; 0] = [];
-
-    let full = build(
-        screen,
-        &Plan {
-            cap: None,
-            omitted_texts: &none,
-            cut: 0,
-        },
-    );
-    if fits(&full) {
-        return full;
+    // Each candidate rendering is the header, element lines and footer lines; its size is
+    // the sum of their lengths. Candidates are measured, and only the one returned is built.
+    let fits = |len: usize| tokens_of_len(len) <= budget_tokens;
+    let head = header(screen);
+    let texts = screen
+        .elements
+        .iter()
+        .filter(|e| e.role == Role::StaticText)
+        .count();
+    let remaining = screen.elements.len() - texts;
+    if !fits(head.len()) {
+        // Every candidate starts with the header, so none fits, and the search ends where
+        // it always does then: every static text omitted, every other element cut.
+        return assemble(&head, std::iter::empty(), &footer(screen, texts, remaining));
     }
-    for cap in LABEL_CAPS {
-        let s = build(
+
+    // The full text, then label caps, as long as everything fits.
+    let plain = footer(screen, 0, 0);
+    let fixed = head.len() + plain.len();
+    let (last_cap, caps) = LABEL_CAPS
+        .split_last()
+        .map_or((None, &[][..]), |(l, c)| (Some(*l), c));
+    for cap in std::iter::once(None).chain(caps.iter().copied().map(Some)) {
+        if let Some(text) = text_within(screen, &head, cap, &plain, fits) {
+            return text;
+        }
+    }
+    let lines: Vec<String> = screen
+        .elements
+        .iter()
+        .map(|e| element_line(e, last_cap))
+        .collect();
+    let line_len = |i: usize| lines.get(i).map_or(0, |l| l.len() + 1);
+    let all: usize = (0..lines.len()).map(line_len).sum();
+    if fits(fixed + all) {
+        return assemble(&head, lines.iter().map(String::as_str), &plain);
+    }
+
+    // Omit static texts, farthest from a control first: the fewest that fit.
+    let order = static_text_omission_order(screen);
+    // Bytes of the lines left once the first k texts of `order` are omitted, by k.
+    let mut left_after = Vec::with_capacity(order.len() + 1);
+    let mut left = all;
+    left_after.push(left);
+    for &i in &order {
+        left -= line_len(i);
+        left_after.push(left);
+    }
+    let omitted_fits = |k: usize| {
+        let lines = left_after.get(k).copied().unwrap_or(0);
+        fits(head.len() + lines + footer(screen, k, 0).len())
+    };
+    let mut omitted = vec![false; screen.elements.len()];
+    let omit = |omitted: &mut Vec<bool>, k: usize| {
+        for &i in order.get(..k).unwrap_or(&order) {
+            if let Some(slot) = omitted.get_mut(i) {
+                *slot = true;
+            }
+        }
+    };
+    if let Some(k) = smallest_fitting(order.len(), omitted_fits) {
+        omit(&mut omitted, k);
+        let shown = lines
+            .iter()
+            .zip(&omitted)
+            .filter(|(_, o)| !**o)
+            .map(|(l, _)| l.as_str());
+        return assemble(&head, shown, &footer(screen, k, 0));
+    }
+
+    // Every static text omitted: cut the fewest elements from the bottom that fit.
+    omit(&mut omitted, order.len());
+    // Bytes of the first j shown lines, by j.
+    let mut shown_upto = vec![0usize];
+    let mut sum = 0usize;
+    for (i, o) in omitted.iter().enumerate() {
+        if !o {
+            sum += line_len(i);
+            shown_upto.push(sum);
+        }
+    }
+    let shown = shown_upto.len() - 1;
+    let kept = |cut: usize| shown.saturating_sub(cut);
+    let cut_fits = |cut: usize| {
+        let lines = shown_upto.get(kept(cut)).copied().unwrap_or(0);
+        fits(head.len() + lines + footer(screen, order.len(), shown - kept(cut)).len())
+    };
+    let cut = smallest_fitting(remaining, cut_fits).unwrap_or(remaining);
+    let lines_shown = lines
+        .iter()
+        .zip(&omitted)
+        .filter(|(_, o)| !**o)
+        .map(|(l, _)| l.as_str())
+        .take(kept(cut));
+    assemble(
+        &head,
+        lines_shown,
+        &footer(screen, order.len(), shown - kept(cut)),
+    )
+}
+
+/// The rendering as it was before candidates were measured instead of built: the
+/// reference the differential test below holds [`render`] to.
+#[cfg(test)]
+mod reference {
+    use super::*;
+
+    /// How much of the screen to show.
+    struct Plan<'a> {
+        /// Label/value character cap.
+        cap: Option<usize>,
+        /// Static texts to omit, in omission order (positions in `elements`).
+        omitted_texts: &'a [usize],
+        /// Number of bottom elements to cut after omitting texts.
+        cut: usize,
+    }
+
+    fn build(screen: &CompactScreen, plan: &Plan<'_>) -> String {
+        let mut omitted = vec![false; screen.elements.len()];
+        for &i in plan.omitted_texts {
+            if let Some(slot) = omitted.get_mut(i) {
+                *slot = true;
+            }
+        }
+        let shown: Vec<&Element> = screen
+            .elements
+            .iter()
+            .zip(&omitted)
+            .filter(|(_, o)| !**o)
+            .map(|(e, _)| e)
+            .collect();
+        let keep = shown.len().saturating_sub(plan.cut);
+        let mut out = header(screen);
+        for e in shown.iter().take(keep) {
+            out.push('\n');
+            out.push_str(&element_line(e, plan.cap));
+        }
+        if !plan.omitted_texts.is_empty() {
+            out.push_str(&format!(
+                "\n… {} static texts omitted",
+                plan.omitted_texts.len()
+            ));
+        }
+        let cut = shown.len() - keep;
+        if cut > 0 {
+            out.push_str(&format!("\n… {cut} more elements below; scroll down"));
+        } else if screen.cues.more_below {
+            out.push('\n');
+            out.push_str(MORE_BELOW);
+        }
+        out
+    }
+
+    pub(super) fn render(screen: &CompactScreen, budget_tokens: u32) -> String {
+        let fits = |s: &str| estimate_tokens(s) <= budget_tokens;
+        let none: [usize; 0] = [];
+
+        let full = build(
             screen,
             &Plan {
-                cap: Some(cap),
+                cap: None,
                 omitted_texts: &none,
                 cut: 0,
             },
         );
-        if fits(&s) {
-            return s;
+        if fits(&full) {
+            return full;
         }
-    }
+        for cap in LABEL_CAPS {
+            let s = build(
+                screen,
+                &Plan {
+                    cap: Some(cap),
+                    omitted_texts: &none,
+                    cut: 0,
+                },
+            );
+            if fits(&s) {
+                return s;
+            }
+        }
 
-    let cap = LABEL_CAPS.last().copied();
-    let order = static_text_omission_order(screen);
-    let with_omitted = |k: usize, cut: usize| {
-        build(
-            screen,
-            &Plan {
-                cap,
-                omitted_texts: order.get(..k).unwrap_or(&order),
-                cut,
-            },
-        )
-    };
-    if let Some(k) = smallest_fitting(order.len(), |k| fits(&with_omitted(k, 0))) {
-        return with_omitted(k, 0);
+        let cap = LABEL_CAPS.last().copied();
+        let order = static_text_omission_order(screen);
+        let with_omitted = |k: usize, cut: usize| {
+            build(
+                screen,
+                &Plan {
+                    cap,
+                    omitted_texts: order.get(..k).unwrap_or(&order),
+                    cut,
+                },
+            )
+        };
+        if let Some(k) = smallest_fitting(order.len(), |k| fits(&with_omitted(k, 0))) {
+            return with_omitted(k, 0);
+        }
+        let remaining = screen.elements.len() - order.len();
+        let cut = smallest_fitting(remaining, |c| fits(&with_omitted(order.len(), c)))
+            .unwrap_or(remaining);
+        with_omitted(order.len(), cut)
     }
-    let remaining = screen.elements.len() - order.len();
-    let cut =
-        smallest_fitting(remaining, |c| fits(&with_omitted(order.len(), c))).unwrap_or(remaining);
-    with_omitted(order.len(), cut)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jarvis_proto::fixtures::random::{random_compact_screen, Rng};
+
+    /// Differential test: [`render`] gives exactly the reference's text on thousands of
+    /// random screens, at every budget from 0 past the full text's size on small screens
+    /// and at random budgets (with 0, 1, 2, 3 and the full size) on larger ones.
+    /// `RENDER_SCREENS=<n>` and `RENDER_BUDGETS=<n>` (the largest full size whose every
+    /// budget is tried, and the number of random ones) change the defaults of 1,000 and 40
+    /// (about 25 s in a debug build); 3,000 and 400 were run once (about 5 minutes).
+    #[test]
+    fn render_matches_the_reference_at_every_budget() {
+        let var = |name: &str, default: u64| {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default)
+        };
+        let screens = var("RENDER_SCREENS", 1_000);
+        let every = u32::try_from(var("RENDER_BUDGETS", 40)).unwrap_or(u32::MAX);
+        let mut compared = 0u64;
+        for seed in 0..screens {
+            let screen = random_compact_screen(seed);
+            let full = estimate_tokens(&reference::render(&screen, u32::MAX));
+            let mut budgets: Vec<u32> = if full <= every {
+                (0..=full + 2).collect()
+            } else {
+                let mut r = Rng::new(seed);
+                (0..every)
+                    .map(|_| u32::try_from(r.below(u64::from(full) + 3)).unwrap_or(0))
+                    .collect()
+            };
+            budgets.extend([0, 1, 2, 3, full.saturating_sub(1), full, u32::MAX]);
+            for b in budgets {
+                assert_eq!(
+                    render(&screen, b),
+                    reference::render(&screen, b),
+                    "seed {seed}, budget {b}"
+                );
+                compared += 1;
+            }
+        }
+        assert!(compared > screens * 10, "{compared}");
+    }
 }

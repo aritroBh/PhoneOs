@@ -7,6 +7,8 @@
 use crate::geometry::{Rect, Size};
 use crate::ui::{Observation, Orientation, Role, Screen, UiNode};
 
+pub mod random;
+
 /// iPhone 15 portrait screen size in points.
 pub const IPHONE_SIZE: Size = Size::new(393.0, 852.0);
 

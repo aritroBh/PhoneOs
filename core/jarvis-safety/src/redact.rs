@@ -96,9 +96,33 @@ pub fn credential_like_field(el: &Element) -> bool {
 /// [`credential_like_field`]) has its value masked, and label, value and placeholder are
 /// passed through [`redact`].
 pub fn redact_element(el: &Element) -> Element {
-    let mut out = el.clone();
-    out.label = redact(&el.label);
-    out.placeholder = el.placeholder.as_deref().map(redact);
+    // Field by field, so the texts are not cloned only to be replaced.
+    let Element {
+        index,
+        role,
+        label: _,
+        value: _,
+        placeholder: _,
+        frame,
+        enabled,
+        focused,
+        selected,
+        secure,
+        fingerprint,
+    } = el;
+    let mut out = Element {
+        index: *index,
+        role: role.clone(),
+        label: redact(&el.label),
+        value: None,
+        placeholder: el.placeholder.as_deref().map(redact),
+        frame: *frame,
+        enabled: *enabled,
+        focused: *focused,
+        selected: *selected,
+        secure: *secure,
+        fingerprint: *fingerprint,
+    };
     let credential_field = credential_like_field(el);
     out.value = if el.secure {
         None
@@ -118,9 +142,23 @@ pub fn redact_element(el: &Element) -> Element {
 
 /// A copy of `screen` with every element passed through [`redact_element`].
 pub fn redact_screen(screen: &CompactScreen) -> CompactScreen {
-    let mut out = screen.clone();
-    out.elements = screen.elements.iter().map(redact_element).collect();
-    out
+    // Field by field, so the elements are not cloned only to be replaced.
+    let CompactScreen {
+        app_bundle_id,
+        app_name,
+        size,
+        keyboard_visible,
+        elements,
+        cues,
+    } = screen;
+    CompactScreen {
+        app_bundle_id: app_bundle_id.clone(),
+        app_name: app_name.clone(),
+        size: *size,
+        keyboard_visible: *keyboard_visible,
+        elements: elements.iter().map(redact_element).collect(),
+        cues: cues.clone(),
+    }
 }
 
 /// The characters of `text` without invisible ones, so `4111\u{200B}1111…` cannot dodge a
@@ -137,12 +175,14 @@ fn digit(c: char) -> Option<u32> {
 /// Spans `(start, end, mask)` over `chars`, sorted by start, possibly overlapping.
 fn find_spans(chars: &[char]) -> Vec<(usize, usize, &'static str)> {
     let mut spans = Vec::new();
+    // The words of `chars`, which code and seed detection both read.
+    let ws = words(chars);
     card_spans(chars, &mut spans);
     iban_spans(chars, &mut spans);
-    code_spans(chars, &mut spans);
+    code_spans(chars, &ws, &mut spans);
     labelled_secret_spans(chars, &mut spans);
     key_spans(chars, &mut spans);
-    seed_spans(chars, &mut spans);
+    seed_spans(chars, &ws, &mut spans);
     spans.sort_by_key(|&(s, e, _)| (s, std::cmp::Reverse(e)));
     spans
 }
@@ -654,9 +694,8 @@ fn standalone_number(chars: &[char], start: usize, end: usize) -> bool {
 /// clusters starting with `+` (phone numbers), dash-joined clusters of three or more groups
 /// (dates, phone numbers) and numbers right after an identifier word (`Order 12345678`)
 /// are not.
-fn code_spans(chars: &[char], spans: &mut Vec<(usize, usize, &'static str)>) {
-    let ws = words(chars);
-    let sent = sentences(chars, &ws);
+fn code_spans(chars: &[char], ws: &[Word], spans: &mut Vec<(usize, usize, &'static str)>) {
+    let sent = sentences(chars, ws);
     let is_num = |w: &str| !w.is_empty() && w.chars().all(|c| digit(c).is_some());
     let word = |k: usize| ws.get(k).map(|(_, _, w)| w.as_str()).unwrap_or("");
     let keyword_at = |k: usize| -> bool {
@@ -735,8 +774,7 @@ const STOPWORDS: &[&str] = &[
 
 /// Seed phrases: 12 or more consecutive lowercase ASCII words of 3–8 letters separated by
 /// single spaces, with few common chat words among them.
-fn seed_spans(chars: &[char], spans: &mut Vec<(usize, usize, &'static str)>) {
-    let ws = words(chars);
+fn seed_spans(chars: &[char], ws: &[Word], spans: &mut Vec<(usize, usize, &'static str)>) {
     let seedish = |w: &str| (3..=8).contains(&w.len()) && w.bytes().all(|b| b.is_ascii_lowercase());
     let mut k = 0usize;
     while k < ws.len() {
@@ -863,4 +901,106 @@ fn is_password_like(text: &str) -> bool {
         .chars()
         .any(|c| !c.is_alphanumeric() && !matches!(c, ',' | '.' | '-' | '_' | '\'' | '/' | ':'));
     lower && upper && num && sym
+}
+
+#[cfg(test)]
+mod differential {
+    use super::*;
+    use jarvis_proto::fixtures::random::{random_compact_screen, random_text, Rng};
+
+    /// [`find_spans`] as it was, each detector reading the words of `chars` on its own.
+    fn reference_find_spans(chars: &[char]) -> Vec<(usize, usize, &'static str)> {
+        let mut spans = Vec::new();
+        card_spans(chars, &mut spans);
+        iban_spans(chars, &mut spans);
+        code_spans(chars, &words(chars), &mut spans);
+        labelled_secret_spans(chars, &mut spans);
+        key_spans(chars, &mut spans);
+        seed_spans(chars, &words(chars), &mut spans);
+        spans.sort_by_key(|&(s, e, _)| (s, std::cmp::Reverse(e)));
+        spans
+    }
+
+    /// [`redact_element`] as it was: a clone of the element with its texts replaced.
+    fn reference_redact_element(el: &Element) -> Element {
+        let mut out = el.clone();
+        out.label = redact(&el.label);
+        out.placeholder = el.placeholder.as_deref().map(redact);
+        let credential_field = credential_like_field(el);
+        out.value = if el.secure {
+            None
+        } else if credential_field {
+            el.value.as_ref().map(|v| {
+                if v.is_empty() {
+                    String::new()
+                } else {
+                    SECRET_MASK.to_owned()
+                }
+            })
+        } else {
+            el.value.as_deref().map(redact)
+        };
+        out
+    }
+
+    const SECRETISH: &[&str] = &[
+        "Your code is 482913",
+        "code: 48 29 13",
+        "verification code 123-456",
+        "4111 1111 1111 1111",
+        "4111-1111-1111-1111 exp 12/29",
+        "GB82 WEST 1234 5698 7654 32",
+        "password: hunter2!",
+        "sk-live-4eC39HqLyjWDarjtT1zdp7dc",
+        "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        "apple banana cherry dragon eagle falcon grape hotel igloo jungle kiwi lemon",
+        "Order 12345678",
+        "+1 555 010 2030",
+        "PIN 1234",
+        "4111\u{200B}1111\u{200B}1111\u{200B}1111",
+        "１２３４５６",
+    ];
+
+    /// Redaction finds the same spans and gives the same screens as before, on random
+    /// texts mixing secrets, codes and card numbers with ordinary words, and on random
+    /// screens.
+    #[test]
+    fn redaction_matches_the_reference() {
+        for seed in 0..4_000u64 {
+            let mut r = Rng::new(seed);
+            let mut text = String::new();
+            for _ in 0..1 + r.below(6) {
+                if r.chance(40) {
+                    text.push_str(r.pick(SECRETISH));
+                } else {
+                    text.push_str(&random_text(&mut r));
+                }
+                text.push_str(r.pick(&[" ", ". ", "\n", ", ", "; "]));
+            }
+            let chars = visible_chars(&text);
+            assert_eq!(
+                find_spans(&chars),
+                reference_find_spans(&chars),
+                "seed {seed}: {text:?}"
+            );
+            let mut screen = random_compact_screen(seed);
+            if let Some(e) = screen.elements.first_mut() {
+                e.value = Some(text.clone());
+            }
+            let expected = CompactScreen {
+                elements: screen
+                    .elements
+                    .iter()
+                    .map(reference_redact_element)
+                    .collect(),
+                ..screen.clone()
+            };
+            // Compared as text: a `NaN` frame is never equal to itself.
+            assert_eq!(
+                format!("{:?}", redact_screen(&screen)),
+                format!("{expected:?}"),
+                "seed {seed}"
+            );
+        }
+    }
 }

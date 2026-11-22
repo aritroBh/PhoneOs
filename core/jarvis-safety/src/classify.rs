@@ -762,9 +762,11 @@ fn side_by_side(a: &Element, b: &Element) -> bool {
 }
 
 /// The indices of the cells and buttons of `screen` that have a sibling of their family
-/// beside them ([`side_by_side`]): items of a carousel or grid. One sweep in vertical order;
-/// each element is compared only with the ones whose top is within
-/// [`SIBLING_MAX_TOP_OFFSET`] of its own.
+/// beside them ([`side_by_side`]): items of a carousel or grid. Sorted by top edge, each
+/// element looks for one such sibling among the ones whose top is within
+/// [`SIBLING_MAX_TOP_OFFSET`] of its own, below it in that order and then above, and stops
+/// at the first (a row of a grid finds its neighbour at once, where comparing every pair
+/// of a row is quadratic in the row's length).
 fn beside_siblings(screen: &CompactScreen) -> BTreeSet<u32> {
     let mut items: Vec<&Element> = screen
         .elements
@@ -774,14 +776,22 @@ fn beside_siblings(screen: &CompactScreen) -> BTreeSet<u32> {
     items.sort_by(|a, b| a.frame.y.total_cmp(&b.frame.y));
     let mut out = BTreeSet::new();
     for (k, a) in items.iter().enumerate() {
-        for b in items.iter().skip(k.saturating_add(1)) {
-            if b.frame.y - a.frame.y > SIBLING_MAX_TOP_OFFSET {
-                break;
-            }
-            if side_by_side(a, b) {
-                out.insert(a.index);
-                out.insert(b.index);
-            }
+        // `side_by_side` needs tops within the offset, so a top that is not a finite
+        // number never has a sibling.
+        if !a.frame.y.is_finite() {
+            continue;
+        }
+        let below = items
+            .iter()
+            .skip(k.saturating_add(1))
+            .take_while(|b| b.frame.y - a.frame.y <= SIBLING_MAX_TOP_OFFSET);
+        let above = items
+            .iter()
+            .take(k)
+            .rev()
+            .take_while(|b| a.frame.y - b.frame.y <= SIBLING_MAX_TOP_OFFSET);
+        if below.chain(above).any(|b| side_by_side(a, b)) {
+            out.insert(a.index);
         }
     }
     out
@@ -1023,4 +1033,90 @@ fn tap_point_in<'a>(x: f64, y: f64, r: &Reader<'a>) -> (RiskCategory, Option<&'a
         .max_by(|a, b| a.frame.area().total_cmp(&b.frame.area()))
         .copied();
     (risk, largest)
+}
+
+#[cfg(test)]
+mod differential {
+    use super::*;
+    use jarvis_proto::fixtures::random::{random_compact_screen, random_element, Rng};
+    use jarvis_proto::Rect;
+
+    /// [`beside_siblings`] as it was before each element stopped at its first sibling:
+    /// every pair within the offset compared.
+    fn reference_beside_siblings(screen: &CompactScreen) -> BTreeSet<u32> {
+        let mut items: Vec<&Element> = screen
+            .elements
+            .iter()
+            .filter(|e| row_family(&e.role) && !e.frame.is_empty())
+            .collect();
+        items.sort_by(|a, b| a.frame.y.total_cmp(&b.frame.y));
+        let mut out = BTreeSet::new();
+        for (k, a) in items.iter().enumerate() {
+            for b in items.iter().skip(k.saturating_add(1)) {
+                if b.frame.y - a.frame.y > SIBLING_MAX_TOP_OFFSET {
+                    break;
+                }
+                if side_by_side(a, b) {
+                    out.insert(a.index);
+                    out.insert(b.index);
+                }
+            }
+        }
+        out
+    }
+
+    /// A grid of cells and buttons, some the same size and some not, tops jittered around
+    /// the row's (within and beyond the offset), with stray elements, empty and `NaN` or
+    /// infinite frames, and duplicate indices.
+    fn grid(seed: u64) -> CompactScreen {
+        let mut screen = random_compact_screen(seed);
+        let mut r = Rng::new(seed ^ 0x6121D);
+        let (cols, rows) = (1 + r.below(30), 1 + r.below(30));
+        let (w, h) = (r.f(5.0, 40.0), r.f(5.0, 40.0));
+        let mut index = 1u32;
+        for row in 0..rows {
+            for col in 0..cols {
+                let mut e = random_element(&mut r, index, screen.size);
+                e.role = if r.chance(70) {
+                    Role::Cell
+                } else {
+                    Role::Button
+                };
+                let jitter = |r: &mut Rng, span: f64| r.f(-span, span);
+                let (dw, dh) = if r.chance(20) {
+                    (jitter(&mut r, 8.0), jitter(&mut r, 8.0))
+                } else {
+                    (0.0, 0.0)
+                };
+                let gap = if r.chance(10) { -3.0 } else { r.f(0.0, 3.0) };
+                e.frame = Rect::new(
+                    col as f64 * (w + gap),
+                    row as f64 * (h + 1.0) + jitter(&mut r, 2.5),
+                    w + dw,
+                    h + dh,
+                );
+                if r.chance(1) {
+                    e.frame.y = *r.pick(&[f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0]);
+                }
+                screen.elements.push(e);
+                index += if r.chance(3) { 0 } else { 1 };
+            }
+        }
+        screen
+    }
+
+    /// The new [`beside_siblings`] finds exactly the reference's set on thousands of random
+    /// screens and grids, so every classification that reads it is unchanged.
+    #[test]
+    fn beside_siblings_match_the_reference() {
+        let mut found = 0usize;
+        for seed in 0..6_000u64 {
+            for screen in [random_compact_screen(seed), grid(seed)] {
+                let new = beside_siblings(&screen);
+                assert_eq!(new, reference_beside_siblings(&screen), "seed {seed}");
+                found += new.len();
+            }
+        }
+        assert!(found > 10_000, "{found}");
+    }
 }
