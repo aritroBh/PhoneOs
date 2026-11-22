@@ -15,6 +15,7 @@ Setup assumed throughout: iPhone 17 Pro Max, iOS 27.x, free Apple ID, a Mac with
 | 5 | [S3 memory](S3-memory.md) | How big a model survives without the paid entitlement? | 2 h, plus harness | Harness app, S2 numbers |
 | 6 | [S4 wake word](S4-wake-word.md) | Does "Hey Jarvis" keep working for 8 hours? | 1 h setup, 8 h wait, 15 min readout | Harness app |
 | 7 | [S7 away mode](S7-away-mode.md) | Can the phone look off, stay unlocked, and still be driven? | 1 h, plus 8 h wait | S1 running, harness app, S4 |
+| 8 | [S8 locked](S8-locked.md) | What happens when the side button is pressed, and what gets back in? | 2 h, plus overnight | S1 running, harness app |
 
 S6 is first because S1 depends on a working install path. S2 to S4 need a harness app that does not exist yet. Do S6, S1 and S5 now, then wait for the harness.
 

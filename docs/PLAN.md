@@ -25,7 +25,7 @@ Hard limits that no design removes:
 
 - No jailbreak or TrollStore for A19 / iOS 26–27.
 - Siri "Extensions" are closed to third parties. Side-button assistant replacement is Japan-only.
-- No system MCP layer in iOS. MCP shipped only in Xcode 27.
+- No system MCP layer in iOS for third-party agents. MCP shipped only in Xcode 27. iOS 27's Siri AI Developer Preview does the reverse: an app's intents become tools Siri calls (`ToolIntent`, app skills bundles); Siri orchestrates, not Jarvis ([Apple](https://developer.apple.com/documentation/appintents/siri-ai-developer-preview)). Worth testing as an extra voice entry (3.3).
 - Best published result on native iOS tasks (iOSWorld benchmark) is 52% overall, 37% multi-app, and that is not with a 4B phone model. Expect simple single-app tasks to work and long multi-app tasks to fail often at first.
 
 ---
@@ -105,7 +105,7 @@ Optional later: MCP client via the official [swift-sdk](https://github.com/model
 
 | Piece | Choice | Reason |
 |---|---|---|
-| Wake word, primary | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) keyword spotting (Apache-2.0, iOS supported) running on a background audio session | The same audio session also keeps Jarvis alive in the background, which the agent needs anyway. Costs battery and shows the orange mic dot permanently. |
+| Wake word, primary | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) keyword spotting (Apache-2.0, iOS supported) running on a background audio session | The same audio session also keeps Jarvis alive in the background, which the agent needs anyway. It ends on a phone call or Siri, and re-activating from the background is reported to fail until the app is in front again ([forum](https://developer.apple.com/forums/thread/813278)); iOS 27 adds `AVAudioSession` lifecycle notifications for this. Jarvis must notify "tap to resume listening" when it happens. Costs battery and shows the orange mic dot permanently. |
 | Wake word, fallback | Accessibility → Vocal Shortcuts → runs a Shortcut → Jarvis App Intent | Zero battery cost. Less reliable than "Hey Siri". Cannot open apps from a locked phone. |
 | Hardware trigger | Action Button → Jarvis App Intent | Always works. |
 | Speech-to-text | Apple `SpeechAnalyzer` (iOS 26+) | Free, on-device, no model download. [WhisperKit](https://github.com/argmaxinc/WhisperKit) if accuracy is poor. |
@@ -176,6 +176,31 @@ Costs, stated plainly:
 - Battery and heat: keep it on a charger; on-device inference plus charging runs warm.
 - Auto-Lock Never applies to all use of the phone until switched back; Away mode should remind the owner when it ends.
 
+### 3.2 Truly locked (side button pressed): what the evidence says
+
+Researched from runner source (WebDriverAgent, LoopCtrl, iCTRL) and Apple documentation, 2026-11-22. Nothing here has been run on your phone yet.
+
+| Question | Finding | Evidence |
+|---|---|---|
+| Can a runner enter the passcode? | No known way. Every runner's `unlock` only presses buttons; LoopCtrl's own error text says the passcode "cannot be entered automatically". Apple: "no officially supported way to automate the entry of this passcode". One forum snippet claims `springboard.secureTextFields["Passcode field"]` works; the only dated test of it failed (iOS 17.4 simulator). No real-device report for iOS 17 to 27. | WDA `XCUIDevice+FBHelpers.m`; LoopCtrl `ActionHandler.swift`; [Apple forum](https://developer.apple.com/forums/thread/693273); [Appium docs](https://github.com/appium/appium-xcuitest-driver/blob/master/docs/reference/execute-methods.md) |
+| What does a locked phone give the runner? | "Black screenshots, dead taps" (iCTRL). Launching an app is refused: `Locked("Unable to launch … because the device was not, or could not be, unlocked")`. | iCTRL `SKILL.md`; [Apple forum](https://developer.apple.com/forums/thread/769872) |
+| Does the runner survive the lock? | Both runners claim the server keeps running with the screen off. Unverified for a full passcode lock. | LoopCtrl and iCTRL READMEs |
+| Can it tell it is locked? | Yes: the `com.apple.springboard.lockstate` notification; LoopCtrl reports `screen_locked`. | WDA source; LoopCtrl source |
+| Can Jarvis open any app while locked? | No. A foreground launch always asks for unlock; `authenticationPolicy` does not change that. | [Apple DTS](https://developer.apple.com/forums/thread/779977) |
+| What still runs while locked? | Audio session with microphone (wake word), CPU inference, App Intents in `.background` mode with `.alwaysAllowed`, notification actions not marked `authenticationRequired`, data in "after first unlock" classes. | [Apple](https://developer.apple.com/documentation/appintents/intentauthenticationpolicy), [Apple](https://developer.apple.com/documentation/security/restricting-keychain-item-accessibility) |
+| After a reboot? | Nothing protected is readable until the first unlock. iOS reboots itself after about 72 h locked (reported). The runner needs its disk image mounted again, and iOS asks for the passcode when the runner starts. | [Apple DTS](https://developer.apple.com/forums/thread/760711); [TechCrunch](https://techcrunch.com/2024/11/14/new-apple-security-feature-reboots-iphones-after-3-days-researchers-confirm); LoopCtrl README |
+| iOS 27 specifics | `pressLockButton` no longer locks (WDA switched to a HID power press); synthesized typing drops characters on real devices under Xcode 27 (FB24932647); LoopCtrl has a `keep_awake` command (a key press every 10 s), which suggests taps alone are not trusted to hold off auto-lock. | [WDA PR 1171](https://github.com/appium/WebDriverAgent/pull/1171); [Apple forum](https://developer.apple.com/forums/thread/849249); LoopCtrl source |
+
+### 3.3 Design that follows
+
+1. **Stay unlocked: Away mode (3.1) is the main route.** It is also what both runner authors recommend. Use the runner's `keep_awake` during tasks and Auto-Lock Never between them.
+2. **If the phone locks anyway, pause and resume, never fail silently.** The core treats a lock as an interruption: no actions, no budget burned, "Unlock to continue" as a notification and Live Activity. After your Face ID glance it re-observes and carries on; nothing decided before the lock runs without a fresh look, and a confirmation given before the lock is asked again. (Being built in the core now.)
+3. **Do the screen-free part while locked.** Listening, thinking on CPU, notifications, background App Intents and whatever system frameworks allow. Tasks that need another app's screen wait for step 2.
+4. **Jarvis never holds your passcode.** The evidence says typing it through the runner is unlikely to work, and storing it would weaken the phone. It stays an experiment (spike S8), not a dependency. A paired Bluetooth keyboard that you type on is the only reported way to unlock without touching the screen.
+5. **Survive interruptions.** Detect a dead audio session, a reboot (before-first-unlock) and an expired runner; tell you with one notification what to tap. Keep working data in "after first unlock" storage.
+6. **Verify typing.** After typing, read the field back and retry once; needed anyway because of the iOS 27 dropped-character bug. (Being built in the core now.)
+7. **Try Siri AI as a second voice entry.** Expose Jarvis actions as `ToolIntent`s plus an app skills bundle and test with the development build: whether a free account qualifies and what it does while locked are unknown.
+
 `BGContinuedProcessingTask` is not the mechanism: it must be user-started, must report progress, the user can cancel it, and background GPU is unavailable on iPhone. The background audio session is the keepalive.
 
 ---
@@ -186,8 +211,8 @@ Costs, stated plainly:
 
 While the agent drives another app, Jarvis is in the background. On iPhone:
 
-- Background GPU (Metal) is not available. A Metal job in flight when the app backgrounds crashes it on iOS 26.
-- Neural Engine in background needs an entitlement in iOS 27 that a free account will not have **[U]**.
+- Background GPU (Metal) is not available on iPhone: Apple DTS says background GPU is iPad-only on iOS 26 ([forum](https://developer.apple.com/forums/thread/802789)); no iOS 27 change found. Metal work submitted after backgrounding fails with `MTLCommandBufferError.notPermitted` ([Apple](https://developer.apple.com/documentation/metal/preparing-your-metal-app-to-run-in-the-background)); crashes are reported, not documented. Check `BGTaskScheduler.supportedResources` on the device.
+- Neural Engine in the background needs `com.apple.developer.background-tasks.continued-processing.inference` on iOS 27, for Core ML, Core AI and MPS Graph alike ([release notes](https://developer.apple.com/documentation/ios-ipados-release-notes/ios-ipados-27-release-notes)). Whether a free account can have it: **[U]**. So background text steps are CPU-only until measured.
 - So background inference is CPU-only, 2–5× slower than GPU.
 
 Per-app memory: about 6 GB measured on a 17 Pro Max *with* the increased-memory-limit entitlement. Without it (free account), lower and unmeasured **[U]**. Ceiling is a 4-bit ~4B model. 8B is out.
@@ -197,7 +222,7 @@ Per-app memory: about 6 GB measured on a 17 Pro Max *with* the increased-memory-
 | Option | How | Trade-off |
 |---|---|---|
 | A. CPU in background | LiteRT-LM or llama.cpp on CPU inside Jarvis | Simplest. Gemma 4 E2B measured at 25 tok/s decode, 532 tok/s prefill on CPU (iPhone 17 Pro, text). Fine for tree-first text steps. Vision steps slow. |
-| B. Apple system model | Foundation Models framework. iOS 27 adds image input and tool calling. Runs out of process, so it does not count against Jarvis's memory. | Free and already installed. Small context. Background availability **[U]**. Grounding quality on UI **[U]**. |
+| B. Apple system model | Foundation Models framework. Tool calling since iOS 26; iOS 27 adds image input, a `LanguageModel` protocol and a larger context (read `contextSize` at runtime). Background calls are rate limited, mainly on battery. Runs out of process, so it does not count against Jarvis's memory. | Free and already installed. Small context. Background availability **[U]**. Grounding quality on UI **[U]**. |
 | C. Foreground flip | Runner brings Jarvis to front for the GPU step, then returns to the target app | Full GPU speed. Adds app-switch time per step and can reset state in some apps. Use for vision steps only. |
 | D. Inference inside the runner process | Load the model in JarvisRunner | Only if Metal works there **[U]**. Probably same restriction. |
 
