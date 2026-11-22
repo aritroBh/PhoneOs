@@ -123,9 +123,17 @@ final class AppModel: ObservableObject {
         self.settingsStore = SettingsStore(fileURL: paths.settings)
         self.historyStore = TaskHistoryStore(fileURL: paths.history)
         self.settings = settingsStore.load()
+        // Playground mode backs the UI tests: lock polls and the lock watch run every
+        // 0.5 s / 1 s and a lock wait ends after 20 s, so a wrong lock signal fails a test in
+        // seconds. The demo phone stays locked for 12 polls (about 6 s) so the "Unlock to
+        // continue" card is on screen long enough to be checked.
         self.coordinator = JarvisCoordinator(
             paths: paths, selection: launch.playground ? .demo : .live,
-            demoLockedPolls: launch.playground && launch.demoLocked ? 4 : 0
+            configuration: launch.playground
+                ? DriverConfiguration(humanTimeout: .seconds(30), unlockPollInterval: .milliseconds(500), lockWatchInterval: .seconds(1))
+                : DriverConfiguration(),
+            demoLockedPolls: launch.playground && launch.demoLocked ? 12 : 0,
+            maxLockedWaitOverrideMs: launch.playground ? 20_000 : nil
         )
         self.skills = SkillLibrary(fileURL: paths.skills)
         self.coreDeniedApps = (try? defaultPolicy().deniedApps) ?? []

@@ -196,7 +196,9 @@ final class LockScreenProbeTests: QATestCase {
         let outcome: String
         do {
             let result = try await run.run(task: "Report the screen", model: ScriptedModel(steps: [.done("observed")]),
-                                           maxSteps: 3, maxDurationMs: 60_000)
+                                           maxSteps: 3, maxDurationMs: 60_000,
+                                           // Evidence only: a locked observation ends the run quickly.
+                                           maxLockedWaitMs: 3_000)
             if let user = result.requests.first?.user {
                 let screen = PromptScreen(prompt: user)
                 details["foreground"] = screen.app ?? "?"

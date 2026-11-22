@@ -112,7 +112,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
 
     nonisolated func perform(_ command: RunnerCommand) async throws -> RunnerResult {
         if case .wait(let ms) = command {
-            try await Task.sleep(for: .milliseconds(Int(min(ms, 60_000))))
+            try await Task.sleep(for: .milliseconds(Int(min(ms, 30_000)))) // capped: no UI-test wait over 30 s
             return RunnerResult(ok: true, error: nil)
         }
         if case .typeText = command {

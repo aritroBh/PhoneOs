@@ -301,6 +301,25 @@ struct CoordinatorTests {
         #expect(LiveRun.Status.locked.title == "Unlock to continue")
     }
 
+    @Test("a lock that never clears ends the run as interrupted within the override")
+    func demoLockedOverride() async throws {
+        let dir = tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let coordinator = JarvisCoordinator(
+            paths: JarvisPaths(directory: dir), selection: .demo,
+            configuration: DriverConfiguration(unlockPollInterval: .milliseconds(20)),
+            demoDelay: .zero, demoLockedPolls: 1_000_000, maxLockedWaitOverrideMs: 300
+        )
+        let start = ContinuousClock.now
+        let outcome = await coordinator.run(task: "Turn off Wi-Fi", settings: JarvisSettings(), human: autoApprovingBroker()) { _ in }
+        guard case .finished(_, let result) = outcome else {
+            Issue.record("not started")
+            return
+        }
+        #expect(result.outcome.status == .interrupted, "\(result.outcome.status): \(result.outcome.summary)")
+        #expect(ContinuousClock.now - start < .seconds(10), "the locked wait was not cut short")
+    }
+
     @Test("bad settings do not start a live run")
     func badSettings() async {
         let coordinator = JarvisCoordinator(paths: JarvisPaths(directory: tempDirectory()), selection: .live)

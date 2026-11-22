@@ -135,6 +135,7 @@ public final class JarvisCoordinator: Sendable {
     private let configuration: DriverConfiguration
     private let demoDelay: Duration
     private let demoLockedPolls: Int
+    private let maxLockedWaitOverrideMs: UInt64?
 
     public init(
         paths: JarvisPaths,
@@ -143,7 +144,8 @@ public final class JarvisCoordinator: Sendable {
         tools: ToolRegistry? = nil,
         configuration: DriverConfiguration = DriverConfiguration(),
         demoDelay: Duration = .milliseconds(350),
-        demoLockedPolls: Int = 0
+        demoLockedPolls: Int = 0,
+        maxLockedWaitOverrideMs: UInt64? = nil
     ) {
         self.paths = paths
         self.selection = selection
@@ -151,6 +153,7 @@ public final class JarvisCoordinator: Sendable {
         self.configuration = configuration
         self.demoDelay = demoDelay
         self.demoLockedPolls = demoLockedPolls
+        self.maxLockedWaitOverrideMs = maxLockedWaitOverrideMs
         if let tools {
             self.tools = tools
         } else {
@@ -230,7 +233,11 @@ public final class JarvisCoordinator: Sendable {
                 knownApps: knownApps,
                 agentBundleId: agentBundleId,
                 skill: skill,
-                adjustPolicy: { settings.apply(to: &$0) }
+                adjustPolicy: { [maxLockedWaitOverrideMs] policy in
+                    settings.apply(to: &policy)
+                    // The app's UI tests: a lock that never clears must end the run in seconds.
+                    if let maxLockedWaitOverrideMs { policy.maxLockedWaitMs = maxLockedWaitOverrideMs }
+                }
             )
         } catch {
             return .notStarted("the core rejected the configuration: \(error)")
