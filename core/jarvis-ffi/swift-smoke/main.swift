@@ -327,6 +327,22 @@ do {
     check("contract functions do not throw", false, "\(error)")
 }
 
+// 4b. The Live view's privacy rule, decided by the core.
+do {
+    let otp = try redactScreenText(text: "Your verification code is 482913.")
+    check("redactScreenText masks a one-time code", !otp.contains("482913") && otp.hasPrefix("Your verification code is "), otp)
+    check("redactScreenText masks a card number", !(try redactScreenText(text: "Visa 4111 1111 1111 1111")).contains("4111"))
+    check("redactScreenText keeps plain text", try redactScreenText(text: "Send") == "Send")
+    check("fieldValueIsHidden: a 'Verification code' field",
+          try fieldValueIsHidden(role: .textField, label: "Verification code", placeholder: nil, identifier: nil, secure: false))
+    check("fieldValueIsHidden: a secure field",
+          try fieldValueIsHidden(role: .textField, label: "Name", placeholder: nil, identifier: nil, secure: true))
+    check("fieldValueIsHidden: a plain 'Email' field is not hidden",
+          !(try fieldValueIsHidden(role: .textField, label: "Email", placeholder: nil, identifier: nil, secure: false)))
+} catch {
+    check("Live view privacy functions do not throw", false, "\(error)")
+}
+
 // 5. Runner text parsing and the parse-failure path.
 do {
     let screen = try parseRunnerTextToScreen(snapshot: snapshot(wifiText(on: true)))

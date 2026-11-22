@@ -23,7 +23,9 @@
 //!   ([`JarvisRemoteHub`], [`JarvisRemoteClient`]; secrets and shell duties in `remote.rs`).
 //! - Free functions: `actionJsonSchema()`, `actionGbnf()`, `systemPrompt()`,
 //!   `coreVersion()`, `parseRunnerTextToScreen(snapshot:)`, `defaultPolicy()`,
-//!   `defaultModelProfile()`, `defaultSessionConfig()` ([`api`]).
+//!   `defaultModelProfile()`, `defaultSessionConfig()`, and for the Live view
+//!   `redactScreenText(text:)` and `fieldValueIsHidden(role:label:placeholder:identifier:secure:)`
+//!   ([`api`]).
 //! - Mirrors of every type in the `Event`/`Effect` graph as records and enums
 //!   ([`types`]), converted to and from `jarvis-proto` in `convert.rs` (`From`/`TryFrom`).
 //! - One error enum, [`JarvisError`].

@@ -5,7 +5,7 @@ use jarvis_proto as p;
 use crate::error::JarvisError;
 use crate::guard::guarded;
 use crate::runner::snapshot_to_screen;
-use crate::types::{ModelProfile, Policy, RunnerSnapshot, Screen, SessionConfig};
+use crate::types::{ModelProfile, Policy, Role, RunnerSnapshot, Screen, SessionConfig};
 
 /// The JSON schema of the canonical action object, for runtimes with constrained decoding.
 #[uniffi::export]
@@ -41,6 +41,67 @@ pub fn core_version() -> String {
 pub fn parse_runner_text_to_screen(snapshot: RunnerSnapshot) -> Result<Screen, JarvisError> {
     guarded("parse_runner_text_to_screen", || {
         snapshot_to_screen(snapshot).map(Into::into)
+    })
+}
+
+/// The display-safe form of a piece of on-screen text: the same redaction the core applies
+/// before screen text reaches a prompt, a log or the owner's summary (card numbers, IBANs,
+/// one-time codes, API keys and tokens, labelled secrets and seed phrases masked; invisible
+/// characters dropped). Text with nothing to mask comes back unchanged.
+#[uniffi::export]
+pub fn redact_screen_text(text: String) -> Result<String, JarvisError> {
+    guarded("redact_screen_text", || Ok(jarvis_safety::redact(&text)))
+}
+
+/// Whether the core hides the value of a field with this role, label, placeholder,
+/// identifier and secure flag: a secure field (flag or `SecureTextField` role), or an entry
+/// field named as a credential or a bank or card detail ("Password", "Verification code",
+/// "Card number", "CVV", "IBAN"...). An identifier counts as the label, as compaction uses
+/// it when the field has no label; it is checked whenever one is given, so the answer is at
+/// least as strict as the core's own.
+#[uniffi::export]
+pub fn field_value_is_hidden(
+    role: Role,
+    label: Option<String>,
+    placeholder: Option<String>,
+    identifier: Option<String>,
+    secure: bool,
+) -> Result<bool, JarvisError> {
+    guarded("field_value_is_hidden", || {
+        let role = p::Role::from(role);
+        if secure || role == p::Role::SecureTextField {
+            return Ok(true);
+        }
+        let placeholder = placeholder.filter(|t| !t.trim().is_empty());
+        let named = |label: String| {
+            jarvis_safety::credential_like_field(&p::Element {
+                index: 1,
+                role: role.clone(),
+                label,
+                value: None,
+                placeholder: placeholder.clone(),
+                frame: p::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 0.0,
+                    height: 0.0,
+                },
+                enabled: true,
+                focused: false,
+                selected: false,
+                secure: false,
+                fingerprint: 0,
+            })
+        };
+        let candidates = [label, identifier]
+            .into_iter()
+            .flatten()
+            .filter(|t| !t.trim().is_empty())
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return Ok(named(String::new()));
+        }
+        Ok(candidates.into_iter().any(named))
     })
 }
 

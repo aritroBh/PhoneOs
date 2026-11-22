@@ -225,6 +225,125 @@ fn free_functions_return_the_contract() {
 }
 
 #[test]
+fn redact_screen_text_is_the_cores_redaction() {
+    for text in [
+        "Your verification code is 482913.",
+        "Apple ID Code: 771305. Don't share it",
+        "Visa 4111 1111 1111 1111",
+        "Card: 5555 5555 5555 4444 exp 12/29",
+        "IBAN: GB82 WEST 1234 5698 7654 32",
+        "DE89 3704 0044 0532 0130 00",
+        "key sk-proj-a8F3kLm29QzX7wYp4Rt6Vb1N here",
+        "AKIAIOSFODNN7EXAMPLE",
+        "Wi-Fi password: Tr0ub4dor&3",
+        "a\u{200B}b",
+    ] {
+        let shown = api::redact_screen_text(text.to_owned()).unwrap();
+        assert_eq!(shown, jarvis_safety::redact(text), "{text}");
+        assert_ne!(shown, text, "{text}");
+    }
+    for text in [
+        "Send",
+        "Wi-Fi",
+        "Call me at +1 415-555-2671",
+        "Order #12345 has shipped",
+        "",
+    ] {
+        assert_eq!(api::redact_screen_text(text.to_owned()).unwrap(), text);
+    }
+}
+
+#[test]
+fn field_value_is_hidden_follows_the_core() {
+    let hidden = |role: Role,
+                  label: Option<&str>,
+                  placeholder: Option<&str>,
+                  id: Option<&str>,
+                  secure: bool| {
+        api::field_value_is_hidden(
+            role,
+            label.map(str::to_owned),
+            placeholder.map(str::to_owned),
+            id.map(str::to_owned),
+            secure,
+        )
+        .unwrap()
+    };
+    // Secure by flag or role.
+    assert!(hidden(Role::TextField, Some("Name"), None, None, true));
+    assert!(hidden(Role::SecureTextField, None, None, None, false));
+    // Credential-like by label, placeholder or identifier.
+    for label in [
+        "Verification code",
+        "Card number",
+        "CVV",
+        "IBAN",
+        "Password",
+        "PIN",
+    ] {
+        assert!(
+            hidden(Role::TextField, Some(label), None, None, false),
+            "{label}"
+        );
+        assert!(
+            hidden(Role::TextField, None, Some(label), None, false),
+            "{label}"
+        );
+        assert!(
+            hidden(Role::TextField, None, None, Some(label), false),
+            "{label}"
+        );
+    }
+    assert!(hidden(
+        Role::TextField,
+        Some("Note"),
+        Some("Card number"),
+        None,
+        false
+    ));
+    // Plain fields and non-entry roles keep their value.
+    assert!(!hidden(
+        Role::TextField,
+        Some("Email"),
+        Some("you@example.com"),
+        None,
+        false
+    ));
+    assert!(!hidden(
+        Role::SearchField,
+        Some("Search"),
+        None,
+        None,
+        false
+    ));
+    assert!(!hidden(Role::TextField, None, None, None, false));
+    assert!(!hidden(Role::Button, Some("Password"), None, None, false));
+    // The same answer as the core's own test on an element.
+    let el = jarvis_proto::Element {
+        index: 1,
+        role: jarvis_proto::Role::TextField,
+        label: "One-time code".to_owned(),
+        value: Some("1".to_owned()),
+        placeholder: None,
+        frame: jarvis_proto::Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+        },
+        enabled: true,
+        focused: false,
+        selected: false,
+        secure: false,
+        fingerprint: 0,
+    };
+    assert_eq!(
+        hidden(Role::TextField, Some("One-time code"), None, None, false),
+        jarvis_safety::credential_like_field(&el)
+    );
+}
+
+#[test]
 fn two_threads_stepping_one_session_are_serialized() {
     // Both threads send Start: exactly one is accepted, the other is a protocol error.
     for _ in 0..20 {
