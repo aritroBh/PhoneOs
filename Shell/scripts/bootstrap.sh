@@ -46,7 +46,6 @@ esac
 gen="$shell/Generated"
 swift_out="$shell/Sources/JarvisCore"
 mkdir -p "$swift_out"
-rm -f "$swift_out/JarvisCore.swift"
 
 if [ "$(uname -s)" = "Darwin" ] && [ "${JARVIS_LINK:-xcframework}" = "xcframework" ]; then
   mode=xcframework
@@ -74,6 +73,10 @@ if [ "$mode" = "xcframework" ]; then
   cp "$xc_out/JarvisCore.swift" "$swift_out/JarvisCore.swift"
   [ -s "$swift_out/JarvisCore.swift" ] || die "no JarvisCore.swift installed"
 else
+  # Build into a staging directory and swap at the end: a failed build (for example a core
+  # that does not compile yet) must leave the previous bindings in place and Shell buildable.
+  final_gen="$gen"
+  gen="$shell/Generated.new"
   rm -rf "$gen"
   mkdir -p "$gen/JarvisCoreFFI" "$gen/lib"
   target_dir="${CARGO_TARGET_DIR:-}"
@@ -111,7 +114,9 @@ else
            "$gen/JarvisCoreFFI/module.modulemap"; do
     [ -s "$f" ] || die "bindings step did not produce $f"
   done
-  cp "$gen/swift/JarvisCore.swift" "$swift_out/JarvisCore.swift"
+  rm -rf "$final_gen"
+  mv "$gen" "$final_gen"
+  cp "$final_gen/swift/JarvisCore.swift" "$swift_out/JarvisCore.swift"
 fi
 
 echo "bootstrap: core $(sed -n 's/^version *= *"\(.*\)"/\1/p' "$core/Cargo.toml" | head -n 1) from $core ($mode mode)" >&2

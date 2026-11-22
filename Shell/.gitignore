@@ -5,6 +5,7 @@ Package.resolved
 
 # Produced by scripts/bootstrap.sh; never committed.
 Generated/
+Generated.new/
 Frameworks/
 Sources/JarvisCore/
 
