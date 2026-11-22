@@ -17,6 +17,18 @@ public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
             case .interrupted: self = .interrupted
             }
         }
+
+        /// A workflow's status in the same words: a `stopUnless` that did not hold reads
+        /// "Stopped", like an owner's stop; finished with failures reads "Failed".
+        public init(_ status: WorkflowStatus) {
+            switch status {
+            case .succeeded: self = .success
+            case .completedWithFailures, .failed: self = .failed
+            case .stopped, .cancelled: self = .cancelled
+            case .blocked: self = .blocked
+            case .interrupted: self = .interrupted
+            }
+        }
     }
 
     public var id: String
@@ -33,9 +45,22 @@ public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
     /// The skill the task ran under (absent in records written before skills).
     public var skillId: String?
     public var skillName: String?
+    /// `true` for the entry of a whole workflow run (its sessions are listed in
+    /// `sessionIds`); absent for a task.
+    public var isWorkflow: Bool?
+    /// The workflow run this record belongs to: on a workflow entry its own id, on one of
+    /// its sessions the run's id (Activity groups them by it).
+    public var workflowRunId: String?
+    public var workflowName: String?
+    /// The workflow entry's sessions, in order.
+    public var sessionIds: [String]?
+    /// The paired device that asked for the task (remote control), by name.
+    public var requestedBy: String?
 
     public init(id: String, task: String, status: Status, summary: String, steps: Int, modelCalls: Int,
-                durationMs: Int, apps: [String] = [], finishedAt: Date, skillId: String? = nil, skillName: String? = nil) {
+                durationMs: Int, apps: [String] = [], finishedAt: Date, skillId: String? = nil, skillName: String? = nil,
+                isWorkflow: Bool? = nil, workflowRunId: String? = nil, workflowName: String? = nil,
+                sessionIds: [String]? = nil, requestedBy: String? = nil) {
         self.id = id
         self.task = task
         self.status = status
@@ -47,17 +72,38 @@ public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
         self.finishedAt = finishedAt
         self.skillId = skillId
         self.skillName = skillName
+        self.isWorkflow = isWorkflow
+        self.workflowRunId = workflowRunId
+        self.workflowName = workflowName
+        self.sessionIds = sessionIds
+        self.requestedBy = requestedBy
     }
 
     /// A record of a driver run.
-    public init(task: TaskSpec, result: RunResult, apps: [String] = [], skill: SkillContext? = nil, finishedAt: Date = Date()) {
+    public init(task: TaskSpec, result: RunResult, apps: [String] = [], skill: SkillContext? = nil,
+                origin: TaskOrigin = .owner, finishedAt: Date = Date()) {
         self.init(
             id: task.id, task: task.text, status: Status(result.outcome.status), summary: result.outcome.summary,
             steps: Int(result.outcome.steps), modelCalls: result.modelCalls,
             durationMs: Int(clamping: result.outcome.durationMs), apps: apps, finishedAt: finishedAt,
-            skillId: skill?.id, skillName: skill?.name
+            skillId: skill?.id, skillName: skill?.name,
+            workflowRunId: origin.workflow?.runId, workflowName: origin.workflow?.name,
+            requestedBy: origin.remoteDeviceName
         )
     }
+
+    /// The entry of a finished workflow run, grouping `sessionIds`.
+    public init(workflowRun runId: String, name: String, outcome: WorkflowOutcome, sessionIds: [String],
+                durationMs: Int, requestedBy: String? = nil, finishedAt: Date = Date()) {
+        self.init(
+            id: runId, task: name, status: Status(outcome.status), summary: outcome.summary,
+            steps: Int(outcome.stepsRun), modelCalls: 0, durationMs: durationMs, apps: [], finishedAt: finishedAt,
+            isWorkflow: true, workflowRunId: runId, workflowName: name, sessionIds: sessionIds, requestedBy: requestedBy
+        )
+    }
+
+    /// Whether this is one session of a workflow run (Activity shows it under the run).
+    public var isWorkflowSession: Bool { isWorkflow != true && workflowRunId != nil }
 
     /// `m:ss`.
     public var durationText: String {

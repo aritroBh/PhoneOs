@@ -406,6 +406,18 @@ public final class SkillLibrary: Sendable {
 
     // MARK: - Internals
 
+    /// Runs `body` with the live core store (workflow warnings and runs read skills from
+    /// it, so a skill changed mid-run counts at the next step). Lock order: a caller that
+    /// holds `WorkflowLibrary`'s lock may take this one, never the reverse.
+    func withStore<T: Sendable>(_ body: (JarvisSkills) throws -> T) throws -> T {
+        try state.withLock { s in try body(s.store) }
+    }
+
+    /// Enabled skills, for remote control's catalog.
+    public var catalog: [CatalogEntry] {
+        skills.filter(\.enabled).map { CatalogEntry(id: $0.id, name: $0.name, summary: $0.summary) }
+    }
+
     private var nowMs: UInt64 {
         UInt64(max(0, (now().timeIntervalSince1970 * 1_000).rounded()))
     }
@@ -447,9 +459,9 @@ public final class SkillLibrary: Sendable {
         #endif
     }
 
-    /// An id for a new skill from its name: lowercase ASCII letters and digits joined by
-    /// `-`, at most 40 characters, `skill` when nothing is left, made unique with `-2`, `-3`….
-    static func makeID(from name: String, taken: Set<String>) -> String {
+    /// An id for a new skill (or workflow) from its name: lowercase ASCII letters and digits
+    /// joined by `-`, at most 40 characters, `fallback` when nothing is left, made unique with `-2`, `-3`….
+    static func makeID(from name: String, taken: Set<String>, fallback: String = "skill") -> String {
         var slug = ""
         for scalar in name.lowercased().unicodeScalars {
             if (scalar >= "a" && scalar <= "z") || (scalar >= "0" && scalar <= "9") {
@@ -461,7 +473,7 @@ public final class SkillLibrary: Sendable {
         while slug.hasSuffix("-") { slug.removeLast() }
         slug = String(slug.prefix(40))
         while slug.hasSuffix("-") { slug.removeLast() }
-        if slug.isEmpty { slug = "skill" }
+        if slug.isEmpty { slug = fallback }
         guard taken.contains(slug) else { return slug }
         var n = 2
         while taken.contains("\(slug)-\(n)") { n += 1 }

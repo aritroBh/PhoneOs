@@ -20,6 +20,12 @@ public struct JarvisPaths: Sendable, Equatable {
     public var demoMemory: URL { directory.appendingPathComponent("demo-memory.json") }
     /// The owner's skills (`SkillLibrary`).
     public var skills: URL { directory.appendingPathComponent("skills.json") }
+    /// The owner's workflows (`WorkflowLibrary`).
+    public var workflows: URL { directory.appendingPathComponent("workflows.json") }
+    /// Which scheduled minutes already fired (`WorkflowScheduler`).
+    public var workflowSchedule: URL { directory.appendingPathComponent("workflow-schedule.json") }
+    /// Remote control's audit log (no secrets: the core keeps them out of audit entries).
+    public var remoteAudit: URL { directory.appendingPathComponent("remote-audit.json") }
 }
 
 /// Which IO a run uses.
@@ -188,13 +194,19 @@ public final class JarvisCoordinator: Sendable {
         text.lowercased().contains("delete") ? DemoPhone.deleteAccountScript : DemoPhone.wifiOffScript
     }
 
-    /// Runs `text` to the end, under `skill` when given (from `SkillLibrary.route` or
-    /// `context(for:values:)`; the core puts its guidance in the prompt and, when confined,
-    /// refuses actions outside its apps). `onEvent` is called from the driver's context.
+    /// Runs `text` to the end, under `skill` when given (from `WorkflowLibrary.resolve`,
+    /// `SkillLibrary.context(…)`; the core puts its guidance in the prompt and, when
+    /// confined, refuses actions outside its apps). `origin` only tags the history record.
+    /// `onEvent` is called from the driver's context.
+    ///
+    /// Apps call this through `TaskCenter.start`, the one entry every request takes (Ask,
+    /// Siri, Run now, a workflow step, a paired device), so all of them get the same policy,
+    /// the same confirmation gate and the same lock handling.
     public func run(
         task text: String,
         settings: JarvisSettings,
         skill: SkillContext? = nil,
+        origin: TaskOrigin = .owner,
         human: any HumanGate,
         attention: any OwnerAttention = NoOwnerAttention(),
         onEvent: @escaping @Sendable (RunEvent) -> Void
@@ -276,7 +288,7 @@ public final class JarvisCoordinator: Sendable {
             Task { await driver.cancel() }
         }
         let apps = await forward.value
-        _ = try? TaskHistoryStore(fileURL: paths.history).append(TaskRecord(task: task, result: result, apps: apps, skill: skill))
+        _ = try? TaskHistoryStore(fileURL: paths.history).append(TaskRecord(task: task, result: result, apps: apps, skill: skill, origin: origin))
         return .finished(task, result)
     }
 }

@@ -1,0 +1,267 @@
+import Foundation
+import JarvisCore
+import Synchronization
+import Testing
+@testable import JarvisKit
+
+func scratchDirectory(_ name: String) -> URL {
+    FileManager.default.temporaryDirectory.appendingPathComponent("jarvis-\(name)-\(UUID().uuidString)")
+}
+
+/// The owner, answering prompts by rule (as the sheets' buttons would). Confirmations whose
+/// category is in `approve` are approved, those in `decline` declined, others left on
+/// screen; yes/no questions get `yes`.
+final class ScriptedOwner: Sendable {
+    struct Rules {
+        var approve: Set<RiskCategory> = [.firstUse]
+        var decline: Set<RiskCategory> = []
+        /// `nil`: leave yes/no questions unanswered.
+        var yes: Bool? = true
+    }
+
+    let rules: Mutex<Rules>
+    let seen = Mutex<[HumanPrompt]>([])
+    private let ref = Mutex<HumanPromptBroker?>(nil)
+
+    init(_ rules: Rules = Rules()) {
+        self.rules = Mutex(rules)
+    }
+
+    var broker: HumanPromptBroker {
+        if let b = ref.withLock({ $0 }) { return b }
+        let broker = HumanPromptBroker { [weak self] prompt in
+            guard let self, let prompt else { return }
+            self.seen.withLock { $0.append(prompt) }
+            let rules = self.rules.withLock { $0 }
+            Task { [weak self] in
+                guard let broker = self?.ref.withLock({ $0 }) else { return }
+                switch prompt {
+                case .confirm(let id, let request):
+                    if rules.approve.contains(request.category) { broker.approve(id) }
+                    if rules.decline.contains(request.category) { broker.decline(id) }
+                case .yesNo(let id, _):
+                    if let yes = rules.yes { broker.answerYesNo(id, yes: yes) }
+                case .question:
+                    break
+                }
+            }
+        }
+        ref.withLock { $0 = broker }
+        return broker
+    }
+
+    var confirmCategories: [RiskCategory] {
+        seen.withLock { $0.compactMap { if case .confirm(_, let r) = $0 { r.category } else { nil } } }
+    }
+}
+
+/// Records notify steps.
+final class RecordingNotifier: WorkflowNotifier {
+    let posted = Mutex<[String]>([])
+    func post(_ text: String, workflow: String) async throws {
+        posted.withLock { $0.append(text) }
+    }
+}
+
+/// Everything a workflow or remote test needs, on the demo backend (DemoPhone + scripted
+/// model) and the real core.
+@MainActor
+final class AppHarness {
+    let dir: URL
+    let owner: ScriptedOwner
+    let coordinator: JarvisCoordinator
+    let center: TaskCenter
+    let skills: SkillLibrary
+    let library: WorkflowLibrary
+    let notifier = RecordingNotifier()
+    let runner: WorkflowRunner
+
+    init(_ name: String, rules: ScriptedOwner.Rules = ScriptedOwner.Rules(), limits: RunLimits? = nil,
+         libraryNow: @escaping @Sendable () -> Date = Date.init) {
+        dir = scratchDirectory(name)
+        owner = ScriptedOwner(rules)
+        let paths = JarvisPaths(directory: dir)
+        coordinator = JarvisCoordinator(paths: paths, selection: .demo, demoDelay: .zero)
+        center = TaskCenter(coordinator: coordinator, broker: owner.broker, settings: { JarvisSettings() })
+        skills = SkillLibrary(fileURL: paths.skills)
+        library = WorkflowLibrary(fileURL: paths.workflows, skills: skills, now: libraryNow)
+        runner = WorkflowRunner(library: library, center: center, notifier: notifier, limits: limits)
+    }
+
+    func cleanUp() {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    var history: [TaskRecord] { TaskHistoryStore(fileURL: coordinator.paths.history).load() }
+}
+
+/// Polls on the main actor (yielding it between checks) until `condition` holds.
+@MainActor
+func eventually(_ what: String, seconds: Double = 10, _ condition: @MainActor () -> Bool) async throws {
+    let deadline = ContinuousClock.now + .milliseconds(Int(seconds * 1_000))
+    while ContinuousClock.now < deadline {
+        if condition() { return }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    Issue.record("timed out waiting for \(what)")
+    throw WaitTimeout()
+}
+
+// MARK: - Remote fakes
+
+/// One ordered log shared by the fake store and the recording transport.
+final class IOLog: Sendable {
+    enum Entry: Equatable, Sendable {
+        case write
+        case send(UInt64, Data)
+        case close(UInt64)
+    }
+
+    let entries = Mutex<[Entry]>([])
+    func add(_ e: Entry) { entries.withLock { $0.append(e) } }
+    var all: [Entry] { entries.withLock { $0 } }
+}
+
+final class RecordingSecretStore: SecretStore {
+    let log: IOLog
+    let inner = InMemorySecretStore()
+    let failWrites = Mutex(false)
+    let writes = Mutex(0)
+
+    init(log: IOLog) { self.log = log }
+
+    func read(_ key: String) throws -> String? { try inner.read(key) }
+
+    func write(_ key: String, _ value: String) throws {
+        if failWrites.withLock({ $0 }) { throw InjectedError(message: "the keychain is unavailable") }
+        log.add(.write)
+        writes.withLock { $0 += 1 }
+        try inner.write(key, value)
+    }
+
+    func delete(_ key: String) throws { try inner.delete(key) }
+}
+
+final class RecordingTransport: RemoteTransport {
+    let inner: InMemoryRemoteTransport
+    let log: IOLog
+
+    init(_ inner: InMemoryRemoteTransport, log: IOLog) {
+        self.inner = inner
+        self.log = log
+    }
+
+    func start() -> AsyncStream<RemoteTransportEvent> { inner.start() }
+
+    func send(_ bytes: Data, to connection: UInt64) {
+        log.add(.send(connection, bytes))
+        inner.send(bytes, to: connection)
+    }
+
+    func close(_ connection: UInt64) {
+        log.add(.close(connection))
+        inner.close(connection)
+    }
+
+    func stop() { inner.stop() }
+}
+
+/// Bytes that are obviously not random (the hub must refuse them).
+struct ZeroRandomSource: RandomSource {
+    func bytes(count: Int) throws -> Data { Data(count: count) }
+}
+
+/// The real hub with hooks: extra effects on the next `tick`, and a poisoned call.
+final class HubProbe: JarvisRemoteHubProtocol, @unchecked Sendable {
+    let hub: JarvisRemoteHub
+    let injectOnTick = Mutex<[HubEffect]?>(nil)
+    let poisonNext = Mutex(false)
+    /// Every effect list the hub returned, in order.
+    let returned = Mutex<[[HubEffect]]>([])
+
+    private func keep(_ effects: [HubEffect]) -> [HubEffect] {
+        returned.withLock { $0.append(effects) }
+        return effects
+    }
+
+    init(_ hub: JarvisRemoteHub) { self.hub = hub }
+
+    private func check() throws {
+        if poisonNext.withLock({ p in defer { p = false }; return p }) {
+            throw JarvisError.Poisoned(message: "injected")
+        }
+    }
+
+    func cancelPairing() throws { try check(); try hub.cancelPairing() }
+    func clockMs() throws -> UInt64 { try hub.clockMs() }
+    func connectionClosed(connId: UInt64, nowMs: UInt64) throws -> [HubEffect] { try check(); return keep(try hub.connectionClosed(connId: connId, nowMs: nowMs)) }
+    func connectionCount() throws -> UInt32 { try hub.connectionCount() }
+    func connectionOpened(connId: UInt64, nowMs: UInt64, entropy: Data) throws -> [HubEffect] {
+        try check(); return keep(try hub.connectionOpened(connId: connId, nowMs: nowMs, entropy: entropy))
+    }
+    func deviceLockedUntilMs(deviceId: String) throws -> UInt64 { try hub.deviceLockedUntilMs(deviceId: deviceId) }
+    func devices() throws -> [DeviceInfo] { try hub.devices() }
+    func isAuthenticated(connId: UInt64) throws -> Bool { try hub.isAuthenticated(connId: connId) }
+    func isBusy() throws -> Bool { try hub.isBusy() }
+    func isPairingOpen() throws -> Bool { try hub.isPairingOpen() }
+    func localEvent(nowMs: UInt64, event: LocalEvent) throws -> [HubEffect] { try check(); return keep(try hub.localEvent(nowMs: nowMs, event: event)) }
+    func openPairing(nowMs: UInt64, entropy: Data) throws -> PairingOffer { try check(); return try hub.openPairing(nowMs: nowMs, entropy: entropy) }
+    func pairingLockedUntilMs() throws -> UInt64 { try hub.pairingLockedUntilMs() }
+    func pendingRequestId() throws -> UInt64? { try hub.pendingRequestId() }
+    func receive(connId: UInt64, bytes: Data, nowMs: UInt64) throws -> [HubEffect] { try check(); return keep(try hub.receive(connId: connId, bytes: bytes, nowMs: nowMs)) }
+    func renameDevice(nowMs: UInt64, deviceId: String, name: String) throws -> [HubEffect] { try check(); return try hub.renameDevice(nowMs: nowMs, deviceId: deviceId, name: name) }
+    func revokeDevice(nowMs: UInt64, deviceId: String) throws -> [HubEffect] { try check(); return keep(try hub.revokeDevice(nowMs: nowMs, deviceId: deviceId)) }
+    func setPermissions(nowMs: UInt64, deviceId: String, permissions: RemotePermissions) throws -> [HubEffect] {
+        try check(); return try hub.setPermissions(nowMs: nowMs, deviceId: deviceId, permissions: permissions)
+    }
+    func tick(nowMs: UInt64) throws -> [HubEffect] {
+        try check()
+        let extra = injectOnTick.withLock { e in defer { e = nil }; return e }
+        return keep((extra ?? []) + (try hub.tick(nowMs: nowMs)))
+    }
+    func toJson() throws -> String { try hub.toJson() }
+}
+
+/// A remote-control setup on the demo backend.
+@MainActor
+final class RemoteHarness {
+    let base: AppHarness
+    let log = IOLog()
+    let transport = InMemoryRemoteTransport()
+    let secrets: RecordingSecretStore
+    final class Probes: Sendable { let list = Mutex<[HubProbe]>([]) }
+    let probes = Probes()
+    let service: RemoteControlService
+
+    init(_ name: String, rules: ScriptedOwner.Rules = ScriptedOwner.Rules(), random: any RandomSource = GeneratorRandomSource()) {
+        base = AppHarness(name, rules: rules)
+        secrets = RecordingSecretStore(log: log)
+        let transport = RecordingTransport(self.transport, log: log)
+        let probes = self.probes
+        service = RemoteControlService(
+            secrets: secrets, random: random, transport: { transport }, phoneName: "Test phone",
+            center: base.center, runner: base.runner, tickInterval: .seconds(3_600),
+            makeHub: { json, name in
+                let probe = HubProbe(try JarvisRemoteHub(storeJson: json, phoneName: name))
+                probes.list.withLock { $0.append(probe) }
+                return probe
+            }
+        )
+    }
+
+    var probe: HubProbe? { probes.list.withLock { $0.last } }
+    var hubsMade: Int { probes.list.withLock { $0.count } }
+
+    /// Turns remote control on, pairs a device named `name` and returns it connected.
+    func pairDevice(_ name: String = "Test Mac") async throws -> InProcessRemote {
+        if !service.isOn { service.setEnabled(true) }
+        try await eventually("the listener") { transport.isListening }
+        let offer = try service.openPairing()
+        return try await InProcessRemote.pair(code: offer.code, name: name, over: transport)
+    }
+
+    func cleanUp() {
+        service.setEnabled(false)
+        base.cleanUp()
+    }
+}

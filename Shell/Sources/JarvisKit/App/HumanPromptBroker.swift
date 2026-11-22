@@ -2,16 +2,34 @@ import Foundation
 import JarvisCore
 import Synchronization
 
-/// Something the owner must answer: a confirmation or a question.
+/// Something the owner must answer: a confirmation, a question, or a yes/no question from
+/// a workflow's "Ask you" step.
 public enum HumanPrompt: Sendable, Equatable, Identifiable {
     case confirm(id: Int, request: ConfirmRequest)
     case question(id: Int, text: String)
+    case yesNo(id: Int, text: String)
 
     public var id: Int {
         switch self {
-        case .confirm(let id, _), .question(let id, _): id
+        case .confirm(let id, _), .question(let id, _), .yesNo(let id, _): id
         }
     }
+}
+
+/// Where a decision about the confirmation on screen can be applied (remote control's
+/// `decide` goes through this, so it can only answer the prompt the owner sees).
+public protocol ConfirmationDesk: Sendable {
+    /// The confirmation waiting for the owner, if the pending prompt is one.
+    var pendingConfirmation: (id: Int, request: ConfirmRequest)? { get }
+    /// Answers confirmation `id`; false when it is no longer pending.
+    @discardableResult
+    func resolveConfirmation(_ id: Int, approved: Bool) -> Bool
+}
+
+/// A yes/no question for the owner (a workflow's "Ask you" step).
+public protocol OwnerQuestioner: Sendable {
+    /// Throws when the question was withdrawn (the run ended, the UI went away).
+    func askYesNo(_ question: String) async throws -> Bool
 }
 
 /// Why a prompt ended without the owner's answer.
@@ -24,7 +42,7 @@ public enum HumanPromptError: Error, Equatable, Sendable {
 /// `onChange`) and resolves with `approve` / `decline` / `reply`. One prompt at a time (the
 /// driver asks one thing at a time); a newer prompt replaces an older one, which is
 /// withdrawn (a withdrawn confirmation is a decline for the driver).
-public final class HumanPromptBroker: HumanGate {
+public final class HumanPromptBroker: HumanGate, ConfirmationDesk, OwnerQuestioner {
     private enum Waiter {
         case confirm(CheckedContinuation<Bool, any Error>)
         case answer(CheckedContinuation<String, any Error>)
@@ -59,18 +77,35 @@ public final class HumanPromptBroker: HumanGate {
         }
     }
 
+    public func askYesNo(_ question: String) async throws -> Bool {
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Bool, any Error>) in
+            install { id in (.yesNo(id: id, text: question), .confirm(c)) }
+        }
+    }
+
+    public var pendingConfirmation: (id: Int, request: ConfirmRequest)? {
+        guard case .confirm(let id, let request)? = pending else { return nil }
+        return (id, request)
+    }
+
+    public func resolveConfirmation(_ id: Int, approved: Bool) -> Bool { decide(id, approved, kind: .confirm) }
+
     /// Approves confirmation `id`. Returns false when it is no longer pending.
     @discardableResult
-    public func approve(_ id: Int) -> Bool { decide(id, true) }
+    public func approve(_ id: Int) -> Bool { decide(id, true, kind: .confirm) }
 
     /// Declines confirmation `id`.
     @discardableResult
-    public func decline(_ id: Int) -> Bool { decide(id, false) }
+    public func decline(_ id: Int) -> Bool { decide(id, false, kind: .confirm) }
+
+    /// Answers yes/no question `id`.
+    @discardableResult
+    public func answerYesNo(_ id: Int, yes: Bool) -> Bool { decide(id, yes, kind: .yesNo) }
 
     /// Answers question `id`.
     @discardableResult
     public func reply(_ id: Int, _ text: String) -> Bool {
-        guard let waiter = take(id, confirmation: false), case .answer(let c) = waiter else { return false }
+        guard let waiter = take(id, kind: .question), case .answer(let c) = waiter else { return false }
         c.resume(returning: text)
         return true
     }
@@ -102,18 +137,24 @@ public final class HumanPromptBroker: HumanGate {
         onChange(prompt)
     }
 
-    private func decide(_ id: Int, _ approved: Bool) -> Bool {
-        guard let waiter = take(id, confirmation: true), case .confirm(let c) = waiter else { return false }
+    private enum Kind { case confirm, question, yesNo }
+
+    private func decide(_ id: Int, _ approved: Bool, kind: Kind) -> Bool {
+        guard let waiter = take(id, kind: kind), case .confirm(let c) = waiter else { return false }
         c.resume(returning: approved)
         return true
     }
 
     /// Removes and returns the waiter of prompt `id` when it is of the asked kind.
-    private func take(_ id: Int, confirmation: Bool) -> Waiter? {
+    private func take(_ id: Int, kind: Kind) -> Waiter? {
         let waiter = state.withLock { s -> Waiter? in
             guard let prompt = s.prompt, prompt.id == id else { return nil }
-            let isConfirmation = if case .confirm = prompt { true } else { false }
-            guard isConfirmation == confirmation else { return nil }
+            let promptKind: Kind = switch prompt {
+            case .confirm: .confirm
+            case .question: .question
+            case .yesNo: .yesNo
+            }
+            guard promptKind == kind else { return nil }
             defer { s.prompt = nil; s.waiter = nil }
             return s.waiter
         }
