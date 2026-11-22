@@ -221,9 +221,10 @@ let doneJSON = #"{"thought":"done","action":"done","summary":"Wi-Fi is off"}"#
 
 /// Turns Wi-Fi off by reading the prompt: tap the Wi-Fi cell, then the switch, then done.
 @Sendable func wifiOffScript(_ request: ModelRequest, _ call: Int) async throws -> String {
-    if request.user.contains("Switch \"Wi-Fi\"") && request.user.contains("value=\"1\""),
-       let i = elementIndex(request.user, role: "Switch", label: "Wi-Fi") {
-        return tapJSON(i)
+    // Reads the screen like a model: a Wi-Fi switch shown `(on)` is tapped.
+    let screen = PromptScreen(prompt: request.user)
+    if let sw = ElementQuery("Wi-Fi", match: .exact, roles: ["Switch"], isOn: true).find(in: screen) {
+        return tapJSON(sw.index)
     }
     if let i = elementIndex(request.user, role: "Cell", label: "Wi-Fi") {
         return tapJSON(i)

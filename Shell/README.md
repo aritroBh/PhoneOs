@@ -320,8 +320,14 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   (`RunnerResult.checkedAfterCommand`), so the core does not trust it and looks again after
   the unlock; live runs wrap `LoopCtrlRunner` in `LockCheckingRunner` for the same check over
   `device_info`. `ScriptedModel` decides from the prompt's "Steps so far" whether a tap/type
-  took effect (`ok`, or its `value=` precondition no longer holds) and otherwise retries it,
-  at most `Options.maxRetries` times.
+  took effect (`ok`, whatever follows it (`ok; changed: …`, `ok; now in …`, `ok; screen
+  unchanged`) is not read; or `done, but …` while its precondition no longer holds) and
+  otherwise retries it, at most `Options.maxRetries` times. A switch is rendered `(on)` /
+  `(off)` by the core, so `ElementQuery(isOn:)` asks for the state and `value:` stays for
+  real values; `StepOutcome` classifies a history result, `PromptScreen.cues` reads the scroll
+  and page cue lines, and `ScreenContractTests` pins all of it against the real core's prompt.
+  A confirmation for an icon the core cannot name (`FirstUse`, app `com.apple.springboard`)
+  is worded by `ConfirmationWording` ("Open "Weather" from the Home Screen?").
 - Time limits in the UI tests: the harness sets `maxLockedWaitMs` 20 s (3 s in the lock
   probe), unlock polls 0.5 s, lock watch 1 s, every driver deadline ≤ 30 s and a run budget of
   150 s (under the CI per-test limit); playground mode in the app does the same

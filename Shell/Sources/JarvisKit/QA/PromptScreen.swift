@@ -12,15 +12,26 @@ public struct PromptScreen: Sendable, Equatable {
         public var label: String
         public var value: String?
         public var placeholder: String?
+        /// A switch's state as the core renders it (`(on)` / `(off)`); `nil` for anything
+        /// that is not a switch. The raw `0`/`1` of the tree is not in the prompt any more.
+        public var isOn: Bool?
+        /// Other flags (`focused`, `selected`, `disabled`), without the switch state.
         public var flags: [String]
 
-        public init(index: UInt32, role: String, label: String, value: String? = nil, placeholder: String? = nil, flags: [String] = []) {
+        public init(index: UInt32, role: String, label: String, value: String? = nil, placeholder: String? = nil, isOn: Bool? = nil, flags: [String] = []) {
             self.index = index
             self.role = role
             self.label = label
             self.value = value
             self.placeholder = placeholder
+            self.isOn = isOn
             self.flags = flags
+        }
+
+        /// What a run view shows next to the label: `On` / `Off` for a switch, else the value.
+        public var displayValue: String? {
+            if let isOn { return isOn ? "On" : "Off" }
+            return value
         }
 
         /// The line as the core renders it (for diagnostics).
@@ -28,7 +39,8 @@ public struct PromptScreen: Sendable, Equatable {
             var s = "[\(index)] \(role)"
             if !label.isEmpty { s += " \"\(label)\"" }
             if let value { s += " value=\"\(value)\"" } else if let placeholder { s += " placeholder=\"\(placeholder)\"" }
-            if !flags.isEmpty { s += " (\(flags.joined(separator: ", ")))" }
+            let all = (isOn.map { [$0 ? "on" : "off"] } ?? []) + flags
+            if !all.isEmpty { s += " (\(all.joined(separator: ", ")))" }
             return s
         }
     }
@@ -50,6 +62,48 @@ public struct PromptScreen: Sendable, Equatable {
     public var history: [String]
     /// `Note: …` lines.
     public var notes: [String]
+    /// The cue lines the core adds under the header and at the end of the list.
+    public var cues: Cues
+
+    /// What the screen says about the part of it that is not shown.
+    public struct Cues: Sendable, Equatable {
+        /// `… more above; scroll up`.
+        public var moreAbove = false
+        /// `… more below; scroll down` or `… N more elements below; scroll down`.
+        public var moreBelow = false
+        /// `Page 1 of 2 …`.
+        public var page: (number: Int, count: Int)?
+
+        public init(moreAbove: Bool = false, moreBelow: Bool = false, page: (number: Int, count: Int)? = nil) {
+            self.moreAbove = moreAbove
+            self.moreBelow = moreBelow
+            self.page = page
+        }
+
+        public static func == (a: Cues, b: Cues) -> Bool {
+            a.moreAbove == b.moreAbove && a.moreBelow == b.moreBelow && a.page?.number == b.page?.number && a.page?.count == b.page?.count
+        }
+
+        /// The cue a block line is, `nil` for any other line.
+        static func parse(_ line: String, into cues: inout Cues) -> Bool {
+            if line == "… more above; scroll up" {
+                cues.moreAbove = true
+                return true
+            }
+            if line == "… more below; scroll down" || (line.hasPrefix("… ") && line.hasSuffix(" more elements below; scroll down")) {
+                cues.moreBelow = true
+                return true
+            }
+            if line.hasPrefix("Page ") {
+                let parts = line.dropFirst(5).split(separator: " ")
+                if parts.count >= 3, parts[1] == "of", let n = Int(parts[0]), let c = Int(parts[2]) {
+                    cues.page = (n, c)
+                    return true
+                }
+            }
+            return false
+        }
+    }
 
     /// Parses the user part of a `ModelRequest`.
     public init(prompt: String) {
@@ -62,16 +116,20 @@ public struct PromptScreen: Sendable, Equatable {
         var app: String?
         var keyboard = false
         var elements: [Element] = []
+        var cues = Cues()
         for line in (block ?? "").split(separator: "\n", omittingEmptySubsequences: true) {
             let text = String(line)
             if text.hasPrefix("App: ") {
                 app = String(text.dropFirst(5))
             } else if text == "Keyboard: visible" {
                 keyboard = true
+            } else if Cues.parse(text, into: &cues) {
+                continue
             } else if let element = Self.parseElement(text) {
                 elements.append(element)
             }
         }
+        self.cues = cues
         self.app = app
         self.keyboardVisible = keyboard
         self.elements = elements
@@ -104,10 +162,29 @@ public struct PromptScreen: Sendable, Equatable {
         self.notes = notes
     }
 
-    /// The result part (after ` -> `) of the last history line.
+    /// The result part (after ` -> `) of the last history line, including what changed
+    /// (`ok; changed: Button "Cart (0)" -> "Cart (1)"`).
     public var lastResult: String? {
-        guard let last = history.last, let arrow = last.range(of: " -> ", options: .backwards) else { return nil }
-        return String(last[arrow.upperBound...])
+        history.last.flatMap(Self.result(ofHistoryLine:))
+    }
+
+    /// The outcome of the last history line.
+    public var lastOutcome: StepOutcome? {
+        lastResult.map(StepOutcome.init(result:))
+    }
+
+    /// The result of a history line: what follows the first ` -> ` that is followed by a
+    /// result the core can write. The change suffix itself holds arrows (`"Cart (0)" ->
+    /// "Cart (1)"`, `Switch "Wi-Fi" off -> on`), so the last arrow is not the separator.
+    static func result(ofHistoryLine line: String) -> String? {
+        var from = line.startIndex
+        while let arrow = line.range(of: " -> ", range: from..<line.endIndex) {
+            let rest = String(line[arrow.upperBound...])
+            if StepOutcome(result: rest) != .unknown { return rest }
+            from = arrow.upperBound
+        }
+        // Another shape of result (`screenshot taken`): after the first arrow.
+        return line.range(of: " -> ").map { String(line[$0.upperBound...]) }
     }
 
     /// Parses `[N] Role "label" value="v" (flags)`; `nil` for any other line.
@@ -136,8 +213,12 @@ public struct PromptScreen: Sendable, Equatable {
             s = rest
         }
         if s.hasPrefix(" ("), s.hasSuffix(")") {
-            element.flags = s.dropFirst(2).dropLast().split(separator: ",").map {
-                $0.trimmingCharacters(in: .whitespaces)
+            for flag in s.dropFirst(2).dropLast().split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) {
+                switch flag {
+                case "on": element.isOn = true
+                case "off": element.isOn = false
+                default: element.flags.append(flag)
+                }
             }
         }
         return element
@@ -168,5 +249,37 @@ public struct PromptScreen: Sendable, Equatable {
             i = s.index(after: i)
         }
         return nil
+    }
+}
+
+
+/// How a step in "Steps so far" ended, read from the start of its result. What follows
+/// `ok;` (the change summary) is never looked at: it quotes screen text.
+public enum StepOutcome: Sendable, Equatable {
+    /// `ok` / `ok; changed: …` / `ok; now in …` / `ok; screen unchanged`, or a tool's `ok: …`.
+    case ok
+    /// `done, but the phone locked before the result could be checked`.
+    case ranUnchecked
+    /// `failed: …`.
+    case failed
+    /// `not done: …` (declined, repeated, lock came first).
+    case notDone
+    /// `interrupted: …`.
+    case interrupted
+    /// `not answered: …`.
+    case notAnswered
+    /// Anything else (`screenshot taken`, `not available: …`, text of another shape).
+    case unknown
+
+    public init(result: String) {
+        let r = result.trimmingCharacters(in: .whitespaces).lowercased()
+        func starts(_ p: String) -> Bool { r.hasPrefix(p) }
+        if r == "ok" || starts("ok;") || starts("ok:") { self = .ok }
+        else if starts("done, but") { self = .ranUnchecked }
+        else if starts("failed") { self = .failed }
+        else if starts("not done") { self = .notDone }
+        else if starts("interrupted") { self = .interrupted }
+        else if starts("not answered") { self = .notAnswered }
+        else { self = .unknown }
     }
 }

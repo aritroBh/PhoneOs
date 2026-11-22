@@ -144,8 +144,8 @@ public final class DemoPhone: PhoneRunner {
     /// while it is on, done when it shows off).
     public static let wifiOffScript: [ScriptStep] = [
         .tap("Wi-Fi", role: "Cell"),
-        .tap(ElementQuery("Wi-Fi", match: .exact, roles: ["Switch"], value: "1")),
-        .done(summary: "Wi-Fi is off", expecting: [ElementQuery("Wi-Fi", match: .exact, roles: ["Switch"], value: "0")]),
+        .tap(ElementQuery("Wi-Fi", match: .exact, roles: ["Switch"], isOn: true)),
+        .done(summary: "Wi-Fi is off", expecting: [ElementQuery("Wi-Fi", match: .exact, roles: ["Switch"], isOn: false)]),
     ]
 
     /// The script for "Delete my account" (the tap is a `delete`-category confirmation).

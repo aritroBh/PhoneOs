@@ -147,7 +147,11 @@ struct DriverFailureTests {
             return doneJSON
         }
         let (result, updates) = try await h.run()
-        #expect(result.outcome.status == .success)
+        // The model says `done` straight after the failed step: the core finishes it
+        // `Failed` ("Not confirmed: the last step failed …"), not a success.
+        #expect(result.outcome.status == .failed)
+        #expect(result.outcome.summary.contains("Not confirmed"))
+        #expect(result.outcome.summary.contains("unknown tool"))
         #expect(updates.contains { update in
             if case .effectCompleted(.callTool, .toolResult(let r)) = update { return !r.ok }
             return false

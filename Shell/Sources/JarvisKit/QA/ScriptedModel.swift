@@ -22,15 +22,22 @@ public struct ElementQuery: Sendable, Equatable, CustomStringConvertible {
     public var match: Match
     /// Accepted roles as rendered (`Button`, `Cell`, …); empty accepts any.
     public var roles: [String]
-    /// The element's rendered `value=` must equal this, when set.
+    /// The element's rendered `value=` must equal this, when set (text fields, sliders;
+    /// not switches, which the core renders as `(on)` / `(off)`).
     public var value: String?
+    /// The element must be a switch that is on (`true`) or off (`false`), when set.
+    public var isOn: Bool?
 
-    public init(_ text: String, match: Match = .prefix, roles: [String] = [], value: String? = nil) {
+    public init(_ text: String, match: Match = .prefix, roles: [String] = [], value: String? = nil, isOn: Bool? = nil) {
         self.text = text
         self.match = match
         self.roles = roles
         self.value = value
+        self.isOn = isOn
     }
+
+    /// Whether the query states a precondition on the element's state.
+    var hasStateCondition: Bool { value != nil || isOn != nil }
 
     public var description: String {
         var s = roles.isEmpty ? "" : roles.joined(separator: "|") + " "
@@ -41,6 +48,7 @@ public struct ElementQuery: Sendable, Equatable, CustomStringConvertible {
         case .contains: s += " (contains)"
         }
         if let value { s += " value=\"\(value)\"" }
+        if let isOn { s += isOn ? " (on)" : " (off)" }
         return s
     }
 
@@ -48,6 +56,7 @@ public struct ElementQuery: Sendable, Equatable, CustomStringConvertible {
     public func matches(_ element: PromptScreen.Element) -> Bool {
         if !roles.isEmpty && !roles.contains(element.role) { return false }
         if let value, element.value != value { return false }
+        if let isOn, element.isOn != isOn { return false }
         let needle = text.lowercased()
         return [element.label, element.placeholder ?? ""].contains { candidate in
             let hay = candidate.lowercased()
@@ -101,8 +110,8 @@ public enum ScriptStep: Sendable, Equatable, CustomStringConvertible {
 
     // Builders that read like the step they are.
 
-    public static func tap(_ text: String, role: String? = nil, match: ElementQuery.Match = .prefix, value: String? = nil) -> ScriptStep {
-        .tap(ElementQuery(text, match: match, roles: role.map { [$0] } ?? [], value: value))
+    public static func tap(_ text: String, role: String? = nil, match: ElementQuery.Match = .prefix, value: String? = nil, isOn: Bool? = nil) -> ScriptStep {
+        .tap(ElementQuery(text, match: match, roles: role.map { [$0] } ?? [], value: value, isOn: isOn))
     }
 
     public static func type(_ text: String, into label: String, role: String? = nil, submit: Bool = false) -> ScriptStep {
@@ -172,8 +181,9 @@ public struct DismissRule: Sendable, Equatable, CustomStringConvertible {
 ///    uses left, and the current step's target is not listed), tap it; at most
 ///    `options.maxDismissals` dismissals per run.
 /// 3. A tap/type step counts as done only from the prompt: the next request's last
-///    "Steps so far" line must say `ok` (or `done, but …` while the step's stated
-///    precondition, such as `value="0"`, no longer holds). When it says the action failed,
+///    "Steps so far" line must say `ok` (`ok; changed: …`, `ok; now in …`, … — the
+///    suffix is ignored) or `done, but …` while the step's stated precondition (such as
+///    "the switch is on") no longer holds. When it says the action failed,
 ///    was not done, was dropped or its result is unknown (`interrupted: …` after a lock),
 ///    the step is retried, unless its precondition no longer holds on screen (it took
 ///    effect) or its target is gone. At most `options.maxRetries` retries per step, then the
@@ -280,7 +290,9 @@ public final class ScriptedModel: ModelProvider {
         let last = screen.lastResult ?? ""
         let pending = s.pending
         s.pending = nil
-        if last.contains("owner declined") || last.contains("does not want Jarvis to act") {
+        let outcome = StepOutcome(result: last)
+        if outcome == .notDone || outcome == .failed,
+           last.contains("owner declined") || last.contains("does not want Jarvis to act") || last.contains("did not let Jarvis act") {
             let (reply, _) = render(options.onDeclined, on: screen, thought: "the owner said no")
             return (nil, reply, "last step was declined (\(last)); replying \(options.onDeclined)")
         }
@@ -400,21 +412,25 @@ public final class ScriptedModel: ModelProvider {
 
     /// Whether a tap/type whose history result is `result` must run again on `screen`.
     ///
-    /// - `ok`: done.
+    /// - `ok` (with or without a change summary): done.
     /// - `done, but …` (ran, the lock came before the check): done unless the stated
-    ///   precondition (`value=`) still holds.
+    ///   precondition (`value=` / on / off) still holds.
     /// - anything else (`failed: …`, `not done: …`, `interrupted: …`, `not answered: …`):
     ///   retried while the target is still there and its precondition, if any, still holds.
     ///   A plain failure without a precondition is not retried once the next step's target
     ///   is listed (the screen moved on).
     static func needsRetry(result: String, query: ElementQuery, on screen: PromptScreen, nextTargetListed: Bool) -> Bool {
-        let r = result.trimmingCharacters(in: .whitespaces).lowercased()
-        if r.isEmpty || r == "ok" { return false }
+        if result.trimmingCharacters(in: .whitespaces).isEmpty { return false }
         let targetThere = query.find(in: screen) != nil
-        if r.hasPrefix("done") { return query.value != nil && targetThere }
-        if query.value != nil { return targetThere }
-        if r.hasPrefix("failed") && nextTargetListed { return false }
-        return targetThere
+        switch StepOutcome(result: result) {
+        case .ok: return false
+        case .ranUnchecked: return query.hasStateCondition && targetThere
+        case .failed:
+            if query.hasStateCondition { return targetThere }
+            return nextTargetListed ? false : targetThere
+        case .notDone, .interrupted, .notAnswered, .unknown:
+            return targetThere
+        }
     }
 
     /// The elements whose presence means the step can proceed.

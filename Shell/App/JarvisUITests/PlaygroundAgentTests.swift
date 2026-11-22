@@ -137,7 +137,9 @@ final class PlaygroundAgentTests: QATestCase {
 
     static let toggleScript: [ScriptStep] = [
         .tap("Toggles"),
-        .tap(ElementQuery("Show tips", match: .exact, roles: ["Switch"], value: "0")),
+        // A SwiftUI Toggle is a Switch whose tree value is "0"/"1"; the core shows it to the
+        // model as (off)/(on), so the script asks for the state, not for a value.
+        .tap(ElementQuery("Show tips", match: .exact, roles: ["Switch"], isOn: false)),
         .done("Tips are on", when: ["Tips are on"]),
     ]
 }

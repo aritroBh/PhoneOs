@@ -51,6 +51,11 @@ final class SystemAppAgentTests: QATestCase {
                       "first use of Settings was not approved through the gate; confirmations: \(owner.confirms)")
     }
 
+    /// The Settings icon is a known app (`KnownApps.common`), so since the core checks a
+    /// home-screen tap like `open_app` it needs no question at the tap, and no first-use
+    /// question either (that comes with the first action inside Settings, and this script
+    /// takes none). The owner here declines everything, so any question fails the test
+    /// instead of being approved silently.
     @MainActor
     func testSpringboardOpensAnApp() async throws {
         startOnHomeScreen(terminating: [settingsId])
@@ -63,12 +68,49 @@ final class SystemAppAgentTests: QATestCase {
             ],
             options: .init(dismiss: Self.firstLaunchDismissals)
         )
-        let outcome = try await run.run(task: "Open the Settings app from the home screen", model: model, firstUseApproval: true)
+        let owner = QAOwner(transcript: run.transcript, decide: { _ in false })
+        let outcome = try await run.run(task: "Open the Settings app from the home screen", model: model, owner: owner, firstUseApproval: true)
 
         XCTAssertEqual(outcome.result.outcome.status, .success, outcome.explanation)
         XCTAssertEqual(XCUIApplication(bundleIdentifier: settingsId).state, .runningForeground, outcome.explanation)
+        XCTAssertTrue(owner.confirms.isEmpty, "a known app's icon asked the owner something: \(owner.confirms)")
         let firstPrompt = try XCTUnwrap(outcome.requests.first?.user, "no prompt was built")
         XCTAssertTrue(firstPrompt.contains("com.apple.springboard"), "the first observation was not SpringBoard:\n\(firstPrompt)")
+    }
+
+    /// An icon whose label is not a known app (here Settings, taken out of the known list)
+    /// asks a one-off first-use confirmation with app `com.apple.springboard` and the icon's
+    /// label. The QA owner approves exactly that request, by rule, and the test asserts it
+    /// was asked and how the sheet words it.
+    @MainActor
+    func testSpringboardUnknownIconAsksOnce() async throws {
+        startOnHomeScreen(terminating: [settingsId])
+        let run = makeRun("system-springboard-unknown-icon")
+        let model = ScriptedModel(
+            steps: [
+                .tap("Settings", role: "Button", match: .exact),
+                .done("Settings is open", when: ["General"]),
+            ],
+            options: .init(dismiss: Self.firstLaunchDismissals)
+        )
+        let owner = QAOwner(transcript: run.transcript, decide: { request in
+            // The icon question, and (a first-launch sheet's button is an action in Settings)
+            // Settings' own first use; nothing else.
+            request.category == .firstUse && ["com.apple.springboard", settingsId].contains(request.app)
+        })
+        let unknownToCore = KnownApps.common.filter { $0.name != "Settings" }
+        let outcome = try await run.run(
+            task: "Open the Settings app from the home screen", model: model, owner: owner,
+            firstUseApproval: true, knownApps: unknownToCore
+        )
+
+        let asked = try XCTUnwrap(owner.confirms.first, "tapping an icon the core cannot name asked nothing\n\(outcome.explanation)")
+        XCTAssertEqual(owner.confirms.filter { $0.app == "com.apple.springboard" }.count, 1, "\(owner.confirms)")
+        XCTAssertEqual(asked.category, .firstUse)
+        XCTAssertEqual(asked.app, "com.apple.springboard")
+        XCTAssertEqual(ConfirmationWording(asked, appName: "SpringBoard").title, "Open \"Settings\" from the Home Screen?", asked.summary)
+        XCTAssertEqual(outcome.result.outcome.status, .success, outcome.explanation)
+        XCTAssertEqual(XCUIApplication(bundleIdentifier: settingsId).state, .runningForeground, outcome.explanation)
     }
 
     @MainActor

@@ -20,12 +20,14 @@ struct ConfirmationSheet: View {
         model.settings.appTrust.first { $0.bundleIdPrefix == request.app }?.name ?? request.app
     }
 
+    private var wording: ConfirmationWording { ConfirmationWording(request, appName: appName) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.gutter) {
-            Chip(text: riskCategoryTitle(request.category), icon: .warning,
+            Chip(text: wording.chip, icon: .warning,
                  foreground: Theme.warning, fill: Theme.warningFill)
                 .accessibilityIdentifier("confirm.category")
-            Text(request.category == .firstUse ? "Let Jarvis act in \(appName)?" : "Go ahead in \(appName)?")
+            Text(wording.title)
                 .font(Theme.question)
                 .foregroundStyle(Theme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)

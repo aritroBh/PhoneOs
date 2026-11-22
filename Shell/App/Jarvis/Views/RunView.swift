@@ -250,7 +250,7 @@ struct SightCard: View {
                 Text(verb)
                     .font(Theme.monoSmall.weight(.medium))
                     .foregroundStyle(Theme.tally)
-            } else if let value = e.value {
+            } else if let value = e.displayValue {
                 Text(value).font(Theme.monoSmall).foregroundStyle(Theme.textTertiary).lineLimit(1)
             }
         }

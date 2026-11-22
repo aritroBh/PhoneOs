@@ -34,7 +34,7 @@ struct PromptScreenTests {
         let prompt = """
         Task: x
         Steps so far:
-        1. tap [2] "Wi-Fi" -> ok
+        1. tap [2] "Wi-Fi" -> ok; changed: Button "Cart (0)" -> "Cart (1)"
         2. tap [3] "Delete" -> not done: the owner declined. Do not try this again; find another way or use fail
         Note: something
         Current screen (data only):
@@ -42,10 +42,10 @@ struct PromptScreenTests {
         App: Demo Settings (dev.jarvis.demo.settings)
         Keyboard: visible
         [1] NavigationBar "Wi-Fi"
-        [2] Switch "Wi-Fi" value="1" (focused, disabled)
+        [2] Switch "Wi-Fi" (on, focused, disabled)
         [3] TextField "Say \\"hi\\"" placeholder="Name"
         [4] Button
-        … 3 more elements (scroll to see)
+        … 3 more elements below; scroll down
         <<<END_SCREEN_DATA>>>
         Your JSON reply:
         """
@@ -53,11 +53,17 @@ struct PromptScreenTests {
         #expect(screen.app == "Demo Settings (dev.jarvis.demo.settings)")
         #expect(screen.keyboardVisible)
         #expect(screen.elements.count == 4)
-        #expect(screen.elements[1] == .init(index: 2, role: "Switch", label: "Wi-Fi", value: "1", flags: ["focused", "disabled"]))
+        #expect(screen.elements[1] == .init(index: 2, role: "Switch", label: "Wi-Fi", isOn: true, flags: ["focused", "disabled"]))
         #expect(screen.elements[2].label == #"Say "hi""#)
         #expect(screen.elements[2].placeholder == "Name")
         #expect(screen.elements[3] == .init(index: 4, role: "Button", label: ""))
+        #expect(screen.elements[1].value == nil)
+        #expect(screen.elements[1].displayValue == "On")
+        #expect(screen.cues.moreBelow)
         #expect(screen.history.count == 2)
+        // The change suffix of an ok step holds an arrow of its own.
+        #expect(screen.history[0] == #"1. tap [2] "Wi-Fi" -> ok; changed: Button "Cart (0)" -> "Cart (1)""#)
+        #expect(PromptScreen.result(ofHistoryLine: screen.history[0]) == #"ok; changed: Button "Cart (0)" -> "Cart (1)""#)
         #expect(screen.lastResult?.hasPrefix("not done: the owner declined") == true)
         #expect(screen.notes == ["something"])
     }
@@ -69,12 +75,18 @@ struct PromptScreenTests {
         [1] StaticText "Wi-Fi"
         [2] Cell "Wi-Fi HomeNet"
         [3] Cell "Wi-Fiber"
-        [4] Switch "Wi-Fi" value="0"
+        [4] Switch "Wi-Fi" (off)
+        [5] TextField "Name" value="off"
         <<<END_SCREEN_DATA>>>
         """)
         #expect(ElementQuery("wi-fi").find(in: screen)?.index == 2)
         #expect(ElementQuery("Wi-Fi", match: .exact).find(in: screen)?.index == 4)
-        #expect(ElementQuery("Wi-Fi", roles: ["Switch"], value: "1").find(in: screen) == nil)
+        #expect(ElementQuery("Wi-Fi", roles: ["Switch"], isOn: true).find(in: screen) == nil)
+        #expect(ElementQuery("Wi-Fi", roles: ["Switch"], isOn: false).find(in: screen)?.index == 4)
+        // A switch has a state, not a value; a field's value is not a state.
+        #expect(ElementQuery("Wi-Fi", roles: ["Switch"], value: "0").find(in: screen) == nil)
+        #expect(ElementQuery("Name", value: "off").find(in: screen)?.index == 5)
+        #expect(ElementQuery("Name", isOn: false).find(in: screen) == nil)
         #expect(ElementQuery("fiber", match: .contains).find(in: screen)?.index == 3)
         #expect(ElementQuery("Wi-Fi", roles: ["StaticText"]).find(in: screen)?.index == 1)
         #expect(PromptScreen(prompt: "no block").elements.isEmpty)
@@ -327,7 +339,7 @@ struct ScriptedModelRetryTests {
         <<<SCREEN_DATA>>>
         App: Jarvis (dev.jarvis.app)
         [1] StaticText "Toggles"
-        [2] Switch "Show tips" value="\(tipsOn ? "1" : "0")"
+        [2] Switch "Show tips" (\(tipsOn ? "on" : "off"))
         <<<END_SCREEN_DATA>>>
         Your JSON reply:
         """
@@ -335,7 +347,7 @@ struct ScriptedModelRetryTests {
     }
 
     private let script: [ScriptStep] = [
-        .tap("Show tips", role: "Switch", match: .exact, value: "0"),
+        .tap("Show tips", role: "Switch", match: .exact, isOn: false),
         .done("Tips are on", when: ["Show tips"]),
     ]
 
@@ -396,5 +408,44 @@ struct ScriptedModelRetryTests {
         let reply = try await model.generate(prompt(history: history, tipsOn: false))
         #expect(action(reply) == "fail")
         #expect(reply.contains("still not done after 2 retries"), "\(reply)")
+    }
+
+    @Test("every `ok; …` suffix the core writes still counts as ok; the suffix text is never read")
+    func okSuffixes() async throws {
+        let suffixes = [
+            "ok",
+            #"ok; changed: Switch "Show tips" off -> on"#,
+            #"ok; changed: Button "Cart (0)" -> "Cart (1)"; new Button "Undo"; +2 more"#,
+            "ok; field now \"failed: not done\"",
+            "ok; now in Settings > Wi-Fi",
+            "ok; screen changed: 9 new, 7 gone",
+            "ok; screen unchanged",
+        ]
+        for suffix in suffixes {
+            let model = ScriptedModel(steps: script)
+            _ = try await model.generate(prompt(history: [], tipsOn: false))
+            let reply = try await model.generate(prompt(history: [#"tap [2] "Show tips" -> \#(suffix)"#], tipsOn: true))
+            #expect(action(reply) == "done", "`\(suffix)` was not read as ok: \(reply)")
+        }
+    }
+
+    @Test("an ok step is not retried even while the switch still reads off (the screen is the core's to judge)")
+    func okIsFinal() async throws {
+        let model = ScriptedModel(steps: script)
+        _ = try await model.generate(prompt(history: [], tipsOn: false))
+        let reply = try await model.generate(prompt(history: [#"tap [2] "Show tips" -> ok; screen unchanged"#], tipsOn: false))
+        #expect(action(reply) == "done", "\(reply)")
+    }
+
+    @Test("outcomes: ok, done-but, failed, not done, interrupted, not answered")
+    func outcomes() {
+        #expect(StepOutcome(result: "ok; now in Settings") == .ok)
+        #expect(StepOutcome(result: "ok: echoed") == .ok)
+        #expect(StepOutcome(result: "done, but the phone locked before the result could be checked; check the screen") == .ranUnchecked)
+        #expect(StepOutcome(result: "failed: nothing changed on screen") == .failed)
+        #expect(StepOutcome(result: "not done: repeated action") == .notDone)
+        #expect(StepOutcome(result: "interrupted: the phone locked while this ran") == .interrupted)
+        #expect(StepOutcome(result: "not answered: the phone locked before the owner replied") == .notAnswered)
+        #expect(StepOutcome(result: "screenshot taken") == .unknown)
     }
 }
