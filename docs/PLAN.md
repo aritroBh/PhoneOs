@@ -2,6 +2,8 @@
 
 Plan date: 2026-11-22. Target: iPhone 17 Pro Max, iOS 27.x, personal sideload, free Apple ID, model runs on the phone.
 
+Core logic is Rust (see `docs/ARCHITECTURE.md`); the iOS shell is Swift. Working checklist: `docs/CHECKLIST.md`.
+
 Claims marked **[U]** are unverified (reported by READMEs/press, not tested on a device). Phase 0 exists to verify them before any real build.
 
 ---
@@ -217,30 +219,29 @@ A paid account ($99/yr) removes the 7-day cycle, the 3-app limit, and the entitl
 
 ```
 PhoneOs/
+├─ core/                       Rust workspace. All decision logic. Builds and tests on Linux.
+│   ├─ jarvis-proto/           shared data types
+│   ├─ jarvis-observe/         a11y tree compaction, prompt rendering, fingerprints
+│   ├─ jarvis-safety/          confirm gates, deny list, caps, untrusted-text hygiene
+│   ├─ jarvis-memory/          learned flows, profile, task log
+│   ├─ jarvis-agent/           sans-IO session state machine, prompts, parser, router
+│   ├─ jarvis-sim/             simulated phone + eval CLI (not shipped)
+│   └─ jarvis-ffi/             UniFFI bindings → JarvisCore.xcframework
 ├─ project.yml                 XcodeGen spec; no .xcodeproj in git
-├─ Packages/JarvisCore/        Pure Swift, no UIKit. Builds and tests on Linux CI.
-│   ├─ Agent/                  loop, planner, verifier, step/time caps
-│   ├─ Actions/                action schema, parser, validator
-│   ├─ Observation/            a11y tree compaction, set-of-marks
-│   ├─ Tools/                  router, tool protocol, tiers
-│   ├─ Memory/                 profile, task log, learned flows
-│   ├─ Safety/                 confirm gates, deny list, untrusted-content rules
-│   └─ Model/                  ModelProvider protocol, prompt templates
-├─ App/Jarvis/                 SwiftUI app: chat, tasks, connections, settings
+├─ App/Jarvis/                 SwiftUI shell: all IO
+│   ├─ SessionDriver           executes core effects, feeds back events
+│   ├─ Runner/                 client for the XCUITest runner
+│   ├─ Model/                  LiteRT-LM / llama.cpp / FoundationModels backends
+│   ├─ Tools/                  EventKit, Contacts, HomeKit, MusicKit, Shortcuts bridge
 │   ├─ Voice/                  wake word, STT, TTS, audio session keepalive
-│   ├─ Runtime/                LiteRT-LM / llama.cpp / FoundationModels backends
-│   ├─ NativeTools/            EventKit, Contacts, HomeKit, MusicKit, …
-│   ├─ Intents/                App Intents, Action Button, Shortcuts bridge
-│   └─ LiveActivity/           progress + stop button
+│   ├─ Intents/                App Intents, Action Button
+│   └─ UI/                     chat, tasks, connections, settings, Live Activity
 ├─ Runner/JarvisRunner/        forked XCUITest runner + RPC server
-├─ Evals/                      personal task set, replay harness, scoring
-├─ .github/workflows/          Linux: JarvisCore tests. macOS: unsigned ipa.
-└─ docs/                       this plan, spike results, setup guide
+├─ .github/workflows/          Linux: Rust fmt/clippy/test. macOS: manual build.
+└─ docs/                       plan, architecture, checklist, spike guides
 ```
 
-`JarvisCore` holds everything that does not need a phone, so most logic is testable in CI against recorded trees and screenshots.
-
----
+Why Rust for the core: the agent loop is a state machine with many edge cases (bad model output, stale screens, declined confirmations, budgets). Rust makes those states explicit and exhaustively matched, has no data races, and the whole core is deterministic and testable on Linux against recorded screens. The core does no IO, so it is driven identically by the Swift app and by the simulator.
 
 ## 7. Phases
 
@@ -294,14 +295,12 @@ Prompt-injection test set, audit log export, per-app policies, recovery from run
 
 | Work | Model | Why |
 |---|---|---|
-| Planning, architecture decisions, review of every merge | orchestrator (this session) | |
-| Agent loop, runner RPC bridge, model runtime backends, safety layer, background/keepalive | Opus | Hard to get right, hard to debug on device |
-| SwiftUI screens, native tools, App Intents, Shortcuts bridge, voice plumbing, Live Activity, CI | Sonnet | Well-trodden APIs |
+| Planning, architecture, review of every stage | orchestrator (this session) | |
+| `jarvis-proto`, `jarvis-safety`, `jarvis-agent`, `jarvis-ffi`, runner bridge, model runtime backends, background/keepalive | Opus | Hard to get right, hard to debug on device |
+| `jarvis-observe`, `jarvis-memory`, `jarvis-sim`, SwiftUI screens, native tools, App Intents, voice plumbing, CI | Sonnet | Well-specified or well-trodden |
 | File moves, renames, config edits, doc lookups, repo fact checks | Haiku | Mechanical |
 
-Parallel tracks after Phase 0: `JarvisCore` (Opus), runner fork + bridge (Opus), app shell + voice (Sonnet), native tools (Sonnet). Each lands as its own PR with tests. Every Swift change is compiled in CI before review, since this workspace has no Xcode.
-
----
+Build order: proto → (observe, safety, memory in parallel) → agent → (sim, ffi, CI in parallel) → Swift shell. Rust is compiled and tested in this workspace on every change. Swift cannot be compiled here (no Xcode); it is verified on the Mac or by the manual macOS workflow.
 
 ## 9. Risks
 
@@ -320,7 +319,7 @@ Parallel tracks after Phase 0: `JarvisCore` (Opus), runner fork + bridge (Opus),
 
 ## 10. Open items needing you
 
-1. **Mac access.** Is there a Mac you can use with Xcode? If not, the build goes through GitHub Actions + SideStore, and a Windows/Linux machine is still needed once for the SideStore install.
+1. **Mac access.** Confirmed: Mac with Xcode available. Build and install from Xcode.
 2. **Phase 0 needs your phone.** The spikes cannot run from here. They will come as step-by-step instructions plus a small test app.
 3. **Free vs. $99 account.** Plan works on free. Revisit after S3 if the memory budget forces a 2B model.
 
