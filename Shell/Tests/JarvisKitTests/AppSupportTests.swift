@@ -177,13 +177,19 @@ struct BrokerTests {
 struct CoordinatorTests {
     /// Approves every confirmation through the broker, as the sheet's Approve button does.
     private func autoApprovingBroker() -> HumanPromptBroker {
-        let box = Mutex<HumanPromptBroker?>(nil)
+        let ref = BrokerRef()
         let broker = HumanPromptBroker { prompt in
             guard case .confirm(let id, _)? = prompt else { return }
-            Task { box.withLock { $0 }?.approve(id) }
+            Task { ref.broker.withLock { $0 }?.approve(id) }
         }
-        box.withLock { $0 = broker }
+        ref.broker.withLock { $0 = broker }
         return broker
+    }
+
+    /// Lets the broker's own callback reach the broker: a `Mutex` cannot be captured by a
+    /// `sending` closure directly, a `Sendable` class holding it can.
+    private final class BrokerRef: Sendable {
+        let broker = Mutex<HumanPromptBroker?>(nil)
     }
 
     @Test("a demo run streams events, saves memory and history, and the second run replays")

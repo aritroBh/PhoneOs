@@ -229,11 +229,10 @@ pub fn from_hex(s: &str) -> Option<Vec<u8>> {
     if !b.len().is_multiple_of(2) {
         return None;
     }
-    b.chunks_exact(2)
-        .map(|pair| match pair {
-            [hi, lo] => Some((hex_val(*hi)? << 4) | hex_val(*lo)?),
-            _ => None,
-        })
+    b.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|[hi, lo]| Some((hex_val(*hi)? << 4) | hex_val(*lo)?))
         .collect()
 }
 
