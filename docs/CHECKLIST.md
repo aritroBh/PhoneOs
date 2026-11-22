@@ -51,7 +51,7 @@ Verified on a macOS runner (Xcode 26.6, iPhone 17 Pro Max simulator, iOS 26.5):
 - [x] Artifacts per step: compact screen, raw tree, screenshot, transcript
 - [x] Green run on an iPhone 17 Pro Max simulator (run 3: 13/13; run 6: 20/21, the lock-mid-task test)
 - [x] App with Workflows + Remote screens builds; lock-mid-task resumes and finishes after the unlock (run 10: 25 of 27)
-- [ ] All UI tests green on the Mac. The two run-10 failures were in the tests and are changed. The repository is public now, so the Mac workflow runs on every push again; run 71 stopped in the package tests (a Live view test freed a 5,000-level hand-built tree and overflowed the 512 KB test thread; test changed), next run pending
+- [ ] All UI tests green on the Mac. Runs 76 and 77 (first builds since `18bc128`; the app and the Live view screen compile): 28 tests, 25 passed, the same 3 failed in both. Causes found from the run artifacts and changed in `3c5b5fa`: the scripted model skipped a step that a Safari tip sheet had covered (test tool); the simulator did not lock in the lock test (test now waits for a lock reading and retries the press); choosing a step kind in the workflow editor replaced the text field under the tap (app: the text kinds share one field). Run 79 pending
 
 Waiting for a Mac build (app code changed after `18bc128`, the last commit compiled on a Mac; the JarvisKit side of each change is tested on Linux):
 
@@ -99,6 +99,7 @@ Watch Jarvis act: a phone-shaped viewer in the run screen shows the screen Jarvi
 - [~] UI test `testLiveViewFollowsAndReplaysDemoTask` (demo run: viewer present, caption changes, step back/forward/Live). **Unverified** until the Mac CI runs it
 - [ ] Check on the Mac: `backward.frame.fill` / `forward.frame.fill` symbols render; Canvas text in small rectangles; the viewer's height on small phones; the workflow run view still shows the element list only
 - [ ] Phase 2: stream the timeline and (when the option is on) frames to the paired remote controller over the existing encrypted channel, off by default, with its own permission
+- [x] Rust crate jarvis-viewer (reducer, privacy, wire format, cursor path, replay, scene) with FFI; [ ] Swift switched over to it
 - [ ] Phase 3 (device spike): Picture-in-Picture floating mini-viewer over other apps (check it never covers tap targets and never appears in the tree the runner reads); Live Activity caption for the current step
 
 ## Core follow-ups
@@ -114,7 +115,8 @@ Watch Jarvis act: a phone-shaped viewer in the run screen shows the screen Jarvi
 - [x] Spotlight, widgets and suggestions cannot open a denied app; classifier scans cannot be padded past a risky control
 - [x] Third, fourth and fifth reviews of the approval path: each broke the version before it. The binding is now the raw digest (with what is shown), the compact content in order, the raw node the target comes from, and the category with the full summary; exclusions apply to digest and compaction alike
 - [x] Sixth and seventh reviews: the binding held under a 200,000-tree property test; the defects were around it (taps landing on a covering control, Return not re-checked, keyboard keys tapped unasked, questions hiding the text sent). Fixed: tap points refuse covered targets by a rule measured on real iOS 26 trees (1 refusal in 108 controls), digest v4 includes layout, questions show what is sent
-- [ ] Eighth review: does not hold. 2 high (a tap on a card can land on a control nested in it; many form fields push the amount and payee out of the question), 4 medium (long note pushes out the payee; Return shows only its own field; scrolled-out recipient missing; `tap_point` on Send hides the text), 1 low (icon-only and synonym send buttons). Fixes in progress, then a ninth pass. Until a review passes without a high finding, treat the approval path as not yet proven
+- [x] Eighth review: 2 high, 4 medium, 1 low (a tap on a card landing on a control nested in it; form fields pushing the amount and payee out of the question; Return showing only its own field; a scrolled-out recipient; `tap_point` on Send hiding the text; icon-only send buttons). Fixed in `d34bacc`
+- [ ] Ninth review: does not hold. 4 high (a menu drawn over a toolbar not seen as a cover; a card narrowed to an unlabelled icon button inside it; the tap-after-typing rule lost when the typed field scrolls away; contact fields pushing the payee out of the question), 1 medium, 1 low. Fixes in progress, this time by construction: the question built from reserved slots, bar precedence only for page content scrolling under a bar, and property tests (random screens against an independent tap oracle, random forms against the question invariants, random type/scroll/tap sequences). Until a review passes without a high finding, treat the approval path as not yet proven
 - [x] Screens read through the third-party runner's text format always ask (the format can be forged by on-screen text)
 - [ ] Typed runner for the device: Jarvis's own XCUITest runner serving typed trees to the app (today it exists only inside the UI test bundle); needed before hands-off use, because the text path now asks before every action
 - [x] Denied apps are refused by display name (home-screen icon, switcher card, `open_app`)
@@ -144,9 +146,10 @@ Watch Jarvis act: a phone-shaped viewer in the run screen shows the screen Jarvi
 
 ## Performance (Rust core)
 
-- [ ] Benchmark harness (`jarvis-sim bench`): every stage of a step on the real iOS 26 trees and on 1k–50k-node synthetic trees; prompt size per screen
-- [ ] Budgets and a scaling check enforced in CI
-- [ ] Hotspot fixes from the measurements
+- [x] Benchmark harness (`jarvis-sim bench`, `234e830`): 24 stages of a step on the ten real iOS 26 trees and on 1k–50k-node synthetic trees; prompt size per screen. Real screens: screen read to prompt 0.3 ms p50, under 1.2 ms p99 (shared VM); the fixed system prompt is 70–85% of every prompt
+- [~] Budgets and scaling limits are in the source and hold (`bench --check`); not yet a CI step
+- [ ] Hotspot fixes: the prompt builder renders the screen about seven times a step; quadratic tap-point sweep, change detection and neighbour search on dense screens; clone-heavy redaction. After the ninth-review fixes (same files)
+- [ ] Keep the fixed system prompt in the model's cache between steps (the largest lever for on-phone speed)
 
 ## Checks
 
