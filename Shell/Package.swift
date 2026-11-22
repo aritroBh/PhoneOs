@@ -13,9 +13,10 @@
 //   - Linux, or macOS with JARVIS_LINK=host: a system-library module over
 //     Generated/JarvisCoreFFI and the host static library Generated/lib/libjarvis_core_ffi.a,
 //     linked with -L (an unsafe flag; acceptable for this dev/test path only).
-//   - macOS (default): the binary target Frameworks/JarvisCoreFFI.xcframework (iOS device +
-//     simulator) built by core/jarvis-ffi/scripts/build-xcframework.sh via bootstrap.sh.
-//     That xcframework has no macOS slice, so run `JARVIS_LINK=host swift test` on a Mac.
+//   - macOS (default): the binary target Frameworks/JarvisCoreFFI.xcframework (iOS device,
+//     iOS simulator and macOS slices) built by core/jarvis-ffi/scripts/build-xcframework.sh
+//     via bootstrap.sh. The macOS slice makes `swift test` work on the Mac host with no
+//     environment variable; JARVIS_LINK=host still selects the host-library path.
 
 import Foundation
 import PackageDescription

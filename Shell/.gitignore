@@ -7,3 +7,6 @@ Package.resolved
 Generated/
 Frameworks/
 Sources/JarvisCore/
+
+# Produced by scripts/sim-qa.sh
+build/
