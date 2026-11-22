@@ -614,7 +614,7 @@ fn parse_retries_run_out() {
         "Turn off Wi-Fi",
         &[
             "hmm".to_owned(),
-            "{\"thought\":\"cut off".to_owned(),
+            "{\"thought\" \"x\"}".to_owned(),
             "tap the wifi".to_owned(),
         ],
         &mut Human::approve_all(),

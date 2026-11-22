@@ -47,18 +47,18 @@ A prompt-only tweak (shorter thoughts, "do not repeat a step marked ok", scroll 
 
 | # | Problem | Status |
 |---|---|---|
-| 1 | Tapping a denied app's icon on the home screen launched it; the deny check ran only on the next observation. | Fix in progress |
-| 2 | Tapping any cell with a price asked for a Purchase confirmation. | Fix in progress |
-| 3 | Step results carry no state change, so loops on changing screens are invisible to the model and to stuck detection. | Fix in progress |
-| 4 | Return in a message field does not send; the prompt suggested it does. | Fix in progress |
-| 5 | Switch values render as 0/1. | Fix in progress |
-| 6 | Nothing marks a list as scrollable. | Fix in progress |
-| 7 | Prompt examples ("No contact named Alex") leak into answers. | Fix in progress |
-| 8 | `done` right after a declined confirmation is accepted as success. | Fix in progress |
-| 9 | 160 output tokens is too few for a chatty model. | Fix in progress |
-| 10 | The simulator's `json_schema` request is rejected by llama-cpp-python. | Fix in progress |
-| 11 | Eval tasks compare sent messages by exact text and expect Failed where Blocked is correct. | Fix in progress |
-| 12 | Runner-text observations lose focused/disabled (the runner's format does not carry them). | Known limit of that format; the typed tree keeps them |
+| 1 | Tapping a denied app's icon on the home screen launched it; the deny check ran only on the next observation. | Fixed: home-screen taps, long presses and tap_points are resolved to a known app by label and get `open_app`'s checks before anything is sent; unknown icons ask first. `small_models::tapping_a_denied_icon_on_the_home_screen_never_sends_the_tap` (+ 4 more in `tests/small_models.rs`), sim task `icon_tap_denied`. |
+| 2 | Tapping any cell with a price asked for a Purchase confirmation. | Fixed (partly already: rows over three words were already read as content). A `Cell` naming an item next to its price is not a purchase; price-only rows, buttons/links with a price, buy/pay/price-verb rows and checkout screens still ask. `classify_context::priced_list_rows_navigate_and_are_not_purchases`, `priced_controls_and_command_rows_still_ask`; `order_headphones` still confirms at Place Order. |
+| 3 | Step results carry no state change, so loops on changing screens are invisible to the model and to stuck detection. | Fixed: step lines say what changed (`-> ok; changed: Button "Cart (0)" -> "Cart (1)"`, `field now "…"`, `now in Settings > Wi-Fi`), and the same action on the same control on a changing screen is warned at 3, warned again at 5 and stopped at the 6th. `small_models::step_results_say_what_changed`, `a_loop_on_a_changing_screen_is_warned_twice_then_stopped`, `typing_the_same_text_into_the_same_field_again_is_a_loop`, `legitimate_repetition_is_not_a_loop`, `scrolling_and_filling_a_form_are_not_loops`, `changes::tests::*`; sim task `cart_add_once`. |
+| 4 | Return in a message field does not send; the prompt suggested it does. | Fixed in the prompt ("in a message field Return does not send: tap the Send button"). `prompt::tests::system_prompt_lists_every_action_and_the_delimiters`, snapshot `wifi_prompt.txt`. |
+| 5 | Switch values render as 0/1. | Fixed: `(on)`/`(off)`; the raw value stays in `Element::value`. `ios26::switches_render_as_on_or_off_and_keep_the_raw_value`; sim task `switch_already_on`. |
+| 6 | Nothing marks a list as scrollable. | Fixed: `… more below; scroll down` (and `… more above; scroll up`) from iOS's own scroll indicator; the home screen's `Page 1 of 2` is kept as one line. `ios26::scroll_cues_follow_the_scroll_indicator_of_real_trees`, `home_screen_keeps_its_page_indicator_as_one_line`; sim task `notes_two_scrolls`. |
+| 7 | Prompt examples ("No contact named Alex") leak into answers. | Fixed: every free-text example field is a `<placeholder>`. `prompt::tests::system_prompt_lists_every_action_and_the_delimiters`. |
+| 8 | `done` right after a declined confirmation is accepted as success. | Fixed: it finishes `Blocked` (and `done` right after a failed step, with nothing working since, finishes `Failed`). `small_models::done_right_after_a_declined_confirmation_is_blocked`, `done_right_after_a_failed_step_is_failed`; sim task `done_after_decline`. |
+| 9 | 160 output tokens is too few for a chatty model. | Fixed: 256 (the longest complete reply seen was 91 tokens), the thought is capped at 12 words in the prompt, and a cut-off reply gets one retry asking for a shorter one. `session_flow::a_cut_off_reply_asks_once_for_a_shorter_one`. |
+| 10 | The simulator's `json_schema` request is rejected by llama-cpp-python. | Fixed in the simulator: on a 4xx/5xx naming the response format it retries with `json_object` (schema attached), then with none, and reports the mode used. `http::tests::a_rejected_json_schema_falls_back_to_json_object_then_none`. |
+| 11 | Eval tasks compare sent messages by exact text and expect Failed where Blocked is correct. | Fixed: `has(text, part)` (normalised contains) in the message tasks; `expect_status` takes a list, `["failed", "blocked"]` after a decline. `expr::tests::has_is_a_tolerant_contains_for_sent_text`; `eval --json` now streams one object per task with its transcript (`cli::eval_json_is_machine_readable_and_strict_controls_the_exit_code`). |
+| 12 | Runner-text observations lose focused/disabled (the runner's format does not carry them). | Not changed: a limit of that format; the typed tree keeps them. Nothing is invented, and the fixed prompt does not mention either flag (asserted in `prompt::tests::system_prompt_lists_every_action_and_the_delimiters`). |
 
 Positives: the lenient parser accepted a nested action form; a password aimed at a secure field became an owner hand-off every time.
 

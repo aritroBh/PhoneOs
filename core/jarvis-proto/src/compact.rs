@@ -54,6 +54,35 @@ pub struct CompactScreen {
     pub keyboard_visible: bool,
     /// Elements ordered top-to-bottom then left-to-right, indices ascending from 1.
     pub elements: Vec<Element>,
+    /// What the tree says about content that is not listed (more to scroll to, the
+    /// home-screen page). Numbers and flags only, never screen text. Omitted from JSON when
+    /// empty; absent in older JSON.
+    #[serde(default, skip_serializing_if = "ScreenCues::is_empty")]
+    pub cues: ScreenCues,
+}
+
+/// Hints derived from the tree about content beyond what is listed.
+///
+/// `jarvis-observe` fills these only where the tree supports the inference (see
+/// `jarvis_observe::compact`); a screen without the signals has none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ScreenCues {
+    /// A scrollable list continues above what is visible.
+    #[serde(default)]
+    pub more_above: bool,
+    /// A scrollable list continues below what is visible.
+    #[serde(default)]
+    pub more_below: bool,
+    /// A page indicator: `(current, count)`, 1-based, e.g. the home screen's "Page 1 of 2".
+    #[serde(default)]
+    pub page: Option<(u32, u32)>,
+}
+
+impl ScreenCues {
+    /// True when there is nothing to say.
+    pub fn is_empty(&self) -> bool {
+        !self.more_above && !self.more_below && self.page.is_none()
+    }
 }
 
 impl CompactScreen {

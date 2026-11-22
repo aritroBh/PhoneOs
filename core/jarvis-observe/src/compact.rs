@@ -36,7 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ptr;
 use std::rc::Rc;
 
-use jarvis_proto::{CompactScreen, Element, Rect, Role, Screen, UiNode};
+use jarvis_proto::{CompactScreen, Element, Rect, Role, Screen, ScreenCues, UiNode};
 
 use crate::fingerprint::{identity_key, FingerprintAssigner};
 
@@ -708,5 +708,72 @@ pub fn compact(screen: &Screen) -> CompactScreen {
         size: screen.size,
         keyboard_visible: screen.keyboard_visible || keyboard.is_some(),
         elements,
+        cues: cues(alert.unwrap_or(&screen.root), bounds),
     }
+}
+
+/// `(pages, percent)` of an iOS scroll indicator: label `Vertical scroll bar, N pages`
+/// (`1 page`), value `P%`. `None` for anything else.
+fn vertical_scroll_bar(node: &UiNode) -> Option<(u32, Option<u32>)> {
+    let label = clean_opt(&node.label).to_lowercase();
+    let rest = label.strip_prefix("vertical scroll bar,")?.trim();
+    let count = rest
+        .strip_suffix("pages")
+        .or_else(|| rest.strip_suffix("page"))?
+        .trim()
+        .parse::<u32>()
+        .ok()?;
+    let percent = clean_opt(&node.value)
+        .strip_suffix('%')
+        .and_then(|p| p.trim().parse::<f64>().ok())
+        .filter(|p| p.is_finite())
+        // Float to int saturates; the value is a small percentage.
+        .map(|p| p.round().clamp(0.0, 100.0) as u32);
+    Some((count, percent))
+}
+
+/// `(current, count)` of a page indicator whose value reads `Page N of M` (M >= 2).
+fn page_indicator(node: &UiNode) -> Option<(u32, u32)> {
+    let value = clean_opt(&node.value).to_lowercase();
+    let rest = value.strip_prefix("page ")?;
+    let (cur, count) = rest.split_once(" of ")?;
+    let cur = cur.trim().parse::<u32>().ok()?;
+    let count = count.trim().parse::<u32>().ok()?;
+    (count >= 2 && (1..=count).contains(&cur)).then_some((cur, count))
+}
+
+/// What the tree says about content that is not listed, from the subtree in front (the
+/// alert while one is up).
+///
+/// Only explicit signals count, never guesses from geometry: UIKit and SwiftUI lists keep
+/// just the rows near the viewport in the tree, so "nothing below the screen" proves
+/// nothing. iOS reports every scrollable view's indicator as a node labelled
+/// `Vertical scroll bar, N pages` with the position as value (`0%` at the top, `100%` at
+/// the bottom). With two or more pages, a position below 100% means more below and one
+/// above 0% means more above. A single page, a missing or unreadable position, or a bar
+/// that is hidden or off screen says nothing. The page indicator is any node whose value
+/// reads `Page N of M` (SpringBoard's page control and its search pill carry it). The
+/// labels are English; other locales simply get no cue.
+fn cues(root: &UiNode, bounds: Rect) -> ScreenCues {
+    let mut out = ScreenCues::default();
+    let mut stack: Vec<(&UiNode, usize)> = vec![(root, 0)];
+    while let Some((n, depth)) = stack.pop() {
+        if is_pruned(n) || depth > MAX_DEPTH {
+            continue;
+        }
+        let on_screen = !n.frame.is_empty() && (bounds.is_empty() || n.frame.intersects(&bounds));
+        if on_screen {
+            if let Some((pages, Some(percent))) = vertical_scroll_bar(n) {
+                if pages >= 2 {
+                    out.more_below |= percent < 100;
+                    out.more_above |= percent > 0;
+                }
+            }
+            if out.page.is_none() {
+                out.page = page_indicator(n);
+            }
+        }
+        stack.extend(n.children.iter().rev().map(|c| (c, depth + 1)));
+    }
+    out
 }

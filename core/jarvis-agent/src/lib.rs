@@ -21,6 +21,7 @@
     )
 )]
 
+mod changes;
 mod commands;
 pub mod gestures;
 mod history;

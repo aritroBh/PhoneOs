@@ -29,6 +29,60 @@ pub enum ExpectStatus {
     Any,
 }
 
+impl ExpectStatus {
+    fn accepts(self, status: OutcomeStatus) -> bool {
+        match self {
+            ExpectStatus::Success => status == OutcomeStatus::Success,
+            ExpectStatus::Blocked => status == OutcomeStatus::Blocked,
+            ExpectStatus::Failed => status == OutcomeStatus::Failed,
+            ExpectStatus::Interrupted => status == OutcomeStatus::Interrupted,
+            ExpectStatus::Any => true,
+        }
+    }
+}
+
+/// The final status(es) a task accepts: one (`"failed"`) or any of several
+/// (`["failed", "blocked"]`, e.g. after a decline, where a model may give up itself or be
+/// stopped by the core for asking again).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum StatusSpec {
+    /// Exactly this status.
+    One(ExpectStatus),
+    /// Any of these.
+    AnyOf(Vec<ExpectStatus>),
+}
+
+impl Default for StatusSpec {
+    fn default() -> Self {
+        StatusSpec::One(ExpectStatus::Success)
+    }
+}
+
+impl StatusSpec {
+    /// `blocked`, or `blocked or failed`.
+    pub fn describe(&self) -> String {
+        let name = |s: &ExpectStatus| {
+            serde_json::to_value(s)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| format!("{s:?}"))
+        };
+        match self {
+            StatusSpec::One(s) => name(s),
+            StatusSpec::AnyOf(list) => list.iter().map(name).collect::<Vec<_>>().join(" or "),
+        }
+    }
+
+    /// Whether `status` is acceptable.
+    pub fn accepts(&self, status: OutcomeStatus) -> bool {
+        match self {
+            StatusSpec::One(s) => s.accepts(status),
+            StatusSpec::AnyOf(list) => list.iter().any(|s| s.accepts(status)),
+        }
+    }
+}
+
 /// How the simulated owner behaves in a task.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -84,9 +138,9 @@ pub struct TaskDef {
     /// Policy changes for this task.
     #[serde(default)]
     pub policy: TaskPolicy,
-    /// The final status the session must reach.
+    /// The final status the session must reach (one, or a list of acceptable ones).
     #[serde(default)]
-    pub expect_status: ExpectStatus,
+    pub expect_status: StatusSpec,
     /// Step budget; also the most steps a passing run may use.
     #[serde(default)]
     pub max_steps: Option<u32>,
@@ -137,6 +191,28 @@ pub struct TaskResult {
     pub confirmations: Vec<String>,
     /// Why the task failed, empty when it passed.
     pub reasons: Vec<String>,
+    /// Final outcome summary.
+    #[serde(default)]
+    pub summary: String,
+    /// The judged run in full: prompts, replies and effects (JSON output only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<TaskTranscript>,
+}
+
+/// One task's run, for reading failures afterwards.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TaskTranscript {
+    /// The system prompt of the first request (it is fixed; later ones are identical).
+    pub system: String,
+    /// The user part of every request, in order.
+    pub prompts: Vec<String>,
+    /// Every raw model reply, in order.
+    pub replies: Vec<String>,
+    /// Every effect and what the simulator did with it, one line each.
+    pub effects: Vec<String>,
+    /// The structured-output mode the model client ended up using, when it reports one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<String>,
 }
 
 fn category_name(c: RiskCategory) -> String {
@@ -225,18 +301,11 @@ pub fn run_one(
         memory,
     )?;
     let status = report.outcome.status;
-    let status_ok = match task.expect_status {
-        ExpectStatus::Success => status == OutcomeStatus::Success,
-        ExpectStatus::Blocked => status == OutcomeStatus::Blocked,
-        ExpectStatus::Failed => status == OutcomeStatus::Failed,
-        ExpectStatus::Interrupted => status == OutcomeStatus::Interrupted,
-        ExpectStatus::Any => true,
-    };
-    if !status_ok {
+    if !task.expect_status.accepts(status) {
         reasons.push(format!(
-            "status {} but expected {:?}: {}",
+            "status {} but expected {}: {}",
             status_name(status),
-            task.expect_status,
+            task.expect_status.describe(),
             report.outcome.summary
         ));
     }
@@ -310,6 +379,22 @@ pub fn run_one(
         real_model_ms: report.model_real_ms,
         confirmations: seen.into_iter().map(category_name).collect(),
         reasons,
+        summary: report.outcome.summary.clone(),
+        transcript: Some(TaskTranscript {
+            system: report
+                .requests
+                .first()
+                .map(|r| r.system.clone())
+                .unwrap_or_default(),
+            prompts: report.requests.iter().map(|r| r.user.clone()).collect(),
+            replies: report.model_outputs.clone(),
+            effects: report
+                .steps
+                .iter()
+                .map(|st| format!("{} [{} ms] {} => {}", st.n, st.at_ms, st.effect, st.result))
+                .collect(),
+            response_format: model.response_format(),
+        }),
     })
 }
 
@@ -317,31 +402,53 @@ fn seconds(ms: u64) -> String {
     format!("{}.{}s", ms / 1000, (ms % 1000) / 100)
 }
 
-/// Renders results as a fixed-width table with totals.
-pub fn format_table(results: &[TaskResult]) -> String {
-    let w = results.iter().map(|r| r.id.len()).max().unwrap_or(4).max(4);
+/// Width of the task column for these task ids.
+pub fn id_width<'a>(ids: impl IntoIterator<Item = &'a str>) -> usize {
+    ids.into_iter().map(str::len).max().unwrap_or(4).max(4)
+}
+
+/// The table's header line.
+pub fn table_header(w: usize) -> String {
+    format!(
+        "{:<w$}  {:<6}  {:<8}  {:>5}  {:>6}  {:>8}  confirmations\n",
+        "task", "result", "status", "steps", "model", "sim time"
+    )
+}
+
+/// One task's row (plus its failure reasons, one per line).
+pub fn table_row(r: &TaskResult, w: usize) -> String {
     let mut s = String::new();
     let _ = writeln!(
         s,
-        "{:<w$}  {:<6}  {:<8}  {:>5}  {:>6}  {:>8}  confirmations",
-        "task", "result", "status", "steps", "model", "sim time"
+        "{:<w$}  {:<6}  {:<8}  {:>5}  {:>6}  {:>8}  {}",
+        r.id,
+        if r.passed { "PASS" } else { "FAIL" },
+        r.status,
+        r.steps,
+        r.model_calls,
+        seconds(r.sim_ms),
+        r.confirmations.join(",")
     );
-    for r in results {
-        let _ = writeln!(
-            s,
-            "{:<w$}  {:<6}  {:<8}  {:>5}  {:>6}  {:>8}  {}",
-            r.id,
-            if r.passed { "PASS" } else { "FAIL" },
-            r.status,
-            r.steps,
-            r.model_calls,
-            seconds(r.sim_ms),
-            r.confirmations.join(",")
-        );
-        for reason in &r.reasons {
-            let _ = writeln!(s, "{:<w$}    - {reason}", "");
-        }
+    for reason in &r.reasons {
+        let _ = writeln!(s, "{:<w$}    - {reason}", "");
     }
+    s
+}
+
+/// Renders results as a fixed-width table with totals.
+pub fn format_table(results: &[TaskResult]) -> String {
+    let w = id_width(results.iter().map(|r| r.id.as_str()));
+    let mut s = table_header(w);
+    for r in results {
+        s.push_str(&table_row(r, w));
+    }
+    s.push_str(&table_totals(results));
+    s
+}
+
+/// The totals line.
+pub fn table_totals(results: &[TaskResult]) -> String {
+    let mut s = String::new();
     let passed = results.iter().filter(|r| r.passed).count();
     let steps: u32 = results.iter().map(|r| r.steps).sum();
     let calls: usize = results.iter().map(|r| r.model_calls).sum();

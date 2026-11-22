@@ -47,6 +47,12 @@ pub trait Model {
     fn take_real_ms(&mut self) -> Option<u64> {
         None
     }
+
+    /// The structured-output mode in use (`json_schema`, `json_object`, `none`), for models
+    /// that negotiate one with a server; `None` otherwise.
+    fn response_format(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A queue of fixed outputs.
@@ -59,6 +65,13 @@ pub trait Model {
 ///   then containing);
 /// * `"@Switch:Wi-Fi"` restricts the match to one role;
 /// * `"@Cell:Mom#2"` picks the second match.
+///
+/// An output may also be a condition on the prompt, for a model that reacts to what it is
+/// told: `{"if_prompt": "TEXT", "then": OUTPUT, "else": OUTPUT}`. When the request's user
+/// text contains `TEXT`, `then` is served and the entry is used up; otherwise `else` is
+/// served and the entry stays queued, so it is asked again on the next call (a model that
+/// keeps doing the same thing until it sees `TEXT`). `then` and `else` are outputs like any
+/// other (`@` references work).
 #[derive(Debug, Clone, Default)]
 pub struct ScriptedModel {
     outputs: VecDeque<String>,
@@ -121,14 +134,26 @@ impl Model for ScriptedModel {
         if self.fail_at.remove(&n) {
             return Err(ModelError::Injected(n + 1));
         }
-        let text = self.outputs.front().ok_or(ModelError::Exhausted {
+        let entry = self.outputs.front().ok_or(ModelError::Exhausted {
             served: self.served,
             call: n + 1,
         })?;
+        let (chosen, used_up) = match conditional(entry) {
+            Some((needle, then, otherwise)) => {
+                if req.user.contains(&needle) {
+                    (then, true)
+                } else {
+                    (otherwise, false)
+                }
+            }
+            None => (entry.clone(), true),
+        };
         // An output whose `@reference` matches nothing stays queued: the session retries a
         // failed request unchanged, and the retry fails the same way.
-        let text = resolve_labels(text, &req.user)?;
-        self.outputs.pop_front();
+        let text = resolve_labels(&chosen, &req.user)?;
+        if used_up {
+            self.outputs.pop_front();
+        }
         self.served += 1;
         Ok(ModelOutput { text })
     }
@@ -250,6 +275,19 @@ pub fn resolve_reference(spec: &str, lines: &[ScreenLine]) -> Result<u32, ModelE
     )))
 }
 
+/// `(needle, then, else)` of a conditional script entry (see [`ScriptedModel`]).
+fn conditional(entry: &str) -> Option<(String, String, String)> {
+    let v: Value = serde_json::from_str(entry).ok()?;
+    let obj = v.as_object()?;
+    let needle = obj.get("if_prompt")?.as_str()?.to_owned();
+    let out = |k: &str| match obj.get(k) {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    };
+    Some((needle, out("then"), out("else")))
+}
+
 /// Rewrites `"element":"@..."` in a JSON output; any other text passes through untouched.
 fn resolve_labels(output: &str, user: &str) -> Result<String, ModelError> {
     if !output.contains("\"@") {
@@ -314,6 +352,27 @@ mod tests {
         assert!(err.to_string().contains("exhausted"));
         assert_eq!(m.calls(), 3);
         assert_eq!(m.requests().len(), 3);
+    }
+
+    #[test]
+    fn conditional_entries_repeat_until_the_prompt_shows_the_text() {
+        let entry = r#"{"if_prompt":"changed:","then":"{\"action\":\"done\"}","else":{"action":"tap","element":"@Switch:Wi-Fi"}}"#;
+        let mut m = ScriptedModel::new([entry, "last"]);
+        let plain = ModelRequest {
+            user: SCREEN.to_owned(),
+            ..ModelRequest::default()
+        };
+        for _ in 0..3 {
+            let out = m.generate(&plain).unwrap().text;
+            assert!(out.contains("\"element\":2"), "{out}");
+        }
+        assert_eq!(m.remaining(), 2);
+        let told = ModelRequest {
+            user: format!("{SCREEN}\n1. tap [2] -> ok; changed: x"),
+            ..ModelRequest::default()
+        };
+        assert_eq!(m.generate(&told).unwrap().text, "{\"action\":\"done\"}");
+        assert_eq!(m.generate(&told).unwrap().text, "last");
     }
 
     #[test]

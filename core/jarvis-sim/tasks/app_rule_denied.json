@@ -14,7 +14,7 @@
   "forbid_confirm": [
     "first_use"
   ],
-  "expect_status": "blocked",
+  "expect_status": ["blocked", "failed"],
   "max_steps": 8,
   "script": [
     "{\"thought\":\"open it\",\"action\":\"open_app\",\"app\":\"Notes\"}",

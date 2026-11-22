@@ -29,7 +29,7 @@ fn golden_settings() {
 App: Settings (com.apple.Preferences)
 [1] StaticText \"Settings\"
 [2] SearchField \"Search\"
-[3] Switch \"Airplane Mode\" value=\"0\"
+[3] Switch \"Airplane Mode\" (off)
 [4] Cell \"Wi-Fi, HomeNet\"
 [5] Cell \"Bluetooth, On\"
 [6] Cell \"Notifications\"
@@ -207,7 +207,7 @@ App: Example (com.example.app)
 [2] Button \"Action numb…\"
 [3] Button \"Action numb…\"
 … 10 static texts omitted
-… 3 more elements (scroll to see)";
+… 3 more elements below; scroll down";
     assert_eq!(got, want);
     assert!(tokens(&got) <= 50);
 }

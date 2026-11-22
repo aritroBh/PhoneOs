@@ -27,6 +27,7 @@ pub fn screen(app: &str, elements: Vec<Element>) -> CompactScreen {
         size: IPHONE_SIZE,
         keyboard_visible: false,
         elements,
+        cues: Default::default(),
     }
 }
 

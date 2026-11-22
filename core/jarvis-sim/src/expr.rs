@@ -10,13 +10,19 @@
 //! rel     := unary (('<' | '<=' | '>' | '>=') unary)*
 //! unary   := '!' unary | primary
 //! primary := number | 'string' | "string" | true | false | null
-//!          | len '(' expr ')' | '(' expr ')' | path
+//!          | len '(' expr ')' | has '(' expr ',' expr ')' | '(' expr ')' | path
 //! path    := ident ('.' ident | '[' expr ']')*
 //! ```
 //!
 //! Paths are looked up in the layers of an [`Env`] (item scope first, then app state). A
 //! missing path is `null`. On arrays `.last`, `.first` and `.len` are pseudo-fields; on
 //! strings `.len` is the character count.
+//!
+//! `has(text, part)` is a tolerant text check for predicates on what the agent typed or
+//! sent: true when `part` occurs in `text` once both are normalised (lowercase, curly quotes
+//! and apostrophes dropped, other punctuation turned into spaces, whitespace collapsed), so
+//! `has(messages.thread["Mom"].last, "running late")` accepts "I'm running late!". A
+//! missing or non-string `text` is false; an empty `part` is true for any string.
 
 use serde_json::{Map, Value};
 use thiserror::Error;
@@ -85,6 +91,7 @@ enum Expr {
     Path(Vec<Seg>),
     Not(Box<Expr>),
     Len(Box<Expr>),
+    Has(Box<Expr>, Box<Expr>),
     Bin(Op, Box<Expr>, Box<Expr>),
     Ternary(Box<Expr>, Box<Expr>, Box<Expr>),
 }
@@ -285,6 +292,17 @@ impl Parser {
                         }
                         return Ok(Expr::Len(Box::new(e)));
                     }
+                    "has" if self.eat("(") => {
+                        let text = self.expr()?;
+                        if !self.eat(",") {
+                            return self.err("expected `,` in has(text, part)");
+                        }
+                        let part = self.expr()?;
+                        if !self.eat(")") {
+                            return self.err("expected `)` after has(");
+                        }
+                        return Ok(Expr::Has(Box::new(text), Box::new(part)));
+                    }
                     _ => {}
                 }
                 let mut segs = vec![Seg::Field(name)];
@@ -422,6 +440,12 @@ fn eval_expr(e: &Expr, env: &Env<'_>) -> Value {
         }
         Expr::Not(x) => Value::Bool(!truthy(&eval_expr(x, env))),
         Expr::Len(x) => len_of(&eval_expr(x, env)),
+        Expr::Has(text, part) => match (eval_expr(text, env), eval_expr(part, env)) {
+            (Value::String(t), Value::String(p)) => {
+                Value::Bool(normalize_text(&t).contains(&normalize_text(&p)))
+            }
+            _ => Value::Bool(false),
+        },
         Expr::Ternary(c, a, b) => {
             if truthy(&eval_expr(c, env)) {
                 eval_expr(a, env)
@@ -450,6 +474,29 @@ fn eval_expr(e: &Expr, env: &Env<'_>) -> Value {
             })
         }
     }
+}
+
+/// Lowercase, apostrophes and quotes dropped, other punctuation as spaces, whitespace
+/// collapsed, padded with one space each side (so `has` matches whole words at the edges).
+fn normalize_text(s: &str) -> String {
+    let mut out = String::from(" ");
+    for c in s.chars().flat_map(char::to_lowercase) {
+        if matches!(
+            c,
+            '\'' | '\u{2019}' | '\u{2018}' | '"' | '\u{201C}' | '\u{201D}'
+        ) {
+            continue;
+        }
+        if c.is_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with(' ') {
+            out.push(' ');
+        }
+    }
+    if !out.ends_with(' ') {
+        out.push(' ');
+    }
+    out
 }
 
 /// Evaluates `text` as an expression.
@@ -642,6 +689,21 @@ mod tests {
         let env = Env::new().with(&item).with(&s);
         assert_eq!(render("{name}", &env), json!("Alex"));
         assert_eq!(render("{n}", &env), json!(3));
+    }
+
+    #[test]
+    fn has_is_a_tolerant_contains_for_sent_text() {
+        let s = json!({"last": "I\u{2019}m running LATE!", "n": 3});
+        let env = Env::new().with(&s);
+        let t = |e: &str| eval_bool(e, &env).unwrap();
+        assert!(t("has(last, 'running late')"));
+        assert!(t("has(last, \"I'm running late\")"));
+        assert!(t("has(last, 'late')"));
+        assert!(!t("has(last, 'lat')"), "whole words only");
+        assert!(!t("has(last, 'on time')"));
+        assert!(!t("has(missing, 'x')"));
+        assert!(!t("has(n, '3')"));
+        assert!(eval("has(last)", &env).is_err());
     }
 
     #[test]

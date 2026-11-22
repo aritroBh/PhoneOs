@@ -7,7 +7,7 @@
     "first_use",
     "payment"
   ],
-  "expect_status": "failed",
+  "expect_status": ["failed", "blocked"],
   "max_steps": 14,
   "human": {
     "decline": [

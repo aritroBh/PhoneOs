@@ -2,7 +2,7 @@
   "id": "first_use_declined",
   "task": "Text Mom that I'm running late",
   "start_app": "messages",
-  "success": "messages.thread[\"Mom\"].last != \"running late\" && messages.current == \"\"",
+  "success": "!has(messages.thread[\"Mom\"].last, \"running late\") && messages.current == \"\"",
   "expect_confirm": [
     "first_use"
   ],

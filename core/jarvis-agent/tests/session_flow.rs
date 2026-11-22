@@ -282,7 +282,7 @@ fn parse_retry_exhaustion_fails_the_session() {
         "Turn off Wi-Fi",
         MemoryStore::new(),
         wifi_phone(),
-        Script::model(&["hmm", "{\"thought\":\"cut off", "tap the wifi"]),
+        Script::model(&["hmm", "{\"thought\" \"x\"}", "tap the wifi"]),
     );
     // max_parse_retries = 2: one try plus two retries.
     assert_eq!(run.infers(), 3);
@@ -293,10 +293,59 @@ fn parse_retry_exhaustion_fails_the_session() {
         run.outcome.summary
     );
     assert!(
-        run.requests[2].user.contains("cut off"),
+        run.requests[2]
+            .user
+            .contains("Your last reply could not be used"),
         "{}",
         run.requests[2].user
     );
+}
+
+/// A reply cut off at the token cap (a rambling thought) is its own error: the model is
+/// asked once for a shorter reply, without using up a parse retry; a second cut-off in the
+/// same decision is an ordinary parse failure.
+#[test]
+fn a_cut_off_reply_asks_once_for_a_shorter_one() {
+    let long = format!("{{\"thought\":\"{}", "I think the user wants ".repeat(20));
+    let run = run(
+        config(),
+        "Turn off Wi-Fi",
+        MemoryStore::new(),
+        wifi_phone(),
+        Script::model(&[&long, &long, &long, &long]),
+    );
+    // One cut-off retry plus the two ordinary parse retries.
+    assert_eq!(run.infers(), 4);
+    assert_eq!(run.outcome.status, OutcomeStatus::Failed);
+    assert!(
+        run.requests[1].user.contains("was cut off"),
+        "{}",
+        run.requests[1].user
+    );
+    assert!(run.requests[1].user.contains("at most 12 words"));
+    assert!(run.requests[2]
+        .user
+        .contains("Your last reply could not be used"));
+    assert!(!run.requests[2].user.contains("much shorter"));
+    // A short reply after the cut-off works as usual.
+    let run2 = run_ok_after_cut(&long);
+    assert_eq!(run2, OutcomeStatus::Success);
+}
+
+fn run_ok_after_cut(long: &str) -> OutcomeStatus {
+    run(
+        config(),
+        "Turn off Wi-Fi",
+        MemoryStore::new(),
+        wifi_phone(),
+        Script::model(&[
+            long,
+            "{\"thought\":\"tap\",\"action\":\"tap\",\"element\":4}",
+            "{\"action\":\"done\"}",
+        ]),
+    )
+    .outcome
+    .status
 }
 
 #[test]

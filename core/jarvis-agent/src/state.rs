@@ -34,6 +34,8 @@ pub(crate) struct Pending {
     pub source: Source,
     /// The screen it was chosen on (original, unsanitised; for verification and recording).
     pub before: CompactScreen,
+    /// The prompt-safe copy of `before` (for describing what changed in the history).
+    pub before_safe: CompactScreen,
     /// Prompt-safe description for the history.
     pub described: String,
     /// Verification must see a change for the step to count as a success.

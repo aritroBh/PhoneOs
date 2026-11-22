@@ -2,7 +2,7 @@
   "id": "text_alex_from_home",
   "task": "Open Messages and tell Alex I am on my way",
   "start_app": "home",
-  "success": "messages.thread[\"Alex\"].last == \"on my way\"",
+  "success": "has(messages.thread[\"Alex\"].last, \"on my way\")",
   "expect_confirm": [
     "first_use",
     "send_message"

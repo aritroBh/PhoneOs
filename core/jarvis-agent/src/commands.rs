@@ -186,6 +186,99 @@ pub(crate) fn plan(
 /// Bundle id of the home screen.
 pub(crate) const SPRINGBOARD: &str = jarvis_proto::SPRINGBOARD_BUNDLE_ID;
 
+/// What a home-screen action may launch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HomeLaunch {
+    /// An icon, widget or search result named like a known app.
+    App {
+        /// The app's bundle id.
+        bundle_id: String,
+        /// The label that was tapped.
+        label: String,
+    },
+    /// Something tappable that is not a known app (no label, or a name Jarvis does not
+    /// know): it may launch anything.
+    Unknown {
+        /// The label that was tapped (empty when unlabeled).
+        label: String,
+    },
+    /// Return in the home screen's search field opens the top result.
+    Search {
+        /// The text searched for.
+        text: String,
+    },
+}
+
+/// Home-screen labels that open SpringBoard's own UI, never an app: the search pill and
+/// folders (VoiceOver names them `<Name> folder`).
+fn opens_springboard_ui(label: &str) -> bool {
+    let l = label.trim().to_lowercase();
+    matches!(l.as_str(), "search" | "spotlight search") || l.ends_with(" folder")
+}
+
+/// The known app a home-screen label names: the whole label, else its first
+/// comma-separated part ("Messages, 2 unread"), by display name (case-insensitive).
+fn known_app_named<'a>(label: &str, known_apps: &'a [AppInfo]) -> Option<&'a AppInfo> {
+    let first = label.split(',').next().unwrap_or("");
+    [label, first].into_iter().find_map(|want| {
+        let want = want.trim();
+        (!want.is_empty()).then(|| {
+            known_apps
+                .iter()
+                .find(|a| a.name.trim().eq_ignore_ascii_case(want))
+        })?
+    })
+}
+
+/// The element a normalized point lands on: the smallest one containing it.
+fn element_at(x: f64, y: f64, screen: &CompactScreen) -> Option<&jarvis_proto::Element> {
+    let p = denormalize(x, y, screen.size);
+    screen
+        .elements
+        .iter()
+        .filter(|e| e.frame.contains(p))
+        .min_by(|a, b| a.frame.area().total_cmp(&b.frame.area()))
+}
+
+/// What `action` on the home screen `screen` may launch, so the agent can give it the
+/// checks `open_app` gets before anything is sent.
+///
+/// A tap, long press (its menu offers the app's quick actions) or tap_point on an element
+/// is resolved by label: a known app's display name (the label, or its first
+/// comma-separated part) is [`HomeLaunch::App`]; the search pill and folders open
+/// SpringBoard's own UI and launch nothing (`None`); anything else, unlabeled included, is
+/// [`HomeLaunch::Unknown`]. Return in a search field (`type` with `submit`) is
+/// [`HomeLaunch::Search`]. Text inputs only take focus (`None`). Other actions launch
+/// nothing from here (`open_app` has its own checks).
+pub(crate) fn home_launch(
+    action: &Action,
+    screen: &CompactScreen,
+    known_apps: &[AppInfo],
+) -> Option<HomeLaunch> {
+    let target = match action {
+        Action::Tap { element } | Action::LongPress { element, .. } => screen.get(*element)?,
+        Action::TapPoint { x, y } => element_at(*x, *y, screen)?,
+        Action::Type {
+            text, submit: true, ..
+        } => {
+            return Some(HomeLaunch::Search { text: text.clone() });
+        }
+        _ => return None,
+    };
+    if target.role.is_text_input() || opens_springboard_ui(&target.label) {
+        return None;
+    }
+    Some(match known_app_named(&target.label, known_apps) {
+        Some(app) => HomeLaunch::App {
+            bundle_id: app.bundle_id.clone(),
+            label: target.label.clone(),
+        },
+        None => HomeLaunch::Unknown {
+            label: target.label.clone(),
+        },
+    })
+}
+
 /// Whether executing `action` on `screen` should visibly change something; when it should
 /// and verification sees no change, the step counts as a failure.
 ///
@@ -231,6 +324,7 @@ mod tests {
             size: Size::new(400.0, 800.0),
             keyboard_visible: false,
             elements: vec![field(1, false, None), field(2, true, Some("abc"))],
+            cues: Default::default(),
         }
     }
 

@@ -11,7 +11,8 @@ pub fn estimate_tokens(text: &str) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-fn role_name(role: &Role) -> &str {
+/// The role as the rendered screen names it (`Button`, `Cell`, ...).
+pub fn role_name(role: &Role) -> &str {
     match role {
         Role::Button => "Button",
         Role::Link => "Link",
@@ -72,12 +73,34 @@ fn truncate(s: &str, cap: Option<usize>) -> String {
     }
 }
 
+/// `on`/`off` for a switch whose value is one of the forms iOS and SwiftUI report
+/// (`1`/`0`, `true`/`false`, `on`/`off`); `None` for anything else, which is shown raw.
+/// Only the rendering changes: `Element::value` keeps the raw value for verification.
+pub fn switch_state(e: &Element) -> Option<&'static str> {
+    if e.role != Role::Switch {
+        return None;
+    }
+    match e
+        .value
+        .as_deref()
+        .map(str::trim)?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "1" | "true" | "on" => Some("on"),
+        "0" | "false" | "off" => Some("off"),
+        _ => None,
+    }
+}
+
 fn element_line(e: &Element, cap: Option<usize>) -> String {
     let mut line = format!("[{}] {}", e.index, role_name(&e.role));
     if !e.label.is_empty() {
         line.push_str(&format!(" \"{}\"", escape(&truncate(&e.label, cap))));
     }
+    let switch = switch_state(e);
     match (&e.value, &e.placeholder) {
+        _ if switch.is_some() => {}
         (Some(v), _) => line.push_str(&format!(" value=\"{}\"", escape(&truncate(v, cap)))),
         (None, Some(p)) if e.role.is_text_input() && *p != e.label => {
             line.push_str(&format!(" placeholder=\"{}\"", escape(&truncate(p, cap))));
@@ -85,6 +108,9 @@ fn element_line(e: &Element, cap: Option<usize>) -> String {
         _ => {}
     }
     let mut flags: Vec<&str> = Vec::new();
+    if let Some(state) = switch {
+        flags.push(state);
+    }
     if e.focused {
         flags.push("focused");
     }
@@ -108,8 +134,24 @@ fn header(screen: &CompactScreen) -> String {
     if screen.keyboard_visible {
         out.push_str("\nKeyboard: visible");
     }
+    if let Some((page, count)) = screen.cues.page {
+        out.push_str(&format!("\nPage {page} of {count}"));
+        out.push_str(match (page > 1, page < count) {
+            (_, true) => " (swipe left for the next page)",
+            (true, false) => " (swipe right for the previous page)",
+            (false, false) => "",
+        });
+    }
+    if screen.cues.more_above {
+        out.push_str(&format!("\n{MORE_ABOVE}"));
+    }
     out
 }
+
+/// Cue line when a list continues above the visible part.
+pub const MORE_ABOVE: &str = "… more above; scroll up";
+/// Cue line when a list continues below the visible part.
+pub const MORE_BELOW: &str = "… more below; scroll down";
 
 /// How much of the screen to show.
 struct Plan<'a> {
@@ -149,7 +191,10 @@ fn build(screen: &CompactScreen, plan: &Plan<'_>) -> String {
     }
     let cut = shown.len() - keep;
     if cut > 0 {
-        out.push_str(&format!("\n… {cut} more elements (scroll to see)"));
+        out.push_str(&format!("\n… {cut} more elements below; scroll down"));
+    } else if screen.cues.more_below {
+        out.push('\n');
+        out.push_str(MORE_BELOW);
     }
     out
 }
@@ -210,8 +255,13 @@ fn static_text_omission_order(screen: &CompactScreen) -> Vec<usize> {
 /// element, e.g. `[4] TextField "Email" value="a@b.c" (focused)`. Over budget, it degrades in
 /// order: truncate long labels and values; omit static texts far from interactive elements
 /// (`… N static texts omitted`); drop elements from the bottom
-/// (`… N more elements (scroll to see)`). Element indices are never renumbered. If even the
-/// header and footer exceed the budget, those alone are returned.
+/// (`… N more elements below; scroll down`). Element indices are never
+/// renumbered. If even the header and footer exceed the budget, those alone are returned.
+///
+/// Switches show `(on)`/`(off)` instead of their raw `0`/`1` value ([`switch_state`]). The
+/// screen's [`jarvis_proto::ScreenCues`] add one line each: `Page 1 of 2 (swipe left for
+/// the next page)` and `… more above; scroll up` after the header, `… more below; scroll
+/// down` at the end (the budget-cut line says the same when elements were dropped).
 pub fn render(screen: &CompactScreen, budget_tokens: u32) -> String {
     let fits = |s: &str| estimate_tokens(s) <= budget_tokens;
     let none: [usize; 0] = [];

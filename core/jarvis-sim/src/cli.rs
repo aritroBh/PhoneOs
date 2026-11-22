@@ -11,7 +11,9 @@ use serde_json::Value;
 use crate::builtin::{builtin_apps, builtin_tasks};
 use crate::driver::RunReport;
 use crate::error::SimError;
-use crate::eval::{format_table, human_for, run_one, TaskDef, TaskResult};
+use crate::eval::{
+    human_for, id_width, run_one, table_header, table_row, table_totals, TaskDef, TaskResult,
+};
 use crate::harness::{run_task, RunSetup};
 use crate::human::Human;
 use crate::model::{Model, ScriptedModel};
@@ -407,15 +409,31 @@ fn cmd_eval(args: &Args, out: &mut dyn Write) -> Result<i32, String> {
     if tasks.is_empty() {
         return Err("no tasks to run".to_owned());
     }
+    // Each task's result is written (and flushed) as soon as it is known, so a run that is
+    // killed part-way keeps every finished task: one table row each, or with `--json` one
+    // JSON object per line (with the full transcript) and a final totals object.
+    let json = args.flag("json");
+    let w = id_width(tasks.iter().map(|t| t.id.as_str()));
+    if !json {
+        let _ = write!(out, "{}", table_header(w));
+        let _ = out.flush();
+    }
     let mut results: Vec<TaskResult> = Vec::new();
+    // One HTTP client for the whole run, so what it learned about the server (which
+    // structured-output mode it accepts) carries over from task to task.
+    let mut http = http_model(args)?;
     for t in &tasks {
-        let model: Option<Box<dyn Model>> = match http_model(args)? {
-            Some(m) => Some(m),
+        let mut scripted: Option<Box<dyn Model>> = match &http {
+            Some(_) => None,
             None if t.script.is_empty() => None,
             None => Some(Box::new(ScriptedModel::new(t.script.clone()))),
         };
+        let model: Option<&mut dyn Model> = match (&mut http, &mut scripted) {
+            (Some(m), _) | (None, Some(m)) => Some(m.as_mut()),
+            (None, None) => None,
+        };
         let r = match model {
-            Some(mut m) => run_one(t, &setup, m.as_mut(), approve).map_err(|e| e.to_string())?,
+            Some(m) => run_one(t, &setup, m, approve).map_err(|e| e.to_string())?,
             None => TaskResult {
                 id: t.id.clone(),
                 passed: false,
@@ -428,15 +446,30 @@ fn cmd_eval(args: &Args, out: &mut dyn Write) -> Result<i32, String> {
                 reasons: vec![
                     "no model: the task has no script and --model-url was not given".to_owned(),
                 ],
+                summary: String::new(),
+                transcript: None,
             },
         };
+        if json {
+            let line = serde_json::to_string(&r).map_err(|e| e.to_string())?;
+            let _ = writeln!(out, "{line}");
+        } else {
+            let _ = write!(out, "{}", table_row(&r, w));
+        }
+        let _ = out.flush();
         results.push(r);
     }
-    if args.flag("json") {
-        let json = serde_json::to_string_pretty(&results).map_err(|e| e.to_string())?;
-        let _ = writeln!(out, "{json}");
+    if json {
+        let passed = results.iter().filter(|r| r.passed).count();
+        let totals = serde_json::json!({
+            "total": results.len(),
+            "passed": passed,
+            "steps": results.iter().map(|r| u64::from(r.steps)).sum::<u64>(),
+            "model_calls": results.iter().map(|r| r.model_calls).sum::<usize>(),
+        });
+        let _ = writeln!(out, "{totals}");
     } else {
-        let _ = write!(out, "{}", format_table(&results));
+        let _ = write!(out, "{}", table_totals(&results));
     }
     let failed = results.iter().any(|r| !r.passed);
     Ok(i32::from(failed && args.flag("strict")))

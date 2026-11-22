@@ -334,21 +334,23 @@ fn alert_scopes_to_its_own_content() {
 
 /// Token estimates (bytes / 4) of the full render of each fixture, before this change and now.
 /// Fixing the hidden-parent bug adds the home screen's icons (51 -> 120 tokens) and the Settings
-/// search field; nothing else may grow.
+/// search field. The scroll and page cues add one short line where the tree says there is more
+/// (home screen page, Settings lists, the long list, the alert's text); switches shown as
+/// `(off)` instead of `value="0"` save a little. Nothing else may grow.
 #[test]
 fn token_estimates_stay_close_to_the_known_numbers() {
     // (fixture, tokens before the fix, ceiling now)
     let table = [
-        ("springboard_home", 51, 125),
+        ("springboard_home", 51, 131),
         ("playground_home", 71, 71),
         ("toggles_off", 62, 62),
         ("safari_start_page", 149, 149),
-        ("settings_root", 119, 130),
-        ("settings_general", 178, 178),
+        ("settings_root", 119, 133),
+        ("settings_general", 178, 185),
         ("settings_about", 134, 134),
         ("login_keyboard", 61, 61),
-        ("long_list_scrolled", 151, 151),
-        ("alert_dialog", 34, 34),
+        ("long_list_scrolled", 151, 164),
+        ("alert_dialog", 34, 41),
     ];
     for (name, before, ceiling) in table {
         let t = tokens(&compact_fixture(name));
@@ -362,4 +364,79 @@ fn token_estimates_stay_close_to_the_known_numbers() {
             "{name}: {t} tokens, suspiciously few"
         );
     }
+}
+
+// ---- cues for small models ------------------------------------------------------------------
+
+/// The scroll cue comes only from iOS's own scroll indicator (`Vertical scroll bar, N pages`,
+/// value = position): two or more pages and a position short of the end. Lists that fit, and
+/// screens without an indicator, get no cue.
+#[test]
+fn scroll_cues_follow_the_scroll_indicator_of_real_trees() {
+    use jarvis_observe::{MORE_ABOVE, MORE_BELOW};
+    // (fixture, more above, more below)
+    let table = [
+        ("long_list_scrolled", true, true), // 6 pages at 12%
+        ("settings_root", false, true),     // 2 pages at 0%
+        ("settings_general", false, true),
+        ("alert_dialog", false, true), // the alert's message view: 2 pages at 0%
+        ("playground_home", false, false), // 1 page
+        ("login_keyboard", false, false),
+        ("safari_start_page", false, false),
+        ("springboard_home", false, false),
+        ("toggles_off", false, false),
+    ];
+    for (name, above, below) in table {
+        let c = compact_fixture(name);
+        assert_eq!(
+            (c.cues.more_above, c.cues.more_below),
+            (above, below),
+            "{name}"
+        );
+        let text = render(&c, 100_000);
+        assert_eq!(text.contains(MORE_ABOVE), above, "{name}\n{text}");
+        assert_eq!(text.contains(MORE_BELOW), below, "{name}\n{text}");
+        if below {
+            assert!(text.ends_with(MORE_BELOW), "{name}: cue is the last line");
+        }
+    }
+}
+
+/// SpringBoard's page control ("Page 1 of 2") survives as one line under the header.
+#[test]
+fn home_screen_keeps_its_page_indicator_as_one_line() {
+    let c = compact_fixture("springboard_home");
+    assert_eq!(c.cues.page, Some((1, 2)));
+    let text = render(&c, 100_000);
+    let mut lines = text.lines();
+    assert!(lines.next().unwrap().starts_with("App: "));
+    assert_eq!(
+        lines.next().unwrap(),
+        "Page 1 of 2 (swipe left for the next page)"
+    );
+    assert_eq!(text.matches("Page 1 of 2").count(), 1, "{text}");
+    for name in FIXTURES.iter().filter(|n| **n != "springboard_home") {
+        assert_eq!(compact_fixture(name).cues.page, None, "{name}");
+    }
+}
+
+/// Switches read `(on)`/`(off)`; the raw value stays in the element for verification.
+#[test]
+fn switches_render_as_on_or_off_and_keep_the_raw_value() {
+    let c = compact_fixture("toggles_off");
+    let switches: Vec<_> = c
+        .elements
+        .iter()
+        .filter(|e| e.role == Role::Switch)
+        .collect();
+    assert!(!switches.is_empty());
+    let text = render(&c, 100_000);
+    for s in switches {
+        assert_eq!(s.value.as_deref(), Some("0"), "{:?}", s.label);
+        assert!(
+            text.contains(&format!("[{}] Switch \"{}\" (off)", s.index, s.label)),
+            "{text}"
+        );
+    }
+    assert!(!text.contains("value=\"0\""), "{text}");
 }

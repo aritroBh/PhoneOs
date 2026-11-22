@@ -62,7 +62,7 @@ fn prompt_fits_a_4096_model_with_a_300_element_screen() {
         assert!(r.user.contains("Task: Find item 250 in the list"));
         assert!(r.system.contains("Rules:"));
         assert!(
-            r.user.contains("more elements (scroll to see)") || r.user.contains("…\""),
+            r.user.contains("more elements below; scroll down") || r.user.contains("…\""),
             "screen was degraded to fit"
         );
     }

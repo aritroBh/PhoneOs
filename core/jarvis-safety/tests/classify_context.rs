@@ -424,3 +424,57 @@ fn unknown_element_falls_back_to_context() {
     let s = app_screen(vec![label(1, "Pay $5 now"), button(2, "OK")]);
     assert_eq!(classify(&tap(99), &s, None), RiskCategory::Payment);
 }
+
+/// Model evaluation finding: every product row with a price asked for a Purchase
+/// confirmation. A row that names an item and its price opens the item; it is not a buy.
+#[test]
+fn priced_list_rows_navigate_and_are_not_purchases() {
+    let s = app_screen(vec![
+        el(1, Role::Cell, "Lamp, $35.50"),
+        el(2, Role::Cell, "Desk Lamp, $35.50"),
+        el(3, Role::Cell, "Headphones 129 USD"),
+        button(4, "Cart (0)"),
+    ]);
+    for i in 1..=3 {
+        assert_eq!(classify(&tap(i), &s, None), RiskCategory::None, "row {i}");
+    }
+    // The product page's own button does not become a purchase because a price is shown.
+    let product = app_screen(vec![label(1, "$129.00"), button(2, "Add to Cart")]);
+    assert_eq!(classify(&tap(2), &product, None), RiskCategory::None);
+}
+
+/// The narrowing stays narrow: a price on a button, a row that is only a price, a row whose
+/// words are a buy/pay/order action or a price verb, and any row on a checkout screen still
+/// ask.
+#[test]
+fn priced_controls_and_command_rows_still_ask() {
+    let s = app_screen(vec![
+        button(1, "$0.99"),
+        button(2, "Headphones $129"),
+        el(3, Role::Cell, "$0.99"),
+        el(4, Role::Cell, "USD 5"),
+        el(5, Role::Cell, "Buy, $0.99"),
+        el(6, Role::Cell, "Get $1.99"),
+        el(7, Role::Cell, "Order now $5"),
+        el(8, Role::Link, "Lamp $35"),
+    ]);
+    for i in 1..=8 {
+        let r = classify(&tap(i), &s, None);
+        assert!(
+            matches!(r, RiskCategory::Purchase | RiskCategory::Payment),
+            "element {i}: {r:?}"
+        );
+    }
+    // A confirmation-style screen (price plus payment wording): every row pays.
+    let checkout = app_screen(vec![
+        el(1, Role::Cell, "Lamp, $35.50"),
+        label(2, "Total: $35.50"),
+        button(3, "Place Order"),
+    ]);
+    assert_eq!(
+        classify(&tap(1), &checkout, None),
+        RiskCategory::Payment,
+        "row on a checkout screen"
+    );
+    assert_eq!(classify(&tap(3), &checkout, None), RiskCategory::Payment);
+}

@@ -56,6 +56,13 @@
 //! field (`crate::typing::check_typed`). On a mismatch the session deletes what arrived and
 //! types once more; a second mismatch is reported to the model as a failed step. A `submit`
 //! is pressed only after the text checks out.
+//!
+//! Small models need more than "ok": every step that worked says what visibly changed
+//! (`crate::changes`), the same action repeated on the same control on a changing screen is
+//! warned about and finally stopped ([`RepeatRun`]), and `done` is not taken as a success
+//! right after the owner declined something or a step failed, with nothing working since.
+//! A tap on the home screen launches what it hits, so the icon gets `open_app`'s checks
+//! before the tap is sent (`crate::commands::home_launch`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -69,13 +76,17 @@ use jarvis_proto::{
     Size, TaskSpec, TimedEvent, ToolCall, ToolResult, ToolSpec,
 };
 use jarvis_safety::{
-    check_app, check_confinement, evaluate, first_use_app, first_use_request, redact,
-    redact_screen, sanitize_screen_text, summarize, Budget, BudgetVerdict, Decision, Verdict,
+    check_app, check_confinement, evaluate, first_use_app, first_use_request, is_springboard,
+    redact, redact_screen, sanitize_screen_text, summarize, Budget, BudgetVerdict, Decision,
+    Verdict,
 };
 
-use crate::commands::{plan, resolve_app, should_change, AppTarget, MAX_CLEAR_DELETES};
+use crate::changes::describe_change;
+use crate::commands::{
+    home_launch, plan, resolve_app, should_change, AppTarget, HomeLaunch, MAX_CLEAR_DELETES,
+};
 use crate::history::{clean, describe, History, MAX_SHOWN};
-use crate::parser::parse_model_output;
+use crate::parser::{parse_model_output, ParseError};
 use crate::profile::{mask, sanitize_keys, sensitive_texts, substitute};
 use crate::prompt::{self, PromptParts, ACTION_MAX_TOKENS};
 use crate::schema::{action_gbnf, action_json_schema};
@@ -87,6 +98,15 @@ use crate::typing::{check_typed, correction_deletes, TypedVerdict};
 const MIN_ACTIONABLE: usize = 2;
 /// Identical (screen, action) pairs that count as stuck.
 const STUCK_REPEATS: u32 = 3;
+/// The same action on the same control, working each time, this many times in a row on a
+/// changing screen draws the first warning ([`RepeatRun`]).
+const REPEAT_WARN: u32 = 3;
+/// ... and this many the second, last warning; one more proposal finishes `Failed`.
+const REPEAT_FINAL: u32 = 5;
+/// Two screens share a layout when at least this share of the smaller one's element
+/// fingerprints is in the other (a counter or a typed value changing keeps the layout; a
+/// new page of a wizard does not).
+const SAME_LAYOUT: f64 = 0.75;
 /// App deny-list hits after which the session is blocked.
 const MAX_APP_DENIALS: u32 = 2;
 /// Characters of tool output or answers kept in the history.
@@ -126,6 +146,7 @@ impl Default for Current {
             size: Size::new(0.0, 0.0),
             keyboard_visible: false,
             elements: Vec::new(),
+            cues: Default::default(),
         };
         Self {
             screen: empty.clone(),
@@ -135,6 +156,122 @@ impl Default for Current {
             seen: false,
         }
     }
+}
+
+/// A run of the same action on the same control, each one carried out and changing the
+/// screen ("Add to Cart" tapped again and again, the same text typed into the same field).
+///
+/// The unchanged-screen stuck rule cannot see these loops because every step changes
+/// something. The rule: an action counts when it is a tap, long press, clear, tap_point or
+/// type (same text) chosen by the model, on the control with the same fingerprint, on a
+/// screen with the same layout as the previous one ([`SAME_LAYOUT`]), and it worked.
+/// Anything else in between (another action, a failure, a decline) ends the run. Scrolls
+/// and swipes never count (scrolling a list is repetition by design; the end of a list
+/// shows as "nothing changed"), and neither do adjusters: sliders, pickers, controls named
+/// like a stepper or pager (`+`, `Increment`, `Next`, `Show more`...) and controls whose
+/// own value changed (a stepper reaching a value). Typing different text, or into another
+/// field, is a different action. At [`REPEAT_WARN`] the model is told what happened since
+/// the first time, at [`REPEAT_FINAL`] it is warned that one more ends the task, and the
+/// next proposal of it finishes `Failed` as stuck.
+#[derive(Debug, Clone)]
+struct RepeatRun {
+    /// The action and its control (see [`repeat_key`]).
+    key: String,
+    /// Element fingerprints of the screen the last repetition was chosen on.
+    layout: BTreeSet<u64>,
+    /// The prompt-safe screen the first repetition was chosen on.
+    first: CompactScreen,
+    /// Repetitions carried out so far.
+    count: u32,
+    /// Warnings given (0, 1 or 2).
+    warnings: u32,
+}
+
+/// Labels of controls that step a value or a page; pressing them repeatedly is their use.
+const ADJUSTER_LABELS: &[&str] = &[
+    "+",
+    "-",
+    "\u{2212}",
+    "plus",
+    "minus",
+    "increment",
+    "decrement",
+    "increase",
+    "decrease",
+    "add one",
+    "remove one",
+    "next",
+    "previous",
+    "next page",
+    "previous page",
+    "page down",
+    "page up",
+    "more",
+    "show more",
+    "load more",
+    "see more",
+    "zoom in",
+    "zoom out",
+    "volume up",
+    "volume down",
+];
+
+/// The run key of `action` on `screen`: action name, the target control's fingerprint and,
+/// for `type`, the text and submit flag. `None` for actions that never count.
+fn repeat_key(action: &Action, screen: &CompactScreen) -> Option<String> {
+    let target = |i: u32| screen.get(i).filter(|e| !is_adjuster(e));
+    match action {
+        Action::Tap { element } | Action::LongPress { element, .. } | Action::Clear { element } => {
+            target(*element).map(|e| format!("{}#{}", action.name(), e.fingerprint))
+        }
+        Action::Type {
+            element,
+            text,
+            submit,
+        } => {
+            let field = match element {
+                Some(i) => target(*i),
+                None => screen.elements.iter().find(|e| e.focused),
+            };
+            field.map(|e| format!("type#{}#{submit}#{text}", e.fingerprint))
+        }
+        Action::TapPoint { x, y } => Some(format!("tap_point#{x:.3}#{y:.3}")),
+        _ => None,
+    }
+}
+
+/// Sliders, pickers and controls labelled like a stepper or pager.
+fn is_adjuster(e: &jarvis_proto::Element) -> bool {
+    if matches!(
+        e.role,
+        jarvis_proto::Role::Slider | jarvis_proto::Role::Picker
+    ) {
+        return true;
+    }
+    let label: String = e
+        .label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    ADJUSTER_LABELS.contains(&label.as_str())
+}
+
+fn layout(screen: &CompactScreen) -> BTreeSet<u64> {
+    screen.elements.iter().map(|e| e.fingerprint).collect()
+}
+
+/// Whether two element sets share a layout (see [`SAME_LAYOUT`]).
+fn same_layout(a: &BTreeSet<u64>, b: &BTreeSet<u64>) -> bool {
+    let smaller = a.len().min(b.len());
+    if smaller == 0 {
+        return a.is_empty() && b.is_empty();
+    }
+    let shared = a.intersection(b).count();
+    // Element counts are far below 2^52, so the conversions are exact.
+    #[allow(clippy::cast_precision_loss)]
+    let share = shared as f64 / smaller as f64;
+    share >= SAME_LAYOUT
 }
 
 /// What `prepare` made of a proposed action.
@@ -148,8 +285,9 @@ enum Prepared {
     FirstUse {
         /// The action.
         pending: Pending,
-        /// The app to approve.
-        app: String,
+        /// The app to approve (remembered for the session when approved); `None` for a
+        /// one-off approval that names no app (a home-screen tap on an unknown icon).
+        app: Option<String>,
         /// The `FirstUse` request.
         request: ConfirmRequest,
         /// The risk confirmation that follows an approval.
@@ -215,6 +353,15 @@ pub struct Session {
     last_repeat_key: Option<(u64, String)>,
     /// Observations in a row that failed (`Event::ObserveFailed`).
     observe_failures: u32,
+    /// The current run of one repeated action on a changing screen.
+    repeat: Option<RepeatRun>,
+    /// What the owner declined, while no action has worked since (a `done` now is not a
+    /// success).
+    declined_open: Option<String>,
+    /// The latest step's failure, while no step has worked since.
+    last_failed: Option<String>,
+    /// The one "reply was cut off" retry of this decision was used.
+    truncation_retried: bool,
     /// The current wait for an unlock so far (forward time only).
     lock_wait_ms: u64,
     /// Clock reading the lock wait was last advanced to.
@@ -317,6 +464,10 @@ impl Session {
             guidance,
             last_repeat_key: None,
             observe_failures: 0,
+            repeat: None,
+            declined_open: None,
+            last_failed: None,
+            truncation_retried: false,
             lock_wait_ms: 0,
             lock_last_ms: 0,
             locked_total_ms: 0,
@@ -505,9 +656,19 @@ impl Session {
                 Ok(parsed) => {
                     self.model_failures = 0;
                     self.parse_retries = 0;
+                    self.truncation_retried = false;
                     self.correction = None;
                     self.notes.clear();
                     self.propose(now, parsed.action, Source::Model)
+                }
+                Err(ParseError::Truncated) if !self.truncation_retried => {
+                    // Cut off at the token cap: almost always a rambling thought. One extra
+                    // retry asks for a shorter one; it does not use up a parse retry.
+                    self.model_failures = 0;
+                    self.truncation_retried = true;
+                    self.total_parse_retries = self.total_parse_retries.saturating_add(1);
+                    self.correction = Some(prompt::truncated_note());
+                    self.infer(kind)
                 }
                 Err(e) if self.parse_retries < self.config.policy.max_parse_retries => {
                     self.model_failures = 0;
@@ -664,6 +825,8 @@ impl Session {
         action: &Action,
         source: Source,
     ) {
+        self.repeat = None;
+        self.declined_open = Some(format!("\"{}\"", clean(&request.summary, 120)));
         let result = match approves_app {
             Some(app) => {
                 self.declined_apps.insert(app);
@@ -1093,6 +1256,23 @@ impl Session {
                 } else {
                     summary
                 };
+                // The session does not judge whether a summary is true. It only refuses to
+                // call it a success when nothing has worked since the owner said no, or
+                // since the last step failed.
+                if let Some(what) = self.declined_open.clone() {
+                    let summary = format!(
+                        "Not done: the owner declined {what}, and nothing was done after that. (The agent said: {})",
+                        clean(s, 120)
+                    );
+                    return self.finish(now, OutcomeStatus::Blocked, &summary);
+                }
+                if let Some(failed) = self.last_failed.clone() {
+                    let summary = format!(
+                        "Not confirmed: the last step failed ({failed}), and nothing worked after it. (The agent said: {})",
+                        clean(s, 120)
+                    );
+                    return self.finish(now, OutcomeStatus::Failed, &summary);
+                }
                 return self.finish(now, OutcomeStatus::Success, s);
             }
             Action::Fail { reason } => {
@@ -1104,6 +1284,9 @@ impl Session {
                 return self.finish(now, OutcomeStatus::Failed, s);
             }
             _ => {}
+        }
+        if let Some(stop) = self.repeat_check(now, &action, source) {
+            return stop;
         }
         self.last_repeat_key = None;
         if action.is_ui() || matches!(action, Action::Look) {
@@ -1124,6 +1307,7 @@ impl Session {
                 }
                 self.stuck_hinted = true;
                 let described = describe(&action, &self.current.safe);
+                self.last_failed = Some(format!("{described} -> {}", prompt::RESULT_STUCK));
                 self.history
                     .push(described, prompt::RESULT_STUCK, source == Source::Replay);
                 self.notes.push(prompt::STUCK_HINT.to_owned());
@@ -1168,7 +1352,7 @@ impl Session {
                     );
                     return self.finish(now, OutcomeStatus::Blocked, &summary);
                 }
-                self.ask_confirm(now, pending, request, Some(app), then)
+                self.ask_confirm(now, pending, request, app, then)
             }
             Ok(Prepared::Ask {
                 question,
@@ -1280,11 +1464,11 @@ impl Session {
     /// A refused action: tell the model, count a failure, decide again on the same screen.
     fn reject(&mut self, now: u64, action: &Action, source: Source, msg: &str) -> Effect {
         let described = describe(action, &self.current.safe);
-        self.history.push(
-            described,
-            format!("failed: {}", clean(msg, 200)),
-            source == Source::Replay,
-        );
+        let result = format!("failed: {}", clean(msg, 200));
+        self.repeat = None;
+        self.last_failed = Some(format!("{described} -> {}", clean(&result, 120)));
+        self.history
+            .push(described, result, source == Source::Replay);
         self.budget.record_failure();
         self.log_step(action, false);
         if source == Source::Replay {
@@ -1379,6 +1563,34 @@ impl Session {
             }
             other => other.clone(),
         };
+        // 1a. A tap on the home screen launches what it hits: the icon gets the checks
+        //     `open_app` gets, before the tap is sent (see `home_launch`).
+        let home = if is_springboard(&screen.app_bundle_id) {
+            home_launch(&normalized, screen, &self.config.known_apps)
+        } else {
+            None
+        };
+        match &home {
+            Some(HomeLaunch::App { bundle_id, label }) => {
+                if check_app(policy, bundle_id).is_denied() || check_app(policy, label).is_denied()
+                {
+                    return Err(Reject::AppDenied(format!(
+                        "{} is on the deny list",
+                        clean(label, 80)
+                    )));
+                }
+                if self.app_declined(bundle_id) {
+                    return Err(Reject::Blocked(self.declined_message(bundle_id)));
+                }
+            }
+            Some(HomeLaunch::Unknown { label }) if check_app(policy, label).is_denied() => {
+                return Err(Reject::AppDenied(format!(
+                    "{} is on the deny list",
+                    clean(label, 80)
+                )));
+            }
+            Some(HomeLaunch::Unknown { .. } | HomeLaunch::Search { .. }) | None => {}
+        }
         // 1b. Skill confinement: a skill with `confine_to_apps` keeps the session in its
         //     apps. It only narrows; every check below still applies.
         if let Verdict::Deny(reason) =
@@ -1457,6 +1669,7 @@ impl Session {
             action: normalized.clone(),
             source,
             before: screen.clone(),
+            before_safe: self.current.safe.clone(),
             described,
             exec,
             check,
@@ -1471,7 +1684,39 @@ impl Session {
             }
             Decision::Allow | Decision::Deny(_) => None,
         };
-        // 5. First-use approval of the app the action acts in (asked before the risk).
+        // 5. First-use approval of the app the action acts in (asked before the risk). A
+        //    home-screen tap that may launch an app Jarvis cannot name asks a one-off
+        //    approval naming what was tapped, never silently.
+        let unknown_launch = match &home {
+            Some(HomeLaunch::Unknown { label }) => Some(format!("\"{}\"", clean(label, 60))),
+            Some(HomeLaunch::Search { text }) => {
+                Some(format!("the top search result for \"{}\"", clean(text, 60)))
+            }
+            Some(HomeLaunch::App { .. }) | None => None,
+        };
+        if let Some(what) = unknown_launch.filter(|_| policy.first_use_approval) {
+            if policy.denies_category(RiskCategory::FirstUse) {
+                return Err(Reject::AppDenied(format!(
+                    "{what} on the home screen is not a known app, and new apps are not allowed"
+                )));
+            }
+            let request = ConfirmRequest {
+                category: RiskCategory::FirstUse,
+                summary: clean(
+                    &format!(
+                        "Let Jarvis open {what} from the home screen? It is not one of the known apps."
+                    ),
+                    200,
+                ),
+                app: screen.app_bundle_id.clone(),
+            };
+            return Ok(Prepared::FirstUse {
+                pending,
+                app: None,
+                request,
+                then: risk,
+            });
+        }
         if let Some(app) =
             first_use_app(policy, &executed, screen, tool).filter(|a| !self.app_approved(a))
         {
@@ -1484,7 +1729,7 @@ impl Session {
             let request = first_use_request(&app, self.app_name(&app).as_deref());
             return Ok(Prepared::FirstUse {
                 pending,
-                app,
+                app: Some(app),
                 request,
                 then: risk,
             });
@@ -1656,12 +1901,113 @@ impl Session {
             };
             self.record_failure(&pending, msg);
         } else {
-            self.record_success(&pending, prompt::RESULT_OK);
+            let change = describe_change(&pending.action, &pending.before_safe, &self.current.safe);
+            let note = self.count_repeat(&pending);
+            let result = match note {
+                Some(times) => format!(
+                    "{}; {change} (done {times} times in a row)",
+                    prompt::RESULT_OK
+                ),
+                None => format!("{}; {change}", prompt::RESULT_OK),
+            };
+            self.record_success(&pending, &result);
         }
         self.decide(now)
     }
 
+    /// Ends the session when the model proposes an action it was told, twice, it keeps
+    /// repeating; `None` otherwise. Any other action ends the run.
+    fn repeat_check(&mut self, now: u64, action: &Action, source: Source) -> Option<Effect> {
+        let key = (source == Source::Model)
+            .then(|| repeat_key(action, &self.current.screen))
+            .flatten();
+        let run = self.repeat.as_ref()?;
+        let same = key.as_deref() == Some(run.key.as_str())
+            && same_layout(&run.layout, &layout(&self.current.screen));
+        if !same {
+            self.repeat = None;
+            return None;
+        }
+        if run.warnings < 2 {
+            return None;
+        }
+        let described = describe(action, &self.current.safe);
+        let summary = format!(
+            "Stuck: {described} was chosen again after {} repetitions and two warnings.",
+            run.count
+        );
+        self.log_step(action, false);
+        Some(self.finish(now, OutcomeStatus::Failed, &summary))
+    }
+
+    /// Counts a repetition that worked (see [`RepeatRun`]) and leaves a warning note at
+    /// [`REPEAT_WARN`] and [`REPEAT_FINAL`]. Returns the run length when a warning was
+    /// given.
+    fn count_repeat(&mut self, pending: &Pending) -> Option<u32> {
+        let key = (pending.source == Source::Model)
+            .then(|| repeat_key(&pending.action, &pending.before))
+            .flatten();
+        let Some(key) = key else {
+            self.repeat = None;
+            return None;
+        };
+        // A control whose own value changed is an adjuster (a stepper reaching a value).
+        let own_value_changed = pending
+            .action
+            .element()
+            .and_then(|i| pending.before.get(i))
+            .filter(|e| !e.role.is_text_input())
+            .and_then(|e| {
+                self.current
+                    .screen
+                    .find_by_fingerprint(e.fingerprint)
+                    .map(|now| now.value != e.value)
+            })
+            .unwrap_or(false);
+        if own_value_changed {
+            self.repeat = None;
+            return None;
+        }
+        let here = layout(&pending.before);
+        let run = match self.repeat.take() {
+            Some(mut run) if run.key == key && same_layout(&run.layout, &here) => {
+                run.count = run.count.saturating_add(1);
+                run.layout = here;
+                run
+            }
+            _ => RepeatRun {
+                key,
+                layout: here,
+                first: pending.before_safe.clone(),
+                count: 1,
+                warnings: 0,
+            },
+        };
+        let warn = match (run.count, run.warnings) {
+            (c, 0) if c >= REPEAT_WARN => Some(false),
+            (c, 1) if c >= REPEAT_FINAL => Some(true),
+            _ => None,
+        };
+        let count = run.count;
+        let mut run = run;
+        let given = warn.map(|last| {
+            run.warnings = run.warnings.saturating_add(1);
+            let since = describe_change(&pending.action, &run.first, &self.current.safe);
+            let note = if last {
+                prompt::repeat_final_note(&pending.described, count, &since)
+            } else {
+                prompt::repeat_note(&pending.described, count, &since)
+            };
+            self.notes.push(note);
+            count
+        });
+        self.repeat = Some(run);
+        given
+    }
+
     fn record_success(&mut self, pending: &Pending, result: &str) {
+        self.declined_open = None;
+        self.last_failed = None;
         self.history.push(
             pending.described.clone(),
             result,
@@ -1683,6 +2029,11 @@ impl Session {
     }
 
     fn record_failure(&mut self, pending: &Pending, result: &str) {
+        self.repeat = None;
+        // Reaching the end of a list is information, not a failed attempt.
+        if result != prompt::RESULT_SCROLL_END {
+            self.last_failed = Some(format!("{} -> {}", pending.described, clean(result, 120)));
+        }
         self.history.push(
             pending.described.clone(),
             result,

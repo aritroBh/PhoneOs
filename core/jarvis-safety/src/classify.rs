@@ -14,6 +14,7 @@ use crate::phrases::{
 use crate::redact::contains_secret;
 use crate::text::{
     bounded, has_foreign_word, has_money, has_non_english_letters, label_is_unreadable, tokens,
+    CURRENCY_WORDS,
 };
 use crate::validate::{looks_like_url, url_scheme};
 
@@ -44,7 +45,8 @@ const MAX_TOOL_STRINGS: usize = 64;
 ///   Settings/Control Center switches). Generic
 ///   confirmations ("OK", "Continue"), unlabeled buttons and unknown SF Symbol names take
 ///   on the riskiest signal elsewhere on the screen (prices, "Delete 3 photos?", a Send
-///   button). A price in a button label is at least a `Purchase`; "Book"/"Order"/"Get"
+///   button). A price in a button label is at least a `Purchase` (a list or product row
+///   that only names an item and its price is not: it opens the item); "Book"/"Order"/"Get"
 ///   with a price on screen is a `Purchase`. On a checkout screen (a price plus payment
 ///   wording such as "Total" or "Card ending"), every pressable element that is not
 ///   plainly navigation is a `Payment`. Rows of a share sheet (a screen with AirDrop) send.
@@ -294,6 +296,24 @@ fn own_label_risk(el: &Element, toks: &[String], screen: &CompactScreen) -> (Lab
     (lr, toks.is_empty())
 }
 
+/// Whether `el` is a list or product row that shows a price next to the item's name
+/// ("Desk Lamp, $35.50"): tapping it opens the item, it does not buy it. Only a `Cell`
+/// qualifies, and only when its own words are neither an action phrase (Buy, Pay, Order,
+/// Checkout... or a generic OK/Continue) nor a price verb (Get, Book, Rent...), and when
+/// it names something besides the amount: a row that is only a price ("$0.99", "USD 5")
+/// still asks. Buttons and links with a price, checkout screens (see `element_risk`) and
+/// rows whose first segment is a command are unaffected.
+fn is_priced_item_row(el: &Element, toks: &[String], lr: LabelRisk) -> bool {
+    let names_something = toks
+        .iter()
+        .any(|t| !t.chars().all(|c| c.is_ascii_digit()) && !CURRENCY_WORDS.contains(&t.as_str()));
+    el.role == Role::Cell
+        && lr.category == RiskCategory::None
+        && !lr.generic
+        && !matches_any(toks, PRICE_VERB_PHRASES)
+        && names_something
+}
+
 /// Risk of tapping (or long-pressing) `el`.
 pub(crate) fn element_risk(el: &Element, screen: &CompactScreen) -> RiskCategory {
     if el.role.is_text_input() {
@@ -320,7 +340,7 @@ pub(crate) fn element_risk(el: &Element, screen: &CompactScreen) -> RiskCategory
         // The keyboard's backspace key is labelled "delete".
         risk = RiskCategory::None;
     }
-    if has_money(&text) && !content_row {
+    if has_money(&text) && !content_row && !is_priced_item_row(el, &toks, lr) {
         risk = match risk {
             RiskCategory::SendMessage | RiskCategory::Payment => RiskCategory::Payment,
             other => max_risk(other, RiskCategory::Purchase),

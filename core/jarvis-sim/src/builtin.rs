@@ -15,6 +15,7 @@ pub const APP_SOURCES: &[(&str, &str)] = &[
     ("passwords.json", include_str!("../apps/passwords.json")),
     ("phone.json", include_str!("../apps/phone.json")),
     ("laden.json", include_str!("../apps/laden.json")),
+    ("news.json", include_str!("../apps/news.json")),
 ];
 
 /// Built-in task files as `(file name, JSON text)`.
@@ -123,6 +124,30 @@ pub const TASK_SOURCES: &[(&str, &str)] = &[
     (
         "dropped_chars_twice.json",
         include_str!("../tasks/dropped_chars_twice.json"),
+    ),
+    (
+        "icon_tap_denied.json",
+        include_str!("../tasks/icon_tap_denied.json"),
+    ),
+    (
+        "cart_add_once.json",
+        include_str!("../tasks/cart_add_once.json"),
+    ),
+    (
+        "switch_already_on.json",
+        include_str!("../tasks/switch_already_on.json"),
+    ),
+    (
+        "done_after_decline.json",
+        include_str!("../tasks/done_after_decline.json"),
+    ),
+    (
+        "notes_two_scrolls.json",
+        include_str!("../tasks/notes_two_scrolls.json"),
+    ),
+    (
+        "news_dense_page.json",
+        include_str!("../tasks/news_dense_page.json"),
     ),
 ];
 

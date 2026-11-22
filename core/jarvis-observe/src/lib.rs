@@ -19,5 +19,5 @@ pub use compact::compact;
 pub use diff::{diff, screen_hash, ScreenDiff};
 pub use fingerprint::{fingerprint, fnv1a64, identity_key};
 pub use lookup::{find_by_fingerprint, marks, resolve, ResolveError};
-pub use render::{estimate_tokens, render};
+pub use render::{estimate_tokens, render, role_name, switch_state, MORE_ABOVE, MORE_BELOW};
 pub use runner_text::{parse_runner_text, ParseError, ParsedTree};

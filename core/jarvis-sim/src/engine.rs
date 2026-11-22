@@ -158,6 +158,42 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
     Rect::new(x, y, w, h)
 }
 
+/// The vertical scroll indicator iOS reports for every scrollable view: an `Other` node
+/// labelled `Vertical scroll bar, N pages` whose value is the position (`0%` at the top,
+/// `100%` at the bottom), with the thumb as its only child. It takes no taps.
+fn scroll_indicator(viewport: Rect, content_h: f64, offset: f64, max: f64) -> UiNode {
+    let pages = if viewport.height > 0.0 {
+        (content_h / viewport.height).ceil().max(1.0)
+    } else {
+        1.0
+    };
+    let percent = if max > 0.0 {
+        (offset / max * 100.0).round()
+    } else {
+        0.0
+    };
+    let thumb_h = (viewport.height / pages).max(8.0);
+    let thumb_y = viewport.y + (viewport.height - thumb_h) * percent / 100.0;
+    UiNode::new(
+        Role::Other("Other".to_owned()),
+        rect(
+            viewport.x + viewport.width - 30.0,
+            viewport.y,
+            30.0,
+            viewport.height,
+        ),
+    )
+    .with_label(format!(
+        "Vertical scroll bar, {pages} {}",
+        if pages > 1.0 { "pages" } else { "page" }
+    ))
+    .with_value(format!("{percent}%"))
+    .with_children(vec![UiNode::new(
+        Role::Other("Other".to_owned()),
+        rect(viewport.x + viewport.width - 6.0, thumb_y, 3.0, thumb_h),
+    )])
+}
+
 fn shift(node: &mut UiNode, dy: f64) {
     node.frame.y += dy;
     for c in &mut node.children {
@@ -473,6 +509,7 @@ impl<'a> Builder<'a> {
             shift(k, -offset);
         }
         kids.retain(|k| k.frame.intersects(&abs));
+        kids.push(scroll_indicator(abs, content_h, offset, max));
         let tail = self.hits.split_off(start);
         for mut h in tail {
             h.frame.y -= offset;

@@ -41,7 +41,9 @@ pub(crate) struct FieldSpec {
     pub aliases: &'static [&'static str],
 }
 
-/// One action of the canonical form.
+/// One action of the canonical form. Examples use `<placeholder>` text for every free-text
+/// field, never a name, contact, app or result: small models copy example strings into their
+/// answers ("No contact named ..."), and a placeholder cannot pass for a real answer.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ActionSpec {
     /// Canonical name (the `"action"` value), identical to `Action::name()`.
@@ -122,7 +124,7 @@ pub(crate) const ACTIONS: &[ActionSpec] = &[
             field("text", FieldKind::Text, true, TEXT_ALIASES),
             field("submit", FieldKind::Bool, false, SUBMIT_ALIASES),
         ],
-        example: r#"{"action":"type","element":4,"text":"hello","submit":false}"#,
+        example: r#"{"action":"type","element":4,"text":"<text>","submit":false}"#,
     },
     ActionSpec {
         name: "clear",
@@ -172,7 +174,7 @@ pub(crate) const ACTIONS: &[ActionSpec] = &[
             true,
             &["app_name", "bundle_id", "name", "application"],
         )],
-        example: r#"{"action":"open_app","app":"Settings"}"#,
+        example: r#"{"action":"open_app","app":"<app name>"}"#,
     },
     ActionSpec {
         name: "open_url",
@@ -208,7 +210,7 @@ pub(crate) const ACTIONS: &[ActionSpec] = &[
                 &["arguments", "params", "parameters"],
             ),
         ],
-        example: r#"{"action":"call_tool","name":"TOOL","args":{"param":"value"}}"#,
+        example: r#"{"action":"call_tool","name":"<tool>","args":{"<param>":"<value>"}}"#,
     },
     ActionSpec {
         name: "ask_user",
@@ -219,7 +221,7 @@ pub(crate) const ACTIONS: &[ActionSpec] = &[
             true,
             &["text", "message", "prompt", "q"],
         )],
-        example: r#"{"action":"ask_user","question":"Which Alex?"}"#,
+        example: r#"{"action":"ask_user","question":"<question>"}"#,
     },
     ActionSpec {
         name: "look",
@@ -243,7 +245,7 @@ pub(crate) const ACTIONS: &[ActionSpec] = &[
             false,
             &["result", "message", "text", "answer", "reason"],
         )],
-        example: r#"{"action":"done","summary":"Wi-Fi is off"}"#,
+        example: r#"{"action":"done","summary":"<what was done>"}"#,
     },
     ActionSpec {
         name: "fail",
@@ -254,7 +256,7 @@ pub(crate) const ACTIONS: &[ActionSpec] = &[
             false,
             &["message", "text", "error", "summary"],
         )],
-        example: r#"{"action":"fail","reason":"No contact named Alex"}"#,
+        example: r#"{"action":"fail","reason":"<why it cannot be done>"}"#,
     },
 ];
 

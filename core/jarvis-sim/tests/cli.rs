@@ -118,10 +118,32 @@ fn eval_builtin_passes_every_task_in_both_modes() {
 fn eval_json_is_machine_readable_and_strict_controls_the_exit_code() {
     let (code, out, _) = cli(&["eval", "builtin", "--json", "--filter", "wifi"]);
     assert_eq!(code, 0);
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v[0]["id"], "wifi_off");
-    assert_eq!(v[0]["passed"], true);
-    assert_eq!(v[0]["model_calls"], 3);
+    // One JSON object per finished task, then the totals: a killed run keeps what finished.
+    let lines: Vec<serde_json::Value> = out
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let v = &lines[0];
+    assert_eq!(v["id"], "wifi_off");
+    assert_eq!(v["passed"], true);
+    assert_eq!(v["model_calls"], 3);
+    // The transcript: every prompt, reply and effect of the judged run.
+    let t = &v["transcript"];
+    assert!(t["system"].as_str().unwrap().starts_with("You are Jarvis."));
+    assert_eq!(t["prompts"].as_array().unwrap().len(), 3);
+    assert_eq!(t["replies"].as_array().unwrap().len(), 3);
+    assert!(t["prompts"][1]
+        .as_str()
+        .unwrap()
+        .contains("-> ok; now in Settings > Wi-Fi"));
+    assert!(t["effects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e.as_str().unwrap().contains("confirm [FirstUse]")));
+    let totals = lines.last().unwrap();
+    assert_eq!(totals["total"], lines.len() - 1);
+    assert_eq!(totals["passed"], lines.len() - 1);
     // Forcing the owner to decline makes the send-message task fail its predicate.
     let (code, out, _) = cli(&["eval", "builtin", "--filter", "text_mom", "--decline"]);
     assert_eq!(

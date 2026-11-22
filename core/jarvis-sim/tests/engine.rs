@@ -541,7 +541,7 @@ fn both_modes_agree_on_roles_labels_and_frames() {
 
 #[test]
 fn every_builtin_app_file_parses_and_validates() {
-    assert_eq!(APP_SOURCES.len(), 9);
+    assert_eq!(APP_SOURCES.len(), 10);
     let phone = SimPhone::new().unwrap();
     let ids = phone.app_ids();
     for id in [
@@ -550,6 +550,7 @@ fn every_builtin_app_file_parses_and_validates() {
         "home",
         "laden",
         "messages",
+        "news",
         "notes",
         "passwords",
         "settings",

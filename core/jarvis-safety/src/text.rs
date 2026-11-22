@@ -451,7 +451,7 @@ fn is_currency_symbol(c: char) -> bool {
 }
 
 /// ISO currency codes and words that turn an adjacent number into a price.
-const CURRENCY_WORDS: &[&str] = &[
+pub(crate) const CURRENCY_WORDS: &[&str] = &[
     "usd", "eur", "gbp", "cad", "aud", "nzd", "jpy", "cny", "rmb", "inr", "chf", "sek", "nok",
     "dkk", "pln", "mxn", "brl", "zar", "sgd", "hkd", "krw", "ils", "aed", "dollar", "dollars",
     "euro", "euros", "pound", "pounds", "bucks", "rupees", "yen", "kr", "kc", "zl", "rs", "lei",

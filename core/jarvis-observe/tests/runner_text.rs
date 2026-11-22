@@ -219,7 +219,7 @@ App: Settings (com.apple.Preferences)
 Keyboard: visible
 [1] StaticText \"Settings\"
 [2] SearchField \"Search\"
-[3] Switch \"Airplane Mode\" value=\"0\"
+[3] Switch \"Airplane Mode\" (off)
 [4] Cell \"Wi-Fi, HomeNet\"";
     assert_eq!(text, want);
 }

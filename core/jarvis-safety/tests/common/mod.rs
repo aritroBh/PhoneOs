@@ -48,6 +48,7 @@ pub fn screen(bundle: &str, name: &str, elements: Vec<Element>) -> CompactScreen
         size: IPHONE_SIZE,
         keyboard_visible: elements.iter().any(|e| e.focused),
         elements,
+        cues: Default::default(),
     }
 }
 
@@ -112,6 +113,7 @@ pub fn compact(s: &Screen) -> CompactScreen {
         size: s.size,
         keyboard_visible: s.keyboard_visible,
         elements,
+        cues: Default::default(),
     }
 }
 

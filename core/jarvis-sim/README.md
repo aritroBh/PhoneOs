@@ -8,7 +8,7 @@ OpenAI-compatible HTTP API. Dev tool only: never shipped on the phone.
 cd core
 cargo run -p jarvis-sim -- apps                       # apps, screens, alerts
 cargo run -p jarvis-sim -- dump --app shop --screen cart --set 'shop.cart=[{"name":"Desk Lamp","price":35.5}]'
-cargo run -p jarvis-sim -- eval builtin               # 22 built-in tasks with bundled scripts
+cargo run -p jarvis-sim -- eval builtin               # 36 built-in tasks with bundled scripts
 cargo run -p jarvis-sim -- run --task "Turn off Wi-Fi" --start-app settings
 ```
 
@@ -43,8 +43,17 @@ jarvis-sim dump --app ID --screen NAME [--mode ...] [--tokens N] [--set app.path
   `forbid_confirm` and `expect_confirm_count` besides `expect_confirm`.
 * `--memory file.json` loads the memory store if the file exists and writes it after the run, so
   running the same task twice shows learned-flow replay: the second run makes zero model calls.
-* `eval` prints one row per task (pass/fail, steps, model calls, simulated time, confirmation
-  categories) plus totals. It exits non-zero on failures only with `--strict`.
+* `eval` prints one row per task as it finishes (pass/fail, steps, model calls, simulated time,
+  confirmation categories) plus totals. It exits non-zero on failures only with `--strict`.
+  `--json` prints one JSON object per line per finished task, flushed at once (so a killed run
+  keeps what finished), each with a `transcript` (system prompt, every prompt, reply and
+  effect, and the `response_format` the HTTP client used), then a totals object.
+* Task predicates may use `has(text, part)`, a normalised contains (case, punctuation and
+  apostrophes ignored, whole words) for text a model typed or sent. `expect_status` is one
+  status or a list (`["failed", "blocked"]`).
+* Script lines may be conditional: `{"if_prompt": "TEXT", "then": OUTPUT, "else": OUTPUT}`
+  serves `then` once the prompt contains `TEXT` and repeats `else` until then (a scripted
+  model that reacts to feedback, e.g. `cart_add_once`).
 
 ## Pointing it at a local model
 
@@ -65,7 +74,10 @@ cargo run -p jarvis-sim --features http -- eval builtin \
 
 Requests are `POST {url}/chat/completions` with a system and a user message, `max_tokens`,
 `temperature: 0` and no streaming. `--grammar` marks the model as supporting constrained output,
-so each request also carries the action JSON schema as `response_format`. `--api-key` sends a
+so each request also carries the action JSON schema as `response_format` (`json_schema`); a
+server that rejects that (4xx/5xx naming the response format, as llama-cpp-python's server
+does) gets the request again with `json_object` plus the schema, then with no response format,
+and the client keeps the mode that worked (shown in the transcript and the `--json` output). `--api-key` sends a
 bearer token. Timeouts and HTTP errors become `Event::ModelFailed`. The simulator has no
 screenshots, so a vision request is sent as text only and the transcript says so.
 
@@ -76,7 +88,10 @@ relative frames, `column` layout, `scroll`, `for_each`, `when`/`enabled` conditi
 `{state}` templates, effects such as `goto`, `toggle`, `append`, `alert`) is documented in
 `src/app.rs`; the expression language in `src/expr.rs`. Built in: `home` (SpringBoard),
 `settings` (Wi-Fi, Bluetooth, Dark Mode), `messages`, `acme` (login), `shop`, `notes` (long list,
-delete alert), `passwords` (denied by default policy).
+delete alert), `passwords` (denied by default policy), `phone`, `laden` (German checkout) and
+`news` (a dense web page of 60 long headlines that overflows a 4096-token prompt, so labels are
+cut to fit). Scrollable views report an iOS-style `Vertical scroll bar, N pages` indicator with
+the position as value, which the agent turns into a `… more below; scroll down` cue.
 
 Eval tasks are JSON files in `tasks/` (`id`, `task`, `start_app`, `success` predicate such as
 `messages.thread["Mom"].last == "running late"`, `expect_confirm`, `expect_status`, `max_steps`,
