@@ -20,10 +20,13 @@ use crate::text::{
 use crate::validate::{looks_like_url, url_scheme};
 use jarvis_proto::SPRINGBOARD_BUNDLE_ID;
 
-/// Most elements read as context for one decision. On bigger screens the elements
-/// nearest (vertically) to the target are read, so padding a page cannot push a price or
-/// warning out of view of the button next to it.
-pub(crate) const MAX_CONTEXT_ELEMENTS: usize = 200;
+/// Most controls whose own risk is worked out for one gesture or `tap_point` (each such
+/// evaluation reads the whole screen as context). The elements are filtered to the ones
+/// that matter (controls that react to the drag, pressable elements under the point)
+/// *before* this cap applies, so padding with text cannot push a control out of view;
+/// when more relevant controls than this remain, the result is at least
+/// [`UNREADABLE_RISK`], so the owner is asked.
+pub(crate) const MAX_SCANNED_CONTROLS: usize = 32;
 
 /// Category for a tap the phrase net cannot read (unknown script or language, oversized
 /// label, unknown symbol name, no label at all) and for a tool call without a spec. It
@@ -160,7 +163,7 @@ fn tool_risk(name: &str, args: &serde_json::Value, tool: Option<&ToolSpec>) -> R
 
 /// The text an element shows, bounded: its label, plus its value unless it is a text input
 /// (whose value is user content, not a description of what the element does).
-fn element_text(el: &Element) -> String {
+pub(crate) fn element_text(el: &Element) -> String {
     match (&el.value, el.role.is_text_input()) {
         (Some(v), false) if !v.is_empty() => format!("{} {}", bounded(&el.label), bounded(v)),
         _ => bounded(&el.label).into_owned(),
@@ -216,52 +219,90 @@ pub(crate) struct Context {
     pub settings_words: bool,
 }
 
-/// The elements read as context for `exclude` (see [`MAX_CONTEXT_ELEMENTS`]).
-fn context_elements(screen: &CompactScreen, exclude: Option<u32>) -> Vec<&Element> {
-    let mut els: Vec<&Element> = screen
-        .elements
-        .iter()
-        .filter(|e| Some(e.index) != exclude)
-        .collect();
-    if els.len() > MAX_CONTEXT_ELEMENTS {
-        if let Some(y) = exclude
-            .and_then(|i| screen.get(i))
-            .map(|e| e.frame.center().y)
-        {
-            els.sort_by(|a, b| {
-                (a.frame.center().y - y)
-                    .abs()
-                    .total_cmp(&(b.frame.center().y - y).abs())
-            });
-        }
-        els.truncate(MAX_CONTEXT_ELEMENTS);
-    }
-    els
+/// What one element contributes to the [`Context`] of a decision.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Signal {
+    /// Its phrase-table category (an amount reads as `Payment`).
+    pub risk: RiskCategory,
+    /// It shows a price.
+    pub money: bool,
+    /// Payment wording.
+    pub payment_words: bool,
+    /// Purchase wording.
+    pub purchase_words: bool,
+    /// It offers AirDrop (share sheet).
+    pub share_sheet: bool,
+    /// Account or settings wording.
+    pub settings_words: bool,
 }
 
-/// Reads the screen apart from element `exclude`. Keyboard keys are ignored.
-pub(crate) fn context_of(screen: &CompactScreen, exclude: Option<u32>) -> Context {
+impl Signal {
+    /// Whether the element says anything the classifier acts on.
+    pub(crate) fn is_some(&self) -> bool {
+        *self != Signal::default()
+    }
+}
+
+/// The tables context is read with on `screen`.
+fn context_tables(screen: &CompactScreen) -> Vec<&'static [Phrase]> {
     let mut tables: Vec<&[Phrase]> = action_tables(&screen.app_bundle_id);
     tables.push(CONTEXT_PHRASES);
+    tables
+}
+
+/// What `el` contributes to the context of a decision (nothing for keyboard keys).
+fn signal_of(el: &Element, tables: &[&[Phrase]]) -> Signal {
+    if el.role == Role::Key {
+        return Signal::default();
+    }
+    let text = element_text(el);
+    let toks = tokens(&text);
+    let cat = match_tokens(&toks, tables).category;
+    let money = has_money(&text);
+    Signal {
+        risk: if money {
+            max_risk(cat, RiskCategory::Payment)
+        } else {
+            cat
+        },
+        money,
+        payment_words: cat == RiskCategory::Payment,
+        purchase_words: matches!(cat, RiskCategory::Purchase | RiskCategory::Payment),
+        share_sheet: toks.iter().any(|t| t == "airdrop")
+            || toks.windows(2).any(|w| w == ["air", "drop"]),
+        settings_words: match_tokens(&toks, &[SETTINGS_CONTEXT_PHRASES]).category
+            != RiskCategory::None,
+    }
+}
+
+/// The texts of the elements of `screen` that carry a context signal (see [`Signal`]), in
+/// screen order: what the classifier read to decide a category. Used by the approval
+/// context, so the facts an approval is checked against cannot drift from the facts the
+/// category came from.
+pub(crate) fn signal_texts(screen: &CompactScreen) -> Vec<String> {
+    let tables = context_tables(screen);
+    screen
+        .elements
+        .iter()
+        .filter(|e| signal_of(e, &tables).is_some())
+        .map(element_text)
+        .collect()
+}
+
+/// Reads the screen apart from element `exclude`. Keyboard keys are ignored. Every element
+/// is read: the context only ever grows (the riskiest signal, flags that are set), so
+/// there is no window a page could push a price or a warning out of with padding.
+pub(crate) fn context_of(screen: &CompactScreen, exclude: Option<u32>) -> Context {
+    let tables = context_tables(screen);
     let mut ctx = Context::default();
-    for el in context_elements(screen, exclude) {
-        if el.role == Role::Key {
-            continue;
-        }
-        let text = element_text(el);
-        let toks = tokens(&text);
-        let cat = match_tokens(&toks, &tables).category;
-        ctx.risk = max_risk(ctx.risk, cat);
-        ctx.payment_words |= cat == RiskCategory::Payment;
-        ctx.purchase_words |= matches!(cat, RiskCategory::Purchase | RiskCategory::Payment);
-        if has_money(&text) {
-            ctx.money = true;
-            ctx.risk = max_risk(ctx.risk, RiskCategory::Payment);
-        }
-        ctx.share_sheet |=
-            toks.iter().any(|t| t == "airdrop") || toks.windows(2).any(|w| w == ["air", "drop"]);
-        ctx.settings_words |=
-            match_tokens(&toks, &[SETTINGS_CONTEXT_PHRASES]).category != RiskCategory::None;
+    for el in screen.elements.iter().filter(|e| Some(e.index) != exclude) {
+        let s = signal_of(el, &tables);
+        ctx.risk = max_risk(ctx.risk, s.risk);
+        ctx.money |= s.money;
+        ctx.payment_words |= s.payment_words;
+        ctx.purchase_words |= s.purchase_words;
+        ctx.share_sheet |= s.share_sheet;
+        ctx.settings_words |= s.settings_words;
     }
     ctx
 }
@@ -476,7 +517,6 @@ fn return_key_risk(target: Option<&Element>, screen: &CompactScreen) -> RiskCate
         .elements
         .iter()
         .filter(|e| e.role == Role::Key)
-        .take(MAX_CONTEXT_ELEMENTS)
         .map(|e| e.label.as_str());
     let tables = action_tables(&screen.app_bundle_id);
     let mut risk = RiskCategory::None;
@@ -548,21 +588,41 @@ fn is_adjustable(el: &Element) -> bool {
             .any(|t| matches!(t.as_str(), "slide" | "swipe"))
 }
 
+/// Share of the screen width a cell or button must span to count as a list row (with
+/// swipe actions). Narrower cells sit side by side in a horizontal carousel (music, App
+/// Store, news shelves), whose sideways drag only pages the carousel.
+pub(crate) const LIST_ROW_MIN_WIDTH: f64 = 0.8;
+
+/// Whether `el` is a list or button row that reveals swipe actions on a sideways drag: a
+/// cell or button spanning at least [`LIST_ROW_MIN_WIDTH`] of the screen's width, outside
+/// the home screen (whose icons have none: a sideways swipe there turns the page). With an
+/// unknown screen width every cell and button counts.
+fn is_list_row(el: &Element, screen: &CompactScreen) -> bool {
+    if !matches!(el.role, Role::Cell | Role::Button)
+        || in_app(&screen.app_bundle_id, SPRINGBOARD_BUNDLE_ID)
+    {
+        return false;
+    }
+    let width = screen.size.width;
+    if !(width.is_finite() && width > 0.0) {
+        return true;
+    }
+    el.frame.width >= width * LIST_ROW_MIN_WIDTH
+}
+
 /// Whether a drag in finger direction `finger` that crosses `el` acts on it. Sideways:
-/// adjustable controls (sliders, switches, steppers, slide-to-act controls) and list or
-/// button rows, whose swipe actions a sideways drag reveals and a long one triggers (not on
-/// the home screen, whose icons have none: a sideways swipe there turns the page).
-/// Vertically: pickers, vertical sliders and slide-to-act controls; rows only scroll.
-/// Disabled elements and keyboard keys never react.
+/// adjustable controls (sliders, switches, steppers, slide-to-act controls) and list rows
+/// ([`is_list_row`]), whose swipe actions a sideways drag reveals and a long one triggers;
+/// not the narrow cells of a horizontal carousel, nor home-screen icons. Vertically:
+/// pickers, vertical sliders and slide-to-act controls; rows only scroll. Disabled elements
+/// and keyboard keys never react.
 fn reacts_to_drag(el: &Element, finger: Direction, screen: &CompactScreen) -> bool {
     if !el.enabled || el.role == Role::Key {
         return false;
     }
     let sideways = matches!(finger, Direction::Left | Direction::Right);
     if sideways {
-        is_adjustable(el)
-            || (matches!(el.role, Role::Cell | Role::Button)
-                && !in_app(&screen.app_bundle_id, SPRINGBOARD_BUNDLE_ID))
+        is_adjustable(el) || is_list_row(el, screen)
     } else {
         match el.role {
             Role::Picker => true,
@@ -573,25 +633,33 @@ fn reacts_to_drag(el: &Element, finger: Direction, screen: &CompactScreen) -> bo
     }
 }
 
-/// The elements whose frame the straight path `from` → `to` touches (at most
-/// [`MAX_CONTEXT_ELEMENTS`], in screen order).
-fn crossed(screen: &CompactScreen, from: Point, to: Point) -> impl Iterator<Item = &Element> {
+/// The controls whose frame the straight path `from` → `to` touches and that react to a
+/// drag in finger direction `finger` ([`reacts_to_drag`]), in screen order. Filtered first,
+/// so any number of texts or inert elements on the path cannot crowd a control out.
+fn crossed_controls(
+    screen: &CompactScreen,
+    from: Point,
+    to: Point,
+    finger: Direction,
+) -> Vec<&Element> {
     let (x0, x1) = (from.x.min(to.x), from.x.max(to.x));
     let (y0, y1) = (from.y.min(to.y), from.y.max(to.y));
     screen
         .elements
         .iter()
-        .filter(move |e| {
+        .filter(|e| {
             let f = e.frame;
             !f.is_empty() && f.x <= x1 && f.max_x() >= x0 && f.y <= y1 && f.max_y() >= y0
         })
-        .take(MAX_CONTEXT_ELEMENTS)
+        .filter(|e| reacts_to_drag(e, finger, screen))
+        .collect()
 }
 
 /// Risk of a scroll or swipe (see [`classify`]): the drag is computed exactly as the
 /// command will make it; the target element's own risk counts for swipes, sideways
 /// scrolls and scrolls of adjustable controls, and every control the path crosses that
-/// reacts to the drag adds its swipe risk.
+/// reacts to the drag adds its swipe risk. More than [`MAX_SCANNED_CONTROLS`] such
+/// controls is at least [`UNREADABLE_RISK`] (asked, never silently skipped).
 fn gesture_risk(
     kind: GestureKind,
     direction: Direction,
@@ -617,23 +685,27 @@ fn gesture_risk(
     // Without a computable path (unknown screen size, an element in the system-gesture
     // margin) the runner gets no command at all; nothing more to read.
     if let Ok(g) = gesture(kind, direction, target.map(|e| e.frame), screen.size) {
-        for el in crossed(screen, g.from, g.to) {
-            if target.is_some_and(|t| t.index == el.index) || !reacts_to_drag(el, finger, screen) {
-                continue;
-            }
+        let crossed: Vec<&Element> = crossed_controls(screen, g.from, g.to, finger)
+            .into_iter()
+            .filter(|el| !target.is_some_and(|t| t.index == el.index))
+            .collect();
+        if crossed.len() > MAX_SCANNED_CONTROLS {
+            risk = max_risk(risk, UNREADABLE_RISK);
+        }
+        for el in crossed.into_iter().take(MAX_SCANNED_CONTROLS) {
             risk = max_risk(risk, swipe_risk(el, finger, screen));
         }
     }
     risk
 }
 
-/// Risk of swiping on `el`: read like a tap of it (with context); sideways on a cell or
-/// button row it is at least `Delete`. Vertical swipes on adjustable controls are read like
-/// taps too; on other elements they only read their label, since they mostly scroll.
+/// Risk of swiping on `el`: read like a tap of it (with context); sideways on a list row
+/// ([`is_list_row`]) it is at least `Delete`. Vertical swipes on adjustable controls are
+/// read like taps too; on other elements they only read their label, since they mostly
+/// scroll.
 fn swipe_risk(el: &Element, direction: Direction, screen: &CompactScreen) -> RiskCategory {
     let sideways = matches!(direction, Direction::Left | Direction::Right);
-    let row = matches!(el.role, Role::Cell | Role::Button);
-    if sideways && row {
+    if sideways && is_list_row(el, screen) {
         max_risk(RiskCategory::Delete, element_risk(el, screen))
     } else if sideways || is_adjustable(el) {
         element_risk(el, screen)
@@ -662,23 +734,39 @@ pub(crate) fn tap_point(
         .iter()
         .filter(|e| e.frame.contains(p))
         .collect();
-    let best_pressable = hits
+    // Pressable elements first, smallest first (what a finger hits), then capped: texts
+    // and containers under the point never use up the window.
+    let mut pressable: Vec<&Element> = hits
         .iter()
+        .copied()
         .filter(|e| is_pressable(&e.role))
-        .map(|e| (element_risk(e, screen), *e))
+        .collect();
+    pressable.sort_by(|a, b| a.frame.area().total_cmp(&b.frame.area()));
+    let too_many = pressable.len() > MAX_SCANNED_CONTROLS;
+    let best_pressable = pressable
+        .into_iter()
+        .take(MAX_SCANNED_CONTROLS)
+        .map(|e| (element_risk(e, screen), e))
         .max_by(|(ra, a), (rb, b)| {
             severity(*ra)
                 .cmp(&severity(*rb))
                 .then(b.frame.area().total_cmp(&a.frame.area()))
         });
     if let Some((risk, el)) = best_pressable {
+        let risk = if too_many {
+            max_risk(risk, UNREADABLE_RISK)
+        } else {
+            risk
+        };
         return (risk, Some(el));
     }
     let mut risk = context_of(screen, None).risk;
-    for el in &hits {
-        if !el.role.is_text_input() {
-            risk = max_risk(risk, element_risk(el, screen));
-        }
+    let others: Vec<&&Element> = hits.iter().filter(|e| !e.role.is_text_input()).collect();
+    if others.len() > MAX_SCANNED_CONTROLS {
+        risk = max_risk(risk, UNREADABLE_RISK);
+    }
+    for el in others.into_iter().take(MAX_SCANNED_CONTROLS) {
+        risk = max_risk(risk, element_risk(el, screen));
     }
     let largest = hits
         .iter()

@@ -1065,6 +1065,130 @@ fn denied_apps_are_recognised_by_their_display_names() {
     assert!(!check_app(&p, "Fortune Vault").is_denied());
 }
 
+/// A dotted id whose only parts after the reverse-DNS head are generic (`com.mobile`) has
+/// no name part: it denies by bundle id, not every app whose name contains "mobile". (Before,
+/// the generic last part was used as the name.) A one-word entry is still a name.
+#[test]
+fn a_generic_only_bundle_id_does_not_deny_names_with_that_word() {
+    use jarvis_proto::{AppRule, TrustLevel};
+    let mut p = Policy::default();
+    p.app_rules
+        .push(AppRule::new("com.mobile", TrustLevel::Denied));
+    assert!(!check_app(&p, "Mobile Banking Plus").is_denied());
+    assert!(check_app(&p, "com.mobile.banking").is_denied());
+    let mut p = Policy::default();
+    p.denied_apps.push("com.app".to_owned());
+    assert!(!check_app(&p, "My App").is_denied());
+    let mut p = Policy::default();
+    p.denied_apps.push("Mobile".to_owned());
+    assert!(check_app(&p, "Mobile").is_denied());
+    // Ordinary ids are unchanged.
+    let mut p = Policy::default();
+    p.denied_apps.push("com.examplebank.mobile".to_owned());
+    assert!(check_app(&p, "ExampleBank").is_denied());
+}
+
+/// The Spotlight and home-screen label rules (see `search_names_denied_app` and
+/// `label_names_denied_app`).
+#[test]
+fn search_text_and_labels_that_name_a_denied_app() {
+    use jarvis_proto::{AppInfo, AppRule, TrustLevel};
+    use jarvis_safety::{denied_app_names, label_names_denied_app, search_names_denied_app};
+    let mut p = Policy::default();
+    p.app_rules
+        .push(AppRule::new("com.examplebank.mobile", TrustLevel::Denied).with_name("Example Bank"));
+    p.app_rules
+        .push(AppRule::new("com.mailchimp.app", TrustLevel::Denied));
+    let apps = vec![AppInfo::new("com.vault.ios", "Fortune Vault")];
+    p.denied_apps.push("com.vault".to_owned());
+    let names = denied_app_names(&p, &apps);
+    for want in [
+        "examplebank",
+        "mailchimp",
+        "fortunevault",
+        "passwords",
+        "wallet",
+    ] {
+        assert!(names.iter().any(|n| n == want), "{want} not in {names:?}");
+    }
+    let search = |t: &str| search_names_denied_app(&p, &apps, t);
+    for t in [
+        "Example Bank",
+        "examplebank",
+        "EXAMPLE-BANK",
+        "Exa",
+        "my example bank app",
+        "mail",
+        "Fortune V",
+        "pass",
+    ] {
+        assert!(search(t).is_some(), "{t}");
+    }
+    for t in [
+        "weather",
+        "Ex",
+        "Example Mail",
+        "Bank",
+        "banking",
+        "Notes",
+        "",
+    ] {
+        assert!(search(t).is_none(), "{t}: {:?}", search(t));
+    }
+    let label = |t: &str| label_names_denied_app(&p, &apps, t);
+    for t in [
+        "Example Bank Balance",
+        "ExampleBank, 2 notifications",
+        "Open Mailchimp",
+        "Fortune Vault widget",
+    ] {
+        assert!(label(t).is_some(), "{t}");
+    }
+    for t in ["Mail", "Bank", "Example", "Examples Banking", "Notes"] {
+        assert!(label(t).is_none(), "{t}: {:?}", label(t));
+    }
+}
+
+/// The approval context: unchanged facts hold; a far, signal-free text (a clock) may
+/// change; a text in the target's row, the target's value or any amount may not.
+#[test]
+fn approval_context_holds_only_on_the_same_facts() {
+    use jarvis_safety::approval_context;
+    let base = || {
+        let mut clock = label(1, "9:41");
+        clock.frame = Rect::new(16.0, 20.0, 100.0, 20.0);
+        let mut name = label(2, "Socks");
+        name.frame = Rect::new(16.0, 400.0, 200.0, 30.0);
+        let mut price = label(3, "$5.00");
+        price.frame = Rect::new(16.0, 430.0, 200.0, 30.0);
+        let mut buy = button(4, "Buy");
+        buy.frame = Rect::new(280.0, 400.0, 90.0, 60.0);
+        let mut total = label(5, "Cart total $12.00");
+        total.frame = Rect::new(16.0, 780.0, 300.0, 30.0);
+        app_screen(vec![clock, name, price, buy, total])
+    };
+    let a = tap(4);
+    let asked = approval_context(&a, &base());
+    assert!(asked.holds_on(&a, &base()));
+    let mut s = base();
+    s.elements[0].label = "9:42".to_owned();
+    assert!(asked.holds_on(&a, &s), "{:?}", asked.differences(&a, &s));
+    let mut s = base();
+    s.elements[1].label = "Wool socks".to_owned();
+    assert_eq!(asked.differences(&a, &s), ["neighbourhood"]);
+    let mut s = base();
+    s.elements[4].label = "Cart total $512.00".to_owned();
+    assert!(asked.differences(&a, &s).contains(&"amounts"));
+    let mut s = base();
+    s.elements[3].value = Some("2".to_owned());
+    assert!(asked.differences(&a, &s).contains(&"target"));
+    let mut s = base();
+    s.elements[3].selected = true;
+    assert_eq!(asked.differences(&a, &s), ["target"]);
+    // Debug shows counts, not screen text.
+    assert!(!format!("{asked:?}").contains("Socks"));
+}
+
 #[test]
 fn policy_json_without_display_names_still_loads() {
     let json = r#"{"denied_apps":["com.examplebank"],"app_rules":[{"bundle_id_prefix":"com.apple.MobileSMS","level":"step_by_step"}],"first_use_approval":true}"#;

@@ -585,4 +585,243 @@ fn session_debug_never_shows_typed_text_mid_action() {
     for secret in ["4111111111111111", "secret-note-7731"] {
         assert!(!dbg.contains(secret), "{secret} in {dbg}");
     }
+    // Nor the effect itself, nor the runner command it carries (only the length shows).
+    let effect = format!("{e:?}");
+    let Effect::Act(cmd) = &e else { panic!() };
+    let command = format!("{cmd:?}");
+    for shown in [&effect, &command] {
+        for secret in ["4111111111111111", "secret-note-7731", "hello"] {
+            assert!(!shown.contains(secret), "{secret} in {shown}");
+        }
+        assert!(shown.contains("text_chars"), "{shown}");
+    }
+}
+
+/// The owner's answer to a question is not shown by `Debug` either.
+#[test]
+fn user_answer_debug_never_shows_the_answer() {
+    let e = Event::UserAnswer {
+        text: "my door code is 4471".to_owned(),
+    };
+    let shown = format!("{e:?}");
+    assert!(
+        !shown.contains("4471") && !shown.contains("door"),
+        "{shown}"
+    );
+    assert!(shown.contains("UserAnswer"), "{shown}");
+    let timed = format!("{:?}", TimedEvent::new(5, e));
+    assert!(!timed.contains("4471"), "{timed}");
+}
+
+// ---------------------------------------------------------------------------------------
+// The approval context (second review): an approval holds only while the target, its row,
+// the texts just before it, every amount and the classifier's context are unchanged.
+// ---------------------------------------------------------------------------------------
+
+/// A flat (web-like) shop list: name/price texts and a "Buy" button per item, with an
+/// optional status line far above the list.
+fn shop_list_with(status: Option<&str>, items: &[(&str, &str)]) -> Screen {
+    let mut children = Vec::new();
+    if let Some(s) = status {
+        children.push(text(s, rect(16.0, 20.0, 200.0, 20.0)));
+    }
+    children.push(text("Shop", rect(16.0, 70.0, 200.0, 40.0)));
+    for (k, (name, price)) in items.iter().enumerate() {
+        let y = 200.0 + 120.0 * k as f64;
+        children.push(text(name, rect(16.0, y, 250.0, 30.0)));
+        children.push(text(price, rect(16.0, y + 30.0, 250.0, 30.0)));
+        children.push(node(Role::Button, "Buy", rect(280.0, y, 90.0, 60.0)));
+    }
+    screen(
+        "com.example.shop",
+        "Shop",
+        app_root("Shop", children),
+        false,
+    )
+}
+
+fn shop_list(items: &[(&str, &str)]) -> Screen {
+    shop_list_with(None, items)
+}
+
+/// The `n`th (1-based) element labelled `label`.
+fn nth_index(s: &Screen, label: &str, n: usize) -> u32 {
+    jarvis_observe::compact(s)
+        .elements
+        .iter()
+        .filter(|e| e.label == label)
+        .nth(n - 1)
+        .unwrap()
+        .index
+}
+
+/// Asks to tap element `i` on `before`, approves, and returns the summary asked and the
+/// effect on the fresh look `after`.
+fn approve_then_look(
+    c: jarvis_proto::SessionConfig,
+    before: &Screen,
+    i: u32,
+    after: &Screen,
+) -> (String, Effect) {
+    let mut d = Driver::new(c, "Buy the socks");
+    d.step(Event::Start);
+    d.observed(before);
+    let Effect::Confirm(asked) = d.model(&format!(r#"{{"action":"tap","element":{i}}}"#)) else {
+        panic!("expected a confirmation")
+    };
+    assert!(matches!(
+        d.step(Event::UserDecision { approved: true }),
+        Effect::Observe { .. }
+    ));
+    (asked.summary, d.observed(after))
+}
+
+/// Socks approved; the socks row disappears and the TV's "Buy" slides into the same slot
+/// (same label, role, fingerprint; its frame holds the planned point). The TV is not
+/// bought under the socks approval.
+#[test]
+fn an_approval_for_one_buy_does_not_buy_its_twin() {
+    let before = shop_list(&[("Socks", "$5.00"), ("TV", "$1,500.00")]);
+    let i = nth_index(&before, "Buy", 1);
+    let (asked, e) = approve_then_look(config(), &before, i, &shop_list(&[("TV", "$1,500.00")]));
+    assert_eq!(asked, "Tap \"Buy\" next to \"Socks $5.00\" in Shop");
+    assert!(
+        !matches!(e, Effect::Act(_)),
+        "approved '{asked}' but tapped: {e:?}"
+    );
+}
+
+/// The total next to "Pay" changes from $5 to $500 between ask and act: not paid.
+#[test]
+fn an_approval_at_one_amount_does_not_pay_another() {
+    let pay = |amount: &str| {
+        screen(
+            "com.example.shop",
+            "Shop",
+            app_root(
+                "Shop",
+                vec![
+                    text("Checkout", rect(16.0, 70.0, 200.0, 40.0)),
+                    text(&format!("Total {amount}"), rect(16.0, 200.0, 361.0, 30.0)),
+                    node(Role::Button, "Pay", rect(16.0, 600.0, 361.0, 50.0)),
+                ],
+            ),
+            false,
+        )
+    };
+    let before = pay("$5.00");
+    let i = index_of(&before, "Pay");
+    let (asked, e) = approve_then_look(config(), &before, i, &pay("$500.00"));
+    assert_eq!(asked, "Tap \"Pay\" in Shop (Total $5.00)");
+    assert!(
+        !matches!(e, Effect::Act(_)),
+        "approved '{asked}' but paid: {e:?}"
+    );
+    // The same total: paid as approved.
+    let (_, e) = approve_then_look(config(), &before, i, &pay("$5.00"));
+    assert!(matches!(e, Effect::Act(_)), "{e:?}");
+}
+
+/// Step by step: the switch the owner approved turning on is already on at the fresh look;
+/// the approved tap would turn it off, so it is not sent.
+#[test]
+fn an_approved_switch_that_flipped_meanwhile_is_not_tapped() {
+    let mut c = config();
+    c.policy.mode = jarvis_proto::PolicyMode::StepByStep;
+    let before = wifi_screen(false);
+    let sw = jarvis_observe::compact(&before)
+        .elements
+        .iter()
+        .find(|e| e.role == Role::Switch)
+        .unwrap()
+        .index;
+    let (asked, e) = approve_then_look(c.clone(), &before, sw, &wifi_screen(true));
+    assert_eq!(asked, "Turn on \"Wi-Fi\" in Settings");
+    assert!(!matches!(e, Effect::Act(_)), "approved '{asked}': {e:?}");
+    // Unchanged: it runs.
+    let (_, e) = approve_then_look(c, &before, sw, &wifi_screen(false));
+    assert!(matches!(e, Effect::Act(_)), "{e:?}");
+}
+
+/// Not brittle: a status line far from the target (a clock, "Updating…") changing does not
+/// void the approval; a text in the target's own row changing does.
+#[test]
+fn an_approval_survives_far_changes_but_not_changes_in_its_row() {
+    let items = [("Socks", "$5.00"), ("TV", "$1,500.00")];
+    let before = shop_list_with(Some("Updated 9:41"), &items);
+    let tv = nth_index(&before, "Buy", 2);
+    for status in ["Updated 9:42", "Updating…"] {
+        let after = shop_list_with(Some(status), &items);
+        let (asked, e) = approve_then_look(config(), &before, tv, &after);
+        assert!(
+            matches!(e, Effect::Act(_)),
+            "'{status}' far away voided '{asked}': {e:?}"
+        );
+    }
+    let after = shop_list_with(
+        Some("Updated 9:41"),
+        &[("Socks", "$5.00"), ("TV (used)", "$1,500.00")],
+    );
+    let (asked, e) = approve_then_look(config(), &before, tv, &after);
+    assert!(
+        !matches!(e, Effect::Act(_)),
+        "the row of '{asked}' changed but it ran: {e:?}"
+    );
+}
+
+/// A screen that keeps changing after every approval, with a harmless step that works in
+/// between (resetting the failure count), ends `Failed` after
+/// [`jarvis_agent::MAX_STALE_APPROVALS`] stale approvals instead of asking the owner until
+/// the step budget runs out.
+#[test]
+fn stale_approvals_are_capped_even_with_successes_in_between() {
+    // Every look shows a new screen: "Buy now" alternates between two places and the
+    // harmless button's caption counts up (so tapping it visibly works).
+    let mut d = Driver::new(config(), "Buy the headphones");
+    let mut e = d.step(Event::Start);
+    let mut looks = 0;
+    let mut current = shop(300.0, "Details 0");
+    let (mut infers, mut harmless, mut confirms) = (0, 0, 0);
+    for _ in 0..200 {
+        e = match e {
+            Effect::Observe { .. } => {
+                looks += 1;
+                let at = if looks % 2 == 1 { 300.0 } else { 560.0 };
+                current = shop(at, &format!("Details {looks}"));
+                d.observed(&current)
+            }
+            Effect::Infer(_) => {
+                infers += 1;
+                if infers % 2 == 1 {
+                    d.model(&tap_buy(&current))
+                } else {
+                    let i = index_of(&current, &format!("Details {looks}"));
+                    d.model(&format!(r#"{{"action":"tap","element":{i}}}"#))
+                }
+            }
+            Effect::Confirm(c) => {
+                assert_eq!(c.category, RiskCategory::Purchase, "{}", c.summary);
+                confirms += 1;
+                d.step(Event::UserDecision { approved: true })
+            }
+            Effect::Act(_) => {
+                harmless += 1;
+                d.step(Event::ActResult(RunnerResult::ok()))
+            }
+            Effect::Finished(o) => {
+                assert_eq!(o.status, OutcomeStatus::Failed, "{}", o.summary);
+                assert!(
+                    o.summary
+                        .contains("the screen changed after the owner approved"),
+                    "{}",
+                    o.summary
+                );
+                assert_eq!(confirms, jarvis_agent::MAX_STALE_APPROVALS as usize);
+                assert_eq!(harmless, confirms - 1, "only the harmless taps ran");
+                return;
+            }
+            other => panic!("{other:?}"),
+        };
+    }
+    panic!("the session did not end");
 }

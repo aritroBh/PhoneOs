@@ -38,6 +38,7 @@
 #![deny(missing_docs)]
 
 mod app;
+mod approval;
 mod budget;
 mod classify;
 mod confine;
@@ -51,7 +52,11 @@ mod text;
 mod validate;
 
 pub use app::{
-    app_level, check_app, check_app_name, is_springboard, matching_rule, mode_level, Verdict,
+    app_level, check_app, check_app_name, denied_app_names, is_springboard, label_names_denied_app,
+    matching_rule, mode_level, search_names_denied_app, Verdict, MIN_SEARCH_PREFIX,
+};
+pub use approval::{
+    approval_context, ApprovalContext, NEIGHBOURHOOD_REACH, NEIGHBOURHOOD_TEXTS_BEFORE,
 };
 pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;

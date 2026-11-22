@@ -23,7 +23,10 @@ pub enum Key {
 }
 
 /// One low-level command for the runner. JSON is internally tagged with `"type"`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// `Debug` never shows the text of `TypeText` (it may carry substituted profile values),
+/// only its length.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunnerCommand {
     /// Tap at a point.
@@ -76,6 +79,45 @@ pub enum RunnerCommand {
         /// Milliseconds to wait.
         ms: u64,
     },
+}
+
+impl std::fmt::Debug for RunnerCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunnerCommand::Tap { x, y } => {
+                f.debug_struct("Tap").field("x", x).field("y", y).finish()
+            }
+            RunnerCommand::LongPress { x, y, duration_ms } => f
+                .debug_struct("LongPress")
+                .field("x", x)
+                .field("y", y)
+                .field("duration_ms", duration_ms)
+                .finish(),
+            RunnerCommand::Swipe {
+                from,
+                to,
+                duration_ms,
+            } => f
+                .debug_struct("Swipe")
+                .field("from", from)
+                .field("to", to)
+                .field("duration_ms", duration_ms)
+                .finish(),
+            RunnerCommand::TypeText { text } => f
+                .debug_struct("TypeText")
+                .field("text_chars", &text.chars().count())
+                .finish_non_exhaustive(),
+            RunnerCommand::PressKey { key } => {
+                f.debug_struct("PressKey").field("key", key).finish()
+            }
+            RunnerCommand::LaunchApp { bundle_id } => f
+                .debug_struct("LaunchApp")
+                .field("bundle_id", bundle_id)
+                .finish(),
+            RunnerCommand::OpenUrl { url } => f.debug_struct("OpenUrl").field("url", url).finish(),
+            RunnerCommand::Wait { ms } => f.debug_struct("Wait").field("ms", ms).finish(),
+        }
+    }
 }
 
 impl RunnerCommand {

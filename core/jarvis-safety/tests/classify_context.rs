@@ -478,3 +478,238 @@ fn priced_controls_and_command_rows_still_ask() {
     );
     assert_eq!(classify(&tap(3), &checkout, None), RiskCategory::Payment);
 }
+
+// --- Scan windows cannot be padded (second review) --------------------------------------
+
+fn at(mut e: jarvis_proto::Element, r: jarvis_proto::Rect) -> jarvis_proto::Element {
+    e.frame = r;
+    e
+}
+
+/// 200 texts on the swipe line listed before a "Slide to pay" slider: the crossed controls
+/// are filtered to drag-reactive ones before any cap, so the slider still decides.
+#[test]
+fn padding_on_the_swipe_line_cannot_hide_a_pay_slider() {
+    use jarvis_proto::Rect;
+    let mut els = Vec::new();
+    for i in 1..=200u32 {
+        els.push(at(
+            el(i, Role::StaticText, "."),
+            Rect::new(16.0, 400.0, 361.0, 40.0),
+        ));
+    }
+    els.push(at(
+        el(201, Role::StaticText, "Total $42.10"),
+        Rect::new(16.0, 200.0, 361.0, 30.0),
+    ));
+    els.push(at(
+        el(202, Role::Slider, "Slide to pay"),
+        Rect::new(16.0, 395.0, 361.0, 44.0),
+    ));
+    let s = screen("com.example.shop", "Shop", els);
+    let a = Action::Swipe {
+        direction: Direction::Right,
+        element: None,
+    };
+    let mut small = s.clone();
+    small.elements.retain(|e| e.index > 200);
+    assert_eq!(classify(&a, &small, None), RiskCategory::Payment);
+    assert_eq!(
+        classify(&a, &s, None),
+        RiskCategory::Payment,
+        "padding hid the slider"
+    );
+}
+
+/// More drag-reactive controls on the path than are read one by one: asked
+/// (`Unverified` at least), never skipped.
+#[test]
+fn too_many_crossed_controls_ask() {
+    use jarvis_proto::Rect;
+    let els: Vec<_> = (1..=60u32)
+        .map(|i| {
+            at(
+                el(i, Role::Slider, "Volume"),
+                Rect::new(16.0, 400.0, 361.0, 40.0),
+            )
+        })
+        .collect();
+    let s = screen("com.example.app", "Example", els);
+    let a = Action::Swipe {
+        direction: Direction::Right,
+        element: None,
+    };
+    assert_ne!(classify(&a, &s, None), RiskCategory::None);
+}
+
+/// Money context is read from the whole screen: neither padding before the price (screen
+/// order, no target) nor padding right next to the target (nearest window) hides it.
+#[test]
+fn padding_cannot_push_money_out_of_any_context_scan() {
+    use jarvis_proto::Rect;
+    // No target: submit in a field that is not focused / not given.
+    let mut els: Vec<_> = (1..=300u32).map(|i| label(i, "Lorem ipsum")).collect();
+    els.push(label(301, "Total $42.10"));
+    let mut confirm = button(302, "Continue");
+    confirm.frame = Rect::new(16.0, 40.0, 361.0, 36.0);
+    els.push(confirm);
+    let s = app_screen(els.clone());
+    assert_eq!(
+        classify(&tap(999), &s, None),
+        RiskCategory::Payment,
+        "unknown target reads the whole screen"
+    );
+    // Target with 300 fillers stacked right on it and the price far away.
+    let mut els: Vec<_> = (1..=300u32)
+        .map(|i| at(label(i, "Lorem"), Rect::new(16.0, 40.0, 361.0, 36.0)))
+        .collect();
+    els.push(at(
+        label(301, "Total $42.10"),
+        Rect::new(16.0, 800.0, 361.0, 30.0),
+    ));
+    els.push(at(button(302, "OK"), Rect::new(16.0, 40.0, 361.0, 36.0)));
+    assert_eq!(
+        classify(&tap(302), &app_screen(els), None),
+        RiskCategory::Payment
+    );
+}
+
+/// The Return key is found among any number of keys.
+#[test]
+fn many_keys_cannot_hide_a_send_return_key() {
+    let mut els = vec![field(1, Role::TextField, "To")];
+    for i in 2..=260u32 {
+        els.push(el(i, Role::Key, "a"));
+    }
+    els.push(el(261, Role::Key, "send"));
+    let s = app_screen(els);
+    assert_eq!(
+        classify(&typed(Some(1), "hi", true), &s, None),
+        RiskCategory::SendMessage
+    );
+}
+
+/// `tap_point`: texts under the point never use up the window of pressable elements, and
+/// more pressable elements than are read asks.
+#[test]
+fn tap_point_reads_the_pressable_elements_under_the_point() {
+    use jarvis_proto::Rect;
+    let mut els: Vec<_> = (1..=300u32)
+        .map(|i| at(label(i, "Lorem"), Rect::new(0.0, 0.0, 393.0, 852.0)))
+        .collect();
+    els.push(at(
+        button(301, "Pay $5.00"),
+        Rect::new(100.0, 400.0, 200.0, 50.0),
+    ));
+    let s = app_screen(els);
+    let p = Action::TapPoint {
+        x: 200.0 / 393.0,
+        y: 425.0 / 852.0,
+    };
+    assert_eq!(classify(&p, &s, None), RiskCategory::Payment);
+    let els: Vec<_> = (1..=40u32)
+        .map(|i| at(button(i, "Next"), Rect::new(100.0, 400.0, 200.0, 50.0)))
+        .collect();
+    assert_ne!(classify(&p, &app_screen(els), None), RiskCategory::None);
+}
+
+// --- Carousels and list rows (second review) ---------------------------------------------
+
+/// A horizontal carousel of narrow cells (music, App Store shelves): scrolling or swiping it
+/// sideways is browsing, not a swipe action, and asks nothing.
+#[test]
+fn a_sideways_scroll_of_a_carousel_asks_nothing() {
+    use jarvis_proto::{Policy, Rect};
+    use jarvis_safety::{evaluate, Decision};
+    let els = vec![
+        at(
+            el(1, Role::Cell, "Summer Hits playlist"),
+            Rect::new(16.0, 300.0, 160.0, 160.0),
+        ),
+        at(
+            el(2, Role::Cell, "Chill Mix playlist"),
+            Rect::new(190.0, 300.0, 160.0, 160.0),
+        ),
+        at(
+            el(3, Role::Button, "Get"),
+            Rect::new(360.0, 300.0, 120.0, 160.0),
+        ),
+    ];
+    let s = screen("com.example.music", "Music", els);
+    for a in [
+        Action::Scroll {
+            direction: Direction::Right,
+            element: Some(1),
+        },
+        Action::Swipe {
+            direction: Direction::Left,
+            element: Some(2),
+        },
+        Action::Swipe {
+            direction: Direction::Left,
+            element: None,
+        },
+    ] {
+        assert_eq!(classify(&a, &s, None), RiskCategory::None, "{a:?}");
+        assert_eq!(
+            evaluate(&Policy::default(), &a, &s, None),
+            Decision::Allow,
+            "{a:?}"
+        );
+    }
+}
+
+/// A full-width list row (Mail's message list) still has swipe actions: sideways asks
+/// `Delete`, on it or across it.
+#[test]
+fn a_sideways_swipe_on_a_full_width_list_row_still_asks_delete() {
+    use jarvis_proto::Rect;
+    let els = vec![at(
+        el(1, Role::Cell, "Alex, Lunch tomorrow?, 9:41"),
+        Rect::new(0.0, 380.0, 393.0, 80.0),
+    )];
+    let s = screen("com.apple.mobilemail", "Mail", els);
+    for a in [
+        Action::Swipe {
+            direction: Direction::Left,
+            element: Some(1),
+        },
+        Action::Scroll {
+            direction: Direction::Right,
+            element: Some(1),
+        },
+        Action::Swipe {
+            direction: Direction::Left,
+            element: None,
+        },
+    ] {
+        assert_eq!(classify(&a, &s, None), RiskCategory::Delete, "{a:?}");
+    }
+}
+
+/// A plain vertical scroll of a news list whose headline contains "slide" stays free.
+#[test]
+fn a_vertical_scroll_over_a_headline_with_slide_asks_nothing() {
+    use jarvis_proto::{Policy, Rect};
+    use jarvis_safety::{evaluate, Decision};
+    let els = vec![
+        at(
+            el(1, Role::Cell, "Stocks slide as rates rise"),
+            Rect::new(0.0, 380.0, 393.0, 80.0),
+        ),
+        at(
+            el(2, Role::StaticText, "AAPL $129.00"),
+            Rect::new(16.0, 120.0, 361.0, 30.0),
+        ),
+        at(
+            el(3, Role::Button, "Buy"),
+            Rect::new(300.0, 160.0, 60.0, 40.0),
+        ),
+    ];
+    let s = screen("com.example.news", "News", els);
+    let a = Action::Scroll {
+        direction: Direction::Down,
+        element: None,
+    };
+    assert_eq!(evaluate(&Policy::default(), &a, &s, None), Decision::Allow);
+}

@@ -953,3 +953,240 @@ fn other_icons_still_open() {
         run.outcome.summary
     );
 }
+
+// ---------------------------------------------------------------------------------------
+// Spotlight and the home screen (second review): a denied app cannot be opened by
+// searching for it, by Return on a search that shows it, or by tapping a result or widget
+// that names it.
+// ---------------------------------------------------------------------------------------
+
+fn spotlight_root(children: Vec<UiNode>) -> UiNode {
+    UiNode::new(Role::Application, IPHONE_SIZE.to_rect())
+        .with_label("Home")
+        .with_children(vec![
+            UiNode::new(Role::Window, IPHONE_SIZE.to_rect()).with_children(children)
+        ])
+}
+
+/// The home screen's search with `query` typed and `results` listed below the field.
+fn spotlight(query: Option<&str>, results: &[&str]) -> Screen {
+    let mut field = UiNode::new(Role::SearchField, rect(16.0, 120.0, 361.0, 36.0))
+        .with_label("Search")
+        .hittable(true)
+        .focused(true);
+    if let Some(q) = query {
+        field = field.with_value(q);
+    }
+    let mut children = vec![field];
+    for (k, r) in results.iter().enumerate() {
+        children.push(node(
+            Role::Button,
+            r,
+            rect(16.0, 200.0 + 60.0 * k as f64, 361.0, 50.0),
+        ));
+    }
+    screen(
+        "com.apple.springboard",
+        "Home",
+        spotlight_root(children),
+        true,
+    )
+}
+
+fn deny_bank(c: &mut jarvis_proto::SessionConfig, name: &str) {
+    c.policy
+        .app_rules
+        .push(AppRule::new("com.examplebank.mobile", TrustLevel::Denied).with_name(name));
+}
+
+fn returned(acts: &[RunnerCommand]) -> bool {
+    acts.iter()
+        .any(|a| matches!(a, RunnerCommand::PressKey { key: Key::Return }))
+}
+
+fn typed_anything(acts: &[RunnerCommand]) -> bool {
+    acts.iter()
+        .any(|a| matches!(a, RunnerCommand::TypeText { .. }))
+}
+
+/// Typing a denied app's name (or a start of it, or text containing it) into the home
+/// screen's search, with or without Return, is refused before anything is typed.
+#[test]
+fn spotlight_search_for_a_denied_app_is_refused_before_typing() {
+    for (text, submit) in [
+        ("ExampleBank", true),
+        ("examplebank", false),
+        ("Example Bank", true),
+        ("Exa", true),
+        ("open ExampleBank now", true),
+    ] {
+        let mut c = config();
+        deny_bank(&mut c, "ExampleBank");
+        let r = run(
+            c,
+            "Check my bank balance",
+            MemoryStore::new(),
+            Phone::still(spotlight(None, &[])),
+            Script::model(&[
+                &format!(r#"{{"action":"type","text":"{text}","submit":{submit}}}"#),
+                &format!(r#"{{"action":"type","text":"{text}","submit":{submit}}}"#),
+            ]),
+        );
+        assert!(r.acts.is_empty(), "{text}: {:?}", r.acts);
+        assert_eq!(
+            r.outcome.status,
+            OutcomeStatus::Blocked,
+            "{text}: {}",
+            r.outcome.summary
+        );
+    }
+}
+
+/// A harmless search whose results show a denied app: the text is typed, but Return
+/// (which opens the top hit) is not pressed.
+#[test]
+fn spotlight_return_is_not_pressed_when_a_result_names_a_denied_app() {
+    let mut c = config();
+    deny_bank(&mut c, "ExampleBank");
+    let phone = Phone::new(spotlight(None, &[]), |cmd, _s: &Screen| match cmd {
+        RunnerCommand::TypeText { .. } => Transition::Go(spotlight(
+            Some("balance"),
+            &["ExampleBank", "Balance Sheets"],
+        )),
+        _ => Transition::Stay,
+    });
+    let r = run(
+        c,
+        "Check my balance",
+        MemoryStore::new(),
+        phone,
+        Script::model(&[
+            r#"{"action":"type","text":"balance","submit":true}"#,
+            r#"{"action":"fail","reason":"blocked"}"#,
+        ]),
+    );
+    assert!(typed_anything(&r.acts), "{:?}", r.acts);
+    assert!(!returned(&r.acts), "{:?}", r.acts);
+    assert!(
+        r.all_prompt_text().contains("Return was not pressed"),
+        "{}",
+        r.last_user()
+    );
+}
+
+/// A result, widget or suggestion whose label mentions a denied app as whole words is not
+/// tapped, even when the label is more than the name ("Example Bank Balance").
+#[test]
+fn a_home_screen_label_that_names_a_denied_app_is_not_tapped() {
+    for label in [
+        "Example Bank Balance",
+        "ExampleBank, 2 notifications",
+        "Open ExampleBank",
+    ] {
+        let mut c = config();
+        deny_bank(&mut c, "ExampleBank");
+        let home = spotlight(None, &[label]);
+        let i = index_of(&home, label);
+        let tap = format!(r#"{{"action":"tap","element":{i}}}"#);
+        let r = run(
+            c,
+            "Check my balance",
+            MemoryStore::new(),
+            Phone::still(home),
+            Script::model(&[&tap, &tap]),
+        );
+        assert!(r.acts.is_empty(), "{label}: {:?}", r.acts);
+        assert_eq!(r.outcome.status, OutcomeStatus::Blocked, "{label}");
+    }
+}
+
+/// Unrelated searches still work, and a name that only shares a word with a denied one is
+/// not refused: "weather", and "Example Mail" while "Example Bank" is denied. A label that
+/// only starts like a denied name ("Mail" while "Mailchimp" is denied) is tapped; typing
+/// "Mail" into the search is refused, because its top hit may be Mailchimp (the documented
+/// trade-off of the prefix rule; `open_app "Mail"` resolves exactly).
+#[test]
+fn spotlight_rules_leave_unrelated_apps_alone() {
+    for (deny, text) in [("ExampleBank", "weather"), ("Example Bank", "Example Mail")] {
+        let mut c = config();
+        deny_bank(&mut c, deny);
+        let r = run(
+            c,
+            "Search",
+            MemoryStore::new(),
+            Phone::still(spotlight(None, &[])),
+            Script::model(&[
+                &format!(r#"{{"action":"type","text":"{text}","submit":true}}"#),
+                r#"{"action":"done","summary":"searched"}"#,
+            ]),
+        );
+        assert!(typed_anything(&r.acts), "{text}: {:?}", r.acts);
+        assert!(returned(&r.acts), "{text}: {:?}", r.acts);
+    }
+    let mut c = config();
+    c.policy
+        .app_rules
+        .push(AppRule::new("com.mailchimp.app", TrustLevel::Denied).with_name("Mailchimp"));
+    c.known_apps
+        .push(jarvis_proto::AppInfo::new("com.apple.mobilemail", "Mail"));
+    let home = spotlight(None, &["Mail"]);
+    let i = index_of(&home, "Mail");
+    let r = run(
+        c.clone(),
+        "Open Mail",
+        MemoryStore::new(),
+        Phone::still(home),
+        Script::model(&[
+            &format!(r#"{{"action":"tap","element":{i}}}"#),
+            r#"{"action":"done","summary":"opened"}"#,
+        ]),
+    );
+    assert_eq!(r.acts.len(), 1, "{:?}", r.acts);
+    let r = run(
+        c,
+        "Open Mail",
+        MemoryStore::new(),
+        Phone::still(spotlight(None, &[])),
+        Script::model(&[
+            r#"{"action":"type","text":"Mail","submit":true}"#,
+            r#"{"action":"fail","reason":"x"}"#,
+        ]),
+    );
+    assert!(r.acts.is_empty(), "{:?}", r.acts);
+}
+
+/// End to end: a page that puts 200 texts across the screen's middle before a "Slide to
+/// pay" slider cannot get an element-less swipe across the slider sent unasked.
+#[test]
+fn padding_cannot_hide_a_pay_slider_from_an_elementless_swipe() {
+    let mut children = vec![
+        text("Checkout", rect(16.0, 70.0, 200.0, 40.0)),
+        text("Total $42.10", rect(16.0, 200.0, 361.0, 30.0)),
+    ];
+    for i in 0..200 {
+        children.push(text(
+            &format!("Note line {i}"),
+            rect(16.0, 400.0, 361.0, 30.0),
+        ));
+    }
+    children.push(
+        UiNode::new(Role::Slider, rect(16.0, 395.0, 361.0, 44.0))
+            .with_label("Slide to pay")
+            .with_value("0")
+            .hittable(true),
+    );
+    let page = screen("com.example.shop", "Shop", spotlight_root(children), false);
+    let r = run(
+        config(),
+        "Look around",
+        MemoryStore::new(),
+        Phone::still(page),
+        Script::model(&[
+            r#"{"action":"swipe","direction":"right"}"#,
+            r#"{"action":"fail","reason":"x"}"#,
+        ]),
+    );
+    assert!(r.acts.is_empty(), "{:?}", r.acts);
+    assert_eq!(r.confirms.len(), 1, "{:?}", r.confirms);
+    assert_eq!(r.confirms[0].category, RiskCategory::Payment);
+}

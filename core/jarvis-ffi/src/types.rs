@@ -235,8 +235,9 @@ pub enum Key {
     Home,
 }
 
-/// A command for the XCUITest runner, in absolute screen points.
-#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+/// A command for the XCUITest runner, in absolute screen points. Its Rust `Debug` output
+/// never shows the text of `typeText`, only its length.
+#[derive(Clone, PartialEq, uniffi::Enum)]
 pub enum RunnerCommand {
     Tap {
         x: f64,
@@ -462,8 +463,9 @@ pub struct Policy {
     pub max_locked_wait_ms: u64,
 }
 
-/// One input to the session.
-#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+/// One input to the session. Its Rust `Debug` output never shows the owner's answer text
+/// (`userAnswer`), only its length.
+#[derive(Clone, PartialEq, uniffi::Enum)]
 pub enum Event {
     Start,
     /// A typed screen (tests, simulators, or a shell that builds the tree itself).
@@ -1337,4 +1339,89 @@ pub enum EntropyProblem {
     TooShort,
     /// Obviously not random (all zero, constant, a short repeated pattern).
     NotRandom,
+}
+
+impl std::fmt::Debug for RunnerCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunnerCommand::Tap { x, y } => {
+                f.debug_struct("Tap").field("x", x).field("y", y).finish()
+            }
+            RunnerCommand::LongPress { x, y, duration_ms } => f
+                .debug_struct("LongPress")
+                .field("x", x)
+                .field("y", y)
+                .field("duration_ms", duration_ms)
+                .finish(),
+            RunnerCommand::Swipe {
+                from,
+                to,
+                duration_ms,
+            } => f
+                .debug_struct("Swipe")
+                .field("from", from)
+                .field("to", to)
+                .field("duration_ms", duration_ms)
+                .finish(),
+            RunnerCommand::TypeText { text } => f
+                .debug_struct("TypeText")
+                .field("text_chars", &text.chars().count())
+                .finish_non_exhaustive(),
+            RunnerCommand::PressKey { key } => {
+                f.debug_struct("PressKey").field("key", key).finish()
+            }
+            RunnerCommand::LaunchApp { bundle_id } => f
+                .debug_struct("LaunchApp")
+                .field("bundle_id", bundle_id)
+                .finish(),
+            RunnerCommand::OpenUrl { url } => f.debug_struct("OpenUrl").field("url", url).finish(),
+            RunnerCommand::Wait { ms } => f.debug_struct("Wait").field("ms", ms).finish(),
+        }
+    }
+}
+
+impl std::fmt::Debug for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Event::Start => f.write_str("Start"),
+            Event::Observed { observation } => f
+                .debug_struct("Observed")
+                .field("observation", observation)
+                .finish(),
+            Event::ObservedRunnerText { snapshot } => f
+                .debug_struct("ObservedRunnerText")
+                .field("snapshot", snapshot)
+                .finish(),
+            Event::ModelOutput { output } => f
+                .debug_struct("ModelOutput")
+                .field("output", output)
+                .finish(),
+            Event::ModelFailed { error } => {
+                f.debug_struct("ModelFailed").field("error", error).finish()
+            }
+            Event::ActResult { result } => {
+                f.debug_struct("ActResult").field("result", result).finish()
+            }
+            Event::ToolResult { result } => f
+                .debug_struct("ToolResult")
+                .field("result", result)
+                .finish(),
+            Event::UserDecision { approved } => f
+                .debug_struct("UserDecision")
+                .field("approved", approved)
+                .finish(),
+            Event::UserAnswer { text } => f
+                .debug_struct("UserAnswer")
+                .field("text_chars", &text.chars().count())
+                .finish_non_exhaustive(),
+            Event::Cancel => f.write_str("Cancel"),
+            Event::DeviceLocked => f.write_str("DeviceLocked"),
+            Event::DeviceUnlocked => f.write_str("DeviceUnlocked"),
+            Event::Tick => f.write_str("Tick"),
+            Event::ObserveFailed { reason } => f
+                .debug_struct("ObserveFailed")
+                .field("reason", reason)
+                .finish(),
+        }
+    }
 }

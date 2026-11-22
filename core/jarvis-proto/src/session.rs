@@ -20,8 +20,10 @@ use crate::ui::Observation;
 ///
 /// `Observed` is not boxed: one event moves per step, and a plain payload keeps the type
 /// simple to mirror across FFI.
+///
+/// `Debug` never shows the owner's answer text (`UserAnswer`), only its length.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     /// Begin the task.
@@ -71,6 +73,37 @@ pub enum Event {
         /// What went wrong, for the log.
         reason: String,
     },
+}
+
+impl std::fmt::Debug for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Event::Start => f.write_str("Start"),
+            Event::Observed(o) => f.debug_tuple("Observed").field(o).finish(),
+            Event::ModelOutput(o) => f.debug_tuple("ModelOutput").field(o).finish(),
+            Event::ModelFailed { error } => {
+                f.debug_struct("ModelFailed").field("error", error).finish()
+            }
+            Event::ActResult(r) => f.debug_tuple("ActResult").field(r).finish(),
+            Event::ToolResult(r) => f.debug_tuple("ToolResult").field(r).finish(),
+            Event::UserDecision { approved } => f
+                .debug_struct("UserDecision")
+                .field("approved", approved)
+                .finish(),
+            Event::UserAnswer { text } => f
+                .debug_struct("UserAnswer")
+                .field("text_chars", &text.chars().count())
+                .finish_non_exhaustive(),
+            Event::Cancel => f.write_str("Cancel"),
+            Event::DeviceLocked => f.write_str("DeviceLocked"),
+            Event::DeviceUnlocked => f.write_str("DeviceUnlocked"),
+            Event::Tick => f.write_str("Tick"),
+            Event::ObserveFailed { reason } => f
+                .debug_struct("ObserveFailed")
+                .field("reason", reason)
+                .finish(),
+        }
+    }
 }
 
 impl Event {

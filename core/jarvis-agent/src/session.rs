@@ -83,9 +83,10 @@ use jarvis_proto::{
 };
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
-    check_app, check_app_name, check_confinement, evaluate, first_use_app, first_use_request,
-    is_springboard, redact, redact_screen, sanitize_screen_text, summarize, Budget, BudgetVerdict,
-    Decision, Verdict,
+    approval_context, check_app, check_app_name, check_confinement, evaluate, first_use_app,
+    first_use_request, is_springboard, label_names_denied_app, redact, redact_screen,
+    sanitize_screen_text, search_names_denied_app, summarize, Budget, BudgetVerdict, Decision,
+    Verdict,
 };
 
 use crate::changes::describe_change;
@@ -120,6 +121,11 @@ const REPEAT_FINAL: u32 = 5;
 const SAME_LAYOUT: f64 = 0.75;
 /// App deny-list hits after which the session is blocked.
 const MAX_APP_DENIALS: u32 = 2;
+/// Approved actions not carried out because the screen changed after the approval, after
+/// which the session ends `Failed`: a screen that keeps changing must not keep the owner
+/// answering prompts until the step budget runs out (a harmless step between prompts
+/// resets the failure count, so the failure budget alone does not bound it).
+pub const MAX_STALE_APPROVALS: u32 = 3;
 /// Characters of tool output or answers kept in the history.
 const MAX_RESULT_CHARS: usize = 300;
 /// Known app names listed when `open_app` names an unknown app.
@@ -393,6 +399,9 @@ pub struct Session {
     /// A lock left some action's result unknown: the recording is not trustworthy, so no
     /// learned flow is saved from this session.
     lock_uncertain: bool,
+    /// Approved actions not carried out because the screen changed after the approval
+    /// (see [`MAX_STALE_APPROVALS`]).
+    stale_approvals: u32,
 }
 
 impl std::fmt::Debug for Session {
@@ -405,6 +414,7 @@ impl std::fmt::Debug for Session {
             .field("app", &self.current.screen.app_bundle_id)
             .field("declined", &self.declined)
             .field("approved_apps", &self.approved_apps)
+            .field("stale_approvals", &self.stale_approvals)
             .field("declined_apps", &self.declined_apps)
             .field("replaying", &self.replay.is_some())
             .field("memory", &self.memory)
@@ -519,6 +529,7 @@ impl Session {
             locked_total_ms: 0,
             lock_waits: 0,
             lock_uncertain: false,
+            stale_approvals: 0,
         }
     }
 
@@ -1155,6 +1166,14 @@ impl Session {
             Some(fresh) => self.execute(fresh),
             None => {
                 self.record_failure(&pending, prompt::RESULT_APPROVAL_STALE);
+                self.stale_approvals = self.stale_approvals.saturating_add(1);
+                if self.stale_approvals >= MAX_STALE_APPROVALS {
+                    let summary = format!(
+                        "Stopped: the screen changed after the owner approved an action {} times, so nothing approved was done. Try again when the screen is settled.",
+                        self.stale_approvals
+                    );
+                    return self.finish(now, OutcomeStatus::Failed, &summary);
+                }
                 self.decide(now)
             }
         }
@@ -1163,8 +1182,12 @@ impl Session {
     /// `pending` re-planned on the current screen, when it is still the action the owner
     /// approved: the same app (for actions inside it); the same target control (same
     /// fingerprint, role and label) whose frame still contains the point that was planned;
-    /// and a gate decision on the fresh screen that asks for nothing new (no denial, and no
-    /// confirmation other than the one approved). `None` otherwise.
+    /// the same approval context ([`jarvis_safety::ApprovalContext`]: the target's value
+    /// and on/off state, its row and the texts just before it, every amount on the screen
+    /// and the texts the classifier read), captured from the screen the question was asked
+    /// about (`pending.before`); and a gate decision on the fresh screen that asks for
+    /// nothing new (no denial, and no confirmation other than the one approved, with the
+    /// same category and summary). `None` otherwise.
     fn recheck_approved(
         &self,
         pending: &Pending,
@@ -1199,6 +1222,10 @@ impl Session {
                 return None;
             }
         } else if action.element().is_some() {
+            return None;
+        }
+        let asked = approval_context(&pending.action, before);
+        if !asked.holds_on(&action, screen) {
             return None;
         }
         let executed = match &action {
@@ -1756,6 +1783,7 @@ impl Session {
             Some(HomeLaunch::App { bundle_id, label }) => {
                 if check_app(policy, bundle_id).is_denied()
                     || check_app_name(policy, &self.apps, label).is_denied()
+                    || label_names_denied_app(policy, &self.apps, label).is_some()
                 {
                     return Err(Reject::AppDenied(format!(
                         "{} is on the deny list",
@@ -1767,7 +1795,8 @@ impl Session {
                 }
             }
             Some(HomeLaunch::Unknown { label })
-                if check_app_name(policy, &self.apps, label).is_denied() =>
+                if check_app_name(policy, &self.apps, label).is_denied()
+                    || label_names_denied_app(policy, &self.apps, label).is_some() =>
             {
                 return Err(Reject::AppDenied(format!(
                     "{} is on the deny list",
@@ -1821,6 +1850,18 @@ impl Session {
             },
             other => other.clone(),
         };
+        // 2a. Typing on the home screen searches (Spotlight), and Spotlight opens its top
+        //     hit on Return: text that names, contains or starts a denied app's name is
+        //     refused before it is typed (see `search_names_denied_app`).
+        if let Action::Type { text, .. } = &executed {
+            if is_springboard(&screen.app_bundle_id)
+                && search_names_denied_app(policy, &self.apps, text).is_some()
+            {
+                return Err(Reject::AppDenied(
+                    "searching the home screen for an app on the deny list".to_owned(),
+                ));
+            }
+        }
         // 3. Safety: validation, deny list, risk classification, confirmation gate.
         let decision = evaluate(policy, &executed, screen, tool);
         if let Decision::Deny(reason) = &decision {
@@ -2035,6 +2076,11 @@ impl Session {
                 if then.is_empty() {
                     return self.verify(now, pending);
                 }
+                if let Some(msg) = self.denied_search_result() {
+                    // Return on the home screen opens Spotlight's top hit: not pressed
+                    // while any result names a denied app.
+                    return self.denied_after_typing(now, &pending, &msg);
+                }
                 return self.continue_act(then, pending);
             }
             TypedVerdict::Mismatch { kind, found } => (kind, found),
@@ -2085,6 +2131,37 @@ impl Session {
             }
         );
         self.record_failure(&pending, &msg);
+        self.decide(now)
+    }
+
+    /// On the home screen (Spotlight, App Library, widgets): why pressing Return or a
+    /// result now could open a denied app (a result or top hit whose label names one, see
+    /// `label_names_denied_app`); `None` elsewhere or when nothing does.
+    fn denied_search_result(&self) -> Option<String> {
+        let screen = &self.current.screen;
+        if !is_springboard(&screen.app_bundle_id) {
+            return None;
+        }
+        screen.elements.iter().find_map(|e| {
+            label_names_denied_app(&self.config.policy, &self.apps, &e.label).map(|_| {
+                format!(
+                    "the search shows \"{}\", an app on the deny list",
+                    clean(&e.label, 60)
+                )
+            })
+        })
+    }
+
+    /// A held-back Return not pressed because the search shows a denied app: counted like
+    /// every deny-list hit (`Blocked` at [`MAX_APP_DENIALS`]); nothing more is sent.
+    fn denied_after_typing(&mut self, now: u64, pending: &Pending, msg: &str) -> Effect {
+        self.app_denials = self.app_denials.saturating_add(1);
+        if self.app_denials >= MAX_APP_DENIALS {
+            self.log_step(&pending.action, false);
+            let summary = format!("Blocked: {msg}.");
+            return self.finish(now, OutcomeStatus::Blocked, &summary);
+        }
+        self.record_failure(pending, &format!("not done: Return was not pressed: {msg}"));
         self.decide(now)
     }
 

@@ -966,3 +966,40 @@ fn ffi_values_round_trip_through_proto() {
     };
     assert_eq!(f::Role::from(p::Role::from(role.clone())), role);
 }
+
+/// `Debug` of the FFI records that carry typed text or the owner's answer shows its length
+/// only (the text may hold substituted profile values).
+#[test]
+fn ffi_debug_never_shows_typed_text_or_answers() {
+    let secret = "4111 1111 1111 1111 secret-note";
+    let cmd = f::RunnerCommand::TypeText {
+        text: secret.to_owned(),
+    };
+    let effect = f::Effect::Act {
+        command: cmd.clone(),
+    };
+    let answer = f::Event::UserAnswer {
+        text: secret.to_owned(),
+    };
+    for shown in [
+        format!("{cmd:?}"),
+        format!("{effect:?}"),
+        format!("{answer:?}"),
+    ] {
+        assert!(
+            !shown.contains("4111") && !shown.contains("secret"),
+            "{shown}"
+        );
+        assert!(shown.contains("text_chars"), "{shown}");
+    }
+    // The proto types behave the same.
+    let p_cmd = p::RunnerCommand::TypeText {
+        text: secret.to_owned(),
+    };
+    let p_effect = p::Effect::Act(p_cmd.clone());
+    for shown in [format!("{p_cmd:?}"), format!("{p_effect:?}")] {
+        assert!(!shown.contains("4111"), "{shown}");
+    }
+    // Other commands still show their fields.
+    assert!(format!("{:?}", f::RunnerCommand::Tap { x: 1.0, y: 2.0 }).contains("x: 1.0"));
+}

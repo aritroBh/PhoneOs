@@ -215,7 +215,7 @@ const MAX_AMOUNT_CHARS: usize = 24;
 
 /// Char ranges (start, end) of the amounts in `chars`: words that read as money on their
 /// own ("$500", "500€") or with their neighbour ("USD 500", "500 EUR").
-fn amount_ranges(chars: &[char]) -> Vec<(usize, usize)> {
+pub(crate) fn amount_ranges(chars: &[char]) -> Vec<(usize, usize)> {
     let mut words: Vec<(usize, usize)> = Vec::new();
     let mut start = None;
     for (i, c) in chars.iter().enumerate() {
@@ -276,11 +276,47 @@ fn is_currency_word(w: &str) -> bool {
     CURRENCY_WORDS.contains(&w.as_str())
 }
 
+/// The value of an amount as written ("$1,500.00" → 1500.0, "1.500,50 €" → 1500.5,
+/// "USD 42" → 42.0): its first run of digits and `,`/`.` separators, where the last
+/// separator is the decimal point when one or two digits follow it and every other
+/// separator groups thousands. `None` when it has no digits.
+pub(crate) fn amount_value(text: &str) -> Option<f64> {
+    let run: String = text
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit() || *c == ',' || *c == '.')
+        .collect();
+    let run = run.trim_end_matches([',', '.']);
+    if run.is_empty() {
+        return None;
+    }
+    let (int_part, frac_part) = match run.rfind([',', '.']) {
+        Some(i) => {
+            let frac = run.get(i.saturating_add(1)..).unwrap_or("");
+            if (1..=2).contains(&frac.len()) {
+                (run.get(..i).unwrap_or(""), frac)
+            } else {
+                (run, "")
+            }
+        }
+        None => (run, ""),
+    };
+    let digits: String = int_part.chars().filter(char::is_ascii_digit).collect();
+    let number = if frac_part.is_empty() {
+        digits
+    } else {
+        format!("{digits}.{frac_part}")
+    };
+    number.parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
 /// A label for the owner's summary: redacted and sanitised like [`clean`], and when longer
 /// than `max` characters shortened from the middle, keeping its start and its end
-/// ("Confirm and pay … $500"), so a trailing amount is never cut off. Amounts in the
-/// part that is cut are kept too (`head … $42.10 … tail`), even if that makes the label a
-/// little longer than `max`.
+/// ("Confirm and pay … $500"), so a trailing amount is never cut off. Of the amounts in the
+/// part that is cut, the [`MAX_KEPT_AMOUNTS`] largest (by value; the largest always, equal
+/// ones once) are kept in their order (`head … $499.99 … tail`), and the rest are counted
+/// ("… and 3 more amounts …"), even if that makes the label a little longer than `max`:
+/// decoy amounts cannot hide the real charge.
 fn clean_label(s: &str, max: usize) -> String {
     let full = clean(s, crate::sanitize::MAX_SCREEN_TEXT_CHARS);
     let chars: Vec<char> = full.chars().collect();
@@ -292,8 +328,13 @@ fn clean_label(s: &str, max: usize) -> String {
         .iter()
         .take(MAX_KEPT_AMOUNTS)
         .map(|(a, b)| (b - a).min(MAX_AMOUNT_CHARS) + 3)
-        .sum();
-    let room = max.saturating_sub(kept_len.saturating_add(3)).max(8);
+        .sum::<usize>()
+        + if amounts.len() > MAX_KEPT_AMOUNTS {
+            24
+        } else {
+            0
+        };
+    let room = max.saturating_sub(kept_len.saturating_add(3)).max(24);
     let mut head_len = room / 2;
     let mut tail_start = chars.len().saturating_sub(room - head_len);
     // Cut at word boundaries when one is near.
@@ -326,15 +367,44 @@ fn clean_label(s: &str, max: usize) -> String {
             .trim()
             .to_owned()
     };
-    let mut parts = vec![piece(0, head_len)];
-    for &(a, b) in amounts
+    // The amounts in the cut part, largest first (ties: the earlier one).
+    let mut middle: Vec<(usize, usize, f64)> = amounts
         .iter()
         .filter(|(a, b)| *a >= head_len && *b <= tail_start)
-    {
-        if parts.len() > MAX_KEPT_AMOUNTS {
+        .map(|&(a, b)| (a, b, amount_value(&piece(a, b)).unwrap_or(-1.0)))
+        .collect();
+    let total = middle.len();
+    middle.sort_by(|x, y| y.2.total_cmp(&x.2).then(x.0.cmp(&y.0)));
+    let mut kept: Vec<(usize, String)> = Vec::new();
+    for &(a, b, _) in &middle {
+        if kept.len() >= MAX_KEPT_AMOUNTS {
             break;
         }
-        parts.push(piece(a, b.min(a.saturating_add(MAX_AMOUNT_CHARS))));
+        let text = piece(a, b.min(a.saturating_add(MAX_AMOUNT_CHARS)));
+        if !kept.iter().any(|(_, t)| *t == text) {
+            kept.push((a, text));
+        }
+    }
+    let shown = kept.len();
+    // Equal amounts shown once still count as shown.
+    let hidden = total.saturating_sub(
+        middle
+            .iter()
+            .filter(|&&(a, b, _)| {
+                let text = piece(a, b.min(a.saturating_add(MAX_AMOUNT_CHARS)));
+                kept.iter().any(|(_, t)| *t == text)
+            })
+            .count()
+            .max(shown),
+    );
+    kept.sort_by_key(|(a, _)| *a);
+    let mut parts = vec![piece(0, head_len)];
+    parts.extend(kept.into_iter().map(|(_, t)| t));
+    if hidden > 0 {
+        parts.push(format!(
+            "and {hidden} more amount{}",
+            if hidden == 1 { "" } else { "s" }
+        ));
     }
     parts.push(piece(tail_start, chars.len()));
     parts.retain(|p| !p.is_empty());
@@ -360,6 +430,111 @@ fn describe_index(screen: &CompactScreen, index: u32) -> String {
         .map_or_else(|| format!("element {index}"), describe)
 }
 
+/// Longest neighbourhood text quoted after "next to", in characters.
+const MAX_NEIGHBOUR_CHARS: usize = 40;
+/// Longest amount text quoted in parentheses, in characters.
+const MAX_AMOUNT_TEXT_CHARS: usize = 40;
+
+/// Whether `el` is an on/off switch, and if so whether it is on (`value` "1"/"on"/"true"
+/// or "0"/"off"/"false"; any other value is unknown).
+pub(crate) fn switch_is_on(el: &Element) -> Option<bool> {
+    let switch = match &el.role {
+        jarvis_proto::Role::Switch => true,
+        jarvis_proto::Role::Other(name) => {
+            let n = name.to_lowercase();
+            n.contains("switch") || n.contains("toggle")
+        }
+        _ => false,
+    };
+    if !switch {
+        return None;
+    }
+    match el
+        .value
+        .as_deref()
+        .map(|v| v.trim().to_lowercase())
+        .as_deref()
+    {
+        Some("1" | "on" | "true") => Some(true),
+        Some("0" | "off" | "false") => Some(false),
+        _ => None,
+    }
+}
+
+/// Whether two frames share part of their vertical extent (the same row band).
+pub(crate) fn same_row(a: &jarvis_proto::Rect, b: &jarvis_proto::Rect) -> bool {
+    a.y < b.max_y() && b.y < a.max_y()
+}
+
+/// The static texts in `el`'s row band (see [`same_row`]), in screen order, that say more
+/// than `el`'s own label: what tells one "Buy" from another ("Socks", "$5.00").
+fn row_texts<'a>(el: &Element, screen: &'a CompactScreen) -> Vec<&'a str> {
+    let own = el.label.to_lowercase();
+    screen
+        .elements
+        .iter()
+        .filter(|e| e.index != el.index && e.role == jarvis_proto::Role::StaticText)
+        .filter(|e| !e.frame.is_empty() && same_row(&e.frame, &el.frame))
+        .map(|e| e.label.trim())
+        .filter(|l| !l.is_empty() && !own.contains(&l.to_lowercase()))
+        .collect()
+}
+
+/// The text with an amount nearest (vertically) to `el`, other than `el` itself: the
+/// amount a press of `el` most likely concerns ("Total $5.00" above a "Pay" button).
+fn nearest_amount_text(el: &Element, screen: &CompactScreen) -> Option<String> {
+    let y = el.frame.center().y;
+    screen
+        .elements
+        .iter()
+        .filter(|e| e.index != el.index && !e.secure && e.role != jarvis_proto::Role::Key)
+        .map(|e| (e, crate::classify::element_text(e)))
+        .filter(|(_, t)| has_money(t))
+        .min_by(|(a, _), (b, _)| {
+            (a.frame.center().y - y)
+                .abs()
+                .total_cmp(&(b.frame.center().y - y).abs())
+                .then(a.index.cmp(&b.index))
+        })
+        .map(|(_, t)| t)
+}
+
+/// The summary of pressing `el` (`verb` "Tap" or "Long-press"), saying what distinguishes
+/// it: a tap on an on/off switch says what it will do (`Turn on "Wi-Fi" in Settings`); a
+/// control whose row has other text names it (`Tap "Buy" next to "Socks $5.00" in Shop`);
+/// when neither the control nor its row shows an amount but the screen does, the nearest
+/// one is added (`Tap "Pay" in Shop (Total $5.00)`). Screen text is cleaned like every
+/// label (quotes become `'`, parentheses are dropped from the amount text), so it cannot
+/// pose as the summary's own structure.
+fn press_summary(verb: &str, el: &Element, screen: &CompactScreen, in_app: &str) -> String {
+    let what = describe(el);
+    if verb == "Tap" {
+        if let Some(on) = switch_is_on(el) {
+            let turn = if on { "Turn off" } else { "Turn on" };
+            return format!("{turn} {what}{in_app}");
+        }
+    }
+    let row = row_texts(el, screen).join(" ");
+    let next_to = if row.is_empty() {
+        String::new()
+    } else {
+        format!(" next to \"{}\"", clean_label(&row, MAX_NEIGHBOUR_CHARS))
+    };
+    let shows_amount = has_money(&crate::classify::element_text(el)) || has_money(&row);
+    let amount = if shows_amount {
+        None
+    } else {
+        nearest_amount_text(el, screen)
+    };
+    let amount = amount
+        .map(|t| {
+            let t = clean_label(&t, MAX_AMOUNT_TEXT_CHARS).replace(['(', ')'], "");
+            format!(" ({})", t.split_whitespace().collect::<Vec<_>>().join(" "))
+        })
+        .unwrap_or_default();
+    format!("{verb} {what}{next_to}{in_app}{amount}")
+}
+
 /// A one-line, human-readable, sanitised description of `action` for a confirmation
 /// prompt, e.g. `Tap "Pay $42.10" in Amazon`. Typed secrets are never shown.
 pub fn summarize(action: &Action, screen: &CompactScreen, tool: Option<&ToolSpec>) -> String {
@@ -374,10 +549,14 @@ fn summarize_with(action: &Action, screen: &CompactScreen, category: RiskCategor
         .unwrap_or(&screen.app_bundle_id);
     let in_app = format!(" in {}", clean(app_name, MAX_QUOTE_CHARS));
     let line = match action {
-        Action::Tap { element } => format!("Tap {}{in_app}", describe_index(screen, *element)),
-        Action::LongPress { element, .. } => {
-            format!("Long-press {}{in_app}", describe_index(screen, *element))
-        }
+        Action::Tap { element } => match screen.get(*element) {
+            Some(el) => press_summary("Tap", el, screen, &in_app),
+            None => format!("Tap element {element}{in_app}"),
+        },
+        Action::LongPress { element, .. } => match screen.get(*element) {
+            Some(el) => press_summary("Long-press", el, screen, &in_app),
+            None => format!("Long-press element {element}{in_app}"),
+        },
         Action::Type {
             element,
             text,

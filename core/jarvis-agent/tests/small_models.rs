@@ -265,10 +265,12 @@ fn an_unknown_icon_asks_first_with_its_label() {
         ),
         ..home()
     };
-    let submit = "{\"action\":\"type\",\"element\":1,\"text\":\"pass\",\"submit\":true}";
+    // ("pass" was used here before; it starts the default-denied "Passwords", which is now
+    // refused before it is typed: see `spotlight_*` in session_safety.rs.)
+    let submit = "{\"action\":\"type\",\"element\":1,\"text\":\"weather\",\"submit\":true}";
     let searched = run(
         first_use_config(),
-        "Search for pass",
+        "Search for weather",
         MemoryStore::new(),
         Phone::still(search),
         Script::model(&[submit, "{\"action\":\"fail\"}"]).decisions(&[false]),

@@ -85,20 +85,25 @@ const GENERIC_ID_PARTS: &[&str] = &[
 
 /// The component of a (normalised) bundle id that a display name is matched against: the
 /// last one that is not a generic word (`com.apple.Passwords` → `passwords`,
-/// `com.examplebank.mobile` → `examplebank`), else the last one.
+/// `com.examplebank.mobile` → `examplebank`). An entry without dots is a name itself and is
+/// used whole. A dotted id whose only components after the reverse-DNS head are generic
+/// (`com.mobile`, `com.app`) has no name part: matching every display name that contains
+/// the word "mobile" would deny unrelated apps; such an entry still denies by bundle id.
 fn name_part(id: &str) -> Option<&str> {
     let mut parts = id.rsplit('.');
     let last = parts.next()?;
     if !GENERIC_ID_PARTS.contains(&last) {
         return Some(last);
     }
-    // Never the reverse-DNS head (`com` of `com.mobile`).
     let rest: Vec<&str> = parts.collect();
+    if rest.is_empty() {
+        return Some(last);
+    }
+    // Never the reverse-DNS head (`com` of `com.mobile`).
     rest.iter()
         .take(rest.len().saturating_sub(1))
         .find(|p| !p.is_empty() && !GENERIC_ID_PARTS.contains(p))
         .copied()
-        .or(Some(last))
 }
 
 /// A display name folded for equality: case and look-alike letters folded, everything but
@@ -141,6 +146,105 @@ pub fn check_app_name(policy: &Policy, known_apps: &[AppInfo], name: &str) -> Ve
         }
     }
     Verdict::Allow
+}
+
+/// Shortest search text (folded, letters and digits only) that is matched as the start of
+/// a denied app's name. "Ex" is too short to mean anything; "Exa" is what Spotlight would
+/// already complete to "ExampleBank".
+pub const MIN_SEARCH_PREFIX: usize = 3;
+
+/// The folded display names of the apps `policy` denies: every `denied_apps` entry (a name
+/// as written, or a bundle id's name part, plus the aliases of denied built-in apps), every
+/// `Denied` app rule (its `name` and its prefix's name part) and the `known_apps` names of
+/// denied bundle ids. Sorted, without duplicates; names that fold to nothing are dropped.
+pub fn denied_app_names(policy: &Policy, known_apps: &[AppInfo]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let from_id = |id: &str, out: &mut Vec<String>| {
+        let n = normalize(id.trim().trim_end_matches('*'));
+        if let Some(part) = name_part(n.trim_end_matches('.')) {
+            out.push(fold_name(part));
+        }
+        for (alias, aliased) in NAME_ALIASES {
+            if normalize(aliased) == n {
+                out.push(fold_name(alias));
+            }
+        }
+    };
+    for entry in &policy.denied_apps {
+        from_id(entry, &mut out);
+    }
+    for rule in policy
+        .app_rules
+        .iter()
+        .filter(|r| r.level == TrustLevel::Denied)
+    {
+        from_id(rule_prefix(rule), &mut out);
+        if let Some(name) = &rule.name {
+            out.push(fold_name(name));
+        }
+    }
+    for app in known_apps {
+        if check_app(policy, &app.bundle_id).is_denied() {
+            out.push(fold_name(&app.name));
+        }
+    }
+    out.retain(|n| !n.is_empty());
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The denied app (folded name, see [`denied_app_names`]) that searching for `text` on the
+/// home screen (Spotlight) may bring up as its top hit: the folded text equals the name,
+/// contains it (names of at least [`MIN_SEARCH_PREFIX`] characters), or is the start of
+/// it and at least [`MIN_SEARCH_PREFIX`] characters long ("exampleb" for "ExampleBank").
+///
+/// Trade-off: a prefix of a denied name is refused even when it is also a whole other
+/// app's name ("Mail" while "Mailchimp" is denied), because Spotlight's top hit for it may
+/// be the denied app; `open_app` by name, which resolves exactly, still reaches the other
+/// app. Sharing a word is not enough: "Example Mail" is not refused for a denied
+/// "Example Bank".
+pub fn search_names_denied_app(
+    policy: &Policy,
+    known_apps: &[AppInfo],
+    text: &str,
+) -> Option<String> {
+    let t = fold_name(text);
+    if t.is_empty() {
+        return None;
+    }
+    denied_app_names(policy, known_apps).into_iter().find(|n| {
+        t == *n
+            || (n.chars().count() >= MIN_SEARCH_PREFIX && t.contains(n.as_str()))
+            || (t.chars().count() >= MIN_SEARCH_PREFIX && n.starts_with(t.as_str()))
+    })
+}
+
+/// The denied app (folded name) that `label` names somewhere in it as whole words: a run
+/// of its words that, joined, equals the name ("Example Bank Balance" names "ExampleBank";
+/// "Mail" does not name "Mailchimp"). For labels on the home screen, Spotlight, the App
+/// Library and widgets, where tapping anything that mentions an app may open it.
+pub fn label_names_denied_app(
+    policy: &Policy,
+    known_apps: &[AppInfo],
+    label: &str,
+) -> Option<String> {
+    let words = tokens(label);
+    if words.is_empty() {
+        return None;
+    }
+    denied_app_names(policy, known_apps).into_iter().find(|n| {
+        (0..words.len()).any(|start| {
+            let mut joined = String::new();
+            for w in words.iter().skip(start) {
+                joined.push_str(w);
+                if joined.len() >= n.len() {
+                    break;
+                }
+            }
+            joined == *n
+        })
+    })
 }
 
 /// Whether the words of `needle` appear contiguously among the words of `hay`, or `hay`'s
