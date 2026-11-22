@@ -331,6 +331,7 @@ def load(name):
 
 summary, tests = load("summary.json"), load("tests.json")
 cases = []  # (identifier, result, [failure messages])
+durations = []  # (seconds, identifier)
 
 def walk(node, path):
     kind, label = node.get("nodeType", ""), node.get("name", "")
@@ -343,6 +344,10 @@ def walk(node, path):
                 collect(c)
         collect(node)
         cases.append(("/".join(path + [label]), node.get("result", "Unknown"), msgs))
+        try:
+            durations.append((float(node.get("durationInSeconds") or 0), "/".join(path + [label])))
+        except (TypeError, ValueError):
+            pass
         return
     nxt = path if kind in ("Test Plan", "Test Target") else path + [label]
     for c in node.get("children", []):
@@ -382,6 +387,11 @@ if failures:
         for m in msgs:
             if m:
                 out.append("  - %s" % " ".join(str(m).split()))
+# Slowest tests: a test drifting toward its time limit shows here before it starts failing.
+if durations:
+    durations.sort(reverse=True)
+    out += ["", "Slowest tests (%.0f s in all):" % sum(d for d, _ in durations), ""]
+    out += ["- %.0f s `%s`" % (d, ident) for d, ident in durations[:6]]
 print("\n".join(out))
 
 if os.environ.get("GITHUB_STEP_SUMMARY"):
