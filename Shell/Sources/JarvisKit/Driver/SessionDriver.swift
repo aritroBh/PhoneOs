@@ -218,7 +218,7 @@ public actor SessionDriver {
                 }
                 for note in observation.notes { emit(.note(note)) }
                 let ref = observation.screenshot.map { deps.screenshots.store($0) }
-                return .observedRunnerText(snapshot: observation.runnerSnapshot(screenshot: ref))
+                return observation.event(screenshot: ref)
             } catch let error where isOurCancellation(error) {
                 return stop(.cancelled)
             } catch {
