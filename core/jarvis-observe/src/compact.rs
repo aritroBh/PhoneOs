@@ -777,9 +777,10 @@ pub struct CompactView {
     /// keyboard suggestion, drag and drop), whatever the field's label does meanwhile.
     pub input_marks: Vec<u64>,
     /// Seventeenth review (Rule T): every `WebView` raw node that starts a document (by its
-    /// index, ascending), shown or not: a web view directly holding the same frame as the
-    /// web view it is nested in is the same document (WebKit wraps a page in two or three
-    /// web views of one frame: Safari's real tree) and is left out. A web view nested in
+    /// index, ascending), shown or not: a web view that is a structural wrapper of the web
+    /// view it is nested in — the same frame, and that web view holds no content of its own
+    /// beside it (eighteenth review) — is the same document (WebKit wraps a page in two or
+    /// three web views of one frame: Safari's real tree) and is left out. A web view nested in
     /// another, or one beside listed native content in an app whose chrome shows no host,
     /// is a place of its own (`jarvis_safety::ScreenPlaces`); the place of an action is
     /// decided by whether its target's raw node lies inside one (`parents`/`ends`).
@@ -1010,7 +1011,25 @@ pub fn compact_view(screen: &Screen) -> CompactView {
             nodes: &nodes,
         },
     );
-    let webviews = documents(webviews, &index.ends);
+    // Eighteenth review (E4): per raw node, whether it is content of its own (a label, a
+    // shown value or a control; a web view is not), for the structural-wrapper test. Only
+    // a screen with two web views or more needs it (one more walk, O(nodes)).
+    let mut content = Vec::new();
+    if webviews.len() >= 2 {
+        content = vec![false; index.parents.len()];
+        layout.walk(&screen.root, |node, _| {
+            let Some(&i) = index.by_addr.get(&addr(node)) else {
+                return;
+            };
+            if node.role == Role::WebView {
+                return;
+            }
+            if let Some(c) = usize::try_from(i).ok().and_then(|k| content.get_mut(k)) {
+                *c = is_own_content(node);
+            }
+        });
+    }
+    let webviews = documents(webviews, &index.ends, &content);
     CompactView {
         screen: screen_out,
         sources,
@@ -1023,17 +1042,63 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         webviews,
     }
 }
+/// Whether a raw node (not a web view) is content of its own for the structural-wrapper
+/// test: a label, a shown value or a control role. A scroll view's indicator ("Vertical
+/// scroll bar, 1 page": WebKit puts two beside the innermost of Safari's wrappers) is the
+/// view's chrome, not content.
+fn is_own_content(node: &UiNode) -> bool {
+    let label = clean_opt(&node.label).to_lowercase();
+    let head = label.split(',').next().unwrap_or_default().trim();
+    if matches!(head, "vertical scroll bar" | "horizontal scroll bar") {
+        return false;
+    }
+    !label.is_empty() || shown_value(node).is_some() || node.role.is_interactive()
+}
+
 /// The web views that start a document (seventeenth review, [`CompactView::webviews`]):
-/// `all` sorted by index, minus each one whose frame is the frame (within a point) of the
-/// innermost document web view holding it.
-fn documents(mut all: Vec<(u32, Rect)>, ends: &[u32]) -> Vec<u32> {
+/// `all` sorted by index, minus each one that is a **structural wrapper** of the innermost
+/// document web view holding it (eighteenth review, E4): its frame is that web view's frame
+/// (within a point) **and** that web view holds no content of its own beside it — no node
+/// with a label, a shown value or a control role (`content`, per raw index) in its subtree
+/// outside this one's. A same-frame web view beside the page's own content (a full-viewport
+/// cross-origin interstitial) is a document of its own. O(web views) after one O(nodes)
+/// prefix count.
+fn documents(mut all: Vec<(u32, Rect)>, ends: &[u32], content: &[bool]) -> Vec<u32> {
     all.sort_unstable_by_key(|(i, _)| *i);
+    if all.len() < 2 {
+        return all.into_iter().map(|(i, _)| i).collect();
+    }
     let end = |w: u32| {
         usize::try_from(w)
             .ok()
             .and_then(|k| ends.get(k))
             .copied()
             .unwrap_or(0)
+    };
+    // prefix[k]: content nodes with raw index below k.
+    let mut prefix = Vec::with_capacity(content.len() + 1);
+    let mut n = 0usize;
+    prefix.push(0usize);
+    for &c in content {
+        n += usize::from(c);
+        prefix.push(n);
+    }
+    let count = |from: u32, to: u32| {
+        let at = |k: u32| {
+            usize::try_from(k)
+                .ok()
+                .and_then(|k| prefix.get(k.min(content.len())))
+                .copied()
+                .unwrap_or(n)
+        };
+        at(to).saturating_sub(at(from))
+    };
+    // The parent holds no content outside the child's subtree (the parent's own node
+    // excluded), or the child holds none at all (an empty same-frame web view has nothing
+    // to tell apart: Safari's innermost wrapper beside the scroll indicators).
+    let wrapper = |parent: u32, child: u32| {
+        let inside = count(child, end(child));
+        inside == 0 || count(parent.saturating_add(1), end(parent)) == inside
     };
     let same = |a: &Rect, b: &Rect| {
         (a.x - b.x).abs() <= 1.0
@@ -1047,7 +1112,10 @@ fn documents(mut all: Vec<(u32, Rect)>, ends: &[u32]) -> Vec<u32> {
         while open.last().is_some_and(|&(o, _)| i >= end(o)) {
             open.pop();
         }
-        if open.last().is_some_and(|(_, of)| same(of, &f)) {
+        if open
+            .last()
+            .is_some_and(|&(o, ref of)| same(of, &f) && wrapper(o, i))
+        {
             continue;
         }
         open.push((i, f));

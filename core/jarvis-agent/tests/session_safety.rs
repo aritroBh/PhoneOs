@@ -1164,7 +1164,11 @@ fn spotlight_rules_leave_unrelated_apps_alone() {
             Script::model(&[
                 &format!(r#"{{"action":"type","text":"{text}","submit":true}}"#),
                 r#"{"action":"done","summary":"searched"}"#,
-            ]),
+            ])
+            // SETUP (eighteenth review, E6): the Spotlight screen is a read and a search's
+            // destination cannot be named, so the typing asks once (approved; it covers its
+            // Return, the same action).
+            .decisions(&[true]),
         );
         assert!(typed_anything(&r.acts), "{text}: {:?}", r.acts);
         assert!(returned(&r.acts), "{text}: {:?}", r.acts);
@@ -1196,7 +1200,9 @@ fn spotlight_rules_leave_unrelated_apps_alone() {
         Script::model(&[
             r#"{"action":"type","text":"Mail","submit":true}"#,
             r#"{"action":"fail","reason":"x"}"#,
-        ]),
+        ])
+        // SETUP (eighteenth review, E6): the search's flow question, approved.
+        .decisions(&[true]),
     );
     assert!(typed_anything(&r.acts), "{:?}", r.acts);
     assert!(returned(&r.acts), "{:?}", r.acts);
@@ -1498,7 +1504,9 @@ fn ordinary_searches_under_the_default_deny_list_still_work() {
             Script::model(&[
                 &format!(r#"{{"action":"type","text":"{text}","submit":true}}"#),
                 r#"{"action":"done","summary":"searched"}"#,
-            ]),
+            ])
+            // SETUP (eighteenth review, E6): the search's flow question, approved.
+            .decisions(&[true]),
         );
         assert!(typed_anything(&r.acts), "{text}: {:?}", r.acts);
         assert!(returned(&r.acts), "{text}: {:?}", r.acts);
@@ -1569,7 +1577,10 @@ fn ordinary_home_screen_labels_that_mention_a_denied_app_are_tapped() {
             Script::model(&[
                 &format!(r#"{{"action":"tap","element":{i}}}"#),
                 r#"{"action":"done","summary":"ok"}"#,
-            ]),
+            ])
+            // SETUP (eighteenth review, E6): a row that is not a known app keeps the home
+            // screen (read: it shows Spotlight) as a source; its flow question, approved.
+            .decisions(&[true]),
         );
         assert_eq!(
             r.acts.len(),

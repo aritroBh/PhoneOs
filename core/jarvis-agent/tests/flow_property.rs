@@ -4,19 +4,30 @@
     clippy::panic,
     clippy::indexing_slicing
 )]
-//! Sixteenth review (Rule T), property test, extended by the seventeenth: random tasks over
-//! three apps, an app whose screen holds an embedded web view (an ad: one-way), three sites
-//! in Safari (two the owner named, one not; the second holds a frame: two-way), a tool with arguments that is not self-contained
-//! and one without arguments that is, `press_home` and `wait`, with random owner decisions
-//! and, in half the cases, `policy.confirm: []`. An independent oracle implements the
-//! seventeenth review's sections 1–3 (what a place is, which outputs are input, what an
-//! approval allows). Invariant, checked on every effect:
+//! Sixteenth review (Rule T), property test, extended by the seventeenth and eighteenth:
+//! random tasks over plain apps; a third-party app whose screen holds an embedded web view
+//! (an ad: two-way since the eighteenth review) and an Apple app holding one (one-way); a
+//! third-party app that draws a fake address bar (not a browser: no site, its web view is
+//! "web content in <App>"); a third-party browser (Firefox: its chrome names the site, a
+//! place apart from the same host in Safari, named `<host> in Firefox`); three sites in
+//! Safari (two the owner named, one not; the second holds a frame: two-way; the third two
+//! sibling frames: an ambiguous class, a source for itself, named as covering all of it); a
+//! tool with arguments that is not self-contained and one without arguments that is;
+//! `look` with a vision model in half the cases (the screen picture is a source for every
+//! place); `press_home` onto an icons-only home screen or, in half the cases, onto a
+//! Spotlight screen with a banner and a "Website" row (a launch Jarvis cannot name: every
+//! place read, the Home Screen included, is a source; nothing is kept beyond the action);
+//! `wait`; random owner decisions and, in half the cases, `policy.confirm: []`. An
+//! independent oracle implements the threat model's sections 1–3 (what a place is, which
+//! outputs are input, what an approval allows). Invariant, checked on every effect:
 //! - no runner command and no tool call reaches a destination place while the read set holds
 //!   a source for it the owner has not allowed into it in this task (sources: every place
-//!   read but the destination itself — a tool that is not self-contained is a source for
-//!   itself — and but the embedded content the destination surrounds);
+//!   read but the destination itself — a tool that is not self-contained and an ambiguous
+//!   embedded class are sources for themselves — and but the web content an Apple app hosts,
+//!   for that app);
 //! - a flow question is asked only when such a source exists, names every unallowed source
-//!   (no "and N more"), and its approval allows exactly the places it named;
+//!   (no "and N more"; an ambiguous class by its covering name), and its approval allows
+//!   exactly the places it named (into an undecidable destination: for that action only);
 //! - after a declined flow question nothing is sent before the model is asked again;
 //! - `confirm: []` changes nothing about it.
 //!
@@ -32,20 +43,30 @@ use jarvis_memory::MemoryStore;
 use jarvis_observe::compact;
 use jarvis_proto::fixtures::{node, rect, screen, text, IPHONE_SIZE};
 use jarvis_proto::{
-    AppInfo, Effect, Event, Key, ModelOutput, Observation, ParamKind, Point, Rect, RiskCategory,
-    Role, RunnerCommand, RunnerResult, Screen, TaskSpec, Tier, TimedEvent, ToolParam, ToolResult,
-    ToolSpec, UiNode,
+    AppInfo, Effect, Event, ImageRef, Key, ModelOutput, Observation, ParamKind, Point, Rect,
+    RiskCategory, Role, RunnerCommand, RunnerResult, Screen, TaskSpec, Tier, TimedEvent, ToolParam,
+    ToolResult, ToolSpec, UiNode,
 };
+use jarvis_safety::{COVERS_ALL, SCREEN_PICTURE};
 
 const FLOW: &str = "what it read there could be passed on here";
-const APPS: [&str; 4] = [
+const APPS: [&str; 7] = [
     "com.example.a",
     "com.example.b",
     "com.example.c",
     "com.example.d",
+    "com.apple.news",
+    "com.example.evil",
+    "org.mozilla.ios.Firefox",
 ];
-/// The app whose screen holds an embedded web view.
+/// The third-party app whose screen holds an embedded web view (two-way).
 const MIXED: usize = 3;
+/// The Apple app whose screen holds an embedded web view (one-way).
+const APPLE_MIXED: usize = 4;
+/// The third-party app that draws a fake address bar beside its web view.
+const EVIL: usize = 5;
+/// A listed third-party browser.
+const FIREFOX: usize = 6;
 const SAFARI: &str = "com.apple.mobilesafari";
 const HOSTS: [&str; 3] = ["one.example", "two.example", "three.example"];
 const TASK: &str = "Do it with hello on https://one.example/ and https://two.example/";
@@ -71,27 +92,42 @@ impl Rng {
 enum Ctx {
     App(String),
     Site(String),
-    /// Web content embedded in an app (the mixed app's ad).
+    /// A site in Firefox (by host).
+    FxSite(String),
+    /// Web content embedded in an app (an ad).
     Web(String),
-    /// A frame nested in a site's page (by host).
+    /// Content nested in a site's page (by host).
     Frame(String),
     Tool(String),
+    /// The screen picture given to the model.
+    Pixels,
+    /// A destination Jarvis cannot name (a Spotlight row).
+    Unknown,
 }
 
 impl Ctx {
     /// How a question names it (apps are known under their bundle ids).
-    fn name(&self) -> String {
-        match self {
+    fn name(&self, ambiguous: &BTreeSet<Ctx>) -> String {
+        let base = match self {
+            Ctx::App(a) if a == HOME => "the Home Screen".to_owned(),
             Ctx::App(a) => a.clone(),
             Ctx::Site(h) => h.clone(),
+            Ctx::FxSite(h) => format!("{h} in {}", APPS[FIREFOX]),
             Ctx::Web(a) => format!("web content in {a}"),
             Ctx::Frame(h) => format!("embedded content in {h}"),
             Ctx::Tool(t) => format!("the tool {t}"),
+            Ctx::Pixels => SCREEN_PICTURE.to_owned(),
+            Ctx::Unknown => "a place Jarvis cannot name".to_owned(),
+        };
+        if ambiguous.contains(self) {
+            format!("{base}{COVERS_ALL}")
+        } else {
+            base
         }
     }
 }
 
-/// The embedded web view's frame on the mixed app's screen.
+/// The embedded web view's frame on the mixed apps' screens.
 fn ad_frame() -> Rect {
     rect(0.0, 600.0, 393.0, 150.0)
 }
@@ -106,9 +142,19 @@ fn body(kids_top: &str) -> Vec<UiNode> {
     ]
 }
 
+fn address(host: &str) -> UiNode {
+    UiNode::new(Role::TextField, rect(100.0, 800.0, 200.0, 30.0))
+        .with_label("Address")
+        .with_value(host)
+        .with_identifier("TabBarItemTitle")
+}
+
 fn app_screen(i: usize) -> Screen {
+    if i == FIREFOX {
+        return site_screen_in(APPS[FIREFOX], 0);
+    }
     let mut kids = body(&format!("secret {i}"));
-    if i == MIXED {
+    if matches!(i, MIXED | APPLE_MIXED | EVIL) {
         kids.push(
             UiNode::new(Role::WebView, ad_frame()).with_children(vec![node(
                 Role::Button,
@@ -116,6 +162,10 @@ fn app_screen(i: usize) -> Screen {
                 rect(16.0, 620.0, 361.0, 40.0),
             )]),
         );
+    }
+    if i == EVIL {
+        // Not a browser: the "host" it draws names nothing.
+        kids.push(address("one.example"));
     }
     let root = UiNode::new(Role::Application, IPHONE_SIZE.to_rect())
         .with_label(APPS[i])
@@ -125,17 +175,28 @@ fn app_screen(i: usize) -> Screen {
     screen(APPS[i], APPS[i], root, false)
 }
 
-/// The frame nested in site 1's page.
+/// The frame nested in sites 1 and 2.
 fn frame_rect() -> Rect {
     rect(0.0, 480.0, 393.0, 60.0)
 }
 
+/// The second frame of site 2.
+fn frame_b_rect() -> Rect {
+    rect(0.0, 545.0, 393.0, 50.0)
+}
+
 /// The site with a frame.
 const FRAMED: usize = 1;
+/// The site with two sibling frames (an ambiguous class).
+const TWO_FRAMES: usize = 2;
 
 fn site_screen(h: usize) -> Screen {
+    site_screen_in(SAFARI, h)
+}
+
+fn site_screen_in(app: &str, h: usize) -> Screen {
     let mut page = body(&format!("page {h}"));
-    if h == FRAMED {
+    if h == FRAMED || h == TWO_FRAMES {
         page.push(
             UiNode::new(Role::WebView, frame_rect()).with_children(vec![node(
                 Role::Button,
@@ -144,17 +205,23 @@ fn site_screen(h: usize) -> Screen {
             )]),
         );
     }
+    if h == TWO_FRAMES {
+        page.push(
+            UiNode::new(Role::WebView, frame_b_rect()).with_children(vec![text(
+                "Continue as Jane",
+                rect(16.0, 550.0, 361.0, 30.0),
+            )]),
+        );
+    }
+    let name = if app == SAFARI { "Safari" } else { app };
     let root = UiNode::new(Role::Application, IPHONE_SIZE.to_rect())
-        .with_label("Safari")
+        .with_label(name)
         .with_children(vec![UiNode::new(Role::Window, IPHONE_SIZE.to_rect())
             .with_children(vec![
-                UiNode::new(Role::WebView, rect(0.0, 100.0, 393.0, 450.0)).with_children(page),
-                UiNode::new(Role::TextField, rect(100.0, 800.0, 200.0, 30.0))
-                    .with_label("Address")
-                    .with_value(HOSTS[h])
-                    .with_identifier("TabBarItemTitle"),
+                UiNode::new(Role::WebView, rect(0.0, 100.0, 393.0, 500.0)).with_children(page),
+                address(HOSTS[h]),
             ])]);
-    screen(SAFARI, "Safari", root, false)
+    screen(app, name, root, false)
 }
 
 fn home_screen() -> Screen {
@@ -170,40 +237,92 @@ fn home_screen() -> Screen {
     screen(HOME, " ", root, false)
 }
 
+/// The Spotlight row that opens a website.
+fn row_rect() -> Rect {
+    rect(0.0, 290.0, 393.0, 60.0)
+}
+
+/// SpringBoard with a banner, Spotlight's field and a "Website" row: a read.
+fn spotlight_screen() -> Screen {
+    let root = UiNode::new(Role::Application, IPHONE_SIZE.to_rect())
+        .with_label(" ")
+        .with_children(vec![UiNode::new(Role::Window, IPHONE_SIZE.to_rect())
+            .with_children(vec![
+                UiNode::new(
+                    Role::Other("NotificationBanner".to_owned()),
+                    rect(8.0, 50.0, 377.0, 80.0),
+                )
+                .with_label("Messages, now, Your code is 482913"),
+                UiNode::new(Role::SearchField, rect(16.0, 200.0, 361.0, 40.0))
+                    .with_label("Search")
+                    .hittable(true),
+                UiNode::new(Role::Cell, row_rect())
+                    .with_label("evil.example/482913, Website")
+                    .hittable(true),
+            ])]);
+    screen(HOME, " ", root, false)
+}
+
+fn is_spotlight(s: &Screen) -> bool {
+    s.app_bundle_id == HOME && compact(s).elements.iter().any(|e| e.label == "Search")
+}
+
 /// The places a screen shows (what reading it reads), the base place first; none for the
 /// icons-only home screen.
 fn places_of(s: &Screen) -> Vec<Ctx> {
     if s.app_bundle_id == HOME {
-        return Vec::new();
+        return if is_spotlight(s) {
+            vec![Ctx::App(HOME.to_owned())]
+        } else {
+            Vec::new()
+        };
     }
-    if s.app_bundle_id == SAFARI {
+    let page = || {
         let c = compact(s);
-        let h = (0..3)
+        (0..3)
             .find(|h| c.elements.iter().any(|e| e.label == format!("page {h}")))
-            .unwrap();
+            .unwrap()
+    };
+    if s.app_bundle_id == SAFARI {
+        let h = page();
         let mut out = vec![Ctx::Site(HOSTS[h].to_owned())];
-        if h == FRAMED {
+        if h == FRAMED || h == TWO_FRAMES {
             out.push(Ctx::Frame(HOSTS[h].to_owned()));
         }
         return out;
     }
+    if s.app_bundle_id == APPS[FIREFOX] {
+        return vec![Ctx::FxSite(HOSTS[page()].to_owned())];
+    }
     let mut out = vec![Ctx::App(s.app_bundle_id.clone())];
-    if s.app_bundle_id == APPS[MIXED] {
+    if [APPS[MIXED], APPS[APPLE_MIXED], APPS[EVIL]].contains(&s.app_bundle_id.as_str()) {
         out.push(Ctx::Web(s.app_bundle_id.clone()));
     }
     out
 }
 
-/// The place under a point of `s` (the oracle's own geometry: the mixed app's ad frame).
+/// The place under a point of `s` (the oracle's own geometry).
 fn place_at(s: &Screen, p: Point) -> Ctx {
     let places = places_of(s);
-    if s.app_bundle_id == APPS[MIXED] && ad_frame().contains(p) {
+    if is_spotlight(s) && row_rect().contains(p) {
+        return Ctx::Unknown;
+    }
+    if places.len() == 2 && s.app_bundle_id != SAFARI && ad_frame().contains(p) {
         return places[1].clone();
     }
-    if places.len() == 2 && s.app_bundle_id == SAFARI && frame_rect().contains(p) {
+    if places.len() == 2
+        && s.app_bundle_id == SAFARI
+        && (frame_rect().contains(p)
+            || (places[1] == Ctx::Frame(HOSTS[TWO_FRAMES].to_owned())
+                && frame_b_rect().contains(p)))
+    {
         return places[1].clone();
     }
-    places
+    base_of(s)
+}
+
+fn base_of(s: &Screen) -> Ctx {
+    places_of(s)
         .first()
         .cloned()
         .unwrap_or_else(|| Ctx::App(s.app_bundle_id.clone()))
@@ -221,13 +340,9 @@ fn dest_of(cmd: &RunnerCommand, current: &Screen) -> Option<Ctx> {
             Some(place_at(current, Point::new(*x, *y)))
         }
         RunnerCommand::Swipe { from, .. } => Some(place_at(current, *from)),
-        // The only field is native; Return and Home go to the place in front.
-        RunnerCommand::TypeText { .. } | RunnerCommand::PressKey { .. } => Some(
-            places_of(current)
-                .first()
-                .cloned()
-                .unwrap_or_else(|| Ctx::App(current.app_bundle_id.clone())),
-        ),
+        // The only field is in the screen's own place; Return and Home go to the place in
+        // front.
+        RunnerCommand::TypeText { .. } | RunnerCommand::PressKey { .. } => Some(base_of(current)),
         RunnerCommand::LaunchApp { bundle_id } => Some(Ctx::App(bundle_id.clone())),
         RunnerCommand::OpenUrl { url } => Some(Ctx::Site(HOSTS[host_of(url)].to_owned())),
         RunnerCommand::Wait { .. } => None,
@@ -237,13 +352,9 @@ fn dest_of(cmd: &RunnerCommand, current: &Screen) -> Option<Ctx> {
 /// The destinations of the model's action `json` on `current` (for the question it causes):
 /// one place, but for a scroll the screen's own place and the place under its start point
 /// (what is under a point may be either: the session asks for both, fail closed).
-fn dest_of_action(json: &str, current: &Screen, next: u32, ad: u32) -> Vec<Ctx> {
+fn dest_of_action(json: &str, current: &Screen) -> Vec<Ctx> {
     let v: serde_json::Value = serde_json::from_str(json).unwrap();
     if v["action"].as_str() == Some("scroll") {
-        let base = places_of(current)
-            .first()
-            .cloned()
-            .unwrap_or_else(|| Ctx::App(current.app_bundle_id.clone()));
         let g = jarvis_safety::gestures::drag_gesture(
             jarvis_safety::gestures::GestureKind::Scroll,
             jarvis_proto::Direction::Down,
@@ -251,25 +362,19 @@ fn dest_of_action(json: &str, current: &Screen, next: u32, ad: u32) -> Vec<Ctx> 
             &compact(current),
         )
         .unwrap();
-        let mut out = vec![base];
+        let mut out = vec![base_of(current)];
         let under = place_at(current, g.from);
         if !out.contains(&under) {
             out.push(under);
         }
         return out;
     }
-    dest_one(json, current, next, ad).into_iter().collect()
+    dest_one(json, current).into_iter().collect()
 }
 
 /// [`dest_of_action`] for an action with one destination.
-fn dest_one(json: &str, current: &Screen, next: u32, ad: u32) -> Option<Ctx> {
+fn dest_one(json: &str, current: &Screen) -> Option<Ctx> {
     let v: serde_json::Value = serde_json::from_str(json).unwrap();
-    let base = || {
-        places_of(current)
-            .first()
-            .cloned()
-            .unwrap_or_else(|| Ctx::App(current.app_bundle_id.clone()))
-    };
     match v["action"].as_str().unwrap() {
         "open_app" => Some(Ctx::App(v["app"].as_str().unwrap().to_owned())),
         "open_url" => Some(Ctx::Site(
@@ -282,29 +387,33 @@ fn dest_one(json: &str, current: &Screen, next: u32, ad: u32) -> Option<Ctx> {
                 .elements
                 .into_iter()
                 .find(|e| e.index == i)?;
-            if i == ad || i == next || current.app_bundle_id != APPS[MIXED] {
-                Some(place_at(current, el.frame.center()))
-            } else {
-                Some(base())
-            }
+            Some(place_at(current, el.frame.center()))
         }
-        "wait" | "done" => None,
-        _ => Some(base()),
+        "wait" | "done" | "look" => None,
+        _ => Some(base_of(current)),
     }
 }
 
-/// The places a flow note names, in order.
+/// The places a flow note names, in order (the names Jarvis composes itself, which hold
+/// `, ` and ` and `, are read whole).
 fn named(summary: &str) -> Vec<String> {
     let from = summary.find("Jarvis has read ").unwrap() + "Jarvis has read ".len();
     let to = summary[from..].find(" in this task;").unwrap() + from;
-    let list = &summary[from..to];
+    let list = summary[from..to]
+        .replace(SCREEN_PICTURE, "\u{1}")
+        .replace(COVERS_ALL, "\u{2}");
     let (head, last) = match list.rsplit_once(" and ") {
-        Some((h, l)) => (h, Some(l)),
-        None => (list, None),
+        Some((h, l)) => (h.to_owned(), Some(l.to_owned())),
+        None => (list.clone(), None),
     };
     let mut out: Vec<String> = head.split(", ").map(str::to_owned).collect();
-    out.extend(last.map(str::to_owned));
-    out
+    out.extend(last);
+    out.into_iter()
+        .map(|n| {
+            n.replace('\u{1}', SCREEN_PICTURE)
+                .replace('\u{2}', COVERS_ALL)
+        })
+        .collect()
 }
 
 /// The oracle's record of one task.
@@ -312,21 +421,31 @@ fn named(summary: &str) -> Vec<String> {
 struct Oracle {
     read: BTreeSet<Ctx>,
     allowed: BTreeMap<Ctx, BTreeSet<Ctx>>,
+    /// Allowed into an undecidable destination for the action being carried out.
+    for_action: BTreeSet<Ctx>,
+    /// Embedded classes that held more than one document.
+    ambiguous: BTreeSet<Ctx>,
 }
 
 impl Oracle {
     /// The sources that may not reach `dest` (section 1: a place is not a source for itself,
-    /// except a tool that is not self-contained; the embedded content an app surrounds is
-    /// not a source for it).
+    /// except a tool that is not self-contained and an ambiguous embedded class; the web
+    /// content an Apple app hosts is not a source for that app).
     fn unallowed(&self, dest: &Ctx) -> BTreeSet<Ctx> {
         self.read
             .iter()
             .filter(|r| {
-                let itself = *r == dest && !matches!(dest, Ctx::Tool(t) if t == "lookup");
-                // One-way between an app and the web content it hosts only; a frame and its
-                // page are sources for each other.
-                let surrounded = matches!((dest, r), (Ctx::App(a), Ctx::Web(w)) if a == w);
-                !itself && !surrounded && !self.allowed.get(dest).is_some_and(|a| a.contains(*r))
+                let itself = *r == dest
+                    && !matches!(dest, Ctx::Tool(t) if t == "lookup")
+                    && !self.ambiguous.contains(dest);
+                // One-way between an Apple app and the web content it hosts only.
+                let surrounded = matches!((dest, r), (Ctx::App(a), Ctx::Web(w))
+                    if a == w && a.starts_with("com.apple."));
+                let for_action = *dest == Ctx::Unknown && self.for_action.contains(*r);
+                !itself
+                    && !surrounded
+                    && !for_action
+                    && !self.allowed.get(dest).is_some_and(|a| a.contains(*r))
             })
             .cloned()
             .collect()
@@ -347,11 +466,22 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
     let next = index(&app_screen(0), "Next");
     let field = index(&app_screen(0), "Note");
     let ad = index(&app_screen(MIXED), "Ad");
-    // "tap the ad" taps the frame on the framed site.
+    // "tap the ad" taps the frame on the framed sites; on Spotlight "tap next" taps the
+    // website row and "type" types into the search field.
     assert_eq!(index(&site_screen(FRAMED), "Frame"), ad);
+    assert_eq!(index(&site_screen(TWO_FRAMES), "Frame"), ad);
+    assert_eq!(index(&app_screen(EVIL), "Ad"), ad);
+    assert_eq!(index(&app_screen(APPLE_MIXED), "Ad"), ad);
+    assert_eq!(
+        index(&spotlight_screen(), "evil.example/482913, Website"),
+        next
+    );
+    assert_eq!(index(&spotlight_screen(), "Search"), field);
     for s in [
         app_screen(1),
         app_screen(MIXED),
+        app_screen(EVIL),
+        app_screen(FIREFOX),
         site_screen(0),
         site_screen(2),
     ] {
@@ -361,10 +491,10 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
     let steps = 3 + rng.below(12);
     let mut script: Vec<String> = Vec::new();
     for _ in 0..steps {
-        script.push(match rng.below(12) {
+        script.push(match rng.below(13) {
             0 | 1 => format!(
                 r#"{{"action":"open_app","app":"{}"}}"#,
-                APPS[rng.below(4) as usize]
+                APPS[rng.below(APPS.len() as u64) as usize]
             ),
             2 => format!(
                 r#"{{"action":"open_url","url":"https://{}/"}}"#,
@@ -377,6 +507,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
             8 => r#"{"action":"call_tool","name":"lookup","args":{"q":"hello"}}"#.to_owned(),
             9 => r#"{"action":"call_tool","name":"clock","args":{}}"#.to_owned(),
             10 => r#"{"action":"wait","ms":300}"#.to_owned(),
+            11 => r#"{"action":"look"}"#.to_owned(),
             _ => r#"{"action":"press_home"}"#.to_owned(),
         });
     }
@@ -388,6 +519,8 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
     if confirm_nothing {
         config.policy.confirm = Vec::new();
     }
+    config.model.supports_vision = rng.below(2) == 0;
+    let spotlight_home = rng.below(2) == 0;
     for a in APPS {
         config.known_apps.push(AppInfo::new(a, a));
     }
@@ -415,11 +548,11 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
         app: None,
         self_contained: true,
     });
-    let start = rng.below(7) as usize;
-    let mut current = if start < 4 {
+    let start = rng.below(APPS.len() as u64 + 3) as usize;
+    let mut current = if start < APPS.len() {
         app_screen(start)
     } else {
-        site_screen(start - 4)
+        site_screen(start - APPS.len())
     };
     let mut session = Session::new(config, TaskSpec::new("p", TASK), MemoryStore::new());
     let mut model: std::collections::VecDeque<String> = script.into_iter().collect();
@@ -433,16 +566,31 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
         let effect = session.step(TimedEvent::new(now, event));
         now += 50;
         event = match effect {
-            Effect::Observe { .. } => {
+            Effect::Observe { screenshot } => {
                 observed.extend(places_of(&current));
+                if current.app_bundle_id == SAFARI && places_of(&current).len() == 2 {
+                    let f = Ctx::Frame(HOSTS[TWO_FRAMES].to_owned());
+                    if places_of(&current)[1] == f {
+                        oracle.ambiguous.insert(f);
+                    }
+                }
                 Event::Observed(Observation {
                     screen: current.clone(),
-                    screenshot: None,
+                    screenshot: screenshot.then(|| ImageRef {
+                        id: "shot".into(),
+                        width: 1179,
+                        height: 2556,
+                    }),
                     device_locked: false,
                 })
             }
-            Effect::Infer(_) => {
+            Effect::Infer(req) => {
                 oracle.read.append(&mut observed);
+                // The screen picture given to the model is read.
+                if req.image.is_some() {
+                    oracle.read.insert(Ctx::Pixels);
+                }
+                oracle.for_action.clear();
                 declined_since_infer = false;
                 match model.pop_front() {
                     Some(text) => {
@@ -475,7 +623,13 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                         current = app_screen(i);
                     }
                     RunnerCommand::OpenUrl { url } => current = site_screen(host_of(url)),
-                    RunnerCommand::PressKey { key: Key::Home, .. } => current = home_screen(),
+                    RunnerCommand::PressKey { key: Key::Home, .. } => {
+                        current = if spotlight_home {
+                            spotlight_screen()
+                        } else {
+                            home_screen()
+                        }
+                    }
                     _ => {}
                 }
                 Event::ActResult(RunnerResult::ok())
@@ -503,7 +657,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                 let approve = rng.below(3) != 0;
                 if req.summary.contains(FLOW) {
                     assert!(req.phone_only, "seed {seed}: {}", req.summary);
-                    let dests = dest_of_action(&last_action, &current, next, ad);
+                    let dests = dest_of_action(&last_action, &current);
                     assert!(
                         !dests.is_empty(),
                         "seed {seed}: a flow question for {last_action}"
@@ -517,28 +671,49 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                         "seed {seed}: needless ask {} ({last_action} into {dest:?})",
                         req.summary
                     );
-                    assert!(!req.summary.contains(" more "), "{}", req.summary);
+                    assert!(!req.summary.contains("and 1 more"), "{}", req.summary);
                     let names: BTreeSet<String> = named(&req.summary).into_iter().collect();
-                    let expected: BTreeSet<String> = bad.iter().map(Ctx::name).collect();
-                    assert_eq!(
-                        names, expected,
-                        "seed {seed}: {} ({last_action} into {dest:?})",
-                        req.summary
-                    );
+                    let expected: BTreeSet<String> =
+                        bad.iter().map(|c| c.name(&oracle.ambiguous)).collect();
+                    // When the names do not fit, the question names as many as fit and says
+                    // how many more it asks about next.
+                    let rest = expected.len().saturating_sub(names.len());
+                    if rest > 0 {
+                        assert!(names.is_subset(&expected), "seed {seed}: {}", req.summary);
+                        let what = if rest == 1 { "place" } else { "places" };
+                        assert!(
+                            req.summary.contains(&format!(
+                                "it read {rest} more {what} in this task; Jarvis asks about them next"
+                            )),
+                            "seed {seed}: {}",
+                            req.summary
+                        );
+                    } else {
+                        assert_eq!(
+                            names, expected,
+                            "seed {seed}: {} ({last_action} into {dest:?})",
+                            req.summary
+                        );
+                    }
                     asked += 1;
                     declined += u32::from(!approve);
                     if approve {
                         // Exactly the places named.
                         let srcs: Vec<Ctx> = bad
                             .into_iter()
-                            .filter(|c| names.contains(&c.name()))
+                            .filter(|c| names.contains(&c.name(&oracle.ambiguous)))
                             .collect();
                         for d in dests.iter().cloned() {
-                            oracle
-                                .allowed
-                                .entry(d)
-                                .or_default()
-                                .extend(srcs.iter().cloned());
+                            if d == Ctx::Unknown {
+                                // Nothing kept beyond this action.
+                                oracle.for_action.extend(srcs.iter().cloned());
+                            } else {
+                                oracle
+                                    .allowed
+                                    .entry(d)
+                                    .or_default()
+                                    .extend(srcs.iter().cloned());
+                            }
                         }
                     } else {
                         declined_since_infer = true;
@@ -582,4 +757,61 @@ fn no_input_reaches_a_place_while_something_read_elsewhere_is_not_allowed_there(
             "{asked} {declined} {sent}"
         );
     }
+}
+
+/// The generator reaches every kind of place the oracle knows: each is read in some case
+/// and, for the destinations, receives an input in some case.
+#[test]
+fn the_generator_covers_every_kind_of_place() {
+    // Screens: what each one is read as.
+    assert_eq!(places_of(&app_screen(EVIL)).len(), 2);
+    assert_eq!(
+        places_of(&app_screen(FIREFOX)),
+        vec![Ctx::FxSite(HOSTS[0].to_owned())]
+    );
+    assert_eq!(places_of(&spotlight_screen()), vec![Ctx::App(HOME.into())]);
+    assert!(places_of(&home_screen()).is_empty());
+    // The session agrees on the places of each screen (named in one flow question each).
+    let mut c = config();
+    for a in APPS {
+        c.known_apps.push(AppInfo::new(a, a));
+    }
+    c.model.supports_vision = true;
+    let r = run(
+        c,
+        "Look at it",
+        MemoryStore::new(),
+        Phone::still(site_screen(TWO_FRAMES)),
+        Script::model(&[
+            r#"{"action":"look"}"#,
+            &format!(r#"{{"action":"tap","element":{}}}"#, {
+                compact(&site_screen(TWO_FRAMES))
+                    .elements
+                    .iter()
+                    .find(|e| e.label == "Frame")
+                    .unwrap()
+                    .index
+            }),
+            r#"{"action":"done","summary":"ok"}"#,
+        ])
+        .decisions(&[false]),
+    );
+    let q: Vec<&String> = r
+        .confirms
+        .iter()
+        .map(|c| &c.summary)
+        .filter(|s| s.contains(FLOW))
+        .collect();
+    assert_eq!(q.len(), 1, "{q:?}");
+    let names: BTreeSet<String> = named(q[0]).into_iter().collect();
+    let amb: BTreeSet<Ctx> = [Ctx::Frame(HOSTS[TWO_FRAMES].into())].into();
+    let expected: BTreeSet<String> = [
+        Ctx::Site(HOSTS[TWO_FRAMES].into()),
+        Ctx::Frame(HOSTS[TWO_FRAMES].into()),
+        Ctx::Pixels,
+    ]
+    .iter()
+    .map(|c| c.name(&amb))
+    .collect();
+    assert_eq!(names, expected, "{}", q[0]);
 }

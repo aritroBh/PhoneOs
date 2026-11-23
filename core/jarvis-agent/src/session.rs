@@ -558,6 +558,13 @@ pub struct Session {
     /// Sixteenth review: the approved flow question when a first-use question follows it
     /// (the look after the last approval checks the flow question's record).
     prior_approval: Option<ConfirmRequest>,
+    /// Eighteenth review: the sources the owner allowed into an undecidable destination
+    /// ([`FlowContext::Unknown`], for which no approval is kept for the task) by a question
+    /// about the action being carried out: they count as allowed for that one action — while
+    /// it is decided again after a partial approval (so the next question names the rest,
+    /// and does not repeat the first), and for the Return of the `type … submit` whose
+    /// typing was approved. Cleared when the next action is proposed.
+    action_allowed: Vec<FlowContext>,
 }
 
 impl std::fmt::Debug for Session {
@@ -724,6 +731,7 @@ impl Session {
             own_hidden: false,
             screen_locked: false,
             prior_approval: None,
+            action_allowed: Vec::new(),
         }
     }
 
@@ -1210,11 +1218,28 @@ impl Session {
                     None => {
                         if let Some(f) = &pending.flow {
                             self.confine.allow_into(&f.targets, &f.sources);
+                            // Eighteenth review: into an undecidable destination nothing is
+                            // kept for the task; the approval covers this action only (a
+                            // typing and its Return are one action).
+                            if f.targets.contains(&FlowContext::Unknown) {
+                                self.action_allowed.extend(f.sources.iter().cloned());
+                            }
                             // Seventeenth review: the approval allowed only the places it
                             // named; the action is decided again, and the next question
                             // names the rest.
                             if f.partial {
                                 self.prior_approval = None;
+                                // Eighteenth review (E7): the Return of a `type … submit`
+                                // is decided again alone; its text is already typed.
+                                if pending.stage == Stage::Return {
+                                    let field = match &pending.gate {
+                                        Action::Type {
+                                            element: Some(i), ..
+                                        } => self.current.screen.get(*i).map(|e| e.fingerprint),
+                                        _ => None,
+                                    };
+                                    return self.gate_return(now, *pending, field);
+                                }
                                 let action = pending.action.clone();
                                 let source = pending.source;
                                 let prepared = self.prepare(&action, source);
@@ -1227,7 +1252,10 @@ impl Session {
                     Some(next) => {
                         // The flow question asked before a first use (Rule T asks it first):
                         // its approval is what the look after the last approval checks.
-                        if then_app.is_some() {
+                        // Eighteenth review: for the first use of a home-screen launch Jarvis
+                        // cannot name too (no app to approve; was: the look found no approved
+                        // flow question and voided the approval).
+                        if then_app.is_some() || next.category == RiskCategory::FirstUse {
                             self.prior_approval = Some(request);
                         }
                         self.ask_confirm(now, *pending, next, then_app, None)
@@ -2111,6 +2139,11 @@ impl Session {
         self.here = self.places.base().clone();
         if !self.own_hidden {
             self.exposed.extend(self.places.read_places());
+            // Eighteenth review (E5b): an embedded class that holds more than one document
+            // here cannot be told apart into its parts for the rest of the task.
+            for c in self.places.ambiguous() {
+                self.confine.mark_ambiguous(c.clone());
+            }
         }
         if self.own_hidden {
             view.screen.elements.clear();
@@ -2372,11 +2405,13 @@ impl Session {
         // lines and notes derived from earlier screens, tool results — is now read.
         // Seventeenth review: the places of the screen in front are read last (a question
         // names the most recently read place first).
+        // Eighteenth review: within the screen in front, its own place is read last (named
+        // first), after the embedded content it shows.
         let front = self.places.read_places();
         let exposed = std::mem::take(&mut self.exposed);
         let (now, earlier): (Vec<FlowContext>, Vec<FlowContext>) =
             exposed.into_iter().partition(|c| front.contains(c));
-        for context in earlier.into_iter().chain(now) {
+        for context in earlier {
             self.confine.read(context);
         }
         let screenshot = match kind {
@@ -2384,6 +2419,15 @@ impl Session {
             RequestKind::Vision | RequestKind::Text => None,
         };
         let vision = screenshot.is_some();
+        // Eighteenth review (E1): a screenshot given to the model is a read of the whole
+        // display — banners, the Dynamic Island, Live Activities drawn over the app — a place
+        // of its own, whatever path attached it (a `look`, the thin-tree vision fallback).
+        if vision {
+            self.confine.read(FlowContext::ScreenPicture);
+        }
+        for context in front.iter().rev().filter(|c| now.contains(c)) {
+            self.confine.read(context.clone());
+        }
         let request = self.build_request(screenshot);
         self.last_request_vision = vision;
         self.model_calls = self.model_calls.saturating_add(1);
@@ -2446,6 +2490,7 @@ impl Session {
     /// Takes one decided action (model or flow) through budget, stuck detection, safety and
     /// into execution. Every action counts one step first.
     fn propose(&mut self, now: u64, action: Action, source: Source) -> Out {
+        self.action_allowed.clear();
         self.budget.record_step(now);
         self.last_action = Some(action.clone());
         match &action {
@@ -3160,12 +3205,19 @@ impl Session {
         }
         let pasting = insert_control(gate, &self.current.screen, Some(&self.tree())).is_some();
         let mut sources = self.confine.unallowed_into(&targets, pasting, self_source);
-        // A launch from the home screen (an icon, a search result, a search's top hit): the
-        // home screen's own content (icons, the search field and its results) is not
-        // counted as a source for the app it opens; a banner or an alert read there is, at
-        // the first input into that app (asked there). Every other place read is.
-        if home.is_some() {
+        // A launch from the home screen of a known installed app (an icon or an app result
+        // the core resolves to a known app): the home screen's own content is not counted as
+        // a source for the app it opens; a banner or an alert read there is, at the first
+        // input into that app (asked there). Eighteenth review (E6): only then — a row that
+        // is a website or a search, a search's top hit, an icon Jarvis cannot name or a tap
+        // it cannot resolve keeps every place read, the home screen included.
+        if matches!(home, Some(HomeLaunch::App { .. })) {
             sources.retain(|c| *c != self.here);
+        }
+        // Sources the owner allowed into an undecidable destination for this action (no
+        // approval is kept for one beyond it).
+        if targets.contains(&FlowContext::Unknown) {
+            sources.retain(|c| !self.action_allowed.contains(c));
         }
         if sources.is_empty() {
             return Ok(None);
@@ -3257,9 +3309,14 @@ impl Session {
         self.flow_name(places.first().unwrap_or(&self.here))
     }
 
-    /// How a question names `context` (an app by its display name).
+    /// How a question names `context` (an app by its display name; eighteenth review: an
+    /// ambiguous embedded class by a name that covers all of it).
     fn flow_name(&self, context: &FlowContext) -> String {
-        context.display(|b| self.app_name_ci(b))
+        if self.confine.is_ambiguous(context) {
+            context.display_covering(|b| self.app_name_ci(b))
+        } else {
+            context.display(|b| self.app_name_ci(b))
+        }
     }
 
     /// [`Self::flow_name`] of each of `contexts`.

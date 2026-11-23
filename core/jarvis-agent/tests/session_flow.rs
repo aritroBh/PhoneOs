@@ -572,16 +572,27 @@ fn vision_fallback_on_an_empty_tree() {
             RunnerCommand::Tap { .. } => Transition::Go(home_screen()),
             _ => Transition::Stay,
         }),
+        // Eighteenth review (E1, rule changed): the screen picture is a source for every
+        // place, the game included; the tap asks once (approved here).
         Script::model(&[
             r#"{"action":"tap_point","x":0.5,"y":0.6}"#,
             r#"{"action":"done","summary":"started"}"#,
-        ]),
+        ])
+        .decisions(&[true]),
     );
     assert_eq!(
         run.outcome.status,
         OutcomeStatus::Success,
         "{}",
         run.outcome.summary
+    );
+    assert_eq!(run.confirms.len(), 1, "{:?}", run.confirms);
+    assert!(
+        run.confirms[0]
+            .summary
+            .contains("Jarvis has read the screen picture"),
+        "{}",
+        run.confirms[0].summary
     );
     assert_eq!(
         run.observes[..2],

@@ -165,12 +165,35 @@ fn embedded_web_content_is_one_way() {
     assert!(fq[0].summary.contains("read Acme in"), "{}", fq[0].summary);
     assert!(fq[0].phone_only);
     assert!(!touched(&r), "{:?}", r.acts);
-    // The other way: the app's own control, after reading the ad too — not asked.
+    // The other way: the app's own control, after reading the ad too. Eighteenth review
+    // (E2, rule changed): one-way only for Apple's own apps — Acme is a third party, so the
+    // web content it shows (it may be another party's sign-in sheet) is a source for its
+    // own controls: asked (was: not asked).
     let r = run(
         cfg(),
         "Open Acme and check my balance",
         MemoryStore::new(),
-        Phone::still(s),
+        Phone::still(s.clone()),
+        Script::model(&[&tap(native), DONE]).decisions(&[true]),
+    );
+    let fq = flows(&r);
+    assert_eq!(fq.len(), 1, "{:?}", r.confirms);
+    assert!(
+        fq[0].summary.contains("read web content in Acme in"),
+        "{}",
+        fq[0].summary
+    );
+    assert!(touched(&r));
+    // An Apple app keeps the one-way relation: not asked.
+    let mut apple = s;
+    apple.app_bundle_id = "com.apple.news".into();
+    let mut c = cfg();
+    c.known_apps.push(AppInfo::new("com.apple.news", "News"));
+    let r = run(
+        c,
+        "Open News and read the story",
+        MemoryStore::new(),
+        Phone::still(apple),
         Script::model(&[&tap(native), DONE]),
     );
     assert!(flows(&r).is_empty(), "{:?}", r.confirms);

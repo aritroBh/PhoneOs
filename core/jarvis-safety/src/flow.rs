@@ -11,17 +11,29 @@
 //! **Rule T.** *What Jarvis read in one place does not reach another place unless the
 //! owner allowed that flow on the phone for this task.* A place is a [`FlowContext`]:
 //!
+//! Eighteenth review, the governing rule: a place may be merged with another, or exempted
+//! as a source, only on an OS fact. Otherwise every distinct document and every input given
+//! to the model (tree, pixels, tool output) is its own source; where two things cannot be
+//! told apart they are not silently merged — the question says so and its approval covers
+//! all of them.
+//!
 //! - an **app** (its bundle id, an OS fact);
-//! - a **site**: in an app whose own chrome shows the host (a node outside every
-//!   `WebView` subtree, never page content; [`observed_context`]), the top-level host —
-//!   the browser's chrome belongs to the site's place;
-//! - **embedded web content** (seventeenth review): a web view nested inside another web
-//!   view, or a web view on a screen of an app whose chrome shows no host while the screen
-//!   also lists content outside it, is a place of its own ([`ScreenPlaces`]). Between a
-//!   native app and the web view it hosts the relation is one-way: what was read in the app
-//!   is a source for input into its web content, what was read in the web content is not a
-//!   source for input into the app (a host app can read what its own web view shows:
-//!   [`FlowContext::surrounds`]); between a page and a frame nested in it, two-way;
+//! - a **site**: in a listed browser ([`BROWSERS`], by bundle id) whose own chrome shows
+//!   the host (a node outside every `WebView` subtree, never page content;
+//!   [`observed_context`]), the top-level host — the browser's chrome belongs to the site's
+//!   place. Any other app has no site;
+//! - **embedded web content** (seventeenth and eighteenth reviews), by nesting level: the
+//!   top-level web views of an app with no readable host whose screen also lists content
+//!   outside them (`web content in <App>`), and web views nested in another web view
+//!   (`embedded content in <site>`, or `nested web content in <App>`), each a place of its
+//!   own ([`ScreenPlaces`]); a same-frame web view is part of the one holding it only when it
+//!   is a structural wrapper (`jarvis_observe::CompactView::webviews`). Between one of
+//!   Apple's apps and its top-level web content the relation is one-way
+//!   ([`FlowContext::surrounds`]); everywhere else two-way. An embedded class that held more
+//!   than one document in an observation is ambiguous ([`Confinement::mark_ambiguous`]): a
+//!   source for itself, named as covering all of it;
+//! - the **screen picture** ([`FlowContext::ScreenPicture`]): every screenshot given to the
+//!   model, a source for every place;
 //! - a **tool** (`tool:<name>`): a tool that is not self-contained (the default) is a
 //!   source for its own later calls;
 //! - **memory**: text recorded in an earlier task.
@@ -60,6 +72,43 @@ use crate::hit::takes_taps;
 /// next input there asks again.
 pub const SYSTEM_BROWSER: &str = "com.apple.mobilesafari";
 
+/// Eighteenth review (E3): the browsers whose own chrome names the site in front (lower-case
+/// bundle ids, a closed list): Safari and the widely used third-party browsers. A host is
+/// read from an address bar outside every web view only in one of them; in any other app
+/// there is no site, and its web content is `web content in <App>` (an app can draw a node
+/// labelled "Address" with any host it likes). A third-party browser's chrome is that
+/// browser's word, which the owner chose to install; its sites are named with it
+/// (`bank.example in Chrome`).
+pub const BROWSERS: &[&str] = &[
+    "com.apple.mobilesafari",
+    "com.google.chrome.ios",
+    "org.mozilla.ios.firefox",
+    "com.microsoft.msedge",
+    "com.brave.ios.browser",
+    "com.duckduckgo.mobile.ios",
+    "com.opera.operatouch",
+];
+
+/// Whether `bundle_id` is one of [`BROWSERS`] (compared lower-cased).
+pub fn is_browser(bundle_id: &str) -> bool {
+    let b = bundle_id.trim().to_lowercase();
+    BROWSERS.contains(&b.as_str())
+}
+
+/// Eighteenth review (E2): whether `bundle_id` is one of Apple's own apps (`com.apple.`
+/// prefix: an OS fact, no third party can ship an app under it).
+pub fn is_apple_app(bundle_id: &str) -> bool {
+    bundle_id.trim().to_lowercase().starts_with("com.apple.")
+}
+
+/// Eighteenth review (E1): how a question names [`FlowContext::ScreenPicture`].
+pub const SCREEN_PICTURE: &str =
+    "the screen picture (it can show notifications and other apps' banners)";
+
+/// Eighteenth review (E5): what the name of an ambiguous embedded class
+/// ([`Confinement::mark_ambiguous`]) ends with: its approval covers every part of it.
+pub const COVERS_ALL: &str = ", all of it (Jarvis cannot tell its parts apart)";
+
 /// Where content comes from and goes to (Rule T).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FlowContext {
@@ -77,11 +126,13 @@ pub enum FlowContext {
     /// A screen of an app that is web content with nothing listed outside it and whose host
     /// could not be read: one context per app ("site not readable").
     SiteUnreadable(String),
-    /// Seventeenth review: embedded web content — a web view nested inside another web view
-    /// (`within`: that page's host, `None` when it is not readable), or a web view beside
-    /// listed content in an app whose chrome shows no host (`within: None`). One place per
-    /// app (and per site); frames the accessibility tree does not mark as a nested web
-    /// view are part of their page.
+    /// Seventeenth review: embedded web content — with `within: Some(host)`, a web view
+    /// nested (at any depth) inside a site's page; with `within: None`, a top-level web view
+    /// beside listed content in an app whose chrome shows no host (eighteenth review: what is
+    /// nested inside that is [`FlowContext::NestedWeb`]). One class per app and level (and
+    /// per site); a class that held more than one document is ambiguous
+    /// ([`Confinement::mark_ambiguous`]). Frames the accessibility tree does not mark as a
+    /// web view are part of their page.
     Embedded {
         /// The app (lower-cased bundle id).
         app: String,
@@ -96,6 +147,15 @@ pub enum FlowContext {
     /// an app the home screen cannot name. Every place read is a source for it, and no
     /// approval is kept for it (the next such input asks again).
     Unknown,
+    /// Eighteenth review (E5a): content nested inside the web content of an app whose host
+    /// is not readable (a frame in an in-app browser's page; every deeper level too). The
+    /// top level of that web content is [`FlowContext::Embedded`] with `within: None` (or
+    /// the app's "site not readable" page): the two are different places, two-way.
+    NestedWeb(String),
+    /// Eighteenth review (E1): the screen picture given to the model — the whole display,
+    /// notification banners, the Dynamic Island and Live Activities drawn over the app
+    /// included. Never a destination; a source for input into every place.
+    ScreenPicture,
 }
 
 impl FlowContext {
@@ -110,21 +170,31 @@ impl FlowContext {
             FlowContext::App(a)
             | FlowContext::SiteUnreadable(a)
             | FlowContext::Site { app: a, .. }
-            | FlowContext::Embedded { app: a, .. } => Some(a),
-            FlowContext::Tool(_) | FlowContext::Memory | FlowContext::Unknown => None,
+            | FlowContext::Embedded { app: a, .. }
+            | FlowContext::NestedWeb(a) => Some(a),
+            FlowContext::Tool(_)
+            | FlowContext::Memory
+            | FlowContext::Unknown
+            | FlowContext::ScreenPicture => None,
         }
     }
 
     /// Seventeenth review (the one-way relation): whether `inner` is web content that the
-    /// native app `self` hosts — a web view beside the app's own listed content, in an app
-    /// whose chrome shows no host. What was read in `inner` is not a source for input into
-    /// `self` (a host app can read what its own web view shows); what was read in `self` is
-    /// a source for input into `inner`.
+    /// native app `self` hosts — a top-level web view beside the app's own listed content,
+    /// in an app whose chrome shows no host. What was read in `inner` is not a source for
+    /// input into `self`; what was read in `self` is a source for input into `inner`.
+    ///
+    /// Eighteenth review (E2): only for Apple's own apps ([`is_apple_app`], an OS fact).
+    /// The exemption rests on the host app not being the adversary and being able to read
+    /// what its web view shows (Mail showing a message body, News an article; a send still
+    /// asks under Invariant 2). For any other app it does not hold: an in-app browser sheet
+    /// or a sign-in sheet (`SFSafariViewController`, `ASWebAuthenticationSession`) shows
+    /// another party's page (a bank, an identity provider) that the host app cannot read,
+    /// and the host app may be the adversary. A third-party app and its web content are
+    /// **two-way**: each is a source for input into the other, each direction its own flow.
     ///
     /// A frame in a page (a web view nested in a web view, under a site or under a page
-    /// whose host is not readable) is **two-way**: the page does not have what a
-    /// cross-origin frame shows, so each is a source for input into the other, and each
-    /// direction is its own flow (approving one does not allow the other).
+    /// whose host is not readable) is two-way too.
     pub fn surrounds(&self, inner: &FlowContext) -> bool {
         match (self, inner) {
             (
@@ -133,7 +203,7 @@ impl FlowContext {
                     app: a,
                     within: None,
                 },
-            ) => app == a,
+            ) => app == a && is_apple_app(app),
             _ => false,
         }
     }
@@ -151,12 +221,16 @@ impl FlowContext {
             FlowContext::Tool(t) => format!("tool:{t}"),
             FlowContext::Memory => "memory".to_owned(),
             FlowContext::Unknown => "unknown".to_owned(),
+            FlowContext::NestedWeb(a) => format!("nested:{a}"),
+            FlowContext::ScreenPicture => "screen-picture".to_owned(),
         }
     }
 
     /// How a question names this context: `app_name` gives an app's display name from its
     /// bundle id (the session's known apps); SpringBoard is "the Home Screen". A site is
-    /// named by its host, a tool by its name, embedded content by where it is embedded.
+    /// named by its host — in Safari by its host alone, in any other app (a third-party
+    /// browser) as `<host> in <App>` (eighteenth review, E3: two places are never named
+    /// alike) — a tool by its name, embedded content by where it is embedded.
     pub fn display(&self, app_name: impl Fn(&str) -> Option<String>) -> String {
         let app = |b: &str| {
             if is_springboard(b) {
@@ -167,7 +241,8 @@ impl FlowContext {
         };
         match self {
             FlowContext::App(b) => app(b),
-            FlowContext::Site { host, .. } => host.clone(),
+            FlowContext::Site { app: b, host } if b == SYSTEM_BROWSER => host.clone(),
+            FlowContext::Site { app: b, host } => format!("{host} in {}", app(b)),
             FlowContext::SiteUnreadable(b) => format!("{} (site not readable)", app(b)),
             FlowContext::Embedded {
                 within: Some(h), ..
@@ -179,7 +254,17 @@ impl FlowContext {
             FlowContext::Tool(name) => format!("the tool {name}"),
             FlowContext::Memory => "saved routines".to_owned(),
             FlowContext::Unknown => "a place Jarvis cannot name".to_owned(),
+            FlowContext::NestedWeb(b) => format!("nested web content in {}", app(b)),
+            FlowContext::ScreenPicture => SCREEN_PICTURE.to_owned(),
         }
+    }
+
+    /// Eighteenth review (E5b): how a flow note names an ambiguous embedded class
+    /// ([`Confinement::is_ambiguous`]): its [`Self::display`] followed by [`COVERS_ALL`]
+    /// (`embedded content in attacker.example, all of it (Jarvis cannot tell its parts
+    /// apart)`), so an approval states that it covers every embedded part.
+    pub fn display_covering(&self, app_name: impl Fn(&str) -> Option<String>) -> String {
+        format!("{}{COVERS_ALL}", self.display(app_name))
     }
 }
 
@@ -447,7 +532,8 @@ fn home_node(n: &UiNode) -> UiNode {
 /// Jarvis's own app when the run does not drive it (the model gets a stub for it).
 ///
 /// A screen holding a web view whose host the app's own chrome shows (a node outside every
-/// web view subtree: Safari's address field; never page content) is that site. With no
+/// web view subtree: Safari's address field; never page content), in a listed browser
+/// ([`BROWSERS`]; eighteenth review), is that site. With no
 /// single host — none, a value that is not a host, two different hosts — the screen is the
 /// app when it lists content outside its web views (the web views are then "web content in
 /// <App>", [`ScreenPlaces`]), else the app with its site not readable. A tree from runner
@@ -470,12 +556,18 @@ pub struct ScreenPlaces {
     /// The place of the screen's own content: the app, the site (its chrome included) or
     /// the app with its site not readable.
     base: FlowContext,
-    /// Embedded web content on this screen, if any ([`FlowContext::Embedded`]).
-    embedded: Option<FlowContext>,
-    /// Top-level web views are embedded content too (an app without a readable host whose
-    /// screen lists content outside them); else only nested web views are.
-    top_embedded: bool,
-    /// Every web view's raw index, ascending (`jarvis_observe::CompactView::webviews`).
+    /// Eighteenth review (E5a, nesting level 1): the place of a top-level web view's
+    /// content when it is not the screen's own place — an app without a readable host whose
+    /// screen lists content outside its web views ([`FlowContext::Embedded`], `within:
+    /// None`).
+    top: Option<FlowContext>,
+    /// Nesting level 2 and deeper: the place of a web view nested in another web view
+    /// ([`FlowContext::Embedded`] within the site, or [`FlowContext::NestedWeb`]).
+    nested: Option<FlowContext>,
+    /// Eighteenth review (E5b): the embedded classes that hold more than one document on
+    /// this screen (two top-level web views beside an app's content, two nested ones).
+    ambiguous: Vec<FlowContext>,
+    /// Every document web view's raw index, ascending (`jarvis_observe::CompactView::webviews`).
     webviews: Vec<u32>,
     /// The screen is something Jarvis read (not an icons-only home screen).
     read: bool,
@@ -485,8 +577,9 @@ impl Default for ScreenPlaces {
     fn default() -> Self {
         ScreenPlaces {
             base: FlowContext::App(String::new()),
-            embedded: None,
-            top_embedded: false,
+            top: None,
+            nested: None,
+            ambiguous: Vec::new(),
             webviews: Vec::new(),
             read: false,
         }
@@ -500,35 +593,45 @@ impl ScreenPlaces {
         &self.base
     }
 
-    /// The embedded web content on this screen, if any.
+    /// The first embedded web content on this screen (the top level, else the nested), if
+    /// any.
     pub fn embedded(&self) -> Option<&FlowContext> {
-        self.embedded.as_ref()
+        self.top.as_ref().or(self.nested.as_ref())
+    }
+
+    /// Every embedded web content place on this screen (top level, then nested).
+    pub fn embedded_places(&self) -> Vec<FlowContext> {
+        self.top.iter().chain(self.nested.iter()).cloned().collect()
+    }
+
+    /// Eighteenth review (E5b): the embedded classes holding more than one document on this
+    /// screen ([`Confinement::mark_ambiguous`]).
+    pub fn ambiguous(&self) -> &[FlowContext] {
+        &self.ambiguous
     }
 
     /// The places reading this screen reads: every place on it (none for an icons-only
-    /// home screen).
+    /// home screen), the screen's own first.
     pub fn read_places(&self) -> Vec<FlowContext> {
         if !self.read {
             return Vec::new();
         }
-        let mut out = vec![self.base.clone()];
-        out.extend(self.embedded.clone());
-        out
+        self.all()
     }
 
-    /// Every place on this screen.
+    /// Every place on this screen, the screen's own first.
     pub fn all(&self) -> Vec<FlowContext> {
         let mut out = vec![self.base.clone()];
-        out.extend(self.embedded.clone());
+        out.extend(self.embedded_places());
         out
     }
 
     /// The place of the content of raw node `n`: how many web views hold it (itself
     /// included), walking its ancestors — O(depth · log web views).
     fn of_node(&self, n: u32, tree: &ScreenTree<'_>) -> &FlowContext {
-        let Some(embedded) = self.embedded.as_ref() else {
+        if self.top.is_none() && self.nested.is_none() {
             return &self.base;
-        };
+        }
         let mut depth = 0usize;
         let mut at = Some(n);
         let mut steps = 0usize;
@@ -551,15 +654,21 @@ impl ScreenPlaces {
         }
         match depth {
             0 => &self.base,
-            1 if !self.top_embedded => &self.base,
-            _ => embedded,
+            1 => self.top.as_ref().unwrap_or(&self.base),
+            // A nested web view exists whenever depth 2 is reached; the fallback is never
+            // taken.
+            _ => self
+                .nested
+                .as_ref()
+                .or(self.top.as_ref())
+                .unwrap_or(&self.base),
         }
     }
 
     /// The place of a listed element; every place on the screen when its raw node is not
     /// known (fail closed).
     fn of_element(&self, el: &Element, tree: Option<&ScreenTree<'_>>, out: &mut Vec<FlowContext>) {
-        if self.embedded.is_none() {
+        if self.top.is_none() && self.nested.is_none() {
             out.push(self.base.clone());
             return;
         }
@@ -574,11 +683,11 @@ impl ScreenPlaces {
     /// closed). Without the drawn nodes, every place on the screen.
     fn of_point(&self, p: Point, tree: Option<&ScreenTree<'_>>, out: &mut Vec<FlowContext>) {
         out.push(self.base.clone());
-        let Some(embedded) = self.embedded.as_ref() else {
+        if self.top.is_none() && self.nested.is_none() {
             return;
-        };
+        }
         let Some(t) = tree.filter(|t| !t.nodes.is_empty()) else {
-            out.push(embedded.clone());
+            out.extend(self.embedded_places());
             return;
         };
         for &w in &self.webviews {
@@ -687,11 +796,12 @@ pub fn observed_places(
     if source == ScreenSource::RunnerText {
         return single(FlowContext::SiteUnreadable(app));
     }
-    let host = (chrome.hosts.len() == 1 && !chrome.unreadable_address)
+    // Eighteenth review (E3): a host is read from the chrome of a listed browser only.
+    let host = (chrome.hosts.len() == 1 && !chrome.unreadable_address && is_browser(&app))
         .then(|| chrome.hosts.iter().next().cloned())
         .flatten();
-    // Top-level web views (their raw subtree ranges, disjoint and ascending) and whether a
-    // web view lies inside another: one pass over the web views.
+    // Top-level web views (their raw subtree ranges, disjoint and ascending) and how many
+    // web views lie inside another: one pass over the web views.
     let (webviews, ends, sources) = view.unwrap_or((&[], &[], &[]));
     let end = |w: u32| {
         usize::try_from(w)
@@ -701,10 +811,10 @@ pub fn observed_places(
             .unwrap_or(0)
     };
     let mut tops: Vec<(u32, u32)> = Vec::new();
-    let mut nested = false;
+    let mut nested_docs = 0usize;
     for &w in webviews {
         if tops.last().is_some_and(|&(a, e)| w > a && w < e) {
-            nested = true;
+            nested_docs += 1;
         } else {
             tops.push((w, end(w).max(w.saturating_add(1))));
         }
@@ -719,28 +829,48 @@ pub fn observed_places(
     } else {
         chrome.outside
     };
-    let (base, top_embedded, within) = match host {
+    // Eighteenth review (E5a): the nesting level is part of the place — the top level of an
+    // app's web content and what is nested in it are two places; deeper levels share one.
+    let (base, top) = match &host {
         Some(h) => (
             FlowContext::Site {
                 app: app.clone(),
                 host: h.clone(),
             },
-            false,
-            Some(h),
+            None,
         ),
-        None if outside => (FlowContext::App(app.clone()), true, None),
-        None => (FlowContext::SiteUnreadable(app.clone()), false, None),
+        None if outside => (
+            FlowContext::App(app.clone()),
+            Some(FlowContext::Embedded {
+                app: app.clone(),
+                within: None,
+            }),
+        ),
+        None => (FlowContext::SiteUnreadable(app.clone()), None),
     };
-    let embedded = (top_embedded || nested).then_some(FlowContext::Embedded { app, within });
+    let nested = (nested_docs > 0).then(|| match host {
+        Some(h) => FlowContext::Embedded {
+            app: app.clone(),
+            within: Some(h),
+        },
+        None => FlowContext::NestedWeb(app.clone()),
+    });
+    // Eighteenth review (E5b): a class holding more than one document cannot be told apart
+    // into its parts.
+    let mut ambiguous = Vec::new();
+    if let Some(t) = top.as_ref().filter(|_| tops.len() > 1) {
+        ambiguous.push(t.clone());
+    }
+    if let Some(n) = nested.as_ref().filter(|_| nested_docs > 1) {
+        ambiguous.push(n.clone());
+    }
+    let any = top.is_some() || nested.is_some();
     ScreenPlaces {
         base,
-        top_embedded,
-        webviews: if embedded.is_some() {
-            webviews.to_vec()
-        } else {
-            Vec::new()
-        },
-        embedded,
+        top,
+        nested,
+        ambiguous,
+        webviews: if any { webviews.to_vec() } else { Vec::new() },
         read: true,
     }
 }
@@ -783,12 +913,34 @@ pub struct Confinement {
     clipboard: BTreeSet<FlowContext>,
     allowed: BTreeMap<FlowContext, BTreeSet<FlowContext>>,
     declined: BTreeMap<FlowContext, BTreeSet<FlowContext>>,
+    ambiguous: BTreeSet<FlowContext>,
 }
 
 impl Confinement {
     /// An empty record (a new task).
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Eighteenth review (E5b): `context` (an embedded class) held more than one document in
+    /// an observation of this task, so Jarvis cannot tell its parts apart across looks. From
+    /// now on it is a source for input into itself (like a tool's own results), and its name
+    /// in a flow note says it covers all of it ([`FlowContext::display_covering`]). An
+    /// approval given before it was known to be ambiguous named only "embedded content":
+    /// it is dropped (fail closed), so the next input asks with the covering name.
+    pub fn mark_ambiguous(&mut self, context: FlowContext) {
+        if !self.ambiguous.insert(context.clone()) {
+            return;
+        }
+        self.allowed.remove(&context);
+        for sources in self.allowed.values_mut() {
+            sources.remove(&context);
+        }
+    }
+
+    /// Whether `context` was marked ambiguous in this task ([`Self::mark_ambiguous`]).
+    pub fn is_ambiguous(&self, context: &FlowContext) -> bool {
+        self.ambiguous.contains(context)
     }
 
     /// Content of `context` (or text derived from it) entered a model prompt.
@@ -838,7 +990,8 @@ impl Confinement {
 
     /// [`Self::unallowed`] into any of `targets` (an input whose place is not one place:
     /// every place it may reach). `self_source`: the target's own earlier content is a
-    /// source too (a tool that is not self-contained reaches many places).
+    /// source too (a tool that is not self-contained reaches many places). An ambiguous
+    /// embedded class ([`Self::mark_ambiguous`]) is always a source for itself.
     pub fn unallowed_into(
         &self,
         targets: &[FlowContext],
@@ -849,7 +1002,7 @@ impl Confinement {
         let mut out: Vec<FlowContext> = Vec::new();
         for target in targets {
             for c in self.read.keys().chain(clip.clone()) {
-                if (c == target && !self_source)
+                if (c == target && !self_source && !self.ambiguous.contains(c))
                     || target.surrounds(c)
                     || self.allowed_into(target, c)
                     || out.contains(c)

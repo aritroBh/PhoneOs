@@ -277,10 +277,16 @@ fn an_unknown_icon_asks_first_with_its_label() {
         "Search for weather",
         MemoryStore::new(),
         Phone::still(search),
-        Script::model(&[submit, "{\"action\":\"fail\"}"]).decisions(&[false]),
+        Script::model(&[submit, "{\"action\":\"fail\"}"]).decisions(&[true, false]),
     );
-    assert_eq!(searched.confirms.len(), 1);
-    assert!(searched.confirms[0].summary.contains("top search result"));
+    // Eighteenth review (E6, rule changed): the Spotlight screen is a read and a search's
+    // destination cannot be named, so the typing itself asks first, naming the Home Screen
+    // (approved here); its Return is then asked as before (was: one question).
+    assert_eq!(searched.confirms.len(), 2, "{:?}", searched.confirms);
+    assert!(searched.confirms[0]
+        .summary
+        .contains("Jarvis has read the Home Screen"));
+    assert!(searched.confirms[1].summary.contains("top search result"));
     // Sixth review: the search text is typed first (harmless) and only its Return, which
     // opens the top hit, is asked about; declined, it is not pressed. (Was: asked before
     // anything was typed; deliberate change.)

@@ -83,7 +83,15 @@ fn app_web_content_is_one_way_a_frame_two_way() {
         app: "com.apple.mobilesafari".into(),
         within: Some("bank.example".into()),
     };
-    assert!(app.surrounds(&web) && !web.surrounds(&app));
+    // Eighteenth review (E2, rule changed): one-way for Apple's own apps only; Acme is a
+    // third party, so it and its web content are two-way (was: `app.surrounds(&web)`).
+    assert!(!app.surrounds(&web) && !web.surrounds(&app));
+    let news = FlowContext::app("com.apple.news");
+    let news_web = FlowContext::Embedded {
+        app: "com.apple.news".into(),
+        within: None,
+    };
+    assert!(news.surrounds(&news_web) && !news_web.surrounds(&news));
     // A frame in a page is two-way: neither surrounds the other.
     assert!(!site.surrounds(&frame) && !frame.surrounds(&site));
     assert!(!site.surrounds(&web));
@@ -101,10 +109,16 @@ fn app_web_content_is_one_way_a_frame_two_way() {
     let mut c = Confinement::new();
     c.read(app.clone());
     c.read(web.clone());
-    // Into the app: the web content it shows is not a source; into the web content, the
-    // app's own content is.
-    assert!(c.unallowed(&app, false).is_empty());
+    // Into a third-party app the web content it shows is a source (rule changed, was: not
+    // a source); into the web content, the app's own content is.
+    assert_eq!(c.unallowed(&app, false), vec![web.clone()]);
     assert_eq!(c.unallowed(&web, false), vec![app.clone()]);
+    // An Apple app keeps the one-way relation.
+    let mut c = Confinement::new();
+    c.read(news.clone());
+    c.read(news_web.clone());
+    assert!(c.unallowed(&news, false).is_empty());
+    assert_eq!(c.unallowed(&news_web, false), vec![news.clone()]);
     assert_eq!(web.display(|_| Some("Acme".into())), "web content in Acme");
     assert_eq!(frame.display(|_| None), "embedded content in bank.example");
 }

@@ -827,6 +827,31 @@ fn approve_then_look(
     (asked.summary, d.look(after).0)
 }
 
+/// [`approve_then_look`], approving every question asked before the look (eighteenth
+/// review: an unknown home-screen launch asks its first use, then its flow).
+fn approve_all_then_look(
+    c: jarvis_proto::SessionConfig,
+    before: &Screen,
+    i: u32,
+    after: &Screen,
+) -> (String, Effect) {
+    let mut d = Driver::new(c, "Buy the socks");
+    d.step(Event::Start);
+    d.observed(before);
+    let Effect::Confirm(asked) = d.model(&format!(r#"{{"action":"tap","element":{i}}}"#)) else {
+        panic!("expected a confirmation")
+    };
+    let mut e = d.step(Event::UserDecision { approved: true });
+    for _ in 0..4 {
+        if !matches!(e, Effect::Confirm(_)) {
+            break;
+        }
+        e = d.step(Event::UserDecision { approved: true });
+    }
+    assert!(matches!(e, Effect::Observe { .. }), "{e:?}");
+    (asked.summary, d.look(after).0)
+}
+
 /// Socks approved; the socks row disappears and the TV's "Buy" slides into the same slot
 /// (same label, role, fingerprint; its frame holds the planned point). The TV is not
 /// bought under the socks approval.
@@ -1439,6 +1464,11 @@ fn a_home_screen_badge_that_changes_keeps_the_approval() {
     let home = |mail: &str| home_with(Role::Other("Icon".into()), mail);
     let before = home("Mail, 3 unread");
     let i = index_of(&before, "Gadgetry");
+    // SETUP (eighteenth review, E6): "Gadgetry" is not a known app, so the home screen
+    // (read: its icons carry badges) stays a source for the launch, and a flow question
+    // follows the first-use question; both are approved before the look this test is about.
+    let approve_then_look =
+        |c, before: &Screen, i, after: &Screen| approve_all_then_look(c, before, i, after);
     let (asked, e) = approve_then_look(first_use_config(), &before, i, &home("Mail, 4 unread"));
     assert!(asked.contains("Gadgetry"), "{asked}");
     assert!(

@@ -681,6 +681,24 @@ fn session_stages(out: &mut CaseResult, id: &str, screen: &Screen, tap_index: u3
     // a task: every further step starts here).
     if cfg.wants("step.verify_infer") {
         let mut waiting = probe.clone();
+        // Eighteenth review: on a screen whose app is a third party holding a web view (the
+        // web shapes) the tap on its native "Back" after reading the web content asks a flow
+        // question. The owner approves it, and the fresh look after the approval sends the
+        // tap, outside the timed region; the stage then measures the look after the action
+        // as before.
+        let mut sent = matches!(acted, Effect::Act(_));
+        if matches!(acted, Effect::Confirm(_)) {
+            let look = waiting.step(TimedEvent::new(
+                2_100,
+                Event::UserDecision { approved: true },
+            ));
+            if matches!(look, Effect::Observe { .. }) {
+                sent = matches!(
+                    waiting.step(TimedEvent::new(2_200, observed(screen))),
+                    Effect::Act(_)
+                );
+            }
+        }
         let observe = waiting.step(TimedEvent::new(2_500, Event::ActResult(RunnerResult::ok())));
         let mut changed = screen.clone();
         let did_change = perturb(&mut changed);
@@ -694,11 +712,11 @@ fn session_stages(out: &mut CaseResult, id: &str, screen: &Screen, tap_index: u3
                 (s, e)
             },
         );
-        let note = if matches!(acted, Effect::Confirm(_)) {
-            Some(
-                "the tap asks for confirmation: the look after an action is not measured"
-                    .to_owned(),
-            )
+        let note = if !sent {
+            Some(format!(
+                "the tap gave {}, and was not sent after an approval",
+                effect_name(&acted)
+            ))
         } else if !matches!(observe, Effect::Observe { .. }) {
             Some(format!("the result gave {}", effect_name(&observe)))
         } else if !did_change {

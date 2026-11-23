@@ -340,7 +340,16 @@ pub fn flow_note_fit(places: &[String]) -> (QuestionRow, usize) {
     let mut used = 0usize;
     for p in places {
         // A long name keeps its start and its end (two long names stay told apart).
-        let name = clean_label(p, 40);
+        // Eighteenth review: the screen picture's name and the covering suffix of an
+        // ambiguous embedded class are Jarvis's own words, never shortened (only the place's
+        // own name before the suffix is).
+        let name = if p == crate::flow::SCREEN_PICTURE {
+            p.clone()
+        } else if let Some(head) = p.strip_suffix(crate::flow::COVERS_ALL) {
+            format!("{}{}", clean_label(head, 40), crate::flow::COVERS_ALL)
+        } else {
+            clean_label(p, 40)
+        };
         let add = name.chars().count() + 2;
         if !names.is_empty() && used + add > FLOW_NAMES_BUDGET {
             break;
