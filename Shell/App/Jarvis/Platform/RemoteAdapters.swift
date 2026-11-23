@@ -131,6 +131,24 @@ final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
         }
     }
 
+    /// As `send(_:to:)`; `written` runs from the same `.contentProcessed` completion (the
+    /// hub's Live view backpressure). A connection dropped first never confirms.
+    func send(_ bytes: Data, to connection: UInt64, written: @escaping @Sendable (Int) -> Void) {
+        queue.async {
+            guard let entry = self.connections[connection] else { return }
+            let count = bytes.count
+            guard entry.outbound.add(count) else {
+                self.drop(connection)
+                return
+            }
+            let outbound = entry.outbound
+            entry.connection.send(content: bytes, completion: .contentProcessed { (error: NWError?) in
+                outbound.remove(count)
+                if error == nil { written(count) }
+            })
+        }
+    }
+
     func consumed(_ count: Int, on connection: UInt64) {
         queue.async {
             self.connections[connection]?.inbound.remove(count)

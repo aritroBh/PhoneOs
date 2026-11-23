@@ -35,8 +35,8 @@ use crate::convert::device_id_from;
 use crate::error::JarvisError;
 use crate::guard::{guarded, panic_message};
 use crate::types::{
-    ClientEvent, ClientMessage, DeviceInfo, HubEffect, LocalEvent, PairingOffer, RemotePermissions,
-    RiskCategory,
+    ClientEvent, ClientMessage, ClientReceived, DeviceInfo, HubEffect, LocalEvent, PairingOffer,
+    RemotePermissions, RiskCategory,
 };
 
 /// Maps a store or credentials loading error without echoing any input (the input holds
@@ -161,7 +161,7 @@ impl JarvisRemoteHub {
         })
     }
 
-    fn with<T>(
+    pub(crate) fn with<T>(
         &self,
         what: &str,
         f: impl FnOnce(&mut RemoteHub) -> Result<T, JarvisError>,
@@ -308,10 +308,20 @@ impl JarvisRemoteHub {
         })
     }
 
-    /// The paired (confirmed) devices, in pairing order, without keys.
+    /// The paired (confirmed) devices, in pairing order, without keys, with their
+    /// `watchScreen` permission.
     pub fn devices(&self) -> Result<Vec<DeviceInfo>, JarvisError> {
         self.with("devices", |h| {
-            Ok(h.devices().into_iter().map(Into::into).collect())
+            Ok(h.devices()
+                .into_iter()
+                .map(|d| {
+                    let watch_screen = h.watch_screen(d.id);
+                    DeviceInfo {
+                        watch_screen,
+                        ..d.into()
+                    }
+                })
+                .collect())
         })
     }
 
@@ -418,6 +428,55 @@ impl JarvisRemoteHub {
     pub fn is_authenticated(&self, conn_id: u64) -> Result<bool, JarvisError> {
         self.with("is_authenticated", |h| Ok(h.is_authenticated(conn_id)))
     }
+
+    // ---- Live view over remote control (see `JarvisViewer.feedAndStream`) ------------
+
+    /// The transport finished writing `bytes` of this connection's `send` effects: report
+    /// it from the write completion, for every `send` (not only the Live view's). The Live
+    /// view is handed out only while fewer than 128 KiB are unconfirmed, so a connection
+    /// that stops reading never makes the phone queue more (the hub drops its queue and
+    /// sends one snapshot once it reads again). Returns frames that were waiting for room.
+    pub fn written(
+        &self,
+        conn_id: u64,
+        bytes: u64,
+        now_ms: u64,
+    ) -> Result<Vec<HubEffect>, JarvisError> {
+        self.with("written", |h| {
+            let bytes = usize::try_from(bytes).unwrap_or(usize::MAX);
+            Ok(effects(h.written(conn_id, bytes, now_ms)))
+        })
+    }
+
+    /// The owner turned "Watch the screen layout" on or off for a device. Off by default;
+    /// independent of `RemotePermissions` (it never makes anything approvable). Returns
+    /// `storeChanged` and an audit entry when it changed; off also ends that device's
+    /// streams in this call (`viewer_ended { permission_revoked }`, audited). Throws
+    /// `remoteUnknownDevice`.
+    pub fn set_watch_screen(
+        &self,
+        now_ms: u64,
+        device_id: String,
+        allowed: bool,
+    ) -> Result<Vec<HubEffect>, JarvisError> {
+        self.with("set_watch_screen", |h| {
+            let id = device_id_from(&device_id)?;
+            known(h, &id)?;
+            Ok(effects(h.set_watch_screen(id, allowed, now_ms)))
+        })
+    }
+
+    /// Whether a device may watch the screen layout (`false` for unknown devices).
+    pub fn watch_screen(&self, device_id: String) -> Result<bool, JarvisError> {
+        self.with("watch_screen", |h| {
+            Ok(h.watch_screen(device_id_from(&device_id)?))
+        })
+    }
+
+    /// Whether connection `connId` receives the Live view now.
+    pub fn is_watching(&self, conn_id: u64) -> Result<bool, JarvisError> {
+        self.with("is_watching", |h| Ok(h.is_watching(conn_id)))
+    }
 }
 
 /// Exported test hook (feature `panic-hooks`).
@@ -519,6 +578,54 @@ impl JarvisRemoteClient {
         self.with("device_id", |c| {
             Ok(c.credentials().map(|cr| cr.device_id.to_hex()))
         })
+    }
+
+    // ---- Live view over remote control -----------------------------------------------
+
+    /// Like `receive`, plus the Live view stream: feed each `RemoteViewerEvent.delta` /
+    /// `.snapshot` to the controller's own `JarvisViewer.applyDelta` in order, and write
+    /// every `ClientEvent.send` (a resync request the client made by itself on a gap is one
+    /// of them). A thrown `remoteAuthFailed` is final: close the transport.
+    pub fn receive_all(&self, bytes: Vec<u8>) -> Result<ClientReceived, JarvisError> {
+        self.with("receive_all", |c| {
+            let r::Received { events, viewer } = c.receive_all(&bytes).map_err(client_error)?;
+            Ok(ClientReceived {
+                events: events.into_iter().map(Into::into).collect(),
+                viewer: viewer.into_iter().map(Into::into).collect(),
+            })
+        })
+    }
+
+    /// Asks the phone for the Live view (a snapshot, then deltas); write the bytes. Needs
+    /// the device's "Watch the screen layout" permission on the phone, else
+    /// `RemoteViewerEvent.denied` follows. Throws `remoteNotConnected` before `connected`.
+    pub fn start_watching(&self) -> Result<Vec<u8>, JarvisError> {
+        self.with("start_watching", |c| {
+            c.send_viewer(&r::ViewerRequest::StartWatching)
+                .map_err(client_error)
+        })
+    }
+
+    /// Stops the Live view; write the bytes. Frames still on their way are ignored.
+    pub fn stop_watching(&self) -> Result<Vec<u8>, JarvisError> {
+        self.with("stop_watching", |c| {
+            c.send_viewer(&r::ViewerRequest::StopWatching)
+                .map_err(client_error)
+        })
+    }
+
+    /// The controller's view reported `CoreDeltaApplied.needsResync`: the bytes asking the
+    /// phone for a snapshot, or `nil` when not watching or one is already on its way (at
+    /// most one request per gap).
+    pub fn request_resync(&self) -> Result<Option<Vec<u8>>, JarvisError> {
+        self.with("request_resync", |c| {
+            c.request_resync().map_err(client_error)
+        })
+    }
+
+    /// Whether this client follows the Live view stream.
+    pub fn is_watching(&self) -> Result<bool, JarvisError> {
+        self.with("is_watching", |c| Ok(c.is_watching()))
     }
 }
 

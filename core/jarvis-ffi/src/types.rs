@@ -995,6 +995,11 @@ pub struct DeviceInfo {
     pub permissions: RemotePermissions,
     /// Hub clock at pairing.
     pub paired_at_ms: u64,
+    /// May watch the screen layout (the Live view: wireframes, where Jarvis taps, step
+    /// captions; never pixels). Kept beside `permissions`, off by default and for devices
+    /// stored before it existed; change it with `JarvisRemoteHub.setWatchScreen`.
+    #[uniffi(default = false)]
+    pub watch_screen: bool,
 }
 
 /// A skill or workflow remotes may list and run (`LocalEvent.catalogChanged`).
@@ -1334,6 +1339,78 @@ impl std::fmt::Debug for ClientEvent {
                 .finish(),
         }
     }
+}
+
+/// Why the phone ended a Live view stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum RemoteViewerEndReason {
+    /// The controller asked to stop.
+    Stopped,
+    /// The owner turned "Watch the screen layout" off for this device.
+    PermissionRevoked,
+    /// A reason from a newer phone.
+    Other,
+}
+
+/// The Live view stream as a `JarvisRemoteClient` follows it (`receiveAll`). Contains
+/// wireframes, cursor targets and captions only (never pixels, never the approval
+/// picture).
+#[derive(Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum RemoteViewerEvent {
+    /// One delta, in order: `JarvisViewer.applyDelta(bytes:)`.
+    Delta { bytes: Vec<u8> },
+    /// One part of a snapshot, in order: apply it like a delta (part 0 resets the view).
+    Snapshot {
+        bytes: Vec<u8>,
+        part: u32,
+        parts: u32,
+    },
+    /// The stream broke; the client asked the phone for a snapshot itself (the request is a
+    /// `ClientEvent.send` beside it). Reported once per gap.
+    ResyncRequested,
+    /// The phone ended the stream.
+    Ended { reason: RemoteViewerEndReason },
+    /// The phone refused to stream ("Watch the screen layout" is off for this device).
+    Denied { reason: DenyReason },
+    /// The phone streams a newer, incompatible format (its version); watching stopped.
+    Incompatible { version: u32 },
+}
+
+impl std::fmt::Debug for RemoteViewerEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RemoteViewerEvent::Delta { bytes } => f
+                .debug_struct("Delta")
+                .field("bytes", &format_args!("{} bytes", bytes.len()))
+                .finish(),
+            RemoteViewerEvent::Snapshot { bytes, part, parts } => f
+                .debug_struct("Snapshot")
+                .field("bytes", &format_args!("{} bytes", bytes.len()))
+                .field("part", part)
+                .field("parts", parts)
+                .finish(),
+            RemoteViewerEvent::ResyncRequested => f.write_str("ResyncRequested"),
+            RemoteViewerEvent::Ended { reason } => {
+                f.debug_struct("Ended").field("reason", reason).finish()
+            }
+            RemoteViewerEvent::Denied { reason } => {
+                f.debug_struct("Denied").field("reason", reason).finish()
+            }
+            RemoteViewerEvent::Incompatible { version } => f
+                .debug_struct("Incompatible")
+                .field("version", version)
+                .finish(),
+        }
+    }
+}
+
+/// Everything one `JarvisRemoteClient.receiveAll(bytes:)` produced.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ClientReceived {
+    /// As `receive` returns them (write every `send`).
+    pub events: Vec<ClientEvent>,
+    /// The Live view stream, in order.
+    pub viewer: Vec<RemoteViewerEvent>,
 }
 
 /// Why entropy from the shell was refused (`JarvisError.remoteEntropy`).

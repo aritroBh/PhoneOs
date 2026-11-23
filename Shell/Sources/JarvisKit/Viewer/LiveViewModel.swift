@@ -7,8 +7,12 @@ import Synchronization
 /// replay and the scene; see `core/jarvis-viewer`). This type only crosses the FFI:
 ///
 /// - **One call per update**: `apply(_:)` maps a `RunEvent` to a `CoreViewerUpdate` in one
-///   switch and calls `feed` once. The light timeline (steps and screen summaries, no
-///   wireframes) is fetched again only when the change says something changed.
+///   switch and calls `feed` once (`apply(_:streamingTo:nowMs:)`: `feedAndStream`, the same
+///   single call, also streaming to paired devices that watch). The light timeline (steps
+///   and screen summaries, no wireframes) is fetched again only when the change says
+///   something changed.
+/// - **A controller's copy**: `applyDelta(_:)` once per delta received from the phone
+///   (`RemoteLiveView` drives it); the rest reads the same.
 /// - **One call per drawn frame**: `scene(_:)`.
 /// - **On a change of the pending confirmation**: `approvalTarget()` (the approval sheet's
 ///   picture; see `ApprovalPreview`).
@@ -84,32 +88,79 @@ public final class LiveViewModel: Sendable {
         guard let viewer else { return false }
         let update = Self.update(for: event)
         return state.withLock { s in
-            let change: CoreViewerChange
-            do {
-                change = try viewer.feed(update: update)
-            } catch {
-                s.stale = true
-                // The core may have moved on (a newer question, or none): a picture of an
-                // earlier question is not kept for whatever is asked next (preview review).
-                let hadApproval = s.approval != nil
-                s.approval = nil
-                return hadApproval
-            }
-            if change.approval {
-                s.approval = (try? viewer.approvalTarget()) ?? nil
-            }
-            guard change.steps || change.screens || change.activity || change.approval || s.stale else { return false }
-            do {
-                s.timeline = try viewer.timeline()
-                s.stale = false
-            } catch {
-                s.stale = true
-                return false
-            }
-            let kept = Set(s.timeline.screens.map(\.id))
-            s.screens.removeAll { !kept.contains($0.info.id) }
-            return true
+            Self.absorb(s: &s, viewer: viewer, change: try? viewer.feed(update: update))
         }
+    }
+
+    /// What `apply(_:streamingTo:nowMs:)` did.
+    public struct Streamed: Sendable {
+        /// `timeline` or `approvalTarget` changed (as `apply(_:)` returns it).
+        public var changed: Bool
+        /// The hub's effects (frames for watching devices), to carry out in order; `nil`
+        /// when the call failed (nothing was fed or streamed).
+        public var fed: CoreViewerFed?
+    }
+
+    /// Feeds one event AND streams it to the paired devices that watch (the phone, while
+    /// remote control is on): still one FFI call (`feedAndStream`), the timeline never
+    /// crosses the boundary. The returned effects must be carried out like any hub effects.
+    public func apply(_ event: RunEvent, streamingTo hub: JarvisRemoteHub, nowMs: UInt64) -> Streamed {
+        guard let viewer else { return Streamed(changed: false, fed: nil) }
+        let update = Self.update(for: event)
+        return state.withLock { s in
+            let fed = try? viewer.feedAndStream(update: update, hub: hub, nowMs: nowMs)
+            return Streamed(changed: Self.absorb(s: &s, viewer: viewer, change: fed?.change), fed: fed)
+        }
+    }
+
+    /// A controller's view: applies one delta or snapshot part received from the phone
+    /// (one FFI call) and republishes the timeline when it changed. `nil` when the call
+    /// failed.
+    @discardableResult
+    public func applyDelta(_ bytes: Data) -> CoreDeltaApplied? {
+        guard let viewer else { return nil }
+        return state.withLock { s in
+            let applied = try? viewer.applyDelta(bytes: bytes)
+            var change: CoreViewerChange?
+            switch applied {
+            case .changed(let c)?: change = c
+            case .unchanged?, .needsResync?, .incompatible?:
+                change = CoreViewerChange(steps: false, screens: false, activity: false, generation: 0, approval: false)
+            case nil: change = nil
+            }
+            _ = Self.absorb(s: &s, viewer: viewer, change: change)
+            return applied
+        }
+    }
+
+    /// Whether this view (as a remote controller) waits for a snapshot.
+    public var needsResync: Bool { (try? viewer?.needsResync()) ?? false }
+
+    /// Takes a feed's change (`nil`: the call failed) into the published state. Returns
+    /// whether `timeline` or `approvalTarget` changed.
+    private static func absorb(s: inout State, viewer: any JarvisViewerProtocol, change: CoreViewerChange?) -> Bool {
+        guard let change else {
+            s.stale = true
+            // The core may have moved on (a newer question, or none): a picture of an
+            // earlier question is not kept for whatever is asked next (preview review).
+            let hadApproval = s.approval != nil
+            s.approval = nil
+            return hadApproval
+        }
+        if change.approval {
+            s.approval = (try? viewer.approvalTarget()) ?? nil
+        }
+        guard change.steps || change.screens || change.activity || change.approval || s.stale else { return false }
+        do {
+            s.timeline = try viewer.timeline()
+            s.stale = false
+        } catch {
+            s.stale = true
+            return false
+        }
+        let kept = Set(s.timeline.screens.map(\.id))
+        s.screens.removeAll { !kept.contains($0.info.id) }
+        return true
     }
 
     /// Steps, screen summaries and the activity (republished by `apply` only on a change).

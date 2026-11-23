@@ -63,6 +63,7 @@ pub mod api;
 mod convert;
 mod error;
 mod guard;
+mod live_remote;
 mod remote;
 mod runner;
 mod session;
@@ -72,6 +73,7 @@ mod viewer;
 mod workflows;
 
 pub use error::JarvisError;
+pub use live_remote::{CoreDeltaApplied, CoreResyncReason, CoreViewerFed};
 pub use remote::{
     never_remote_approve, new_device_remote_permissions, remote_min_entropy_len,
     remote_protocol_version, remotely_approvable, JarvisRemoteClient, JarvisRemoteHub,

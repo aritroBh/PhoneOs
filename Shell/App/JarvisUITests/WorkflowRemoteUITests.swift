@@ -266,4 +266,31 @@ final class WorkflowRemoteUITests: QATestCase {
         XCTAssertTrue(never.label.lowercased().contains("paying"), "never-remote note: \(never.label)")
         XCTAssertTrue(never.label.lowercased().contains("deleting"), "never-remote note: \(never.label)")
     }
+
+    func testWatchScreenLayoutPermission() {
+        let app = launch(["-jarvis-playground", "-jarvis-reset", "-jarvis-seed-remote-device"])
+        tab("Control", in: app).tap()
+        require(app.buttons["control.remote"], "the Remote control row", in: app)
+        app.buttons["control.remote"].tap()
+        let device = app.descendants(matching: .any)["remote.device.0"].firstMatch
+        require(device, "the paired device", timeout: 20, in: app)
+        let watch = app.switches["remote.device.0.watchScreen"]
+        if !watch.exists { app.swipeUp() }
+        require(watch, "the Watch the screen layout switch", in: app)
+        XCTAssertEqual(watch.value as? String, "0", "watching the screen layout must be off for a new device")
+        let note = app.staticTexts["remote.device.0.watchScreenNote"]
+        if !note.isHittable { app.swipeUp() }
+        require(note, "the Watch the screen layout footnote", in: app)
+        XCTAssertTrue(note.label.contains("outlines of the screen, where it taps, and step captions"), "footnote: \(note.label)")
+        XCTAssertTrue(note.label.contains("Never pictures of the screen, passwords or the lock screen"), "footnote: \(note.label)")
+        watch.tap()
+        if (watch.value as? String) == "0" {
+            // Some iOS versions only toggle when the switch itself (trailing edge) is hit.
+            watch.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        }
+        let on = NSPredicate(format: "value == '1'")
+        expectation(for: on, evaluatedWith: watch)
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(app.switches["remote.device.0.approve"].value as? String, "0", "watching must not turn approving on")
+    }
 }

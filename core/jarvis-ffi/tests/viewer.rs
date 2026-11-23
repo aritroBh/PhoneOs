@@ -37,98 +37,12 @@ fn drive_viewer(viewer: &JarvisViewer) -> usize {
 /// [`drive_viewer`], calling `on_confirm` with the viewer right after each
 /// `.confirmationPending` was fed.
 fn drive_viewer_with(viewer: &JarvisViewer, mut on_confirm: impl FnMut(&JarvisViewer)) -> usize {
-    let session = JarvisSession::new(config(), task(), String::new()).unwrap();
-    let mut feeds = 0;
-    let mut feed = |u: CoreViewerUpdate| {
-        feeds += 1;
-        viewer.feed(u).unwrap()
-    };
-    feed(CoreViewerUpdate::Started { task_id: task().id });
-    let mut page = Page::Settings;
-    let mut script = model_script();
-    let mut now = 1_000u64;
-    let mut event = Event::Start;
-    for number in 1..200u64 {
-        let effect = session.step(now, event);
-        now += 50;
-        feed(CoreViewerUpdate::Effect {
-            effect: effect.clone(),
-            number,
-        });
-        feed(CoreViewerUpdate::Progress {
-            progress: session.progress().unwrap(),
-        });
-        event = match &effect {
-            Effect::Observe { .. } => match page {
-                Page::Settings => Event::Observed {
-                    observation: ScreenObservation {
-                        screen: settings_screen(),
-                        screenshot: None,
-                        device_locked: false,
-                    },
-                },
-                _ => Event::ObservedRunnerText {
-                    snapshot: snapshot(wifi_text(page == Page::WifiOn)),
-                },
-            },
-            Effect::Infer { request } => {
-                feed(CoreViewerUpdate::Prompt {
-                    text: request.user.clone(),
-                });
-                let text = match script.pop_front().flatten() {
-                    Some((role, label)) => {
-                        let i = index_in_prompt(&request.user, role, label).unwrap();
-                        format!(r#"{{"thought":"tap","action":"tap","element":{i}}}"#)
-                    }
-                    None => {
-                        r#"{"thought":"done","action":"done","summary":"Wi-Fi is off"}"#.to_owned()
-                    }
-                };
-                Event::ModelOutput {
-                    output: ModelOutput { text },
-                }
-            }
-            Effect::Act { command } => {
-                if let RunnerCommand::Tap { x, y } = command {
-                    page = match page {
-                        Page::Settings if contains(rect(16.0, 200.0, 361.0, 44.0), *x, *y) => {
-                            Page::WifiOn
-                        }
-                        Page::WifiOn if contains(rect(312.0, 166.0, 51.0, 31.0), *x, *y) => {
-                            Page::WifiOff
-                        }
-                        other => other,
-                    };
-                }
-                Event::ActResult {
-                    result: RunnerResult {
-                        ok: true,
-                        error: None,
-                        failure: None,
-                    },
-                }
-            }
-            Effect::Confirm { request } => {
-                feed(CoreViewerUpdate::ConfirmationPending {
-                    request: request.clone(),
-                });
-                on_confirm(viewer);
-                Event::UserDecision { approved: true }
-            }
-            Effect::Finished { outcome } => {
-                feed(CoreViewerUpdate::Finished {
-                    status: outcome.status,
-                });
-                return feeds;
-            }
-            other => panic!("unexpected {other:?}"),
-        };
-        feed(CoreViewerUpdate::EffectCompleted {
-            effect,
-            event: event.clone(),
-        });
-    }
-    panic!("session did not finish");
+    drive_updates(
+        |u| {
+            viewer.feed(u).unwrap();
+        },
+        || on_confirm(viewer),
+    )
 }
 
 #[test]

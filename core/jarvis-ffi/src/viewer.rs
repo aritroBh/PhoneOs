@@ -26,6 +26,7 @@
 //! The record and enum names carry a `Core` prefix so they never collide with the shell's
 //! own Swift `Viewer*` types while both exist.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use jarvis_proto as p;
@@ -818,15 +819,25 @@ fn replay_status(live: &LiveView) -> CoreReplayStatus {
 // The object.
 // ---------------------------------------------------------------------------------------
 
-struct Inner {
-    live: LiveView,
+pub(crate) struct Inner {
+    pub(crate) live: LiveView,
     config: ReducerConfig,
 }
+
+/// Viewers made so far in this process: each gets its own number, so a remote stream
+/// (`feedAndStream`) tells a new viewer's run from a continued one (see `live_remote.rs`).
+static VIEWERS_MADE: AtomicU64 = AtomicU64::new(0);
 
 /// The Live view of one run. Swift: `JarvisViewer`.
 #[derive(uniffi::Object)]
 pub struct JarvisViewer {
     inner: Mutex<Inner>,
+    /// This viewer's number (`VIEWERS_MADE`).
+    pub(crate) instance: u64,
+}
+
+fn next_instance() -> u64 {
+    VIEWERS_MADE.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
 }
 
 impl JarvisViewer {
@@ -837,10 +848,11 @@ impl JarvisViewer {
                 live: LiveView::new(config.clone()),
                 config,
             }),
+            instance: next_instance(),
         }
     }
 
-    fn lock(&self) -> MutexGuard<'_, Inner> {
+    pub(crate) fn lock(&self) -> MutexGuard<'_, Inner> {
         match self.inner.lock() {
             Ok(g) => g,
             Err(poison) => {
@@ -853,7 +865,7 @@ impl JarvisViewer {
     }
 
     /// Runs `f` with the viewer locked, inside [`guarded`].
-    fn with<T>(
+    pub(crate) fn with<T>(
         &self,
         what: &str,
         f: impl FnOnce(&mut LiveView) -> Result<T, JarvisError>,
@@ -898,6 +910,7 @@ impl JarvisViewer {
                     live: LiveView::from_timeline(timeline, config.clone()),
                     config,
                 }),
+                instance: next_instance(),
             }))
         })
     }

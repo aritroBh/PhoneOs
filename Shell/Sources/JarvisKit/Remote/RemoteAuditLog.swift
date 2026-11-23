@@ -164,11 +164,32 @@ public enum RemoteAuditText {
         case .lockedOut(let untilMs):
             ("Too many failed attempts: locked until \(wallTime(untilMs).formatted(date: .omitted, time: .standard))", true)
         case .accepted(let request, let detail):
-            ("Accepted \(request)" + (detail.map { ": \($0)" } ?? ""), false)
-        case .denied(let request, let reason): ("Refused \(request): \(describe(reason))", true)
+            if let text = liveView(accepted: request, detail: detail) { (text, false) }
+            else { ("Accepted \(request)" + (detail.map { ": \($0)" } ?? ""), false) }
+        case .denied(let request, let reason):
+            if liveViewRequests.contains(request) { ("Refused to show the screen layout: \(describe(reason))", true) }
+            else { ("Refused \(request): \(describe(reason))", true) }
         case .rejected(let request, let code): ("Rejected \(request ?? "a message"): \(describe(code))", true)
         case .revoked: ("Removed", false)
         case .permissionsChanged(let p): ("Permissions: \(describe(p))", false)
+        }
+    }
+
+    /// The Live view stream's requests (`start_watching`, `stop_watching`, `viewer_resync`).
+    static let liveViewRequests: Set<String> = ["start_watching", "stop_watching", "viewer_resync"]
+
+    /// Words for the Live view stream's accepted requests and the permission's changes;
+    /// `nil` for anything else.
+    static func liveView(accepted request: String, detail: String?) -> String? {
+        switch request {
+        case "start_watching": return "Started watching the screen layout"
+        case "stop_watching":
+            return detail == "permission revoked"
+                ? "Stopped watching the screen layout: the permission was turned off"
+                : "Stopped watching the screen layout"
+        case "watch_screen_permission":
+            return "Watch the screen layout: \(detail == "on" ? "on" : "off")"
+        default: return nil
         }
     }
 

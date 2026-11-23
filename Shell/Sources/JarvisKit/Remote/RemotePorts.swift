@@ -66,6 +66,20 @@ public protocol RemoteTransport: Sendable {
     func close(_ connection: UInt64)
     /// Stops listening and closes every connection.
     func stop()
+    /// Sends like `send(_:to:)` and calls `written` with the byte count once the transport
+    /// has handed the bytes to the network (`NWConnection`'s `.contentProcessed`). The hub
+    /// gives the Live view a connection only while little is unconfirmed, so a peer that
+    /// stops reading never makes the phone queue more. Never called for bytes of a
+    /// connection that closed first. The default sends and confirms at once (a transport
+    /// without a completion signal: no backpressure beyond the hub's own queue bound).
+    func send(_ bytes: Data, to connection: UInt64, written: @escaping @Sendable (Int) -> Void)
+}
+
+extension RemoteTransport {
+    public func send(_ bytes: Data, to connection: UInt64, written: @escaping @Sendable (Int) -> Void) {
+        send(bytes, to: connection)
+        written(bytes.count)
+    }
 }
 
 /// A `SecretStore` in memory (tests, the simulator's QA mode).

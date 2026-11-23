@@ -198,11 +198,12 @@ struct ReviewViewerOptionOff {
 
 // MARK: - A. One privacy rule, decided by the core
 
-/// Samples from the core's own redaction tests (jarvis-safety tests/redact.rs, review_fixes.rs).
-private let otpSample = ("Your verification code is 482913.", "482913")
-private let cardSample = ("Card: 5555 5555 5555 4444 exp 12/29", "5555 5555 5555 4444")
-private let ibanSample = ("IBAN: GB82 WEST 1234 5698 7654 32", "GB82 WEST 1234 5698 7654 32")
-private let keySample = ("key sk-proj-a8F3kLm29QzX7wYp4Rt6Vb1N here", "sk-proj-a8F3kLm29QzX7wYp4Rt6Vb1N")
+/// Samples from the core's own redaction tests (`SecretCorpus`, shared with the remote
+/// stream's tests).
+private let otpSample = SecretCorpus.otp
+private let cardSample = SecretCorpus.card
+private let ibanSample = SecretCorpus.iban
+private let keySample = SecretCorpus.key
 
 private func typedField(_ label: String?, placeholder: String? = nil, identifier: String? = nil, secure: Bool = false) -> UiNode {
     let full = Rect(x: 0, y: 0, width: 393, height: 852)

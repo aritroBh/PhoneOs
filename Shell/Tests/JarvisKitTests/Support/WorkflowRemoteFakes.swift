@@ -171,6 +171,11 @@ final class RecordingTransport: RemoteTransport {
         inner.send(bytes, to: connection)
     }
 
+    func send(_ bytes: Data, to connection: UInt64, written: @escaping @Sendable (Int) -> Void) {
+        log.add(.send(connection, bytes))
+        inner.send(bytes, to: connection, written: written)
+    }
+
     func consumed(_ count: Int, on connection: UInt64) { inner.consumed(count, on: connection) }
 
     func close(_ connection: UInt64) {
@@ -261,6 +266,19 @@ final class HubProbe: JarvisRemoteHubProtocol, @unchecked Sendable {
         return keep((extra ?? []) + (try hub.tick(nowMs: nowMs)))
     }
     func toJson() throws -> String { try hub.toJson() }
+    func written(connId: UInt64, bytes: UInt64, nowMs: UInt64) throws -> [HubEffect] {
+        try check(); return keep(try hub.written(connId: connId, bytes: bytes, nowMs: nowMs))
+    }
+    func setWatchScreen(nowMs: UInt64, deviceId: String, allowed: Bool) throws -> [HubEffect] {
+        try check(); return try hub.setWatchScreen(nowMs: nowMs, deviceId: deviceId, allowed: allowed)
+    }
+    func watchScreen(deviceId: String) throws -> Bool { try hub.watchScreen(deviceId: deviceId) }
+    func isWatching(connId: UInt64) throws -> Bool { try hub.isWatching(connId: connId) }
+}
+
+/// The probe streams the Live view through the real hub it wraps.
+extension HubProbe: LiveViewStreamingHub {
+    var liveViewHub: JarvisRemoteHub { hub }
 }
 
 /// A remote-control setup on the demo backend.
@@ -276,14 +294,16 @@ final class RemoteHarness {
 
     init(_ name: String, rules: ScriptedOwner.Rules = ScriptedOwner.Rules(), random: any RandomSource = GeneratorRandomSource(),
          settingsProblem: @escaping @MainActor () -> String? = { nil },
-         demoRunner: (@Sendable (Duration, Int) -> any PhoneRunner)? = nil) {
+         demoRunner: (@Sendable (Duration, Int) -> any PhoneRunner)? = nil,
+         clock: (@Sendable () -> UInt64)? = nil) {
         base = AppHarness(name, rules: rules, settingsProblem: settingsProblem, demoRunner: demoRunner)
         secrets = RecordingSecretStore(log: log)
         let transport = RecordingTransport(self.transport, log: log)
         let probes = self.probes
         service = RemoteControlService(
             secrets: secrets, random: random, transport: { transport }, phoneName: "Test phone",
-            center: base.center, runner: base.runner, tickInterval: .seconds(3_600),
+            center: base.center, runner: base.runner,
+            clock: clock ?? { UInt64(max(0, Date().timeIntervalSince1970 * 1_000)) }, tickInterval: .seconds(3_600),
             makeHub: { json, name in
                 let probe = HubProbe(try JarvisRemoteHub(storeJson: json, phoneName: name))
                 probes.list.withLock { $0.append(probe) }

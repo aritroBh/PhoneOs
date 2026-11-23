@@ -907,6 +907,12 @@ private final class SwitchableViewer: JarvisViewerProtocol, Sendable {
     func screen(id: UInt32) throws -> CoreViewerScreen? { try check(); return try inner.screen(id: id) }
     func timeline() throws -> CoreViewerTimeline { try check(); return try inner.timeline() }
     func approvalTarget() throws -> CoreApprovalTarget? { try check(); return try inner.approvalTarget() }
+    func feedAndStream(update: CoreViewerUpdate, hub: JarvisRemoteHub, nowMs: UInt64) throws -> CoreViewerFed {
+        try check()
+        return try inner.feedAndStream(update: update, hub: hub, nowMs: nowMs)
+    }
+    func applyDelta(bytes: Data) throws -> CoreDeltaApplied { try check(); return try inner.applyDelta(bytes: bytes) }
+    func needsResync() throws -> Bool { try check(); return try inner.needsResync() }
 }
 
 @Suite("Approval preview: the setting", .timeLimit(.minutes(1)))

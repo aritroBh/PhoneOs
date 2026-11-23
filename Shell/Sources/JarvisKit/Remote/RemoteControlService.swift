@@ -46,6 +46,17 @@ public enum RemoteControlError: Error, Sendable, Equatable, CustomStringConverti
     }
 }
 
+/// A hub the Live view can stream through: `JarvisViewer.feedAndStream` takes the core's own
+/// hub object (the timeline never crosses the FFI). The core's `JarvisRemoteHub` is one;
+/// a test wrapper around it says which hub it wraps.
+public protocol LiveViewStreamingHub {
+    var liveViewHub: JarvisRemoteHub { get }
+}
+
+extension JarvisRemoteHub: LiveViewStreamingHub {
+    public var liveViewHub: JarvisRemoteHub { self }
+}
+
 /// A pairing offer on screen. The code and the QR payload are SECRET: they are wrapped so
 /// printing the offer shows nothing, and the service drops the offer when it is used,
 /// cancelled or expired.
@@ -81,6 +92,14 @@ public struct RemotePairingOffer: Sendable, Equatable, CustomStringConvertible, 
 ///   `remotelyApprovable(category:)`.
 /// - **Lifecycle.** Off by default; on starts the listener and a tick timer; off stops both
 ///   and drops the hub. A poisoned hub is rebuilt from the secret store.
+/// - **Live view stream.** `feedLiveView(_:_:)` is the phone's one FFI call per driver
+///   update while remote control is on (`JarvisViewer.feedAndStream`: feeds the Live view
+///   and hands the hub its timeline); the frames it returns go out through the same ordered
+///   path as every hub effect, ahead of hub calls not made yet. Every frame is sent with a
+///   write completion that is reported back (`written`), so a device that stops reading
+///   never makes the phone queue more than the hub's bound; `tick` sends screens held back
+///   by the hub's rate limit. Only devices with "Watch the screen layout" (off by default)
+///   get anything; turning it off ends their stream in the same call (audited).
 @MainActor
 public final class RemoteControlService {
     public enum Status: Sendable, Equatable {
@@ -101,6 +120,8 @@ public final class RemoteControlService {
     public private(set) var lastError: String?
     /// Connections that finished their handshake, by connection id → device id.
     public private(set) var connected: [UInt64: String] = [:]
+    /// Devices that watch the Live view now (on at least one connection).
+    public private(set) var watching: Set<String> = []
     public let audit: RemoteAuditLog
     /// Called after every change.
     public var onChange: (@MainActor () -> Void)?
@@ -120,6 +141,12 @@ public final class RemoteControlService {
     private var transport: (any RemoteTransport)?
     private var consumer: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
+    /// Write completions from the transport (any thread), reported to the hub in order.
+    private var writtenSink: AsyncStream<(UInt64, Int)>.Continuation?
+    private var writtenConsumer: Task<Void, Never>?
+    /// Completed bytes per connection not yet reported to the hub.
+    private var unreported: [UInt64: Int] = [:]
+    private var reportScheduled = false
     private var open: Set<UInt64> = []
     private var observer: UUID?
 
@@ -131,6 +158,9 @@ public final class RemoteControlService {
     }
 
     private var inbox: [Input] = []
+    /// Effects the hub already returned outside the inbox (a Live view feed, an owner
+    /// action): carried out before any inbox entry, whose hub call comes later.
+    private var ready: [[HubEffect]] = []
     private var working = false
     /// The confirmation the hub knows about: its request id, the request, and the broker's
     /// prompt id it was announced for (`nil` until that prompt is shown).
@@ -191,6 +221,13 @@ public final class RemoteControlService {
                 try? await Task.sleep(for: interval)
                 if Task.isCancelled { return }
                 self?.tick()
+            }
+        }
+        let (written, sink) = AsyncStream.makeStream(of: (UInt64, Int).self)
+        writtenSink = sink
+        writtenConsumer = Task { @MainActor [weak self] in
+            for await (id, count) in written {
+                self?.reportWritten(id, count)
             }
         }
         if observer == nil {
@@ -281,13 +318,21 @@ public final class RemoteControlService {
         ticker?.cancel()
         consumer = nil
         ticker = nil
+        writtenSink?.finish()
+        writtenSink = nil
+        writtenConsumer?.cancel()
+        writtenConsumer = nil
+        unreported = [:]
+        reportScheduled = false
         transport?.stop()
         transport = nil
         open = []
         connected = [:]
+        watching = []
         pairing = nil
         hubConfirm = nil
         inbox = []
+        ready = []
         self.hub = nil
         status = .off
     }
@@ -350,6 +395,61 @@ public final class RemoteControlService {
 
     public func isConnected(_ deviceId: String) -> Bool { connected.values.contains(deviceId) }
 
+    /// "Watch the screen layout" for a device: it may see the Live view (outlines of the
+    /// screen, where Jarvis taps, step captions; never pictures of the screen, passwords
+    /// or the lock screen). Off by default; stored with the device. Off ends its stream at
+    /// once. Never changes what may be approved.
+    public func setWatchScreen(deviceId: String, _ allowed: Bool) throws {
+        try ownerAction { try $0.setWatchScreen(nowMs: self.clock(), deviceId: deviceId, allowed: allowed) }
+    }
+
+    /// Whether a device may watch the screen layout.
+    public func watchScreen(_ deviceId: String) -> Bool { devices.first { $0.id == deviceId }?.watchScreen ?? false }
+
+    /// Whether a device watches the Live view now.
+    public func isWatching(_ deviceId: String) -> Bool { watching.contains(deviceId) }
+
+    // MARK: - Live view stream
+
+    /// The phone's Live view takes one driver update: ONE FFI call that feeds `viewer` and,
+    /// while remote control is on, streams to the devices that watch
+    /// (`JarvisViewer.feedAndStream`). Returns whether `viewer`'s timeline or approval
+    /// picture changed (as `LiveViewModel.apply(_:)`). Off, or with a hub that cannot
+    /// stream, it is a plain `apply`.
+    @discardableResult
+    public func feedLiveView(_ viewer: LiveViewModel, _ event: RunEvent) -> Bool {
+        guard let streaming = (hub as? any LiveViewStreamingHub)?.liveViewHub else { return viewer.apply(event) }
+        let streamed = viewer.apply(event, streamingTo: streaming, nowMs: clock())
+        guard let fed = streamed.fed else { return streamed.changed }
+        if let why = fed.hubError {
+            handleHubError(JarvisError.Poisoned(message: why))
+            changed()
+        } else if !fed.effects.isEmpty {
+            deliverComputed(fed.effects)
+        }
+        return streamed.changed
+    }
+
+    /// The transport wrote `count` bytes of a connection's frames: reported to the hub
+    /// (coalesced per connection) through the inbox; frames waiting for room follow.
+    private func reportWritten(_ id: UInt64, _ count: Int) {
+        guard hub != nil, open.contains(id), count > 0 else { return }
+        unreported[id, default: 0] += count
+        guard !reportScheduled else { return }
+        reportScheduled = true
+        enqueue(.hub { [weak self] hub in
+            guard let self else { return [] }
+            self.reportScheduled = false
+            let batch = self.unreported.sorted { $0.key < $1.key }
+            self.unreported = [:]
+            var effects: [HubEffect] = []
+            for (id, count) in batch where self.open.contains(id) {
+                effects += try hub.written(connId: id, bytes: UInt64(count), nowMs: self.clock())
+            }
+            return effects
+        })
+    }
+
     public func deviceName(_ id: String) -> String? { devices.first { $0.id == id }?.name }
 
     private func ownerAction(_ call: @escaping @MainActor (any JarvisRemoteHubProtocol) throws -> [HubEffect]) throws {
@@ -362,7 +462,7 @@ public final class RemoteControlService {
             changed()
             throw failure
         }
-        enqueue(.hub { _ in effects })
+        deliverComputed(effects)
     }
 
     /// Tells remotes what they may list and run: the enabled skills and workflows. Sent
@@ -434,11 +534,27 @@ public final class RemoteControlService {
 
     private func enqueue(_ input: Input) {
         inbox.append(input)
+        drain()
+    }
+
+    /// Effects a hub call outside the inbox returned. Its frames are sealed after those of
+    /// every hub call made so far and before those of any inbox entry (whose call comes
+    /// later), so they go out after the effects being carried out now and before the inbox.
+    private func deliverComputed(_ effects: [HubEffect]) {
+        ready.append(effects)
+        drain()
+    }
+
+    private func drain() {
         guard !working else { return }
         working = true
-        while !inbox.isEmpty {
+        while !ready.isEmpty || !inbox.isEmpty {
+            guard let hub else { inbox = []; ready = []; break }
+            if !ready.isEmpty {
+                carryOut(ready.removeFirst())
+                continue
+            }
             let next = inbox.removeFirst()
-            guard let hub else { inbox = []; break }
             do {
                 switch next {
                 case .hub(let call):
@@ -483,7 +599,9 @@ public final class RemoteControlService {
                     for id in open.sorted() { closeConnection(id) }
                 }
             case .send(let id, let bytes):
-                transport?.send(bytes, to: id)
+                // The completion reports the write to the hub (Live view backpressure).
+                let sink = writtenSink
+                transport?.send(bytes, to: id) { count in sink?.yield((id, count)) }
             case .close(let id, _):
                 closeConnection(id)
             case .startTask(let taskId, let deviceId, let text):
@@ -652,6 +770,9 @@ public final class RemoteControlService {
         for id in open.sorted() { transport?.close(id) }
         open = []
         connected = [:]
+        watching = []
+        unreported = [:]
+        reportScheduled = false
         pairing = nil
         hubConfirm = nil
         hub = nil
@@ -686,6 +807,11 @@ public final class RemoteControlService {
 
     private func refreshDevices() {
         devices = (try? hub?.devices()) ?? []
+        var now: Set<String> = []
+        if let hub {
+            for (conn, device) in connected where (try? hub.isWatching(connId: conn)) == true { now.insert(device) }
+        }
+        watching = now
     }
 
     private func changed() { onChange?() }

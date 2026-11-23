@@ -14,6 +14,9 @@ public final class InMemoryRemoteTransport: RemoteTransport {
         var starts = 0
         /// Bytes delivered as `.received` and not yet reported `consumed`, per connection.
         var unconsumed: [UInt64: Int] = [:]
+        /// Connections whose writes never complete (`holdWrites`).
+        var heldWrites: Set<UInt64> = []
+        var sentBytes: [UInt64: Int] = [:]
     }
 
     private let state = Mutex(State())
@@ -43,6 +46,30 @@ public final class InMemoryRemoteTransport: RemoteTransport {
         let endpoint = state.withLock { $0.endpoints[connection] }
         endpoint?.deliver(bytes)
     }
+
+    /// Delivers at once; `written` follows at once unless the connection's writes are
+    /// held (`holdWrites`), then never (a peer that stopped reading).
+    public func send(_ bytes: Data, to connection: UInt64, written: @escaping @Sendable (Int) -> Void) {
+        let (endpoint, held) = state.withLock { s -> (InMemoryRemoteEndpoint?, Bool) in
+            let endpoint = s.endpoints[connection]
+            let held = s.heldWrites.contains(connection)
+            if endpoint != nil { s.sentBytes[connection, default: 0] += bytes.count }
+            return (endpoint, held)
+        }
+        guard let endpoint else { return }
+        endpoint.deliver(bytes)
+        if !held { written(bytes.count) }
+    }
+
+    /// Test hook: writes on `connection` never complete from now on (or again, with `false`).
+    public func holdWrites(_ held: Bool, on connection: UInt64) {
+        state.withLock { s in
+            if held { s.heldWrites.insert(connection) } else { s.heldWrites.remove(connection) }
+        }
+    }
+
+    /// Bytes sent to `connection` with a completion (the phone's frames), for tests.
+    public func sentBytes(on connection: UInt64) -> Int { state.withLock { $0.sentBytes[connection] ?? 0 } }
 
     public func consumed(_ count: Int, on connection: UInt64) {
         state.withLock { s in
@@ -181,6 +208,8 @@ public final class InProcessRemote: Sendable {
     private let client: Mutex<JarvisRemoteClient>
     public let endpoint: InMemoryRemoteEndpoint
     private let state = Mutex(State())
+    /// The Live view this device watches (`startWatching`), fed from `receiveAll`.
+    private let live = Mutex<RemoteLiveView?>(nil)
     private let pump: Mutex<Task<Void, Never>?> = Mutex(nil)
 
     private init(client: JarvisRemoteClient, endpoint: InMemoryRemoteEndpoint) {
@@ -221,10 +250,20 @@ public final class InProcessRemote: Sendable {
         pump.withLock { $0 = task }
     }
 
+    /// Every frame the client seals is written while its lock is held, so frames reach the
+    /// phone in the order of their counters whichever task sealed them.
     private func receive(_ bytes: Data) {
         let events: [ClientEvent]
         do {
-            events = try client.withLock { try $0.receive(bytes: bytes) }
+            events = try client.withLock { client in
+                let received = try client.receiveAll(bytes: bytes)
+                for case .send(let out) in received.events { endpoint.write(out) }
+                // After the client's own sends: a request the view makes is sealed after them.
+                if !received.viewer.isEmpty, let view = live.withLock({ $0 }) {
+                    view.receive(received.viewer, client: client).forEach(endpoint.write)
+                }
+                return received.events
+            }
         } catch {
             state.withLock { $0.authFailed = true }
             endpoint.close()
@@ -232,8 +271,8 @@ public final class InProcessRemote: Sendable {
         }
         for event in events {
             switch event {
-            case .send(let out):
-                endpoint.write(out)
+            case .send:
+                break
             case .paired(let id, let json):
                 state.withLock { $0.deviceId = id; $0.credentials = Redacted(json) }
             case .connected:
@@ -250,6 +289,19 @@ public final class InProcessRemote: Sendable {
         }
     }
 
+    /// Starts watching the phone's Live view into `view` (needs "Watch the screen layout"
+    /// for this device on the phone).
+    public func startWatching(_ view: RemoteLiveView) throws {
+        live.withLock { $0 = view }
+        try client.withLock { endpoint.write(try view.start($0)) }
+    }
+
+    /// Stops watching (the view keeps its last picture).
+    public func stopWatching() throws {
+        guard let view = live.withLock({ $0 }) else { return }
+        try client.withLock { endpoint.write(try view.stop($0)) }
+    }
+
     public var deviceId: String? { state.withLock { $0.deviceId } }
     /// The credentials from pairing (SECRET: never print `reveal()`).
     public var credentials: Redacted<String>? { state.withLock { $0.credentials } }
@@ -258,8 +310,7 @@ public final class InProcessRemote: Sendable {
 
     /// Sends a command to the phone.
     public func send(_ message: ClientMessage) throws {
-        let bytes = try client.withLock { try $0.send(message: message) }
-        endpoint.write(bytes)
+        try client.withLock { endpoint.write(try $0.send(message: message)) }
     }
 
     /// Waits for a message from the phone after the first `after` messages.

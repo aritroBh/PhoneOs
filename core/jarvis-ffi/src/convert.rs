@@ -2174,6 +2174,8 @@ impl From<r::DeviceInfo> for DeviceInfo {
             name,
             permissions: permissions.into(),
             paired_at_ms,
+            // Not part of the core record: `JarvisRemoteHub.devices()` fills it in.
+            watch_screen: false,
         }
     }
 }
@@ -2187,6 +2189,7 @@ impl TryFrom<DeviceInfo> for r::DeviceInfo {
             name,
             permissions,
             paired_at_ms,
+            watch_screen: _,
         } = v;
         Ok(r::DeviceInfo {
             id: device_id_from(&id)?,
@@ -2810,6 +2813,35 @@ impl From<ServerMessage> for r::ServerMessage {
             },
             ServerMessage::Error { code } => r::ServerMessage::Error { code: code.into() },
             ServerMessage::Pong => r::ServerMessage::Pong,
+        }
+    }
+}
+
+impl From<r::ViewerEndReason> for RemoteViewerEndReason {
+    fn from(v: r::ViewerEndReason) -> Self {
+        match v {
+            r::ViewerEndReason::Stopped => RemoteViewerEndReason::Stopped,
+            r::ViewerEndReason::PermissionRevoked => RemoteViewerEndReason::PermissionRevoked,
+            r::ViewerEndReason::Other => RemoteViewerEndReason::Other,
+        }
+    }
+}
+
+impl From<r::ViewerEvent> for RemoteViewerEvent {
+    fn from(v: r::ViewerEvent) -> Self {
+        match v {
+            r::ViewerEvent::Delta { bytes } => RemoteViewerEvent::Delta { bytes },
+            r::ViewerEvent::Snapshot { bytes, part, parts } => {
+                RemoteViewerEvent::Snapshot { bytes, part, parts }
+            }
+            r::ViewerEvent::ResyncRequested => RemoteViewerEvent::ResyncRequested,
+            r::ViewerEvent::Ended { reason } => RemoteViewerEvent::Ended {
+                reason: reason.into(),
+            },
+            r::ViewerEvent::Denied { reason } => RemoteViewerEvent::Denied {
+                reason: reason.into(),
+            },
+            r::ViewerEvent::Incompatible { version } => RemoteViewerEvent::Incompatible { version },
         }
     }
 }

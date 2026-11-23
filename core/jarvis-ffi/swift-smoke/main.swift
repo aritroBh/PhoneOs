@@ -867,5 +867,168 @@ do {
     check("viewer checks", false, "\(error)")
 }
 
+// 13. Live view over remote control: the phone's one call per update streams to a paired
+//     controller that holds "Watch the screen layout"; nothing without it; revoking ends it.
+do {
+    func entropy() -> Data {
+        var g = SystemRandomNumberGenerator()
+        return Data((0..<32).map { _ in UInt8.random(in: 0...255, using: &g) })
+    }
+    let hub = try JarvisRemoteHub(storeJson: "", phoneName: "Smoke phone")
+    var keychain = ""
+    var audits: [AuditEvent] = []
+    var now: UInt64 = 1_000
+    var streamBytes = 0
+    var sentWhileOff = 0
+    func apply(_ fx: [HubEffect]) throws -> [Data] {
+        var out: [Data] = []
+        for e in fx {
+            switch e {
+            case let .send(_, bytes): out.append(bytes)
+            case .storeChanged: keychain = try hub.toJson()
+            case let .audit(entry): audits.append(entry.event)
+            default: break
+            }
+        }
+        return out
+    }
+    let controllerView = try JarvisViewer(config: CoreViewerConfig(maxSteps: 200, framesEnabled: false, knownApps: []))
+    var viewerEvents: [RemoteViewerEvent] = []
+    var streamText = ""
+    var resyncs = 0
+    // Delivers phone → controller bytes, applies the Live view, reports writes; until quiet.
+    func pump(_ conn: UInt64, _ client: JarvisRemoteClient, _ first: [Data]) throws -> [ClientEvent] {
+        var toClient = first
+        var seen: [ClientEvent] = []
+        for _ in 0..<200 {
+            var toPhone: [Data] = []
+            var written = 0
+            for bytes in toClient {
+                written += bytes.count
+                let got = try client.receiveAll(bytes: bytes)
+                for ev in got.events {
+                    if case let .send(b) = ev { toPhone.append(b) } else { seen.append(ev) }
+                }
+                for ev in got.viewer {
+                    viewerEvents.append(ev)
+                    switch ev {
+                    case let .delta(b), let .snapshot(b, _, _):
+                        streamText += String(decoding: b, as: UTF8.self)
+                        if case .needsResync = try controllerView.applyDelta(bytes: b),
+                           let request = try client.requestResync() {
+                            resyncs += 1
+                            toPhone.append(request)
+                        }
+                    default: break
+                    }
+                }
+            }
+            toClient = []
+            if written > 0 {
+                now += 1
+                toClient += try apply(try hub.written(connId: conn, bytes: UInt64(written), nowMs: now))
+            }
+            for b in toPhone {
+                now += 1
+                toClient += try apply(try hub.receive(connId: conn, bytes: b, nowMs: now))
+            }
+            if toClient.isEmpty { break }
+        }
+        return seen
+    }
+
+    let offer = try hub.openPairing(nowMs: now, entropy: entropy())
+    let client = try JarvisRemoteClient.pair(code: offer.code, deviceName: "Smoke Mac", entropy: entropy())
+    _ = try pump(1, client, try apply(try hub.connectionOpened(connId: 1, nowMs: now, entropy: entropy())))
+    let deviceId = try client.deviceId() ?? ""
+    let mayWatch = try hub.watchScreen(deviceId: deviceId)
+    let listedOff = try hub.devices().first?.watchScreen == false
+    check("stream: a new device may not watch the screen layout", !mayWatch && listedOff)
+    _ = try pump(1, client, try apply(try hub.receive(connId: 1, bytes: try client.startWatching(), nowMs: now)))
+    check("stream: start without the permission is denied and audited",
+          viewerEvents == [.denied(reason: .notPermitted)]
+              && audits.contains(.denied(request: "start_watching", reason: .notPermitted)), "\(viewerEvents)")
+
+    // The phone's view, fed once per update; every update also streams.
+    let phoneView = try JarvisViewer(config: CoreViewerConfig(
+        maxSteps: 200, framesEnabled: false, knownApps: [AppInfo(bundleId: settingsBundle, name: "Settings")]))
+    func update(_ u: CoreViewerUpdate) throws {
+        now += 300
+        let fed = try phoneView.feedAndStream(update: u, hub: hub, nowMs: now)
+        if fed.hubError != nil { check("stream: the hub call failed", false, fed.hubError ?? "") }
+        let out = try apply(fed.effects)
+        if !(try hub.isWatching(connId: 1)) { sentWhileOff += out.reduce(0) { $0 + $1.count } }
+        streamBytes += out.reduce(0) { $0 + $1.count }
+        _ = try pump(1, client, out)
+    }
+    var screen = settingsScreen()
+    screen.root.children[0].children.append(UiNode(
+        role: .staticText, label: "Your code is 482913", value: nil, identifier: nil,
+        placeholder: nil, frame: Rect(x: 16, y: 400, width: 361, height: 44), enabled: true, visible: true,
+        hittable: false, focused: false, selected: false, secure: false, children: []))
+    try update(.started(taskId: "stream"))
+    try update(.effect(effect: .observe(screenshot: false), number: 1))
+    try update(.effectCompleted(effect: .observe(screenshot: false),
+                                event: .observed(observation: ScreenObservation(screen: screen, screenshot: nil))))
+    check("stream: nothing is sent to a device without the permission", sentWhileOff == 0 && streamBytes == 0,
+          "\(streamBytes)")
+
+    _ = try pump(1, client, try apply(try hub.setWatchScreen(nowMs: now, deviceId: deviceId, allowed: true)))
+    let listedOn = try hub.devices().first?.watchScreen == true
+    check("stream: the permission is stored with the device and audited",
+          keychain.contains("\"watch_screen\":true") && listedOn
+              && audits.contains(.accepted(request: "watch_screen_permission", detail: "on")))
+    viewerEvents = []
+    _ = try pump(1, client, try apply(try hub.receive(connId: 1, bytes: try client.startWatching(), nowMs: now)))
+    if case .snapshot(_, 0, _)? = viewerEvents.first {
+        let both = try client.isWatching() && hub.isWatching(connId: 1)
+        check("stream: watching starts with a snapshot", both)
+    } else {
+        check("stream: watching starts with a snapshot", false, "\(viewerEvents)")
+    }
+    let tap = RunnerCommand.tap(x: 196.5, y: 222)
+    try update(.effect(effect: .act(command: tap), number: 2))
+    try update(.effectCompleted(effect: .act(command: tap), event: .actResult(result: RunnerResult(ok: true, error: nil))))
+    try update(.effect(effect: .observe(screenshot: false), number: 3))
+    try update(.effectCompleted(effect: .observe(screenshot: false),
+                                event: .observedRunnerText(snapshot: snapshot(wifiText(on: true)))))
+    let type = RunnerCommand.typeText(text: "hunter2")
+    try update(.effect(effect: .act(command: type), number: 4))
+    try update(.effectCompleted(effect: .act(command: type), event: .actResult(result: RunnerResult(ok: true, error: nil))))
+    try update(.finished(status: .success))
+    let phoneTimeline = try phoneView.timeline()
+    let remoteTimeline = try controllerView.timeline()
+    check("stream: the controller's steps and activity equal the phone's",
+          remoteTimeline.steps == phoneTimeline.steps && remoteTimeline.activity == phoneTimeline.activity
+              && remoteTimeline.currentScreenId == phoneTimeline.currentScreenId,
+          "\(remoteTimeline.steps.map(\.caption)) vs \(phoneTimeline.steps.map(\.caption))")
+    let query = CoreSceneQuery(nowMs: 90_000, reduceMotion: true, viewWidth: 196.5, viewHeight: 426)
+    var phoneScene = try phoneView.scene(query: query)
+    var remoteScene = try controllerView.scene(query: query)
+    phoneScene.generation = 0
+    remoteScene.generation = 0
+    check("stream: the controller draws the phone's scene", phoneScene == remoteScene, "\(phoneScene) vs \(remoteScene)")
+    check("stream: no secret, no pixels in the stream",
+          !streamText.contains("482913") && !streamText.contains("hunter2") && !streamText.contains("frame_key"))
+    let waiting = try controllerView.needsResync()
+    check("stream: no resync on a clean stream", resyncs == 0 && !waiting)
+
+    _ = try pump(1, client, try apply(try hub.setWatchScreen(nowMs: now, deviceId: deviceId, allowed: false)))
+    let hubWatching = try hub.isWatching(connId: 1)
+    let clientWatching = try client.isWatching()
+    check("stream: turning the permission off ends the stream at once",
+          viewerEvents.last == .ended(reason: .permissionRevoked) && !hubWatching && !clientWatching,
+          "\(String(describing: viewerEvents.last))")
+    let afterOff = streamBytes
+    try update(.ignored)
+    check("stream: nothing more is sent after the permission went off", streamBytes == afterOff)
+    let restored = try JarvisRemoteHub(storeJson: keychain, phoneName: "Smoke phone")
+    let restoredOn = try restored.watchScreen(deviceId: deviceId)
+    check("stream: the permission persists (off) in the store", !restoredOn)
+    print("swift-smoke: Live view stream \(streamBytes) bytes, \(viewerEvents.count) viewer events")
+} catch {
+    check("Live view stream checks", false, "\(error)")
+}
+
 print("\(failures == 0 ? "PASS" : "FAIL") swift smoke: \(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -305,6 +305,21 @@ deleted or overwritten, as `SkillLibrary` does) and the caller is told.
   (`InMemorySecretStore`), `RandomSource` (`GeneratorRandomSource` for tests only),
   `RemoteTransport` (`InMemoryRemoteTransport`; `InProcessRemote` drives the real
   `JarvisRemoteClient` over it).
+- **Live view over remote control** (Linux-tested, `RemoteLiveViewTests`). Phone:
+  `RemoteControlService.feedLiveView(viewer, event)` is `AppModel.feedViewer`'s one FFI call
+  per driver update while remote control is on (`LiveViewModel.apply(_:streamingTo:nowMs:)` →
+  `JarvisViewer.feedAndStream`: feeds the Live view and gives the hub its timeline by
+  reference); the hub's frames join the ordered effect path ahead of hub calls not made yet
+  (`ready` before the inbox). Every `send` carries a write completion
+  (`RemoteTransport.send(_:to:written:)`, default: confirmed at once; the in-memory and
+  Network.framework transports confirm on delivery / `.contentProcessed`), reported to the hub
+  (`written`, coalesced per connection), so a device that stops reading gets at most the hub's
+  128 KiB window plus one frame or snapshot and never slows the run (`holdWrites` in tests).
+  `tick` flushes screens held by the hub's 250 ms rate limit. Controller: `RemoteLiveView`
+  (start/stop bytes, `receive(_:client:)` applies `receiveAll`'s viewer events to its own
+  `LiveViewModel` via `applyDelta`, writes a resync request at most once per gap; state
+  `idle`/`starting`/`watching`/`denied`/`ended(reason)`/`incompatible`), driven in tests by
+  `InProcessRemote.startWatching`.
 
 ## Live view (JarvisKit side, Linux-tested)
 
@@ -430,8 +445,13 @@ xcodebuild test -project Jarvis.xcodeproj -scheme Jarvis \
   workflow by its phrase (`resolveUtterance`); the chooser offers workflows too. Remote
   control: master switch, status, Pair a device (code, QR from `CIQRCodeGenerator`, countdown,
   Cancel; the code is read from the model each second and gone when the offer ends), devices
-  with per-device permissions, the core's never-remote list, rename, remove, lockout, audit
-  log. App Intents: `AskJarvisIntent`, `RunJarvisWorkflowIntent` (`openAppWhenRun = false`);
+  with per-device permissions (Start and stop tasks, See what Jarvis sees, Approve for you,
+  and "Watch the screen layout": off by default, stored with the device in the hub's
+  Keychain JSON, footnote "Shows this device what Jarvis is doing: outlines of the screen,
+  where it taps, and step captions. Never pictures of the screen, passwords or the lock
+  screen.", a "Watching now" line while it watches), the core's never-remote list, rename,
+  remove, lockout, audit log (watch start/stop/refusal and the permission's changes in
+  words). App Intents: `AskJarvisIntent`, `RunJarvisWorkflowIntent` (`openAppWhenRun = false`);
   both wait up to 25 s for the outcome with `value(of:within:)` (JarvisKit, tested: returns
   `nil` at the limit without cancelling the task) and otherwise answer that it is still
   running; an automation is answered with the rules problem or "cannot read its workflows

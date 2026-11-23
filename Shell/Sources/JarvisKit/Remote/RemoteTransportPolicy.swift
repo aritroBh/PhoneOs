@@ -12,8 +12,12 @@ public enum RemoteTransportLimits {
     /// phone buffer without bound; nothing honest has more than one record in flight).
     public static let maxUnconsumedInboundBytes = 2 * coreMaxBufferedBytes
     /// Bytes handed to the network but not yet processed by it, per connection. Above this
-    /// the connection is closed (a peer that stops reading).
-    public static let maxUnsentOutboundBytes = 4 * coreMaxBufferedBytes
+    /// the connection is closed (a peer that stops reading). Room for what the hub may hand
+    /// out unconfirmed while a device watches the Live view: its 128 KiB window, plus one
+    /// snapshot (at most 256 KiB of deltas, base64 in sealed frames: about 350 KB) that may
+    /// start just under the window, plus ordinary messages. The hub stops handing out Live
+    /// view data at the window, so an honest slow reader stays under this.
+    public static let maxUnsentOutboundBytes = 12 * coreMaxBufferedBytes
     /// A connection that has not become ready this long after it arrived is cancelled.
     public static let connectionReadyTimeoutMs = 10_000
     /// Connections the transport holds at once, ready or not. The hub serves at most 8

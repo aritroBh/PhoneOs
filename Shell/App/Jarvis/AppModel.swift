@@ -124,6 +124,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var remoteError: String?
     @Published private(set) var remoteAudit: [RemoteAuditRecord] = []
     @Published private(set) var remoteConnected: Set<String> = []
+    /// Devices that watch the Live view now ("watching now" in the device row).
+    @Published private(set) var remoteWatching: Set<String> = []
 
     // Apps
     @Published private(set) var toolSpecs: [ToolSpec] = []
@@ -461,9 +463,12 @@ final class AppModel: ObservableObject {
         viewerTimeline = viewer.timeline
     }
 
-    /// Feeds one event to the Live view (one FFI call); republishes only on a change.
+    /// Feeds one event to the Live view (one FFI call; while remote control is on the same
+    /// call streams it to paired devices that may watch the screen layout); republishes
+    /// only on a change.
     private func feedViewer(_ event: RunEvent) {
-        if viewer.apply(event) { viewerTimeline = viewer.timeline }
+        let changed = remote.isOn ? remote.feedLiveView(viewer, event) : viewer.apply(event)
+        if changed { viewerTimeline = viewer.timeline }
     }
 
     // MARK: - Approval preview
@@ -754,6 +759,7 @@ final class AppModel: ObservableObject {
         remoteError = remote.lastError
         remoteAudit = remote.audit.entries
         remoteConnected = Set(remote.connected.values)
+        remoteWatching = remote.watching
     }
 
     func setRemoteEnabled(_ on: Bool) {
@@ -800,6 +806,11 @@ final class AppModel: ObservableObject {
 
     func setPermissions(_ id: String, _ permissions: RemotePermissions) -> String? {
         remoteAction { try remote.setPermissions(deviceId: id, permissions) }
+    }
+
+    /// "Watch the screen layout" for a paired device (stored with the device).
+    func setWatchScreen(_ id: String, _ on: Bool) -> String? {
+        remoteAction { try remote.setWatchScreen(deviceId: id, on) }
     }
 
     func removeDevice(_ id: String) -> String? {

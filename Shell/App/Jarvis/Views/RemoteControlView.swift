@@ -182,6 +182,8 @@ private struct DeviceCard: View {
                 .padding(.horizontal, Theme.gutter)
                 .padding(.bottom, Theme.gap)
             Divider().overlay(Theme.bezel)
+            watchScreenRow
+            Divider().overlay(Theme.bezel)
             HStack(spacing: Theme.gap) {
                 Button("Rename") {
                     newName = device.name
@@ -208,6 +210,42 @@ private struct DeviceCard: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("It is disconnected at once, its key is forgotten and a task it started stops. Pair it again to use it.")
+        }
+    }
+
+    private var watching: Bool { model.remoteWatching.contains(device.id) }
+
+    /// "Watch the screen layout": kept beside the permissions above (stored with the
+    /// device, off by default); it never changes what may be approved.
+    private var watchScreenRow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Toggle(isOn: Binding(
+                get: { device.watchScreen },
+                set: { (on: Bool) in error = model.setWatchScreen(device.id, on) }
+            )) {
+                Text("Watch the screen layout").font(Theme.body).foregroundStyle(Theme.textPrimary)
+            }
+            .tint(Theme.connected)
+            .padding(.horizontal, Theme.gutter)
+            .frame(minHeight: 52)
+            .accessibilityIdentifier("\(prefix).watchScreen")
+            Text("Shows this device what Jarvis is doing: outlines of the screen, where it taps, and step captions. Never pictures of the screen, passwords or the lock screen.")
+                .font(Theme.meta)
+                .foregroundStyle(Theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, Theme.gutter)
+                .padding(.bottom, Theme.gap)
+                .accessibilityIdentifier("\(prefix).watchScreenNote")
+            if watching {
+                HStack(spacing: 6) {
+                    StatusDot(color: Theme.connected)
+                    Text("Watching now").font(Theme.meta).foregroundStyle(Theme.textSecondary)
+                }
+                .padding(.horizontal, Theme.gutter)
+                .padding(.bottom, Theme.gap)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("\(prefix).watchingNow")
+            }
         }
     }
 

@@ -40,6 +40,11 @@ private final class CountingViewer: JarvisViewerProtocol {
     func screen(id: UInt32) throws -> CoreViewerScreen? { try call("screen") { try inner.screen(id: id) } }
     func timeline() throws -> CoreViewerTimeline { try call("timeline") { try inner.timeline() } }
     func approvalTarget() throws -> CoreApprovalTarget? { try call("approvalTarget") { try inner.approvalTarget() } }
+    func feedAndStream(update: CoreViewerUpdate, hub: JarvisRemoteHub, nowMs: UInt64) throws -> CoreViewerFed {
+        try call("feedAndStream") { try inner.feedAndStream(update: update, hub: hub, nowMs: nowMs) }
+    }
+    func applyDelta(bytes: Data) throws -> CoreDeltaApplied { try call("applyDelta") { try inner.applyDelta(bytes: bytes) } }
+    func needsResync() throws -> Bool { try call("needsResync") { try inner.needsResync() } }
 }
 
 private let phone = Size(width: 393, height: 852)
