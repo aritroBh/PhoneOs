@@ -109,6 +109,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use jarvis_memory::{LogEntry, LogStep, MemoryStore, Next, RecordedStep, Recorder, Replayer};
 use jarvis_observe::{compact_view, diff, marks, screen_digest, screen_hash, ScreenDigest};
@@ -209,9 +210,14 @@ const UNLOCK_REASON_CONFIRM: &str =
 #[derive(Debug, Clone)]
 pub(crate) struct Current {
     /// As compacted from the runner's tree (fingerprints, values; never shown to the model).
-    screen: CompactScreen,
+    ///
+    /// Shared (`Arc`): a gated step keeps this screen and its prompt-safe copy as its
+    /// `before` and `bound` records, and a copy of a big screen on every step is a cost that
+    /// grows with the node count (and a page-fault spike when the allocator hands the pages
+    /// back each time).
+    screen: Arc<CompactScreen>,
     /// Prompt-safe copy: profile values masked, secrets redacted, text sanitised.
-    safe: CompactScreen,
+    safe: Arc<CompactScreen>,
     /// `screen` with the owner's profile values masked (nothing else changed): what
     /// confirmation summaries are built from.
     masked: CompactScreen,
@@ -267,9 +273,9 @@ impl Default for Current {
             cues: Default::default(),
         };
         Self {
-            screen: empty.clone(),
+            screen: Arc::new(empty.clone()),
             masked: empty.clone(),
-            safe: empty,
+            safe: Arc::new(empty),
             sources: Vec::new(),
             parents: Vec::new(),
             ends: Vec::new(),
@@ -1957,7 +1963,7 @@ impl Session {
         self.current = Current {
             hash: screen_hash(&screen),
             digest,
-            safe: prompt_safe(&screen, &self.memory),
+            safe: Arc::new(prompt_safe(&screen, &self.memory)),
             masked: profile_masked(&screen, &self.memory),
             sources: view.sources,
             parents: view.parents,
@@ -1966,7 +1972,7 @@ impl Session {
             nodes: view.nodes,
             inputs: masked_inputs(view.inputs, &self.memory),
             source: self.incoming_source,
-            screen,
+            screen: Arc::new(screen),
             screenshot: obs.screenshot,
             seen: true,
             at_ms: 0,
@@ -3441,7 +3447,7 @@ impl Session {
             _ => RepeatRun {
                 key,
                 layout: here,
-                first: pending.before_safe.clone(),
+                first: CompactScreen::clone(&pending.before_safe),
                 count: 1,
                 warnings: 0,
             },

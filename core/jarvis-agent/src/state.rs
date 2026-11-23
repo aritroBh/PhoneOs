@@ -1,6 +1,7 @@
 //! The session's explicit states and the data each one waits with.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use jarvis_proto::{
     Action, CompactScreen, ConfirmRequest, Outcome, Phase, RequestKind, RunnerCommand, ToolCall,
@@ -56,14 +57,14 @@ pub(crate) struct Pending {
     pub source: Source,
     /// The screen the model step was chosen on (original, unsanitised; for verification and
     /// recording).
-    pub before: CompactScreen,
+    pub before: Arc<CompactScreen>,
     /// The prompt-safe copy of `before` (for describing what changed in the history).
-    pub before_safe: CompactScreen,
+    pub before_safe: Arc<CompactScreen>,
     /// The screen `gate` was gated on, which an approval is bound to: `before`, but the
     /// post-typing screen for the Return part of a `type … submit`.
-    pub bound: CompactScreen,
+    pub bound: Arc<CompactScreen>,
     /// The prompt-safe copy of `bound` (for the note when an approval no longer holds).
-    pub bound_safe: CompactScreen,
+    pub bound_safe: Arc<CompactScreen>,
     /// The exact digest of the raw tree `bound` was compacted from: an approval holds only
     /// on a fresh look with the same digest.
     pub before_digest: jarvis_observe::ScreenDigest,
