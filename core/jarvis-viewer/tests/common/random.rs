@@ -125,6 +125,7 @@ pub fn random_run(rng: &mut Rng, secrets: &[&str]) -> Run {
                 from: p::Point::new(rng.f(0.0, 393.0), rng.f(0.0, 852.0)),
                 to: p::Point::new(rng.f(0.0, 393.0), rng.f(0.0, 852.0)),
                 duration_ms: rng.below(2_000),
+                expect: None,
             },
             3 | 4 => type_text(&text),
             5 => p::RunnerCommand::OpenUrl {

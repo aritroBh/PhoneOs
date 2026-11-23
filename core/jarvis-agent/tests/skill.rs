@@ -50,7 +50,7 @@ fn phone(start: Screen) -> Phone {
             Transition::Go(jarvis_proto::fixtures::settings_screen())
         } else {
             match cmd {
-                RunnerCommand::PressKey { key: Key::Home } => Transition::Go(home_screen()),
+                RunnerCommand::PressKey { key: Key::Home, .. } => Transition::Go(home_screen()),
                 RunnerCommand::LaunchApp { bundle_id } if bundle_id == SHOP => {
                     Transition::Go(product_screen())
                 }
@@ -220,7 +220,13 @@ fn acting_in_a_foreign_foreground_app_is_refused() {
         r.outcome.summary
     );
     // The tap never ran; pressing home did.
-    assert_eq!(r.acts, vec![RunnerCommand::PressKey { key: Key::Home }]);
+    assert_eq!(
+        r.acts,
+        vec![RunnerCommand::PressKey {
+            key: Key::Home,
+            expect: None
+        }]
+    );
     assert!(r.requests[1]
         .user
         .contains("com.example.shop is not one of them"));

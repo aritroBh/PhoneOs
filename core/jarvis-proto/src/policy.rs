@@ -179,16 +179,26 @@ pub struct Policy {
     /// before it finishes `Interrupted`. Time spent waiting does not count against
     /// `max_duration_ms`. Absent in older JSON, which reads as the default (30 minutes).
     pub max_locked_wait_ms: u64,
+    /// Stale-screen guard: the oldest a plan may be, in milliseconds since the observation
+    /// it was made on, for a screen-touching action to be carried out without looking
+    /// again. An older plan (the model took longer) is checked against a fresh observation
+    /// first: the same app in front and the same target. Absent in older JSON, which reads
+    /// as the default (1 s).
+    pub max_plan_age_ms: u64,
 }
 
 /// Default for [`Policy::max_locked_wait_ms`]: 30 minutes.
 pub const DEFAULT_MAX_LOCKED_WAIT_MS: u64 = 30 * 60 * 1000;
 
+/// Default for [`Policy::max_plan_age_ms`]: 1 second.
+pub const DEFAULT_MAX_PLAN_AGE_MS: u64 = 1_000;
+
 impl Default for Policy {
     /// Conservative: confirm every risky category (the three new ones included), deny
     /// Passwords and Wallet, no denied categories, `Guarded` mode, no app rules, first-use
-    /// approval on, 40 steps, 10 minutes, 4 consecutive failures, 2 parse retries, and at
-    /// most 30 minutes waiting for the owner to unlock the phone.
+    /// approval on, 40 steps, 10 minutes, 4 consecutive failures, 2 parse retries, at
+    /// most 30 minutes waiting for the owner to unlock the phone, and a fresh look before a
+    /// plan older than 1 s touches the screen.
     ///
     /// Banking apps are not listed because their bundle ids vary per bank; the shell adds
     /// them from the user's own app list.
@@ -209,6 +219,7 @@ impl Default for Policy {
             max_consecutive_failures: 4,
             max_parse_retries: 2,
             max_locked_wait_ms: DEFAULT_MAX_LOCKED_WAIT_MS,
+            max_plan_age_ms: DEFAULT_MAX_PLAN_AGE_MS,
         }
     }
 }
@@ -240,6 +251,7 @@ struct PolicyWire {
     max_consecutive_failures: u32,
     max_parse_retries: u32,
     max_locked_wait_ms: u64,
+    max_plan_age_ms: u64,
 }
 
 impl Default for PolicyWire {
@@ -257,6 +269,7 @@ impl Default for PolicyWire {
             max_consecutive_failures: p.max_consecutive_failures,
             max_parse_retries: p.max_parse_retries,
             max_locked_wait_ms: p.max_locked_wait_ms,
+            max_plan_age_ms: p.max_plan_age_ms,
         }
     }
 }
@@ -294,6 +307,7 @@ impl From<PolicyWire> for Policy {
             max_consecutive_failures: w.max_consecutive_failures,
             max_parse_retries: w.max_parse_retries,
             max_locked_wait_ms: w.max_locked_wait_ms,
+            max_plan_age_ms: w.max_plan_age_ms,
         }
     }
 }

@@ -408,7 +408,7 @@ fn login_hands_the_password_field_back_to_the_owner() {
             .commands
             .iter()
             .filter_map(|c| match c {
-                RunnerCommand::TypeText { text } => Some(text.as_str()),
+                RunnerCommand::TypeText { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();

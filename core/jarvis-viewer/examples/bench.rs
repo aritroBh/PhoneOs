@@ -197,11 +197,13 @@ fn drive(
         let command = if i % 5 == 4 {
             p::RunnerCommand::TypeText {
                 text: "hello there".into(),
+                expect: None,
             }
         } else {
             p::RunnerCommand::Tap {
                 x: f64::from(i % 390),
                 y: f64::from((i * 7) % 840),
+                expect: None,
             }
         };
         let effect = p::Effect::Act(command);

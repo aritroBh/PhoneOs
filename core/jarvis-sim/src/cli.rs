@@ -29,7 +29,7 @@ USAGE
                  [--max-steps N] [--grammar] [--memory FILE.json]
                  [--step-by-step] [--no-first-use] [--approve-app APP]...
   jarvis-sim eval <DIR | FILE | builtin> [same model, mode and owner flags]
-                 [--filter TEXT] [--json] [--strict]
+                 [--filter TEXT] [--json] [--strict] [--infer-ms MS]
   jarvis-sim bench [--sizes N,..] [--json PATH] [--check] ...   (see `jarvis-sim bench --help`)
   jarvis-sim apps
   jarvis-sim dump --app ID --screen NAME [--mode structured|runner-text] [--tokens N]
@@ -39,6 +39,10 @@ MODELS
   --model-url/--model   an OpenAI-compatible server (build with --features http)
   --script FILE         one model output per line; `\"element\":\"@Label\"` resolves by label
   (neither)             a built-in task's bundled script, matched by its task text
+
+TIMING
+  --infer-ms MS         simulated model latency per call (default 2000; the stale-screen
+                        guard looks again before acting on a plan older than 1000 ms)
 
 POLICY
   --step-by-step        confirm every state-changing action (StepByStep mode)
@@ -145,6 +149,9 @@ fn setup_from(args: &Args) -> Result<RunSetup, String> {
     }
     if let Some(n) = args.number::<u32>("max-steps")? {
         setup.max_steps = Some(n);
+    }
+    if let Some(ms) = args.number::<u64>("infer-ms")? {
+        setup.costs.infer_ms = ms;
     }
     setup.grammar = args.flag("grammar");
     setup.step_by_step = args.flag("step-by-step");
@@ -285,6 +292,7 @@ fn cmd_run(args: &Args, out: &mut dyn Write) -> Result<i32, String> {
         "decline",
         "context-tokens",
         "max-steps",
+        "infer-ms",
         "grammar",
         "memory",
         POLICY_OPTS[0],
@@ -389,6 +397,7 @@ fn cmd_eval(args: &Args, out: &mut dyn Write) -> Result<i32, String> {
         "decline",
         "context-tokens",
         "max-steps",
+        "infer-ms",
         "grammar",
         "filter",
         "json",
@@ -441,6 +450,8 @@ fn cmd_eval(args: &Args, out: &mut dyn Write) -> Result<i32, String> {
                 status: "no model".to_owned(),
                 steps: 0,
                 model_calls: 0,
+                fresh_looks: 0,
+                stale_plans: 0,
                 sim_ms: 0,
                 real_model_ms: 0,
                 confirmations: Vec::new(),

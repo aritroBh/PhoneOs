@@ -160,6 +160,11 @@ pub struct SimPhone {
     fail_acts: BTreeSet<usize>,
     faults: Faults,
     lock: LockState,
+    /// Indices into `Faults::screen_changes` that have happened.
+    changed: BTreeSet<usize>,
+    /// Commands refused because they expected another app in front (the stale-screen
+    /// guard's layer 2, as the shell's front-app check refuses them).
+    stale_refusals: usize,
 }
 
 /// The lock screen side of the phone and its fault counters.
@@ -298,6 +303,8 @@ impl SimPhone {
                 observed: true,
                 ..LockState::default()
             },
+            changed: BTreeSet::new(),
+            stale_refusals: 0,
         })
     }
 
@@ -393,6 +400,47 @@ impl SimPhone {
     /// acted on a screen decided before the lock). Must stay 0.
     pub fn stale_acts(&self) -> usize {
         self.lock.stale_acts
+    }
+
+    /// Runner commands refused because another app than the one they expected was in front.
+    pub fn stale_refusals(&self) -> usize {
+        self.stale_refusals
+    }
+
+    /// Applies the screen changes due during the `n`-th model call (0-based): an alert of
+    /// the app in front, or the app going to the background. Returns what happened.
+    pub fn change_during_infer(&mut self, n: usize) -> Option<String> {
+        let due: Vec<(usize, crate::faults::ScreenChange)> = self
+            .faults
+            .screen_changes
+            .iter()
+            .enumerate()
+            .filter(|(i, c)| c.during_infer == n && !self.changed.contains(i))
+            .map(|(i, c)| (i, c.clone()))
+            .collect();
+        let mut notes = Vec::new();
+        for (i, change) in due {
+            self.changed.insert(i);
+            if let Some(id) = &change.alert {
+                let fg = self.foreground.clone();
+                if let Some(rt) = self.apps.get_mut(&fg) {
+                    if rt.def.alerts.contains_key(id) {
+                        rt.alert = Some(crate::engine::ActiveAlert {
+                            id: id.clone(),
+                            scope: Value::Null,
+                        });
+                        self.focus = None;
+                        notes.push(format!("alert {id} appeared"));
+                    }
+                }
+            }
+            if change.home {
+                self.foreground = HOME_APP.to_owned();
+                self.focus = None;
+                notes.push("the app went to the background".to_owned());
+            }
+        }
+        (!notes.is_empty()).then(|| notes.join(", "))
     }
 
     /// Runner commands refused because the phone was locked.
@@ -655,6 +703,19 @@ impl SimPhone {
                 result: RunnerResult::device_locked(),
             };
         }
+        // The shell's front-app check (stale-screen guard, layer 2): a gesture or typing
+        // that expects another app in front is refused, nothing happens.
+        let front = self
+            .fg()
+            .map(|a| a.def.bundle_id.clone())
+            .unwrap_or_default();
+        if cmd.expect().is_some_and(|e| !e.matches(&front)) {
+            self.stale_refusals += 1;
+            return ActOutcome {
+                note: format!("REFUSED: {}: {front} is in front", cmd.name()),
+                result: RunnerResult::stale(&front),
+            };
+        }
         if !self.lock.observed {
             self.lock.stale_acts += 1;
         }
@@ -662,7 +723,7 @@ impl SimPhone {
             return fail(format!("{}: injected runner failure", cmd.name()));
         }
         match cmd {
-            RunnerCommand::Tap { x, y } => self.tap(Point::new(*x, *y)),
+            RunnerCommand::Tap { x, y, .. } => self.tap(Point::new(*x, *y)),
             RunnerCommand::LongPress { x, y, .. } => {
                 let p = Point::new(*x, *y);
                 let what = self.hit_description(p);
@@ -671,8 +732,8 @@ impl SimPhone {
                 ))
             }
             RunnerCommand::Swipe { from, to, .. } => self.swipe(*from, *to),
-            RunnerCommand::TypeText { text } => self.type_text(text, true),
-            RunnerCommand::PressKey { key } => self.press_key(*key),
+            RunnerCommand::TypeText { text, .. } => self.type_text(text, true),
+            RunnerCommand::PressKey { key, .. } => self.press_key(*key),
             RunnerCommand::LaunchApp { bundle_id } => {
                 let found = self
                     .apps

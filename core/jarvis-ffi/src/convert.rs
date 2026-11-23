@@ -499,21 +499,22 @@ impl From<Key> for p::Key {
 impl From<p::RunnerCommand> for RunnerCommand {
     fn from(v: p::RunnerCommand) -> Self {
         match v {
-            p::RunnerCommand::Tap { x, y } => RunnerCommand::Tap { x, y },
-            p::RunnerCommand::LongPress { x, y, duration_ms } => {
-                RunnerCommand::LongPress { x, y, duration_ms }
-            }
+            p::RunnerCommand::Tap { x, y, .. } => RunnerCommand::Tap { x, y },
+            p::RunnerCommand::LongPress {
+                x, y, duration_ms, ..
+            } => RunnerCommand::LongPress { x, y, duration_ms },
             p::RunnerCommand::Swipe {
                 from,
                 to,
                 duration_ms,
+                ..
             } => RunnerCommand::Swipe {
                 from: from.into(),
                 to: to.into(),
                 duration_ms,
             },
-            p::RunnerCommand::TypeText { text } => RunnerCommand::TypeText { text },
-            p::RunnerCommand::PressKey { key } => RunnerCommand::PressKey { key: key.into() },
+            p::RunnerCommand::TypeText { text, .. } => RunnerCommand::TypeText { text },
+            p::RunnerCommand::PressKey { key, .. } => RunnerCommand::PressKey { key: key.into() },
             p::RunnerCommand::LaunchApp { bundle_id } => RunnerCommand::LaunchApp { bundle_id },
             p::RunnerCommand::OpenUrl { url } => RunnerCommand::OpenUrl { url },
             p::RunnerCommand::Wait { ms } => RunnerCommand::Wait { ms },
@@ -524,10 +525,13 @@ impl From<p::RunnerCommand> for RunnerCommand {
 impl From<RunnerCommand> for p::RunnerCommand {
     fn from(v: RunnerCommand) -> Self {
         match v {
-            RunnerCommand::Tap { x, y } => p::RunnerCommand::Tap { x, y },
-            RunnerCommand::LongPress { x, y, duration_ms } => {
-                p::RunnerCommand::LongPress { x, y, duration_ms }
-            }
+            RunnerCommand::Tap { x, y } => p::RunnerCommand::Tap { x, y, expect: None },
+            RunnerCommand::LongPress { x, y, duration_ms } => p::RunnerCommand::LongPress {
+                x,
+                y,
+                duration_ms,
+                expect: None,
+            },
             RunnerCommand::Swipe {
                 from,
                 to,
@@ -536,9 +540,13 @@ impl From<RunnerCommand> for p::RunnerCommand {
                 from: from.into(),
                 to: to.into(),
                 duration_ms,
+                expect: None,
             },
-            RunnerCommand::TypeText { text } => p::RunnerCommand::TypeText { text },
-            RunnerCommand::PressKey { key } => p::RunnerCommand::PressKey { key: key.into() },
+            RunnerCommand::TypeText { text } => p::RunnerCommand::TypeText { text, expect: None },
+            RunnerCommand::PressKey { key } => p::RunnerCommand::PressKey {
+                key: key.into(),
+                expect: None,
+            },
             RunnerCommand::LaunchApp { bundle_id } => p::RunnerCommand::LaunchApp { bundle_id },
             RunnerCommand::OpenUrl { url } => p::RunnerCommand::OpenUrl { url },
             RunnerCommand::Wait { ms } => p::RunnerCommand::Wait { ms },
@@ -550,6 +558,7 @@ impl From<p::RunnerFailure> for RunnerFailure {
     fn from(v: p::RunnerFailure) -> Self {
         match v {
             p::RunnerFailure::DeviceLocked => RunnerFailure::DeviceLocked,
+            p::RunnerFailure::Stale => RunnerFailure::Stale,
             p::RunnerFailure::Other => RunnerFailure::Other,
         }
     }
@@ -559,6 +568,7 @@ impl From<RunnerFailure> for p::RunnerFailure {
     fn from(v: RunnerFailure) -> Self {
         match v {
             RunnerFailure::DeviceLocked => p::RunnerFailure::DeviceLocked,
+            RunnerFailure::Stale => p::RunnerFailure::Stale,
             RunnerFailure::Other => p::RunnerFailure::Other,
         }
     }
@@ -1006,6 +1016,7 @@ impl From<p::Policy> for Policy {
             max_consecutive_failures,
             max_parse_retries,
             max_locked_wait_ms,
+            max_plan_age_ms,
         } = v;
         Policy {
             denied_apps,
@@ -1019,6 +1030,7 @@ impl From<p::Policy> for Policy {
             max_consecutive_failures,
             max_parse_retries,
             max_locked_wait_ms,
+            max_plan_age_ms,
         }
     }
 }
@@ -1037,6 +1049,7 @@ impl From<Policy> for p::Policy {
             max_consecutive_failures,
             max_parse_retries,
             max_locked_wait_ms,
+            max_plan_age_ms,
         } = v;
         p::Policy {
             denied_apps,
@@ -1050,6 +1063,7 @@ impl From<Policy> for p::Policy {
             max_consecutive_failures,
             max_parse_retries,
             max_locked_wait_ms,
+            max_plan_age_ms,
         }
     }
 }
@@ -1337,6 +1351,9 @@ impl From<p::Effect> for Effect {
                 request: request.into(),
             },
             p::Effect::Act(command) => Effect::Act {
+                expect: command.expect().map(|e| CommandExpect {
+                    bundle_id: e.bundle_id.clone(),
+                }),
                 command: command.into(),
             },
             p::Effect::CallTool(call) => Effect::CallTool { call: call.into() },
@@ -1361,7 +1378,13 @@ impl TryFrom<Effect> for p::Effect {
         Ok(match v {
             Effect::Observe { screenshot } => p::Effect::Observe { screenshot },
             Effect::Infer { request } => p::Effect::Infer(request.into()),
-            Effect::Act { command } => p::Effect::Act(command.into()),
+            Effect::Act { command, expect } => {
+                p::Effect::Act(p::RunnerCommand::from(command).with_expect(expect.map(|e| {
+                    p::Expect {
+                        bundle_id: e.bundle_id,
+                    }
+                })))
+            }
             Effect::CallTool { call } => p::Effect::CallTool(call.try_into()?),
             Effect::Confirm { request } => p::Effect::Confirm(request.into()),
             Effect::AskUser { question } => p::Effect::AskUser { question },
@@ -1417,6 +1440,8 @@ impl From<p::Progress> for SessionProgress {
             waiting_for_unlock,
             locked_wait_ms,
             locked_total_ms,
+            fresh_looks,
+            stale_plans,
         } = v;
         SessionProgress {
             step,
@@ -1428,6 +1453,8 @@ impl From<p::Progress> for SessionProgress {
             waiting_for_unlock,
             locked_wait_ms,
             locked_total_ms,
+            fresh_looks,
+            stale_plans,
         }
     }
 }
@@ -1446,6 +1473,8 @@ impl TryFrom<SessionProgress> for p::Progress {
             waiting_for_unlock,
             locked_wait_ms,
             locked_total_ms,
+            fresh_looks,
+            stale_plans,
         } = v;
         Ok(p::Progress {
             step,
@@ -1457,6 +1486,8 @@ impl TryFrom<SessionProgress> for p::Progress {
             waiting_for_unlock,
             locked_wait_ms,
             locked_total_ms,
+            fresh_looks,
+            stale_plans,
         })
     }
 }

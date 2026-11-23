@@ -7,7 +7,7 @@
   "expect_model_calls": 1,
   "max_steps": 12,
   "faults": {
-    "observe_fail": { "after": 1, "times": 100 }
+    "observe_fail": { "after": 2, "times": 100 }
   },
   "script": [
     "{\"thought\":\"open Wi-Fi\",\"action\":\"tap\",\"element\":\"@Cell:Wi-Fi\"}",

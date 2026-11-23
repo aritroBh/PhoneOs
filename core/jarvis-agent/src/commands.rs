@@ -139,7 +139,11 @@ pub(crate) fn resolve_app(app: &str, known_apps: &[AppInfo]) -> AppTarget {
 }
 
 fn tap(p: Point) -> RunnerCommand {
-    RunnerCommand::Tap { x: p.x, y: p.y }
+    RunnerCommand::Tap {
+        x: p.x,
+        y: p.y,
+        expect: None,
+    }
 }
 
 /// The runner commands for `action` on `screen`. `Type` text must already have its profile
@@ -167,6 +171,7 @@ pub(crate) fn plan(
                 x: c.x,
                 y: c.y,
                 duration_ms: *duration_ms,
+                expect: None,
             });
         }
         Action::Type {
@@ -181,10 +186,16 @@ pub(crate) fn plan(
                 }
             }
             if !text.is_empty() {
-                q.push_back(RunnerCommand::TypeText { text: text.clone() });
+                q.push_back(RunnerCommand::TypeText {
+                    text: text.clone(),
+                    expect: None,
+                });
             }
             if *submit {
-                q.push_back(RunnerCommand::PressKey { key: Key::Return });
+                q.push_back(RunnerCommand::PressKey {
+                    key: Key::Return,
+                    expect: None,
+                });
             }
         }
         Action::Clear { element } => {
@@ -199,7 +210,10 @@ pub(crate) fn plan(
                 .map_or(1, |v| v.chars().count())
                 .clamp(1, MAX_CLEAR_DELETES);
             for _ in 0..n {
-                q.push_back(RunnerCommand::PressKey { key: Key::Delete });
+                q.push_back(RunnerCommand::PressKey {
+                    key: Key::Delete,
+                    expect: None,
+                });
             }
         }
         Action::Scroll { direction, element } | Action::Swipe { direction, element } => {
@@ -229,6 +243,7 @@ pub(crate) fn plan(
                 from: g.from,
                 to: g.to,
                 duration_ms: g.duration_ms,
+                expect: None,
             });
         }
         Action::TapPoint { x, y } => {
@@ -236,7 +251,10 @@ pub(crate) fn plan(
             control_at(p, screen, tree).map_err(PlanError::Point)?;
             q.push_back(tap(p));
         }
-        Action::PressHome => q.push_back(RunnerCommand::PressKey { key: Key::Home }),
+        Action::PressHome => q.push_back(RunnerCommand::PressKey {
+            key: Key::Home,
+            expect: None,
+        }),
         Action::OpenApp { app } => q.push_back(RunnerCommand::LaunchApp {
             bundle_id: app.clone(),
         }),
@@ -472,9 +490,19 @@ mod tests {
         assert_eq!(
             q,
             vec![
-                RunnerCommand::Tap { x: 170.0, y: 220.0 },
-                RunnerCommand::TypeText { text: "hi".into() },
-                RunnerCommand::PressKey { key: Key::Return },
+                RunnerCommand::Tap {
+                    x: 170.0,
+                    y: 220.0,
+                    expect: None
+                },
+                RunnerCommand::TypeText {
+                    text: "hi".into(),
+                    expect: None
+                },
+                RunnerCommand::PressKey {
+                    key: Key::Return,
+                    expect: None
+                },
             ]
         );
         let focused = Action::Type {
@@ -492,10 +520,19 @@ mod tests {
             .into_iter()
             .collect();
         assert_eq!(q.len(), 4);
-        assert_eq!(q[0], RunnerCommand::Tap { x: 312.0, y: 280.0 });
-        assert!(q[1..]
-            .iter()
-            .all(|c| *c == RunnerCommand::PressKey { key: Key::Delete }));
+        assert_eq!(
+            q[0],
+            RunnerCommand::Tap {
+                x: 312.0,
+                y: 280.0,
+                expect: None
+            }
+        );
+        assert!(q[1..].iter().all(|c| *c
+            == RunnerCommand::PressKey {
+                key: Key::Delete,
+                expect: None
+            }));
         assert!(!should_change(&Action::Clear { element: 1 }, &screen()));
         assert!(should_change(&Action::Clear { element: 2 }, &screen()));
     }

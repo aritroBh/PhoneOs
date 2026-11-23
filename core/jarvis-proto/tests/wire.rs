@@ -84,26 +84,51 @@ fn all_actions() -> Vec<Action> {
 
 fn all_runner_commands() -> Vec<RunnerCommand> {
     vec![
-        RunnerCommand::Tap { x: 196.5, y: 426.0 },
+        RunnerCommand::Tap {
+            x: 196.5,
+            y: 426.0,
+            expect: None,
+        },
         RunnerCommand::LongPress {
             x: 10.0,
             y: 20.0,
             duration_ms: 1000,
+            expect: None,
         },
         RunnerCommand::Swipe {
             from: Point::new(196.5, 700.0),
             to: Point::new(196.5, 200.0),
             duration_ms: 300,
+            expect: None,
         },
         RunnerCommand::TypeText {
             text: "hello\nworld".into(),
+            expect: None,
         },
-        RunnerCommand::PressKey { key: Key::Return },
-        RunnerCommand::PressKey { key: Key::Delete },
-        RunnerCommand::PressKey { key: Key::Tab },
-        RunnerCommand::PressKey { key: Key::Space },
-        RunnerCommand::PressKey { key: Key::Escape },
-        RunnerCommand::PressKey { key: Key::Home },
+        RunnerCommand::PressKey {
+            key: Key::Return,
+            expect: None,
+        },
+        RunnerCommand::PressKey {
+            key: Key::Delete,
+            expect: None,
+        },
+        RunnerCommand::PressKey {
+            key: Key::Tab,
+            expect: None,
+        },
+        RunnerCommand::PressKey {
+            key: Key::Space,
+            expect: None,
+        },
+        RunnerCommand::PressKey {
+            key: Key::Escape,
+            expect: None,
+        },
+        RunnerCommand::PressKey {
+            key: Key::Home,
+            expect: None,
+        },
         RunnerCommand::LaunchApp {
             bundle_id: "com.apple.Preferences".into(),
         },
@@ -410,7 +435,12 @@ fn every_effect_round_trips_with_name_as_tag() {
 
 #[test]
 fn act_effect_nests_runner_command() {
-    let v = serde_json::to_value(Effect::Act(RunnerCommand::Tap { x: 1.5, y: 2.0 })).unwrap();
+    let v = serde_json::to_value(Effect::Act(RunnerCommand::Tap {
+        x: 1.5,
+        y: 2.0,
+        expect: None,
+    }))
+    .unwrap();
     assert_eq!(
         v,
         json!({"type": "act", "command": {"type": "tap", "x": 1.5, "y": 2.0}})
@@ -419,7 +449,13 @@ fn act_effect_nests_runner_command() {
         json!({"type": "act", "command": {"type": "press_key", "key": "return"}}),
     )
     .unwrap();
-    assert_eq!(e, Effect::Act(RunnerCommand::PressKey { key: Key::Return }));
+    assert_eq!(
+        e,
+        Effect::Act(RunnerCommand::PressKey {
+            key: Key::Return,
+            expect: None
+        })
+    );
 }
 
 #[test]
@@ -521,6 +557,8 @@ fn session_config_and_progress_round_trip() {
         waiting_for_unlock: true,
         locked_wait_ms: 60_000,
         locked_total_ms: 90_000,
+        fresh_looks: 6,
+        stale_plans: 2,
     });
     round_trip(&Progress::default());
     // Progress JSON from before the counters existed still loads.

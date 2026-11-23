@@ -171,6 +171,14 @@ public final class LoopCtrlRunner: PhoneRunner {
         info[LoopCtrlAPI.DeviceInfo.system]?[LoopCtrlAPI.DeviceInfo.screenLocked]?.boolValue
     }
 
+    /// The app in front, from `device_info` (one call, no tree). `nil` while the phone
+    /// reports itself locked (the lock check handles that) or when the field is missing.
+    public func frontBundleId() async throws -> String? {
+        var notes: [String] = []
+        let info = try await deviceInfo(notes: &notes)
+        return info.locked == true ? nil : info.bundleID
+    }
+
     public func lockState() async throws -> DeviceLockState {
         let info = try await client.result(LoopCtrlAPI.Method.deviceInfo)
         switch Self.screenLocked(info) {

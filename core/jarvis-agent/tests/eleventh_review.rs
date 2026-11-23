@@ -238,7 +238,8 @@ fn probe11_return_in_single_line_field_after_typing_is_not_presumed() {
             matches!(
                 a,
                 RunnerCommand::PressKey {
-                    key: jarvis_proto::Key::Return
+                    key: jarvis_proto::Key::Return,
+                    ..
                 }
             )
         });

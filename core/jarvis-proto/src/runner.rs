@@ -22,7 +22,31 @@ pub enum Key {
     Home,
 }
 
+/// What a gesture or typing command expects of the phone when the runner carries it out
+/// (the stale-screen guard, layer 2): the app the command was planned on is in front. The
+/// core fills it from the observation the command was planned (or re-checked) on; a runner
+/// that can read the front app refuses the command when another app is in front
+/// ([`RunnerFailure::Stale`]). A runner that cannot read it, or ignores the field (the
+/// text-format third-party runner), carries the command out as before.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Expect {
+    /// Bundle id of the app that must be in front (compared ignoring ASCII case and
+    /// surrounding whitespace).
+    pub bundle_id: String,
+}
+
+impl Expect {
+    /// Whether `front` (the runner's reading of the front app) is the expected app.
+    pub fn matches(&self, front: &str) -> bool {
+        self.bundle_id.trim().eq_ignore_ascii_case(front.trim())
+    }
+}
+
 /// One low-level command for the runner. JSON is internally tagged with `"type"`.
+///
+/// Gestures and typing (`Tap`, `LongPress`, `Swipe`, `TypeText`, `PressKey`) carry an
+/// optional [`Expect`]: absent in JSON written before it existed, and omitted when `None`,
+/// so older runners and JSON keep working.
 ///
 /// `Debug` never shows the text of `TypeText` (it may carry substituted profile values),
 /// only its length.
@@ -35,6 +59,9 @@ pub enum RunnerCommand {
         x: f64,
         /// Vertical coordinate.
         y: f64,
+        /// What the phone must show for the tap to be carried out.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expect: Option<Expect>,
     },
     /// Press and hold at a point.
     LongPress {
@@ -44,6 +71,9 @@ pub enum RunnerCommand {
         y: f64,
         /// Hold duration in milliseconds.
         duration_ms: u64,
+        /// What the phone must show for the press to be carried out.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expect: Option<Expect>,
     },
     /// Drag from one point to another.
     Swipe {
@@ -53,16 +83,25 @@ pub enum RunnerCommand {
         to: Point,
         /// Gesture duration in milliseconds.
         duration_ms: u64,
+        /// What the phone must show for the drag to be carried out.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expect: Option<Expect>,
     },
     /// Type text into the focused element.
     TypeText {
         /// Text to type.
         text: String,
+        /// What the phone must show for the text to be typed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expect: Option<Expect>,
     },
     /// Press a key.
     PressKey {
         /// The key.
         key: Key,
+        /// What the phone must show for the key to be pressed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expect: Option<Expect>,
     },
     /// Launch or foreground an app.
     LaunchApp {
@@ -83,33 +122,48 @@ pub enum RunnerCommand {
 
 impl std::fmt::Debug for RunnerCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let front = |e: &Option<Expect>| e.as_ref().map(|e| e.bundle_id.clone());
         match self {
-            RunnerCommand::Tap { x, y } => {
-                f.debug_struct("Tap").field("x", x).field("y", y).finish()
-            }
-            RunnerCommand::LongPress { x, y, duration_ms } => f
+            RunnerCommand::Tap { x, y, expect } => f
+                .debug_struct("Tap")
+                .field("x", x)
+                .field("y", y)
+                .field("expect", &front(expect))
+                .finish(),
+            RunnerCommand::LongPress {
+                x,
+                y,
+                duration_ms,
+                expect,
+            } => f
                 .debug_struct("LongPress")
                 .field("x", x)
                 .field("y", y)
                 .field("duration_ms", duration_ms)
+                .field("expect", &front(expect))
                 .finish(),
             RunnerCommand::Swipe {
                 from,
                 to,
                 duration_ms,
+                expect,
             } => f
                 .debug_struct("Swipe")
                 .field("from", from)
                 .field("to", to)
                 .field("duration_ms", duration_ms)
+                .field("expect", &front(expect))
                 .finish(),
-            RunnerCommand::TypeText { text } => f
+            RunnerCommand::TypeText { text, expect } => f
                 .debug_struct("TypeText")
                 .field("text_chars", &text.chars().count())
+                .field("expect", &front(expect))
                 .finish_non_exhaustive(),
-            RunnerCommand::PressKey { key } => {
-                f.debug_struct("PressKey").field("key", key).finish()
-            }
+            RunnerCommand::PressKey { key, expect } => f
+                .debug_struct("PressKey")
+                .field("key", key)
+                .field("expect", &front(expect))
+                .finish(),
             RunnerCommand::LaunchApp { bundle_id } => f
                 .debug_struct("LaunchApp")
                 .field("bundle_id", bundle_id)
@@ -134,6 +188,44 @@ impl RunnerCommand {
             RunnerCommand::Wait { .. } => "wait",
         }
     }
+
+    /// What the command expects of the phone (gestures and typing; see [`Expect`]).
+    pub fn expect(&self) -> Option<&Expect> {
+        match self {
+            RunnerCommand::Tap { expect, .. }
+            | RunnerCommand::LongPress { expect, .. }
+            | RunnerCommand::Swipe { expect, .. }
+            | RunnerCommand::TypeText { expect, .. }
+            | RunnerCommand::PressKey { expect, .. } => expect.as_ref(),
+            RunnerCommand::LaunchApp { .. }
+            | RunnerCommand::OpenUrl { .. }
+            | RunnerCommand::Wait { .. } => None,
+        }
+    }
+
+    /// The command with its expectation set to `want` (gestures and typing; the other
+    /// commands, which change the front app or touch nothing, carry none and are returned
+    /// as they are).
+    #[must_use]
+    pub fn with_expect(mut self, want: Option<Expect>) -> Self {
+        match &mut self {
+            RunnerCommand::Tap { expect, .. }
+            | RunnerCommand::LongPress { expect, .. }
+            | RunnerCommand::Swipe { expect, .. }
+            | RunnerCommand::TypeText { expect, .. }
+            | RunnerCommand::PressKey { expect, .. } => *expect = want,
+            RunnerCommand::LaunchApp { .. }
+            | RunnerCommand::OpenUrl { .. }
+            | RunnerCommand::Wait { .. } => {}
+        }
+        self
+    }
+
+    /// The command without its expectation (what it does, for comparisons).
+    #[must_use]
+    pub fn without_expect(&self) -> Self {
+        self.clone().with_expect(None)
+    }
 }
 
 /// Why the runner did not carry out a command, when the reason is one the core acts on.
@@ -144,6 +236,11 @@ pub enum RunnerFailure {
     /// The device is locked (`screen_locked`): the command was refused and not carried out.
     /// The session waits for the owner to unlock instead of counting a failure.
     DeviceLocked,
+    /// Stale-screen guard (layer 2): the command carried an [`Expect`] and the runner read
+    /// another app in front, so it was refused and not carried out (the free-text error
+    /// names the app in front). The core treats it like [`Self::DeviceLocked`]: nothing of
+    /// the step happened, it is refunded, the session observes again and decides again.
+    Stale,
     /// Any other typed reason (also what unknown reasons from newer shells read as).
     #[serde(other)]
     Other,
@@ -194,5 +291,28 @@ impl RunnerResult {
     /// Whether this is a refusal because the device is locked.
     pub fn is_device_locked(&self) -> bool {
         !self.ok && self.failure == Some(RunnerFailure::DeviceLocked)
+    }
+
+    /// The command was refused because `front`, not the expected app, is in front
+    /// ([`RunnerFailure::Stale`]); nothing was carried out.
+    pub fn stale(front: &str) -> Self {
+        let front = front.trim();
+        Self {
+            ok: false,
+            error: Some(format!(
+                "not carried out: {} is in front, not the app the command was planned on",
+                if front.is_empty() {
+                    "another app"
+                } else {
+                    front
+                }
+            )),
+            failure: Some(RunnerFailure::Stale),
+        }
+    }
+
+    /// Whether this is a refusal because another app is in front.
+    pub fn is_stale(&self) -> bool {
+        !self.ok && self.failure == Some(RunnerFailure::Stale)
     }
 }

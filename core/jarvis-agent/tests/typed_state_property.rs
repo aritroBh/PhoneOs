@@ -288,12 +288,12 @@ fn session(seed: u64) -> (usize, usize) {
     let phone = move |c: &RunnerCommand| {
         let mut reply = 0u8;
         match c {
-            RunnerCommand::Tap { x, y } => match hit(n, *x, *y) {
+            RunnerCommand::Tap { x, y, .. } => match hit(n, *x, *y) {
                 Some((k, true)) => submit(&mut values, k, typed),
                 Some((k, false)) => focus = Some(k),
                 None => {}
             },
-            RunnerCommand::TypeText { text } => {
+            RunnerCommand::TypeText { text, .. } => {
                 // Any text sent to the app counts, wherever it lands.
                 typed = true;
                 let q = quirks.get(typings).copied().unwrap_or(Quirks {
@@ -332,12 +332,16 @@ fn session(seed: u64) -> (usize, usize) {
                     0
                 };
             }
-            RunnerCommand::PressKey { key: Key::Return } => match focus {
+            RunnerCommand::PressKey {
+                key: Key::Return, ..
+            } => match focus {
                 Some(k) => submit(&mut values, k, typed),
                 // No field has focus (it was dropped): Return submits nothing.
                 None => unfocused.borrow_mut().push((false, typed)),
             },
-            RunnerCommand::PressKey { key: Key::Delete } => {
+            RunnerCommand::PressKey {
+                key: Key::Delete, ..
+            } => {
                 if let Some(k) = focus {
                     values[k].pop();
                 }
@@ -364,8 +368,10 @@ fn session(seed: u64) -> (usize, usize) {
             Effect::Confirm(_) => asked = true,
             Effect::Act(cmd) => {
                 let submit_like = match cmd {
-                    RunnerCommand::Tap { x, y } => matches!(hit(n, *x, *y), Some((_, true))),
-                    RunnerCommand::PressKey { key: Key::Return } => true,
+                    RunnerCommand::Tap { x, y, .. } => matches!(hit(n, *x, *y), Some((_, true))),
+                    RunnerCommand::PressKey {
+                        key: Key::Return, ..
+                    } => true,
                     _ => false,
                 };
                 if submit_like {

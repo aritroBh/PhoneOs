@@ -32,6 +32,15 @@
 //! `recheck_approved`; otherwise the model is told it was not done and the action goes
 //! through the full gate again.
 //!
+//! Plans are not acted on blind either (the stale-screen guard, `ARCHITECTURE.md`): an
+//! action that touches the page, chosen on an observation older than
+//! `Policy::max_plan_age_ms`, is preceded by a fresh look and runs (gated on that look) only
+//! when the same app is in front and its target is the same control (`plan_holds`);
+//! otherwise the model decides again. Every gesture and typing command carries the app it
+//! was planned on, and a runner refusal because another app is in front
+//! (`RunnerFailure::Stale`) is handled like a locked one. After a typing's focusing tap the
+//! session looks at where the focus went before typing (`after_focus_tap`).
+//!
 //! Screen source: an observation parsed from the third-party runner's text format
 //! (`Event::ObservedRunnerText`) is unverified: every state-changing runner action on it
 //! asks (at least `Unverified`, the summary starting with a fixed warning), learned flows
@@ -112,10 +121,11 @@ use jarvis_proto::{
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
     approval_context, check_app, check_app_name, check_confinement, control_at, evaluate_owned,
-    first_use_app, first_use_request, is_springboard, label_names_denied_app, question_with,
-    redact, redact_screen, return_question, sanitize_screen_text, search_names_denied_app, verb_of,
-    widget_names_denied_app, Budget, BudgetVerdict, Covered, CoveredBy, Decision, PointError,
-    ScreenSource, ScreenTree, TypedText, Verdict,
+    first_use_app, first_use_request, is_springboard, label_names_denied_app, point_is_clear,
+    question_with, redact, redact_screen, return_question, sanitize_screen_text,
+    search_names_denied_app, touches_screen, verb_of, widget_names_denied_app, Budget,
+    BudgetVerdict, Covered, CoveredBy, Decision, PointError, ScreenSource, ScreenTree, TypedText,
+    Verdict,
 };
 
 use crate::act::{Out, TypedState};
@@ -130,12 +140,19 @@ use crate::profile::{mask, sanitize_keys, sensitive_texts, substitute};
 use crate::prompt::{self, PromptParts, ACTION_MAX_TOKENS};
 use crate::schema::{action_gbnf, action_json_schema};
 use crate::state::{
-    ApprovalLook, Exec, Late, ObservePurpose, Pending, Resume, Settle, Source, Stage, State,
-    TypeCheck,
+    ApprovalLook, Exec, FocusCheck, Late, ObservePurpose, Pending, PlanBasis, Resume, Settle,
+    Source, Stage, State, TypeCheck,
 };
 use crate::tools::{check_call, relevant, signature, MAX_TOOLS};
 use crate::typing::{check_typed, correction_deletes, TypedVerdict};
 
+/// Stale-screen guard: fresh looks in a row, for one step, that may send the model back to
+/// decide again because the screen changed before its action; the next change is a failed
+/// step (so the failure budget and the stuck guard apply).
+pub const MAX_REPLANS: u32 = 2;
+/// Stale-screen guard: how far (points, per edge) a target's or a node's frame may move
+/// between the planned-on and the fresh look and still be the same.
+const PLAN_FRAME_TOLERANCE: f64 = 2.0;
 /// Fewer enabled interactive elements than this makes the tree "useless" (vision fallback).
 const MIN_ACTIONABLE: usize = 2;
 /// Identical (screen, action) pairs that count as stuck.
@@ -185,7 +202,7 @@ const UNLOCK_REASON_CONFIRM: &str =
 
 /// The latest observation in three forms.
 #[derive(Debug, Clone)]
-struct Current {
+pub(crate) struct Current {
     /// As compacted from the runner's tree (fingerprints, values; never shown to the model).
     screen: CompactScreen,
     /// Prompt-safe copy: profile values masked, secrets redacted, text sanitised.
@@ -222,6 +239,16 @@ struct Current {
     screenshot: Option<ImageRef>,
     /// Whether anything has been observed yet.
     seen: bool,
+    /// The session clock when it was taken (`TimedEvent::now_ms` of the observation): how
+    /// old a plan made on it is (the stale-screen guard).
+    at_ms: u64,
+}
+
+impl Current {
+    /// Whether `self` and `other` are the same observation (by its records, not its text).
+    pub(crate) fn same_observation(&self, other: &Current) -> bool {
+        self.at_ms == other.at_ms && self.hash == other.hash && self.digest == other.digest
+    }
 }
 
 impl Default for Current {
@@ -249,6 +276,7 @@ impl Default for Current {
             digest: ScreenDigest::default(),
             screenshot: None,
             seen: false,
+            at_ms: 0,
         }
     }
 }
@@ -491,6 +519,13 @@ pub struct Session {
     /// an observation after Jarvis acted shows text that entered a field of the app without
     /// `TypeText` (paste, AutoFill, dictation…), see [`TypedState::observed`].
     act: TypedState,
+    /// Stale-screen guard: fresh looks that sent the model back for the current step (see
+    /// [`MAX_REPLANS`]).
+    replans: u32,
+    /// Stale-screen guard: observations taken because a plan was too old (`Progress`).
+    fresh_looks: u32,
+    /// Stale-screen guard: plans not carried out because the screen changed (`Progress`).
+    stale_plans: u32,
 }
 
 impl std::fmt::Debug for Session {
@@ -647,6 +682,9 @@ impl Session {
             stale_approvals: 0,
             incoming_source: ScreenSource::Typed,
             act: TypedState::default(),
+            replans: 0,
+            fresh_looks: 0,
+            stale_plans: 0,
         }
     }
 
@@ -779,6 +817,8 @@ impl Session {
                 0
             },
             locked_total_ms: self.locked_total_ms,
+            fresh_looks: self.fresh_looks,
+            stale_plans: self.stale_plans,
         }
     }
 
@@ -832,6 +872,7 @@ impl Session {
         }
         self.observe_failures = 0;
         self.ingest(obs);
+        self.current.at_ms = now;
         let app = self.current.screen.app_bundle_id.clone();
         if check_app(&self.config.policy, &app).is_denied() {
             let summary = format!(
@@ -847,6 +888,8 @@ impl Session {
             ObservePurpose::Reconsider(pending) => self.reconsider(now, *pending),
             ObservePurpose::Approved(look) => self.act_approved(now, *look),
             ObservePurpose::Settle(settle) => self.on_settle(now, *settle),
+            ObservePurpose::Replan(basis) => self.on_fresh_look(now, *basis),
+            ObservePurpose::Focus(check) => self.after_focus_tap(now, *check),
         }
     }
 
@@ -874,7 +917,7 @@ impl Session {
                     self.truncation_retried = false;
                     self.correction = None;
                     self.notes.clear();
-                    self.propose(now, parsed.action, Source::Model)
+                    self.act_on_reply(now, parsed.action, Source::Model)
                 }
                 Err(ParseError::Truncated) if !self.truncation_retried => {
                     // Cut off at the token cap: almost always a rambling thought. One extra
@@ -943,8 +986,18 @@ impl Session {
             };
             return self.interrupt(now, state, LockSignal::Reply, false);
         }
+        if result.is_stale() {
+            return self.runner_stale(&pending, fresh);
+        }
         if result.ok {
             return match queue.pop_front() {
+                // Fifteenth review (F5): the typing (or a clear's deletes) after a focusing
+                // tap waits for a look at where focus went (`Self::after_focus_tap`).
+                Some(next) if fresh && types_after_focus_tap(&pending.action, &next) => {
+                    queue.push_front(next);
+                    let check = FocusCheck { queue, pending };
+                    self.observe(ObservePurpose::Focus(Box::new(check)), false)
+                }
                 Some(next) => {
                     let effect = self.emit(next, Some(&pending));
                     self.state = State::AwaitingAct {
@@ -1119,6 +1172,15 @@ impl Session {
                 // the unlock.
                 ObservePurpose::Settle(settle) => {
                     self.record_failure(&settle.pending, prompt::RESULT_RETURN_HELD);
+                    (Resume::Decide, None)
+                }
+                // The look before acting on an old plan: nothing was done and no step was
+                // counted; the plan is dropped and decided again after the unlock.
+                ObservePurpose::Replan(_) => (Resume::Decide, None),
+                // The focusing tap was sent, the typing was not: what the tap did is
+                // unknown to the model until it looks.
+                ObservePurpose::Focus(check) => {
+                    self.unknown_result(&check.pending, prompt::RESULT_LOCK_UNKNOWN);
                     (Resume::Decide, None)
                 }
             },
@@ -1535,7 +1597,10 @@ impl Session {
         let (queue, check) = if pending.stage == Stage::Return {
             // The text is typed: only Return is pressed.
             (
-                VecDeque::from([RunnerCommand::PressKey { key: Key::Return }]),
+                VecDeque::from([RunnerCommand::PressKey {
+                    key: Key::Return,
+                    expect: None,
+                }]),
                 None,
             )
         } else {
@@ -1600,6 +1665,200 @@ impl Session {
     }
 
     // ---------------------------------------------------------------------------------
+    // Stale-screen guard (see the module docs and `ARCHITECTURE.md`).
+    // ---------------------------------------------------------------------------------
+
+    /// Layer 1: an action that touches the page (`jarvis_safety::touches_screen`), chosen on
+    /// an observation older than `Policy::max_plan_age_ms` (the model took that long), is
+    /// not sent at once: the session looks again first ([`Self::on_fresh_look`]). Anything
+    /// else, and every plan younger than the limit, is proposed as before: on that path the
+    /// guard costs one comparison of the session clock.
+    fn act_on_reply(&mut self, now: u64, action: Action, source: Source) -> Out {
+        if now.saturating_sub(self.current.at_ms) <= self.config.policy.max_plan_age_ms
+            || !touches_screen(&action)
+        {
+            return self.propose(now, action, source);
+        }
+        self.fresh_looks = self.fresh_looks.saturating_add(1);
+        let basis = PlanBasis {
+            action,
+            source,
+            seen: self.current.clone(),
+        };
+        self.observe(ObservePurpose::Replan(Box::new(basis)), false)
+    }
+
+    /// The fresh look before acting on an old plan: when the plan still holds on it
+    /// ([`Self::plan_holds`]) the action is proposed **on the fresh screen**: counted,
+    /// gated (allow, ask or deny, the typed-here rules included) and planned there, exactly
+    /// as if the model had chosen it on this observation. Otherwise it is not done.
+    fn on_fresh_look(&mut self, now: u64, basis: PlanBasis) -> Out {
+        match self.plan_holds(&basis) {
+            None => self.propose(now, basis.action, basis.source),
+            Some(why) => self.screen_changed(now, basis, why),
+        }
+    }
+
+    /// Whether the plan in `basis` still holds on the current (fresh) look; `None` when it
+    /// does, else a fixed phrase saying what changed (never screen text). Not the whole
+    /// screen: a clock, an animation or a carousel elsewhere would void every slow step
+    /// (the exact digest stays the approval path's record). It holds when
+    /// - the same app is in front (bundle id, ignoring ASCII case);
+    /// - the action's target (its element; for `type` without one, the focused field; for
+    ///   `tap_point`, the control under the point) is the same control on both looks
+    ///   ([`same_control`]: number, raw node, identity, role, texts, states, frame within a
+    ///   small tolerance), or neither look has one;
+    /// - the point the plan touches first (a tap, a press, a clear's caret tap, a drag's
+    ///   start; planned on the old look by the same `tap_spot` / hit procedure) has the
+    ///   same drawn nodes under it on both looks ([`same_under`]: nothing appeared over
+    ///   it, nothing moved under it), and where the target was uncontested there on the old
+    ///   look it still is on the fresh one (`jarvis_safety::point_is_clear`).
+    fn plan_holds(&self, basis: &PlanBasis) -> Option<&'static str> {
+        let (old, new) = (&basis.seen, &self.current);
+        if !old
+            .screen
+            .app_bundle_id
+            .trim()
+            .eq_ignore_ascii_case(new.screen.app_bundle_id.trim())
+        {
+            return Some("another app is in front");
+        }
+        let action = &basis.action;
+        let target = match (
+            action_target(action, &old.screen),
+            action_target(action, &new.screen),
+        ) {
+            (Some(a), Some(b)) if same_control(old, a, new, b) => Some((a, b)),
+            (None, None) => None,
+            _ => return Some("the control it acts on changed or moved"),
+        };
+        let old_tree = tree_of(old);
+        let point = plan(action, &old.screen, Some(&old_tree))
+            .ok()
+            .and_then(|q| planned_point(&Exec::Runner(q)));
+        let p = point?;
+        if !same_under(old, new, p) {
+            return Some("something else is now at the point it touches");
+        }
+        if let Some((a, b)) = target {
+            let clear_before = point_is_clear(p, a, &old.screen, Some(&old_tree)).is_ok();
+            let new_tree = self.tree();
+            if clear_before
+                && (!b.frame.contains(p)
+                    || point_is_clear(p, b, &new.screen, Some(&new_tree)).is_err())
+            {
+                return Some("its control is now covered at the point it touches");
+            }
+        }
+        None
+    }
+
+    /// The fresh look showed the screen changed before an old plan's action: it is not
+    /// done and not counted as a step; the model gets the fresh screen with a one-line note
+    /// and decides again (a flow step is derived again from the fresh screen). After
+    /// [`MAX_REPLANS`] such looks in a row it is a normal failed step instead, so the
+    /// failure budget and the stuck guard apply.
+    fn screen_changed(&mut self, now: u64, basis: PlanBasis, why: &str) -> Out {
+        self.stale_plans = self.stale_plans.saturating_add(1);
+        if self.replans < MAX_REPLANS {
+            self.replans = self.replans.saturating_add(1);
+            self.notes.push(prompt::screen_changed_note(why));
+            return self.decide(now);
+        }
+        self.replans = 0;
+        let PlanBasis {
+            action,
+            source,
+            seen,
+        } = basis;
+        self.budget.record_step(now);
+        self.last_action = Some(action.clone());
+        let described = describe(&action, &seen.safe);
+        let result = prompt::screen_changed_failed(why);
+        self.repeat = None;
+        self.last_failed = Some(format!("{described} -> {}", clean(&result, 120)));
+        self.history
+            .push(described, result, source == Source::Replay);
+        self.budget.record_failure();
+        self.log_step(&action, false);
+        if source == Source::Replay {
+            self.diverge("the screen kept changing before a saved step");
+        }
+        self.decide(now)
+    }
+
+    /// Layer 2: the runner refused a command because another app was in front
+    /// (`RunnerFailure::Stale`). Like a locked refusal: when it was the action's first
+    /// command nothing happened, so the step is refunded and decided again on a fresh
+    /// observation (bounded by [`MAX_REPLANS`], then a failed step); Return after typing
+    /// leaves the text typed, unsent; a later command of the action (the typing after its
+    /// focus tap, a clear's deletes) leaves part of it done: a failed step.
+    fn runner_stale(&mut self, pending: &Pending, fresh: bool) -> Out {
+        self.stale_plans = self.stale_plans.saturating_add(1);
+        if !fresh {
+            self.record_failure(pending, prompt::RESULT_STALE_PART);
+        } else if pending.stage == Stage::Return {
+            self.record_failure(pending, prompt::RESULT_RETURN_STALE);
+        } else if self.replans < MAX_REPLANS {
+            self.replans = self.replans.saturating_add(1);
+            self.set_aside(pending, prompt::RESULT_STALE_NOT_DONE);
+        } else {
+            self.record_failure(
+                pending,
+                &prompt::screen_changed_failed("another app came to the front"),
+            );
+        }
+        self.observe(ObservePurpose::Decide, false)
+    }
+
+    /// Fifteenth review (F5): the look after a typing's (or a clear's) focusing tap, before
+    /// its `TypeText` (or Deletes). They are sent only while the field the plan names (on
+    /// an approved action, the field the approval's record names: `before_target_source`
+    /// is re-bound on the look after the approval) is still that control and no other text
+    /// input has focus ([`Self::focus_holds`]). Otherwise nothing is typed: the step is
+    /// refunded and the model decides again on this screen with a one-line note (bounded
+    /// like the other stale-screen refusals by [`MAX_REPLANS`], then a failed step).
+    fn after_focus_tap(&mut self, now: u64, check: FocusCheck) -> Out {
+        let FocusCheck { queue, pending } = check;
+        if self.focus_holds(&pending) {
+            return self.continue_act(queue, *pending);
+        }
+        self.stale_plans = self.stale_plans.saturating_add(1);
+        if self.replans < MAX_REPLANS {
+            self.replans = self.replans.saturating_add(1);
+            self.set_aside(&pending, prompt::RESULT_FOCUS_MOVED);
+        } else {
+            self.record_failure(&pending, prompt::RESULT_FOCUS_MOVED);
+        }
+        self.decide(now)
+    }
+
+    /// Whether the typing of `pending` may go to the focused field of the current screen:
+    /// its target (a `type`'s or `clear`'s element) is the same control as planned (the same
+    /// number, identity and raw node), and no other text input has focus. A screen that
+    /// shows no focused input at all (focus not readable) does not refuse: the runner's own
+    /// typing check and the typed-text check after typing stay.
+    fn focus_holds(&self, pending: &Pending) -> bool {
+        let i = match &pending.gate {
+            Action::Type {
+                element: Some(i), ..
+            }
+            | Action::Clear { element: i } => *i,
+            _ => return true,
+        };
+        let screen = &self.current.screen;
+        let Some(field) = screen.get(i) else {
+            return false;
+        };
+        let same = pending
+            .before
+            .get(i)
+            .is_some_and(|e| e.fingerprint == field.fingerprint)
+            && self.target_source(&pending.gate) == pending.before_target_source;
+        same && focus_is(screen, field.fingerprint)
+    }
+
+    // ---------------------------------------------------------------------------------
     // The loop: decide → propose → gate → execute → verify.
     // ---------------------------------------------------------------------------------
 
@@ -1632,6 +1891,7 @@ impl Session {
             screen,
             screenshot: obs.screenshot,
             seen: true,
+            at_ms: 0,
         };
     }
 
@@ -1647,18 +1907,7 @@ impl Session {
     /// bars only on a typed tree: runner text's roles are forgeable, so no bar takes
     /// precedence there (`jarvis_safety::tap_spot`).
     fn tree(&self) -> ScreenTree<'_> {
-        ScreenTree {
-            sources: &self.current.sources,
-            parents: &self.current.parents,
-            ends: &self.current.ends,
-            bars: match self.current.source {
-                ScreenSource::Typed => &self.current.bars,
-                ScreenSource::RunnerText => &[],
-            },
-            // Occluders only ever refuse more, so runner text keeps them.
-            nodes: &self.current.nodes,
-            inputs: &self.current.inputs,
-        }
+        tree_of(&self.current)
     }
 
     /// The confirmation summary of `gate` (as decided: placeholders kept; for the Return part
@@ -2656,7 +2905,12 @@ impl Session {
             }
             TypedVerdict::Mismatch { kind, found } => (kind, found),
         };
-        if !check.retried {
+        // Fifteenth review (F5): the correction's Deletes and retype go to the focused field,
+        // so only while no other text input has focus.
+        let focused_here = check
+            .field
+            .is_none_or(|fp| focus_is(&self.current.screen, fp));
+        if !check.retried && focused_here {
             let deletes = after.as_deref().and_then(|a| {
                 correction_deletes(
                     check.prior.as_deref(),
@@ -2667,10 +2921,14 @@ impl Session {
             });
             if let Some(n) = deletes {
                 let mut queue: VecDeque<RunnerCommand> = (0..n)
-                    .map(|_| RunnerCommand::PressKey { key: Key::Delete })
+                    .map(|_| RunnerCommand::PressKey {
+                        key: Key::Delete,
+                        expect: None,
+                    })
                     .collect();
                 queue.push_back(RunnerCommand::TypeText {
                     text: check.typed.clone(),
+                    expect: None,
                 });
                 check.retried = true;
                 pending.check = Some(check);
@@ -2833,6 +3091,7 @@ impl Session {
         pending.before_digest = self.current.digest;
         pending.exec = Exec::Runner(VecDeque::from([RunnerCommand::PressKey {
             key: Key::Return,
+            expect: None,
         }]));
         pending.check = None;
         let risk = match decision {
@@ -3118,6 +3377,7 @@ impl Session {
     }
 
     fn record_success(&mut self, pending: &Pending, result: &str) {
+        self.replans = 0;
         self.declined_open = None;
         self.last_failed = None;
         self.history.push(
@@ -3141,6 +3401,7 @@ impl Session {
     }
 
     fn record_failure(&mut self, pending: &Pending, result: &str) {
+        self.replans = 0;
         self.repeat = None;
         // Reaching the end of a list is information, not a failed attempt.
         if result != prompt::RESULT_SCROLL_END {
@@ -3284,6 +3545,112 @@ fn named_apps(config: &SessionConfig) -> Vec<AppInfo> {
     apps
 }
 
+/// Fifteenth review (F5): whether `next`, the command after a plan's first one, types into
+/// the field that first command (a focusing tap) was meant to focus: a `type`'s text or a
+/// `clear`'s Deletes on an element.
+fn types_after_focus_tap(action: &Action, next: &RunnerCommand) -> bool {
+    matches!(
+        action,
+        Action::Type {
+            element: Some(_),
+            ..
+        } | Action::Clear { .. }
+    ) && matches!(
+        next,
+        RunnerCommand::TypeText { .. }
+            | RunnerCommand::PressKey {
+                key: Key::Delete,
+                ..
+            }
+    )
+}
+
+/// Whether no text input of `screen` but the one with fingerprint `fp` has focus (none
+/// focused: focus not readable, not refused).
+fn focus_is(screen: &CompactScreen, fp: u64) -> bool {
+    screen
+        .elements
+        .iter()
+        .filter(|e| e.focused && e.role.is_text_input())
+        .all(|e| e.fingerprint == fp)
+}
+
+/// The raw tree's shape of `cur` (see [`Session::tree`]).
+fn tree_of(cur: &Current) -> ScreenTree<'_> {
+    ScreenTree {
+        sources: &cur.sources,
+        parents: &cur.parents,
+        ends: &cur.ends,
+        bars: match cur.source {
+            ScreenSource::Typed => &cur.bars,
+            ScreenSource::RunnerText => &[],
+        },
+        // Occluders only ever refuse more, so runner text keeps them.
+        nodes: &cur.nodes,
+        inputs: &cur.inputs,
+    }
+}
+
+/// The raw node (index in the digest's order) `e`, an element of `cur.screen`, was listed
+/// from.
+fn source_of(cur: &Current, e: &Element) -> Option<u32> {
+    let pos = usize::try_from(e.index).ok()?.checked_sub(1)?;
+    cur.sources.get(pos).copied()
+}
+
+/// Whether two frames are the same within [`PLAN_FRAME_TOLERANCE`].
+fn near_frame(a: jarvis_proto::Rect, b: jarvis_proto::Rect) -> bool {
+    let t = PLAN_FRAME_TOLERANCE;
+    (a.x - b.x).abs() <= t
+        && (a.y - b.y).abs() <= t
+        && (a.width - b.width).abs() <= t
+        && (a.height - b.height).abs() <= t
+}
+
+/// Stale-screen guard: whether `a` on the planned-on look `old` and `b` on the fresh look
+/// `new` are the same control: listed at the same number, from the same raw node (the
+/// approval path's binding A3), with the same identity, role, texts and states (focus
+/// aside: the plan is made again on the fresh look, which taps an unfocused field), and a
+/// frame within [`PLAN_FRAME_TOLERANCE`].
+fn same_control(old: &Current, a: &Element, new: &Current, b: &Element) -> bool {
+    a.index == b.index
+        && source_of(old, a) == source_of(new, b)
+        && a.fingerprint == b.fingerprint
+        && a.role == b.role
+        && a.label == b.label
+        && a.value == b.value
+        && a.placeholder == b.placeholder
+        && a.enabled == b.enabled
+        && a.selected == b.selected
+        && a.secure == b.secure
+        && near_frame(a.frame, b.frame)
+}
+
+/// Stale-screen guard: whether what lies under `p` is the same on both looks: every drawn
+/// raw node containing `p` (the keyboard's included), in node order, with the same node
+/// number, role, label, text bit and keyboard bit, and a frame within
+/// [`PLAN_FRAME_TOLERANCE`]. An alert, sheet, banner or overlay that appears over the point
+/// adds nodes there; content that scrolled or moved under it changes them.
+fn same_under(old: &Current, new: &Current, p: Point) -> bool {
+    let under = |c: &Current| {
+        c.nodes
+            .iter()
+            .filter(|n| n.frame.contains(p))
+            .cloned()
+            .collect::<Vec<RawNode>>()
+    };
+    let (a, b) = (under(old), under(new));
+    a.len() == b.len()
+        && a.iter().zip(&b).all(|(x, y)| {
+            x.node == y.node
+                && x.role == y.role
+                && x.label == y.label
+                && x.text == y.text
+                && x.keyboard == y.keyboard
+                && near_frame(x.frame, y.frame)
+        })
+}
+
 /// Whether `action` touches or reads the foreground app (leaving it does not).
 fn uses_foreground_app(action: &Action) -> bool {
     matches!(
@@ -3329,7 +3696,7 @@ fn planned_point(exec: &Exec) -> Option<Point> {
         return None;
     };
     queue.iter().find_map(|c| match c {
-        RunnerCommand::Tap { x, y } | RunnerCommand::LongPress { x, y, .. } => {
+        RunnerCommand::Tap { x, y, .. } | RunnerCommand::LongPress { x, y, .. } => {
             Some(Point::new(*x, *y))
         }
         RunnerCommand::Swipe { from, .. } => Some(*from),

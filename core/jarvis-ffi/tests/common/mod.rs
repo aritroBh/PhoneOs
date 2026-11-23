@@ -270,7 +270,7 @@ pub fn drive_with(
                     output: ModelOutput { text },
                 }
             }
-            Effect::Act { command } => {
+            Effect::Act { command, .. } => {
                 run.acts += 1;
                 if let RunnerCommand::Tap { x, y } = command {
                     page = match page {
@@ -369,7 +369,7 @@ pub fn drive_updates(
                     output: ModelOutput { text },
                 }
             }
-            Effect::Act { command } => {
+            Effect::Act { command, .. } => {
                 if let RunnerCommand::Tap { x, y } = command {
                     page = match page {
                         Page::Settings if contains(rect(16.0, 200.0, 361.0, 44.0), *x, *y) => {

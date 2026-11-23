@@ -159,7 +159,7 @@ fn drive(
                     },
                 }
             }
-            Effect::Act { command } => {
+            Effect::Act { command, .. } => {
                 n_act += 1;
                 trace.acts.push(command.clone());
                 if let Some(last) = trace.asked.last_mut() {

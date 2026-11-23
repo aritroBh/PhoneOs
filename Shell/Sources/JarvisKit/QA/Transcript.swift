@@ -178,7 +178,7 @@ public final class Transcript: Sendable {
         case .observe(let screenshot): "observe(screenshot: \(screenshot))"
         case .infer(let r):
             "infer(kind: \(kindName(r.kind)), user: \(r.user.count) chars, image: \(r.image?.id ?? "none"), marks: \(r.marks.count))"
-        case .act(let command): "act(\(describe(command)))"
+        case .act(let command, _): "act(\(describe(command)))"
         case .callTool(let call): "call_tool(\(call.name), \(call.argsJson))"
         case .confirm(let r): "confirm(\(r.category), app: \(r.app), \"\(r.summary)\")"
         case .askUser(let q): "ask_user(\"\(q)\")"

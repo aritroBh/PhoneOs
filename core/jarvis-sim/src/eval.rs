@@ -234,6 +234,11 @@ pub struct TaskResult {
     pub steps: u32,
     /// Model calls.
     pub model_calls: usize,
+    /// Stale-screen guard: extra observations before acting on a plan older than the
+    /// policy's limit.
+    pub fresh_looks: usize,
+    /// Stale-screen guard: plans not carried out because the screen changed first.
+    pub stale_plans: usize,
     /// Simulated duration in milliseconds.
     pub sim_ms: u64,
     /// Real time spent in model calls, in milliseconds (0 for scripted models).
@@ -431,6 +436,8 @@ pub fn run_one(
         status: status_name(status),
         steps: report.outcome.steps,
         model_calls: report.counts.model_calls,
+        fresh_looks: report.counts.fresh_looks,
+        stale_plans: report.counts.stale_plans,
         sim_ms: report.outcome.duration_ms,
         real_model_ms: report.model_real_ms,
         confirmations: seen.into_iter().map(category_name).collect(),
@@ -523,6 +530,14 @@ pub fn table_totals(results: &[TaskResult]) -> String {
     );
     if real > 0 {
         let _ = write!(s, ", {} real model time", seconds(real));
+    }
+    let fresh: usize = results.iter().map(|r| r.fresh_looks).sum();
+    let stale: usize = results.iter().map(|r| r.stale_plans).sum();
+    if fresh > 0 || stale > 0 {
+        let _ = write!(
+            s,
+            ", {fresh} extra observes and {stale} re-decided plans (stale-screen guard)"
+        );
     }
     s.push('\n');
     s

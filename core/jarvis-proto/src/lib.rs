@@ -39,9 +39,10 @@ pub use geometry::{Point, Rect, Size};
 pub use model::{Mark, ModelOutput, ModelProfile, ModelRequest, RequestKind};
 pub use policy::{
     AppRule, Policy, PolicyMode, RiskCategory, TrustLevel, DEFAULT_MAX_LOCKED_WAIT_MS,
-    PASSWORDS_BUNDLE_ID, SETTINGS_BUNDLE_ID, SPRINGBOARD_BUNDLE_ID, WALLET_BUNDLE_ID,
+    DEFAULT_MAX_PLAN_AGE_MS, PASSWORDS_BUNDLE_ID, SETTINGS_BUNDLE_ID, SPRINGBOARD_BUNDLE_ID,
+    WALLET_BUNDLE_ID,
 };
-pub use runner::{Key, RunnerCommand, RunnerFailure, RunnerResult};
+pub use runner::{Expect, Key, RunnerCommand, RunnerFailure, RunnerResult};
 pub use session::{
     render_rows, ConfirmRequest, ConfirmStage, ConfirmTarget, ConfirmVerb, Effect, Event, Outcome,
     OutcomeStatus, Phase, Progress, QuestionRow, QuestionRowKind, TimedEvent,

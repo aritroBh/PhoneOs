@@ -143,9 +143,11 @@ fn lock_mid_task_then_unlock_completes_without_a_stale_action() {
 #[test]
 fn a_lock_found_by_observation_after_an_action_is_reported_and_nothing_is_learned() {
     // The phone locks right after the first tap: the verifying observation is locked.
+    // (2 750 ms: the tap runs at 2 300-2 700 ms, after the fresh look before acting on the
+    // 2 s old plan.)
     let faults = Faults {
         locks: vec![LockSpec {
-            at_ms: Some(2_600),
+            at_ms: Some(2_750),
             unlock_after_ms: Some(30_000),
             ..LockSpec::default()
         }],
@@ -207,10 +209,12 @@ fn a_lock_during_replay_re_derives_the_step_with_no_model_call() {
 #[test]
 fn a_lock_during_a_pending_confirmation_asks_again_after_the_unlock() {
     let faults = Faults {
-        // Effects: observe, infer, act (tap Mom), observe, infer, act (focus), act (type),
-        // observe, infer, confirm (Send) <- index 9 with the app already approved.
+        // Effects: observe, infer, observe (fresh look: the 2 s plan is older than the
+        // limit), act (tap Mom), observe, infer, observe (fresh look), act (focus), observe
+        // (where the focus went), act (type), observe, infer, observe (fresh look), confirm
+        // (Send) <- index 13 with the app already approved.
         locks: vec![LockSpec {
-            at_effect: Some(9),
+            at_effect: Some(13),
             unlock_after_ms: Some(45_000),
             ..LockSpec::default()
         }],
@@ -354,7 +358,15 @@ fn dropped_characters_are_corrected_on_the_retry() {
     let deletes = r
         .commands
         .iter()
-        .filter(|c| **c == RunnerCommand::PressKey { key: Key::Delete })
+        .filter(|c| {
+            matches!(
+                c,
+                RunnerCommand::PressKey {
+                    key: Key::Delete,
+                    ..
+                }
+            )
+        })
         .count();
     assert_eq!(deletes, "running late".chars().count() - 4);
     assert!(r

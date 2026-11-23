@@ -32,7 +32,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use jarvis_proto::{
-    Action, ConfirmRequest, Effect, ModelRequest, Outcome, RunnerCommand, ToolCall,
+    Action, ConfirmRequest, Effect, Expect, Key, ModelRequest, Outcome, RunnerCommand, ToolCall,
 };
 use jarvis_safety::TypedText;
 
@@ -134,6 +134,8 @@ impl TypedState {
         if matches!(cmd, RunnerCommand::TypeText { .. }) {
             self.typed_sent(pending, front);
         }
+        let expect = expectation(&cmd, front);
+        let cmd = cmd.with_expect(expect);
         Out(Effect::Act(cmd))
     }
 
@@ -245,6 +247,30 @@ impl TypedState {
             _ => Cow::Borrowed(here),
         }
     }
+}
+
+/// Stale-screen guard, layer 2: what `cmd` expects of the phone, filled here, where every
+/// command leaves the session. Gestures and typing (Return and Delete included) expect the
+/// app of the observation they were planned (or re-checked) on, `front`, to be in front, so
+/// a runner that reads another app in front refuses them (`RunnerFailure::Stale`); the
+/// later commands of one plan (the focus tap's typing, a clear's deletes) carry it too.
+/// Home, app launches, links and waits change or ignore the front app and expect nothing;
+/// so does a command planned on an observation without a bundle id.
+fn expectation(cmd: &RunnerCommand, front: &str) -> Option<Expect> {
+    let front = front.trim();
+    let gesture = match cmd {
+        RunnerCommand::PressKey { key, .. } => *key != Key::Home,
+        RunnerCommand::Tap { .. }
+        | RunnerCommand::LongPress { .. }
+        | RunnerCommand::Swipe { .. }
+        | RunnerCommand::TypeText { .. } => true,
+        RunnerCommand::LaunchApp { .. }
+        | RunnerCommand::OpenUrl { .. }
+        | RunnerCommand::Wait { .. } => false,
+    };
+    (gesture && !front.is_empty()).then(|| Expect {
+        bundle_id: front.to_owned(),
+    })
 }
 
 /// Whether the sorted multiset `a` is contained in the sorted multiset `b`.

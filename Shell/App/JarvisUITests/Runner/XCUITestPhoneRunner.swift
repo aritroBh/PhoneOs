@@ -113,6 +113,13 @@ final class XCUITestPhoneRunner: PhoneRunner {
         await lockStateOnMain()
     }
 
+    /// Stale-screen guard (`FrontAppGuard`): the app in front, by the same reading the
+    /// observations use (the last activated app while it is in front, else a known app in
+    /// front, else SpringBoard). No snapshot is taken.
+    nonisolated func frontBundleId() async throws -> String? {
+        await frontOnMain()
+    }
+
     nonisolated func perform(_ command: RunnerCommand) async throws -> RunnerResult {
         if case .wait(let ms) = command {
             try await Task.sleep(for: .milliseconds(Int(min(ms, 30_000)))) // capped: no UI-test wait over 30 s
@@ -237,6 +244,11 @@ final class XCUITestPhoneRunner: PhoneRunner {
         }
         lastActivated = nil
         return Self.springboard
+    }
+
+    private func frontOnMain() -> String {
+        var notes: [String] = []
+        return foregroundBundleId(notes: &notes)
     }
 
     private func application(_ bundleId: String) -> XCUIApplication {

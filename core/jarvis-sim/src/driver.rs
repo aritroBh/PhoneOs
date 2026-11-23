@@ -78,6 +78,14 @@ pub struct RunCounts {
     pub stale_acts: usize,
     /// Observations that failed (`ObserveFailed`).
     pub observe_failures: usize,
+    /// Stale-screen guard: observations taken before acting because a plan was older than
+    /// the policy's limit (the session's `Progress::fresh_looks`).
+    pub fresh_looks: usize,
+    /// Stale-screen guard: plans not carried out because the screen changed first (the
+    /// session's `Progress::stale_plans`).
+    pub stale_plans: usize,
+    /// Runner commands the phone refused because another app was in front.
+    pub stale_refusals: usize,
 }
 
 /// A confirmation request and the owner's decision.
@@ -175,16 +183,18 @@ fn one_line(s: &str, max: usize) -> String {
 
 fn describe_command(c: &RunnerCommand) -> String {
     match c {
-        RunnerCommand::Tap { x, y } => format!("tap ({x:.0}, {y:.0})"),
-        RunnerCommand::LongPress { x, y, duration_ms } => {
+        RunnerCommand::Tap { x, y, .. } => format!("tap ({x:.0}, {y:.0})"),
+        RunnerCommand::LongPress {
+            x, y, duration_ms, ..
+        } => {
             format!("long_press ({x:.0}, {y:.0}) {duration_ms} ms")
         }
         RunnerCommand::Swipe { from, to, .. } => format!(
             "swipe ({:.0}, {:.0}) -> ({:.0}, {:.0})",
             from.x, from.y, to.x, to.y
         ),
-        RunnerCommand::TypeText { text } => format!("type_text {:?}", one_line(text, 60)),
-        RunnerCommand::PressKey { key } => format!("press_key {key:?}"),
+        RunnerCommand::TypeText { text, .. } => format!("type_text {:?}", one_line(text, 60)),
+        RunnerCommand::PressKey { key, .. } => format!("press_key {key:?}"),
         RunnerCommand::LaunchApp { bundle_id } => format!("launch_app {bundle_id}"),
         RunnerCommand::OpenUrl { url } => format!("open_url {url}"),
         RunnerCommand::Wait { ms } => format!("wait {ms} ms"),
@@ -335,6 +345,10 @@ pub fn run_with(
             Effect::Infer(req) => {
                 report.counts.model_calls += 1;
                 phone.advance(costs.infer_ms);
+                // The screen may change while the model thinks (stale-screen faults).
+                let changed = phone
+                    .change_during_infer(report.counts.model_calls - 1)
+                    .map_or(String::new(), |c| format!(" [meanwhile: {c}]"));
                 let kind = format!("{:?}", req.kind).to_lowercase();
                 let label = format!(
                     "infer ({kind}, ~{} prompt chars)",
@@ -353,7 +367,7 @@ pub fn run_with(
                         report.model_outputs.push(out.text.clone());
                         (
                             label,
-                            format!("model{note}: {}", one_line(&out.text, 200)),
+                            format!("model{note}: {}{changed}", one_line(&out.text, 200)),
                             Some(Event::ModelOutput(ModelOutput { text: out.text })),
                         )
                     }
@@ -472,6 +486,9 @@ pub fn run_with(
     report.counts.stale_acts = phone.stale_acts();
     let progress = session.progress();
     report.counts.parse_retries = usize::try_from(progress.parse_retries).unwrap_or(usize::MAX);
+    report.counts.fresh_looks = usize::try_from(progress.fresh_looks).unwrap_or(usize::MAX);
+    report.counts.stale_plans = usize::try_from(progress.stale_plans).unwrap_or(usize::MAX);
+    report.counts.stale_refusals = phone.stale_refusals();
     report.memory = session.into_memory();
     report
 }

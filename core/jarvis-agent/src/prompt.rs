@@ -208,6 +208,33 @@ pub(crate) const RESULT_RETURN_LOCKED: &str =
 /// focused.
 pub(crate) const RESULT_NO_FOCUSED_FIELD: &str =
     "no field is focused; tap a field first (or give the field's element number)";
+/// Stale-screen guard: the note for the next request when a fresh look before acting
+/// showed that the screen changed after the model chose its action (`why`: a fixed phrase,
+/// never screen text). The action was not done and is not counted as a step.
+pub(crate) fn screen_changed_note(why: &str) -> String {
+    format!("The screen changed before the action ({why}); it was not done. Decide again on this screen.")
+}
+/// Stale-screen guard: the history result when the screen kept changing before the action
+/// ([`crate::session::MAX_REPLANS`] times in a row): a failed step.
+pub(crate) fn screen_changed_failed(why: &str) -> String {
+    format!("not done: the screen kept changing before the action ({why}); check the screen and choose again")
+}
+/// Stale-screen guard: the runner refused the action's first command because another app
+/// was in front (`RunnerFailure::Stale`): nothing happened, it will be decided again.
+pub(crate) const RESULT_STALE_NOT_DONE: &str =
+    "not done: another app came to the front before the action; the screen was read again";
+/// Stale-screen guard: the runner refused a later command of the action because another
+/// app came to the front while it ran.
+pub(crate) const RESULT_STALE_PART: &str =
+    "failed: another app came to the front while this ran; only part of it was done, check the screen";
+/// Fifteenth review (F5): after the focusing tap another field had the focus (or the field
+/// changed), so nothing was typed.
+pub(crate) const RESULT_FOCUS_MOVED: &str =
+    "not done: after the tap, the focus was not in that field (the page moved it or the field changed), so nothing was typed; check which field is focused and choose again";
+/// Stale-screen guard: Return was refused because another app came to the front after the
+/// text was typed.
+pub(crate) const RESULT_RETURN_STALE: &str =
+    "not done: the text was typed, but another app came to the front before Return, so Return was not pressed; check the screen";
 /// History result: a held confirmation whose screen changed during the lock.
 pub(crate) const RESULT_LOCK_SCREEN_CHANGED: &str =
     "not done: the phone locked while waiting for the owner's approval, and the screen changed";

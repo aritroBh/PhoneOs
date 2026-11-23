@@ -155,6 +155,7 @@ fn sample_json() -> String {
         from: p::Point::new(200.0, 700.0),
         to: p::Point::new(200.0, 200.0),
         duration_ms: 300,
+        expect: None,
     });
     json(&run.timeline())
 }

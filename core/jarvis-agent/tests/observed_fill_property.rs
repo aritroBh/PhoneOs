@@ -152,7 +152,7 @@ fn session(seed: u64) -> (usize, usize) {
     let mut pending: Vec<(usize, String)> = Vec::new();
     let mut phone = move |c: &RunnerCommand| {
         match c {
-            RunnerCommand::Tap { x, y } => match hit(n, *x, *y) {
+            RunnerCommand::Tap { x, y, .. } => match hit(n, *x, *y) {
                 Some((k, 1)) => {
                     let text = format!("pasted {seed} {pastes}");
                     if late.get(pastes).copied().unwrap_or(false) {
@@ -227,7 +227,7 @@ fn session(seed: u64) -> (usize, usize) {
         match e {
             Effect::Infer(_) => asked = false,
             Effect::Confirm(_) => asked = true,
-            Effect::Act(RunnerCommand::Tap { x, y }) => {
+            Effect::Act(RunnerCommand::Tap { x, y, .. }) => {
                 if matches!(hit(n, *x, *y), Some((_, 2))) {
                     let (filled, entered) = log[at];
                     at += 1;

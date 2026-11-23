@@ -1,5 +1,6 @@
 import Foundation
 import JarvisCore
+import Synchronization
 
 /// The actuator: whatever drives the phone's UI (the XCUITest runner on the device, a
 /// simulator, a fake in tests). `SessionDriver` calls one method at a time.
@@ -26,11 +27,20 @@ public protocol PhoneRunner: Sendable {
     /// nothing of it reaches the core. Runners that cannot take one return `nil` (the
     /// default): the Live view shows the wireframe.
     func viewerScreenshot() async throws -> CapturedScreenshot?
+
+    /// The bundle id of the app in front now, read cheaply (no tree): what the stale-screen
+    /// guard compares a command's `expect` with before sending it (`FrontAppGuard`).
+    /// Runners that cannot tell return `nil` (the default): the command is sent, and the
+    /// driver notes once that the check could not be made.
+    func frontBundleId() async throws -> String?
 }
 
 extension PhoneRunner {
     /// Default: the runner cannot tell.
     public func lockState() async throws -> DeviceLockState { .unknown }
+
+    /// Default: the runner cannot tell which app is in front.
+    public func frontBundleId() async throws -> String? { nil }
 
     /// Default: no Live view screenshots.
     public func viewerScreenshot() async throws -> CapturedScreenshot? { nil }
@@ -48,6 +58,77 @@ extension RunnerResult {
     /// The runner refused because the phone is locked; nothing was carried out.
     public static func deviceLocked(_ message: String = "the device is locked") -> RunnerResult {
         RunnerResult(ok: false, error: message, failure: .deviceLocked)
+    }
+
+    /// The command was refused because `front`, not the app it expected, is in front
+    /// (stale-screen guard, layer 2); nothing was carried out.
+    public static func stale(front: String, expected: String) -> RunnerResult {
+        RunnerResult(
+            ok: false,
+            error: "not carried out: \(front) is in front, not \(expected), the app the command was planned on",
+            failure: .stale
+        )
+    }
+}
+
+/// Stale-screen guard, layer 2 (docs/ARCHITECTURE.md, *Stale-screen guard*): a gesture or
+/// typing command says which app it was planned on (`Effect.act`'s `expect`), and is
+/// refused (`RunnerFailure.stale`, nothing sent) when the runner reads another app in front
+/// (`PhoneRunner.frontBundleId()`), so a tap planned on one app never lands on whatever
+/// replaced it. The core treats the refusal like a locked one: the step is refunded, it
+/// observes again and decides again.
+///
+/// - Same app (bundle ids compared ignoring case and surrounding spaces): sent.
+/// - Another app: refused.
+/// - Unknown (the runner returns `nil` or the read fails): sent, and the first such command
+///   of the run returns a note saying the check could not be made (once per guard).
+/// - No `expect` (launching an app, opening a link, waiting, Home): sent unchecked.
+///
+/// `SessionDriver` runs every command through one guard, so every runner gets the check.
+/// Limits: between the read and the synthesized touch a few milliseconds remain, and
+/// overlays SpringBoard owns (banners, system alerts, the call screen) may not change the
+/// front app.
+public final class FrontAppGuard: Sendable {
+    private let unknownNoted = Mutex(false)
+
+    public init() {}
+
+    /// The note given (once) when the front app cannot be read.
+    public static let unknownNote =
+        "Stale-screen check: this runner cannot tell which app is in front, so commands are sent without checking it."
+
+    /// What `perform` did: the runner's result (or the refusal) and a note to show, if any.
+    public struct Outcome: Sendable, Equatable {
+        public var result: RunnerResult
+        public var note: String?
+    }
+
+    /// Whether `expect` holds for the reading `front`: `true` (send), `false` (refuse), `nil`
+    /// (unknown: send).
+    public static func holds(_ expect: CommandExpect, front: String?) -> Bool? {
+        guard let front else { return nil }
+        let want = expect.bundleId.trimmingCharacters(in: .whitespaces)
+        return want.caseInsensitiveCompare(front.trimmingCharacters(in: .whitespaces)) == .orderedSame
+    }
+
+    /// Checks `expect` against `runner`'s front app, then sends `command` (or refuses it).
+    public func perform(_ command: RunnerCommand, expect: CommandExpect?, on runner: any PhoneRunner) async throws -> Outcome {
+        guard let expect else {
+            return Outcome(result: try await runner.perform(command), note: nil)
+        }
+        let front = try? await runner.frontBundleId()
+        switch Self.holds(expect, front: front) {
+        case false?:
+            return Outcome(result: .stale(front: front ?? "", expected: expect.bundleId), note: nil)
+        case true?:
+            return Outcome(result: try await runner.perform(command), note: nil)
+        case nil:
+            let first = unknownNoted.withLock { noted in
+                defer { noted = true }
+                return !noted
+            }
+            return Outcome(result: try await runner.perform(command), note: first ? Self.unknownNote : nil)
+        }
     }
 }
 
@@ -281,5 +362,9 @@ public final class LockCheckingRunner: PhoneRunner {
 
     public func viewerScreenshot() async throws -> CapturedScreenshot? {
         try await inner.viewerScreenshot()
+    }
+
+    public func frontBundleId() async throws -> String? {
+        try await inner.frontBundleId()
     }
 }

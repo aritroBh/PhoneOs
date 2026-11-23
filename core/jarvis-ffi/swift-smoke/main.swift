@@ -153,8 +153,12 @@ func drive(memoryJson: String, config: SessionConfig? = nil,
                 text = #"{"thought":"done","action":"done","summary":"Wi-Fi is off"}"#
             }
             event = .modelOutput(output: ModelOutput(text: text))
-        case .act(let command):
+        case .act(let command, let expect):
             run.acts += 1
+            if case .tap = command, expect?.bundleId != "com.apple.Preferences" {
+                run.error = "a tap without the app it was planned on: \(String(describing: expect))"
+                return run
+            }
             if case let .tap(x, y) = command {
                 switch run.page {
                 case .settings where contains(Rect(x: 16, y: 200, width: 361, height: 44), x, y):
@@ -544,6 +548,14 @@ do {
     let p = try defaultPolicy()
     check("defaultPolicy() waits at most 30 minutes for an unlock", p.maxLockedWaitMs == 1_800_000,
           "\(p.maxLockedWaitMs)")
+    check("defaultPolicy() looks again before acting on a plan older than 1 s", p.maxPlanAgeMs == 1_000,
+          "\(p.maxPlanAgeMs)")
+    // Stale-screen guard: `Effect.act` without `expect` still compiles (default nil), and a
+    // runner's stale refusal is a typed reason.
+    let bare = Effect.act(command: .wait(ms: 1))
+    if case .act(_, let expect) = bare { check("Effect.act init without expect: defaults to nil", expect == nil) }
+    let stale = RunnerResult(ok: false, error: "another app is in front", failure: .stale)
+    check("RunnerFailure.stale exists", stale.failure == .stale)
     // Initializers written before the new fields still compile (defaults).
     let plain = RunnerResult(ok: true, error: nil)
     check("RunnerResult init without failure: defaults to nil", plain.failure == nil)

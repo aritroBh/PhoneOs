@@ -28,7 +28,7 @@ fn phone_with(app_json: &str) -> SimPhone {
 }
 
 fn tap(p: &mut SimPhone, x: f64, y: f64) -> jarvis_sim::phone::ActOutcome {
-    p.act(&RunnerCommand::Tap { x, y })
+    p.act(&RunnerCommand::Tap { x, y, expect: None })
 }
 
 fn find<'a>(n: &'a UiNode, label: &str) -> Option<&'a UiNode> {
@@ -205,6 +205,7 @@ fn swipe(p: &mut SimPhone, from_y: f64, to_y: f64) -> String {
         from: Point::new(200.0, from_y),
         to: Point::new(200.0, to_y),
         duration_ms: 300,
+        expect: None,
     })
     .note
 }
@@ -259,6 +260,7 @@ fn scrolling_virtualises_rows_clamps_and_keeps_taps_aligned() {
             from: Point::new(300.0, 300.0),
             to: Point::new(50.0, 290.0),
             duration_ms: 200,
+            expect: None,
         })
         .note;
     assert!(h.contains("horizontal"), "{h}");
@@ -278,7 +280,10 @@ const INPUT: &str = r#"{
 fn text_input_focus_keyboard_typing_secure_values_and_keys() {
     let mut p = phone_with(INPUT);
     // Typing with nothing focused is a runner error, as on a real device.
-    let out = p.act(&RunnerCommand::TypeText { text: "x".into() });
+    let out = p.act(&RunnerCommand::TypeText {
+        text: "x".into(),
+        expect: None,
+    });
     assert!(!out.result.ok);
 
     tap(&mut p, 100.0, 220.0);
@@ -287,15 +292,24 @@ fn text_input_focus_keyboard_typing_secure_values_and_keys() {
     assert!(find(&obs.screen.root, "Email").unwrap().focused);
     assert!(obs.screen.root.find(|n| n.role == Role::Keyboard).is_some());
 
-    p.act(&RunnerCommand::TypeText { text: "ab".into() });
+    p.act(&RunnerCommand::TypeText {
+        text: "ab".into(),
+        expect: None,
+    });
     // Tapping the on-screen 'q' key types it; Delete removes one character.
     let q = find(&p.structured_root().unwrap(), "q")
         .unwrap()
         .frame
         .center();
     tap(&mut p, q.x, q.y);
-    p.act(&RunnerCommand::PressKey { key: Key::Delete });
-    p.act(&RunnerCommand::TypeText { text: "c".into() });
+    p.act(&RunnerCommand::PressKey {
+        key: Key::Delete,
+        expect: None,
+    });
+    p.act(&RunnerCommand::TypeText {
+        text: "c".into(),
+        expect: None,
+    });
     assert_eq!(p.snapshot().states["t"]["email"], "abc");
     assert_eq!(
         find(&p.structured_root().unwrap(), "Email")
@@ -309,12 +323,16 @@ fn text_input_focus_keyboard_typing_secure_values_and_keys() {
     tap(&mut p, 100.0, 280.0);
     p.act(&RunnerCommand::TypeText {
         text: "hunter2".into(),
+        expect: None,
     });
     let root = p.structured_root().unwrap();
     let pw = find(&root, "Password").unwrap();
     assert!(pw.secure);
     assert_eq!(pw.value.as_deref(), Some("\u{2022}".repeat(7).as_str()));
-    p.act(&RunnerCommand::PressKey { key: Key::Return });
+    p.act(&RunnerCommand::PressKey {
+        key: Key::Return,
+        expect: None,
+    });
     assert_eq!(p.snapshot().states["t"]["sent"], json!(["submitted abc"]));
 }
 
@@ -390,7 +408,14 @@ fn launching_home_and_urls_switch_apps_and_apps_keep_their_state() {
     tap(&mut p, icon.x, icon.y);
     assert_eq!(p.snapshot().app, "settings");
     p.set_state("settings", "wifi", json!(false)).unwrap();
-    assert!(p.act(&RunnerCommand::PressKey { key: Key::Home }).result.ok);
+    assert!(
+        p.act(&RunnerCommand::PressKey {
+            key: Key::Home,
+            expect: None
+        })
+        .result
+        .ok
+    );
     assert_eq!(p.snapshot().app, "home");
     assert!(
         p.act(&RunnerCommand::LaunchApp {

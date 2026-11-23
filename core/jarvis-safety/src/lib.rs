@@ -54,6 +54,7 @@ mod shape;
 mod text;
 mod validate;
 
+pub use actuation::touches_screen;
 pub use app::{
     app_level, check_app, check_app_name, denied_app_names, is_springboard, label_names_denied_app,
     matching_rule, mode_level, search_names_denied_app, widget_names_denied_app, Verdict,

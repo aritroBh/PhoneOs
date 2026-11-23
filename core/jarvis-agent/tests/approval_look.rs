@@ -77,7 +77,17 @@ fn jarvis_app() -> Screen {
     )
 }
 
-const TAP: RunnerCommand = RunnerCommand::Tap { x: 196.5, y: 325.0 };
+/// The approved tap, carrying what it expects of the phone (the stale-screen guard's
+/// layer 2: the app it was re-checked on is in front).
+fn tap() -> RunnerCommand {
+    RunnerCommand::Tap {
+        x: 196.5,
+        y: 325.0,
+        expect: Some(jarvis_proto::Expect {
+            bundle_id: SHOP.to_owned(),
+        }),
+    }
+}
 
 fn launch_shop() -> Effect {
     Effect::Act(RunnerCommand::LaunchApp {
@@ -196,7 +206,7 @@ fn approved_in_jarvis_brings_the_app_back_then_acts_on_the_same_screen() {
     assert_eq!(d.observed(&jarvis_app()), launch_shop());
     assert_eq!(d.s.progress().phase, Phase::Observing);
     assert_eq!(d.ok(), Effect::Observe { screenshot: false });
-    assert_eq!(d.observed(&asked()), Effect::Act(TAP));
+    assert_eq!(d.observed(&asked()), Effect::Act(tap()));
     // The activation is not a step: only the approved tap counts.
     assert_eq!(d.s.progress().step, 1);
 }
@@ -208,7 +218,7 @@ fn the_home_screen_in_front_brings_the_app_back_too() {
         let mut d = Driver::approved(c);
         assert_eq!(d.observed(&home_screen()), launch_shop());
         assert_eq!(d.ok(), Effect::Observe { screenshot: false });
-        assert_eq!(d.observed(&asked()), Effect::Act(TAP));
+        assert_eq!(d.observed(&asked()), Effect::Act(tap()));
     }
 }
 
@@ -237,7 +247,7 @@ fn after_the_activation_a_screen_that_settles_is_acted_on() {
     // The switch is still finishing: the home screen once more.
     assert_eq!(d.observed(&home_screen()), settle_wait());
     assert_eq!(d.ok(), Effect::Observe { screenshot: false });
-    assert_eq!(d.observed(&asked()), Effect::Act(TAP));
+    assert_eq!(d.observed(&asked()), Effect::Act(tap()));
 }
 
 #[test]
@@ -318,7 +328,13 @@ fn when_jarvis_is_the_asked_app_the_sheet_settles_without_an_activation() {
     ));
     assert_eq!(d.observed(&sheet(true)), settle_wait());
     assert_eq!(d.ok(), Effect::Observe { screenshot: false });
-    assert_eq!(d.observed(&sheet(false)), Effect::Act(TAP));
+    // The tap expects Jarvis's own app, where it was asked and re-checked.
+    assert_eq!(
+        d.observed(&sheet(false)),
+        Effect::Act(tap().with_expect(Some(jarvis_proto::Expect {
+            bundle_id: AGENT.to_owned(),
+        })))
+    );
 }
 
 // ---------------------------------------------------------------------------------------
@@ -331,7 +347,7 @@ fn a_first_look_that_differs_then_settles_is_acted_on() {
     assert_eq!(d.observed(&changed()), settle_wait());
     assert_eq!(d.s.progress().phase, Phase::Observing);
     assert_eq!(d.ok(), Effect::Observe { screenshot: false });
-    assert_eq!(d.observed(&asked()), Effect::Act(TAP));
+    assert_eq!(d.observed(&asked()), Effect::Act(tap()));
     assert_eq!(d.s.progress().step, 1, "the extra look is not a step");
 }
 
@@ -402,7 +418,7 @@ fn the_full_sequence_is_look_activate_look_wait_look() {
             Effect::Observe { screenshot: false },
             settle_wait(),
             Effect::Observe { screenshot: false },
-            Effect::Act(TAP),
+            Effect::Act(tap()),
         ]
     );
     // The tap ran; verification and the next decision follow as usual.
@@ -422,7 +438,7 @@ fn the_step_budget_counts_the_approved_action_once() {
     d.ok();
     assert_eq!(d.observed(&changed()), settle_wait());
     d.ok();
-    assert_eq!(d.observed(&asked()), Effect::Act(TAP));
+    assert_eq!(d.observed(&asked()), Effect::Act(tap()));
     assert_eq!(d.ok(), Effect::Observe { screenshot: false });
     let Effect::Finished(o) = d.observed(&asked()) else {
         panic!()
@@ -619,7 +635,7 @@ fn a_failed_look_after_the_wait_or_the_activation_is_looked_again() {
         }),
         Effect::Observe { screenshot: false }
     );
-    assert_eq!(d.observed(&asked()), Effect::Act(TAP));
+    assert_eq!(d.observed(&asked()), Effect::Act(tap()));
 }
 
 #[test]

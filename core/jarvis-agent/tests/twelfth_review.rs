@@ -315,7 +315,8 @@ fn probe12_return_gated_on_a_different_field_than_typed() {
         matches!(
             a,
             RunnerCommand::PressKey {
-                key: jarvis_proto::Key::Return
+                key: jarvis_proto::Key::Return,
+                ..
             }
         )
     });

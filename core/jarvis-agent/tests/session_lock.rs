@@ -238,10 +238,19 @@ fn lock_part_way_through_an_action_leaves_its_result_unknown_and_learns_nothing(
         s.step(ev(30, model(&typed))),
         Effect::Act(RunnerCommand::Tap { .. })
     ));
+    // The focusing tap ran; the session looks at where the focus went before typing
+    // (fifteenth review, F5).
     assert_eq!(
         s.step(ev(40, Event::ActResult(RunnerResult::ok()))),
+        Effect::Observe { screenshot: false }
+    );
+    assert_eq!(
+        s.step(ev(45, observed(search_screen(true, None)))),
         Effect::Act(RunnerCommand::TypeText {
-            text: "milk".into()
+            text: "milk".into(),
+            expect: Some(jarvis_proto::Expect {
+                bundle_id: search_screen(true, None).app_bundle_id,
+            }),
         })
     );
     // The tap ran, the typing was refused: the action is half done.
@@ -902,7 +911,7 @@ fn dropping_phone(drops: usize) -> Phone {
     let mut left = drops;
     Phone::new(search_screen(true, None), move |cmd, _s: &Screen| {
         match cmd {
-            RunnerCommand::TypeText { text } => {
+            RunnerCommand::TypeText { text, .. } => {
                 if left > 0 {
                     left -= 1;
                     value.extend(
@@ -915,10 +924,14 @@ fn dropping_phone(drops: usize) -> Phone {
                     value.push_str(text);
                 }
             }
-            RunnerCommand::PressKey { key: Key::Delete } => {
+            RunnerCommand::PressKey {
+                key: Key::Delete, ..
+            } => {
                 value.pop();
             }
-            RunnerCommand::PressKey { key: Key::Return } => {
+            RunnerCommand::PressKey {
+                key: Key::Return, ..
+            } => {
                 return Transition::Go(search_screen(false, Some(&format!("{value}!"))));
             }
             _ => return Transition::Stay,
@@ -949,20 +962,28 @@ fn dropped_characters_are_deleted_and_typed_once_more_before_submitting() {
         "{}",
         r.outcome.summary
     );
-    let del = RunnerCommand::PressKey { key: Key::Delete };
+    let del = RunnerCommand::PressKey {
+        key: Key::Delete,
+        expect: None,
+    };
     assert_eq!(
         r.acts,
         vec![
             RunnerCommand::TypeText {
-                text: "milk".into()
+                text: "milk".into(),
+                expect: None
             },
             // "ml" arrived: two characters deleted, typed again.
             del.clone(),
             del,
             RunnerCommand::TypeText {
-                text: "milk".into()
+                text: "milk".into(),
+                expect: None
             },
-            RunnerCommand::PressKey { key: Key::Return },
+            RunnerCommand::PressKey {
+                key: Key::Return,
+                expect: None
+            },
         ]
     );
     assert_eq!(r.infers(), 2);
@@ -981,8 +1002,10 @@ fn characters_dropped_twice_are_reported_to_the_model_and_never_submitted() {
     );
     assert_eq!(r.outcome.status, OutcomeStatus::Failed);
     assert!(
-        !r.acts
-            .contains(&RunnerCommand::PressKey { key: Key::Return }),
+        !r.acts.contains(&RunnerCommand::PressKey {
+            key: Key::Return,
+            expect: None
+        }),
         "wrong text is never submitted: {:?}",
         r.acts
     );

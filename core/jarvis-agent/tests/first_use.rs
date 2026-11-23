@@ -46,7 +46,7 @@ fn shop_phone() -> Phone {
             Transition::Go(wishlist_screen())
         } else if taps(cmd, s, "View wishlist") {
             Transition::Go(product_screen())
-        } else if matches!(cmd, RunnerCommand::PressKey { key: Key::Home }) {
+        } else if matches!(cmd, RunnerCommand::PressKey { key: Key::Home, .. }) {
             Transition::Go(home_screen())
         } else {
             Transition::Stay
@@ -222,7 +222,13 @@ fn a_declined_app_cannot_be_reached_by_open_app_or_a_tool() {
         "{}",
         r.outcome.summary
     );
-    assert_eq!(r.acts, vec![RunnerCommand::PressKey { key: Key::Home }]);
+    assert_eq!(
+        r.acts,
+        vec![RunnerCommand::PressKey {
+            key: Key::Home,
+            expect: None
+        }]
+    );
     assert_eq!(categories(&r.confirms), vec![RiskCategory::FirstUse]);
     // A tool acting on the declined app: Blocked, never called.
     let r = run(

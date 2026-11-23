@@ -74,3 +74,31 @@ pub(crate) fn actuation<'a>(action: &Action, screen: &'a CompactScreen) -> Actua
         | Action::Fail { .. } => Actuation::NoEffect,
     }
 }
+
+/// Stale-screen guard: whether `action` touches the page in front, so that a plan for it
+/// made on an observation older than `Policy::max_plan_age_ms` is checked against a fresh
+/// look before it runs. Every [`Actuation`] but [`Actuation::NoEffect`] (presses, point
+/// presses, drags, page moves, Return), plus typing and clearing, which reach whatever
+/// field has focus: the same `match` over [`Action`] as [`actuation`], no wildcard arm.
+/// Leaving the app, opening a link or an app, waiting, reading, asking, finishing and tool
+/// calls do not touch the page.
+pub fn touches_screen(action: &Action) -> bool {
+    match action {
+        Action::Tap { .. }
+        | Action::LongPress { .. }
+        | Action::TapPoint { .. }
+        | Action::Swipe { .. }
+        | Action::Scroll { .. }
+        | Action::Type { .. }
+        | Action::Clear { .. } => true,
+        Action::PressHome
+        | Action::OpenApp { .. }
+        | Action::OpenUrl { .. }
+        | Action::CallTool { .. }
+        | Action::Wait { .. }
+        | Action::AskUser { .. }
+        | Action::Look
+        | Action::Done { .. }
+        | Action::Fail { .. } => false,
+    }
+}

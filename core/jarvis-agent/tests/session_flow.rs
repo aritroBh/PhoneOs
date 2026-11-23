@@ -150,8 +150,10 @@ fn search_phone() -> Phone {
         RunnerCommand::Tap { .. } if taps(cmd, s, "Search") => {
             Transition::Go(search_screen(true, None))
         }
-        RunnerCommand::TypeText { text } => Transition::Go(search_screen(true, Some(text))),
-        RunnerCommand::PressKey { key: Key::Return } => {
+        RunnerCommand::TypeText { text, .. } => Transition::Go(search_screen(true, Some(text))),
+        RunnerCommand::PressKey {
+            key: Key::Return, ..
+        } => {
             let q = jarvis_observe::compact(s)
                 .elements
                 .iter()
@@ -185,15 +187,26 @@ fn type_on_unfocused_field_taps_then_types_then_returns() {
     assert_eq!(
         run.acts[1],
         RunnerCommand::TypeText {
-            text: "headphones".into()
+            text: "headphones".into(),
+            expect: None
         }
     );
-    assert_eq!(run.acts[2], RunnerCommand::PressKey { key: Key::Return });
-    // One Act at a time, each followed by its result. The typed text is checked on an
-    // observation before Return is pressed (submitting dropped characters would search for
-    // the wrong thing), then the action is verified.
+    assert_eq!(
+        run.acts[2],
+        RunnerCommand::PressKey {
+            key: Key::Return,
+            expect: None
+        }
+    );
+    // One Act at a time, each followed by its result. After the focusing tap the session
+    // looks at where the focus went before typing (fifteenth review, F5). The typed text is
+    // checked on an observation before Return is pressed (submitting dropped characters
+    // would search for the wrong thing), then the action is verified.
     let names: Vec<&str> = run.effects.iter().map(Effect::name).collect();
-    assert_eq!(names[2..7], ["act", "act", "observe", "act", "observe"]);
+    assert_eq!(
+        names[2..9],
+        ["act", "observe", "act", "observe", "act", "observe", "infer"]
+    );
 }
 
 #[test]
@@ -212,7 +225,8 @@ fn type_without_submit_into_focused_field_is_one_command() {
     assert_eq!(
         run.acts,
         vec![RunnerCommand::TypeText {
-            text: "milk".into()
+            text: "milk".into(),
+            expect: None
         }]
     );
     assert_eq!(run.outcome.status, OutcomeStatus::Success);
@@ -585,7 +599,8 @@ fn vision_fallback_on_an_empty_tree() {
         run.acts,
         vec![RunnerCommand::Tap {
             x: 196.5,
-            y: 852.0 * 0.6
+            y: 852.0 * 0.6,
+            expect: None
         }]
     );
     // Next screen is a normal tree: back to text.
@@ -659,7 +674,8 @@ fn profile_placeholder_is_substituted_and_never_reaches_a_prompt() {
         run.outcome.summary
     );
     assert!(run.acts.contains(&RunnerCommand::TypeText {
-        text: "sam.secret@example.org".into()
+        text: "sam.secret@example.org".into(),
+        expect: None
     }));
     let all = run.all_prompt_text();
     assert!(

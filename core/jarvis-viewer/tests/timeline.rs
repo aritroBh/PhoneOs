@@ -33,6 +33,7 @@ fn swipe(fx: f64, fy: f64, tx: f64, ty: f64, ms: u64) -> p::RunnerCommand {
         from: p::Point::new(fx, fy),
         to: p::Point::new(tx, ty),
         duration_ms: ms,
+        expect: None,
     }
 }
 
@@ -47,6 +48,7 @@ fn every_gesture() {
         x: 100.0,
         y: 220.0,
         duration_ms: 900,
+        expect: None,
     });
     run.act(swipe(200.0, 700.0, 200.0, 200.0, 300));
     run.act(swipe(200.0, 200.0, 210.0, 700.0, 300));
@@ -55,8 +57,12 @@ fn every_gesture() {
     run.act(swipe(20.0, 500.0, 20.0, 500.0, 300));
     run.act(p::RunnerCommand::PressKey {
         key: p::Key::Return,
+        expect: None,
     });
-    run.act(p::RunnerCommand::PressKey { key: p::Key::Home });
+    run.act(p::RunnerCommand::PressKey {
+        key: p::Key::Home,
+        expect: None,
+    });
     run.act(p::RunnerCommand::LaunchApp {
         bundle_id: "com.apple.Preferences".into(),
     });
@@ -737,12 +743,16 @@ fn encoding_round_trip() {
         x: 100.0,
         y: 220.0,
         duration_ms: 900,
+        expect: None,
     });
     run.act(swipe(1.0, 2.0, 3.0, 4.0, 5));
     run.act_typed(type_text("hi"), type_action(None, "hi"));
     run.act(type_text("x"));
     run.act_with(
-        p::RunnerCommand::PressKey { key: p::Key::Tab },
+        p::RunnerCommand::PressKey {
+            key: p::Key::Tab,
+            expect: None,
+        },
         None,
         p::RunnerResult::err("nope"),
     );

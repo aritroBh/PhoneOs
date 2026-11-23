@@ -41,7 +41,7 @@ pub mod runner_text;
 
 pub use driver::{run, run_with, RunCounts, RunOptions, RunReport, TranscriptStep};
 pub use error::SimError;
-pub use faults::{DropChars, Faults, LockSpec, ObserveFault};
+pub use faults::{DropChars, Faults, LockSpec, ObserveFault, ScreenChange};
 pub use harness::{run_task, RunSetup};
 pub use human::Human;
 pub use model::{Model, ModelError, ScriptedModel};

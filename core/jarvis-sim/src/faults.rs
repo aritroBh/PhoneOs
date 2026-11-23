@@ -59,6 +59,20 @@ impl DropChars {
     }
 }
 
+/// Stale-screen guard: the screen changes while the model thinks (between the observation
+/// a plan is made on and the plan's first command).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ScreenChange {
+    /// During the n-th model call (0-based).
+    pub during_infer: usize,
+    /// The app in front shows this alert of its definition (a sheet or banner over the
+    /// page).
+    pub alert: Option<String>,
+    /// The app goes to the background: the home screen comes to the front.
+    pub home: bool,
+}
+
 /// All faults of one run.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -69,6 +83,8 @@ pub struct Faults {
     pub observe_fail: Option<ObserveFault>,
     /// Dropped characters.
     pub drop_chars: Option<DropChars>,
+    /// Screens that change while the model thinks.
+    pub screen_changes: Vec<ScreenChange>,
     /// How often the simulated shell's timer fires while waiting for an unlock
     /// (milliseconds; 0 means 60 s).
     pub unlock_poll_ms: u64,
@@ -77,7 +93,10 @@ pub struct Faults {
 impl Faults {
     /// Whether nothing is injected.
     pub fn is_empty(&self) -> bool {
-        self.locks.is_empty() && self.observe_fail.is_none() && self.drop_chars.is_none()
+        self.locks.is_empty()
+            && self.observe_fail.is_none()
+            && self.drop_chars.is_none()
+            && self.screen_changes.is_empty()
     }
 
     /// The timer interval while waiting for an unlock.

@@ -88,6 +88,7 @@ fn view_geometry() {
         from: p::Point::new(200.0, 700.0),
         to: p::Point::new(200.0, 200.0),
         duration_ms: 300,
+        expect: None,
     });
     let mut live = LiveView::new(config(200, false));
     feed(&mut live, &run);

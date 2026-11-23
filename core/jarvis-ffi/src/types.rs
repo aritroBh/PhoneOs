@@ -271,11 +271,23 @@ pub enum RunnerCommand {
     },
 }
 
+/// Proto `Expect`: what a gesture or typing command expects of the phone (stale-screen
+/// guard, layer 2). Carried beside the command on `Effect.act`; the shell refuses the
+/// command with `RunnerFailure.stale` when the runner reads another app in front.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, uniffi::Record)]
+pub struct CommandExpect {
+    /// Bundle id of the app that must be in front.
+    pub bundle_id: String,
+}
+
 /// Proto `RunnerFailure`: a typed reason a command was not carried out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
 pub enum RunnerFailure {
     /// The device is locked; the command was refused and nothing happened.
     DeviceLocked,
+    /// The command expected another app in front (`Effect.act`'s `expect`); it was refused
+    /// and nothing happened. The core observes again and decides again.
+    Stale,
     /// Any other typed reason.
     Other,
 }
@@ -462,6 +474,10 @@ pub struct Policy {
     /// (milliseconds; locked time does not count against `maxDurationMs`).
     #[uniffi(default = 1800000)]
     pub max_locked_wait_ms: u64,
+    /// Stale-screen guard: the oldest a plan may be (milliseconds since the observation it
+    /// was made on) before a screen-touching action looks at the screen again first.
+    #[uniffi(default = 1000)]
+    pub max_plan_age_ms: u64,
 }
 
 /// One input to the session. Its Rust `Debug` output never shows the owner's answer text
@@ -649,8 +665,12 @@ pub enum Effect {
     Infer {
         request: ModelRequest,
     },
+    /// Send `command` to the runner. `expect` (gestures and typing): the app that must be
+    /// in front; refuse with `RunnerFailure.stale` when the runner reads another one.
     Act {
         command: RunnerCommand,
+        #[uniffi(default = None)]
+        expect: Option<CommandExpect>,
     },
     CallTool {
         call: ToolCall,
@@ -706,6 +726,12 @@ pub struct SessionProgress {
     /// Total time spent waiting for unlocks in this session.
     #[uniffi(default = 0)]
     pub locked_total_ms: u64,
+    /// Stale-screen guard: observations taken before acting because a plan was too old.
+    #[uniffi(default = 0)]
+    pub fresh_looks: u32,
+    /// Stale-screen guard: plans not carried out because the screen changed first.
+    #[uniffi(default = 0)]
+    pub stale_plans: u32,
 }
 
 /// The task the owner asked for.

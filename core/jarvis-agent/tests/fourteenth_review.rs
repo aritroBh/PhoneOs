@@ -73,7 +73,7 @@ fn probe14_typed_link_in_address_bar_is_asked_like_open_url() {
         "Look up the weather in Paris",
         MemoryStore::new(),
         Phone::new(s0, move |c, _| match c {
-            RunnerCommand::TypeText { text } => Transition::Go(safari(Some(text))),
+            RunnerCommand::TypeText { text, .. } => Transition::Go(safari(Some(text))),
             RunnerCommand::PressKey { .. } => Transition::Go(collector()),
             _ => Transition::Stay,
         }),
@@ -105,7 +105,6 @@ fn probe14_typed_link_in_address_bar_is_asked_like_open_url() {
 /// sent as bare coordinates after the model's thinking time, with no fresh look and nothing
 /// in the command that lets the runner check what is under the point.
 #[test]
-#[ignore = "stale-screen guard: separate change"]
 fn probe14_unapproved_tap_is_sent_blind_after_model_latency() {
     let promo = scr(
         "com.example.shop",
@@ -145,7 +144,7 @@ fn probe14_unapproved_tap_is_sent_blind_after_model_latency() {
     eprintln!("effect 20 s after the look: {e:?}");
     let accept = rect(250.0, 50.0, 130.0, 60.0); // banner's Accept button
     let blind = match &e {
-        Effect::Act(RunnerCommand::Tap { x, y }) => {
+        Effect::Act(RunnerCommand::Tap { x, y, .. }) => {
             accept.contains(jarvis_proto::Point::new(*x, *y))
         }
         _ => false,

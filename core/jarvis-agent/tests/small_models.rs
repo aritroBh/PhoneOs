@@ -494,7 +494,7 @@ fn typing_the_same_text_into_the_same_field_again_is_a_loop() {
         )
     };
     let phone = Phone::new(compose(""), move |cmd, s: &Screen| match cmd {
-        RunnerCommand::TypeText { text } => {
+        RunnerCommand::TypeText { text, .. } => {
             let prior = jarvis_observe::compact(s).elements[0]
                 .value
                 .clone()

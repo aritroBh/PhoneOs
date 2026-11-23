@@ -545,6 +545,8 @@ fn progress_for_viewer(p_: SessionProgress) -> p::Progress {
         waiting_for_unlock,
         locked_wait_ms,
         locked_total_ms,
+        fresh_looks,
+        stale_plans,
     } = p_;
     p::Progress {
         step,
@@ -556,6 +558,8 @@ fn progress_for_viewer(p_: SessionProgress) -> p::Progress {
         waiting_for_unlock,
         locked_wait_ms,
         locked_total_ms,
+        fresh_looks,
+        stale_plans,
     }
 }
 

@@ -147,7 +147,13 @@ fn an_approval_looks_at_the_screen_again_before_acting() {
     // The same screen: the approved tap runs.
     assert_eq!(
         d.observed(&before),
-        Effect::Act(RunnerCommand::Tap { x: 196.5, y: 325.0 })
+        Effect::Act(RunnerCommand::Tap {
+            x: 196.5,
+            y: 325.0,
+            expect: Some(jarvis_proto::Expect {
+                bundle_id: "com.example.shop".to_owned(),
+            })
+        })
     );
 }
 
@@ -190,7 +196,13 @@ fn an_approved_control_that_shifted_is_tapped_where_it_is_now() {
     d.step(Event::ActResult(RunnerResult::ok()));
     assert_eq!(
         d.observed(&before),
-        Effect::Act(RunnerCommand::Tap { x: 196.5, y: 325.0 })
+        Effect::Act(RunnerCommand::Tap {
+            x: 196.5,
+            y: 325.0,
+            expect: Some(jarvis_proto::Expect {
+                bundle_id: "com.example.shop".to_owned(),
+            })
+        })
     );
 }
 
@@ -243,7 +255,13 @@ fn an_approved_control_that_moved_away_is_not_tapped_and_is_asked_again() {
     ));
     assert_eq!(
         d.observed(&moved),
-        Effect::Act(RunnerCommand::Tap { x: 196.5, y: 525.0 })
+        Effect::Act(RunnerCommand::Tap {
+            x: 196.5,
+            y: 525.0,
+            expect: Some(jarvis_proto::Expect {
+                bundle_id: "com.example.shop".to_owned(),
+            })
+        })
     );
 }
 
@@ -469,9 +487,13 @@ fn a_held_back_return_is_not_pressed_after_the_screen_changed() {
         run.acts
     );
     assert!(
-        !run.acts
-            .iter()
-            .any(|c| matches!(c, RunnerCommand::PressKey { key: Key::Return })),
+        !run.acts.iter().any(|c| matches!(
+            c,
+            RunnerCommand::PressKey {
+                key: Key::Return,
+                ..
+            }
+        )),
         "Return pressed on a screen it was never gated on: {:?}",
         run.acts
     );
@@ -487,7 +509,7 @@ fn a_held_back_return_is_not_pressed_after_the_screen_changed() {
 #[test]
 fn a_held_back_return_is_pressed_when_the_text_arrived() {
     let phone = Phone::new(search_screen(true, None), |cmd, _s: &Screen| match cmd {
-        RunnerCommand::TypeText { text } => Transition::Go(search_screen(true, Some(text))),
+        RunnerCommand::TypeText { text, .. } => Transition::Go(search_screen(true, Some(text))),
         _ => Transition::Stay,
     });
     let run = run(
@@ -500,10 +522,13 @@ fn a_held_back_return_is_pressed_when_the_text_arrived() {
             DONE,
         ]),
     );
-    assert!(run
-        .acts
-        .iter()
-        .any(|c| matches!(c, RunnerCommand::PressKey { key: Key::Return })));
+    assert!(run.acts.iter().any(|c| matches!(
+        c,
+        RunnerCommand::PressKey {
+            key: Key::Return,
+            ..
+        }
+    )));
 }
 
 // ---------------------------------------------------------------------------------------

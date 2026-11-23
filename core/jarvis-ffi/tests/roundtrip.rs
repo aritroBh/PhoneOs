@@ -420,19 +420,26 @@ fn all_actions() -> Vec<p::Action> {
 
 fn all_commands() -> Vec<p::RunnerCommand> {
     let mut v = vec![
-        p::RunnerCommand::Tap { x: 196.5, y: 400.0 },
+        p::RunnerCommand::Tap {
+            x: 196.5,
+            y: 400.0,
+            expect: None,
+        },
         p::RunnerCommand::LongPress {
             x: 1.0,
             y: 2.0,
             duration_ms: 600,
+            expect: None,
         },
         p::RunnerCommand::Swipe {
             from: p::Point::new(200.0, 700.0),
             to: p::Point::new(200.0, 200.0),
             duration_ms: 300,
+            expect: None,
         },
         p::RunnerCommand::TypeText {
             text: "See you at 7".to_owned(),
+            expect: None,
         },
         p::RunnerCommand::LaunchApp {
             bundle_id: "com.apple.MobileSMS".to_owned(),
@@ -450,7 +457,7 @@ fn all_commands() -> Vec<p::RunnerCommand> {
         p::Key::Escape,
         p::Key::Home,
     ] {
-        v.push(p::RunnerCommand::PressKey { key });
+        v.push(p::RunnerCommand::PressKey { key, expect: None });
     }
     v
 }
@@ -611,6 +618,12 @@ fn all_effects() -> Vec<p::Effect> {
     ];
     v.extend(model_requests().into_iter().map(p::Effect::Infer));
     v.extend(all_commands().into_iter().map(p::Effect::Act));
+    // Stale-screen guard: gestures and typing carry what they expect, beside the command.
+    v.extend(all_commands().into_iter().map(|c| {
+        p::Effect::Act(c.with_expect(Some(p::Expect {
+            bundle_id: "com.apple.MobileSMS".to_owned(),
+        })))
+    }));
     v.extend(outcomes().into_iter().map(p::Effect::Finished));
     v
 }
@@ -706,7 +719,7 @@ fn every_runner_command_and_key_round_trips() {
     let keys: Vec<p::Key> = commands
         .iter()
         .filter_map(|c| match c {
-            p::RunnerCommand::PressKey { key } => Some(*key),
+            p::RunnerCommand::PressKey { key, .. } => Some(*key),
             _ => None,
         })
         .collect();
@@ -719,6 +732,9 @@ fn every_runner_command_and_key_round_trips() {
     rt::<_, f::RunnerResult>(p::RunnerResult::device_locked());
     let locked: f::RunnerResult = p::RunnerResult::device_locked().into();
     assert_eq!(locked.failure, Some(f::RunnerFailure::DeviceLocked));
+    rt::<_, f::RunnerResult>(p::RunnerResult::stale("com.apple.springboard"));
+    let stale: f::RunnerResult = p::RunnerResult::stale("com.apple.springboard").into();
+    assert_eq!(stale.failure, Some(f::RunnerFailure::Stale));
 }
 
 #[test]
@@ -793,6 +809,7 @@ fn policy_task_and_config_round_trip() {
         max_consecutive_failures: 1,
         max_parse_retries: 0,
         max_locked_wait_ms: 0,
+        max_plan_age_ms: 7,
     });
     // Every mode, trust level and category, in every list.
     let modes = [p::PolicyMode::Guarded, p::PolicyMode::StepByStep];
@@ -1039,6 +1056,8 @@ fn every_phase_and_progress_round_trips() {
             waiting_for_unlock: phase == p::Phase::WaitingForUnlock,
             locked_wait_ms: 5,
             locked_total_ms: 50,
+            fresh_looks: 4,
+            stale_plans: 1,
         });
     }
     rt_try::<_, f::SessionProgress>(p::Progress::default());
@@ -1093,6 +1112,7 @@ fn ffi_debug_never_shows_typed_text_or_answers() {
     };
     let effect = f::Effect::Act {
         command: cmd.clone(),
+        expect: None,
     };
     let answer = f::Event::UserAnswer {
         text: secret.to_owned(),
@@ -1111,6 +1131,7 @@ fn ffi_debug_never_shows_typed_text_or_answers() {
     // The proto types behave the same.
     let p_cmd = p::RunnerCommand::TypeText {
         text: secret.to_owned(),
+        expect: None,
     };
     let p_effect = p::Effect::Act(p_cmd.clone());
     for shown in [format!("{p_cmd:?}"), format!("{p_effect:?}")] {

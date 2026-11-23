@@ -149,6 +149,8 @@ fn progress() -> SessionProgress {
         waiting_for_unlock: false,
         locked_wait_ms: 0,
         locked_total_ms: 0,
+        fresh_looks: 0,
+        stale_plans: 0,
     }
 }
 

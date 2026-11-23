@@ -695,7 +695,7 @@ fn chat_run(return_label: &'static str) -> Run {
     let phone = Phone::new(
         chat_screen(None, return_label),
         move |cmd, _s: &Screen| match cmd {
-            RunnerCommand::TypeText { text } => {
+            RunnerCommand::TypeText { text, .. } => {
                 Transition::Go(chat_screen(Some(text), return_label))
             }
             RunnerCommand::PressKey { .. } => Transition::Go(chat_screen(None, return_label)),
@@ -715,9 +715,15 @@ fn chat_run(return_label: &'static str) -> Run {
 }
 
 fn pressed_return(run: &Run) -> bool {
-    run.acts
-        .iter()
-        .any(|c| matches!(c, RunnerCommand::PressKey { key: Key::Return }))
+    run.acts.iter().any(|c| {
+        matches!(
+            c,
+            RunnerCommand::PressKey {
+                key: Key::Return,
+                ..
+            }
+        )
+    })
 }
 
 /// Rule 1: Return with a "send" return key sends. The keyboard is a subtree of the real
@@ -778,7 +784,7 @@ fn a_return_key_found_by_its_identifier_asks_under_its_category() {
         s
     };
     let phone = Phone::new(pay_screen(None), move |cmd, _s: &Screen| match cmd {
-        RunnerCommand::TypeText { text } => Transition::Go(pay_screen(Some(text))),
+        RunnerCommand::TypeText { text, .. } => Transition::Go(pay_screen(Some(text))),
         _ => Transition::Stay,
     });
     let run = run(
@@ -1016,8 +1022,15 @@ fn deny_bank(c: &mut jarvis_proto::SessionConfig, name: &str) {
 }
 
 fn returned(acts: &[RunnerCommand]) -> bool {
-    acts.iter()
-        .any(|a| matches!(a, RunnerCommand::PressKey { key: Key::Return }))
+    acts.iter().any(|a| {
+        matches!(
+            a,
+            RunnerCommand::PressKey {
+                key: Key::Return,
+                ..
+            }
+        )
+    })
 }
 
 fn typed_anything(acts: &[RunnerCommand]) -> bool {

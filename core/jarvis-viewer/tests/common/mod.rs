@@ -183,12 +183,13 @@ pub fn type_action(element: Option<u32>, text: &str) -> p::Action {
 }
 
 pub fn tap(x: f64, y: f64) -> p::RunnerCommand {
-    p::RunnerCommand::Tap { x, y }
+    p::RunnerCommand::Tap { x, y, expect: None }
 }
 
 pub fn type_text(text: &str) -> p::RunnerCommand {
     p::RunnerCommand::TypeText {
         text: text.to_owned(),
+        expect: None,
     }
 }
 

@@ -369,11 +369,13 @@ fn chat_phone() -> Phone {
     Phone::new(
         chat("To: alice@example.com", None),
         |cmd, s: &Screen| match cmd {
-            RunnerCommand::TypeText { text } => {
+            RunnerCommand::TypeText { text, .. } => {
                 let to = compact(s).elements[0].label.clone();
                 Transition::Go(chat(&to, Some(text)))
             }
-            RunnerCommand::PressKey { key: Key::Return } => Transition::Go(sent()),
+            RunnerCommand::PressKey {
+                key: Key::Return, ..
+            } => Transition::Go(sent()),
             _ => Transition::Stay,
         },
     )
@@ -464,7 +466,9 @@ fn a_risky_send_asks_once_after_typing() {
             Effect::Observe { .. } => "observe",
             Effect::Infer(_) => "infer",
             Effect::Act(RunnerCommand::TypeText { .. }) => "type",
-            Effect::Act(RunnerCommand::PressKey { key: Key::Return }) => "return",
+            Effect::Act(RunnerCommand::PressKey {
+                key: Key::Return, ..
+            }) => "return",
             Effect::Act(_) => "act",
             Effect::Confirm(_) => "confirm",
             Effect::Finished(_) => "finished",
@@ -519,7 +523,12 @@ fn a_screen_change_between_the_return_question_and_the_look_voids_it() {
     d.approve();
     assert_eq!(
         d.look(&typed),
-        Effect::Act(RunnerCommand::PressKey { key: Key::Return })
+        Effect::Act(RunnerCommand::PressKey {
+            key: Key::Return,
+            expect: Some(jarvis_proto::Expect {
+                bundle_id: "com.example.chat".to_owned(),
+            })
+        })
     );
 }
 
@@ -591,9 +600,13 @@ fn with_a_no_ask_policy_return_is_pressed_at_once() {
         run.acts,
         [
             RunnerCommand::TypeText {
-                text: "On my way".to_owned()
+                text: "On my way".to_owned(),
+                expect: None
             },
-            RunnerCommand::PressKey { key: Key::Return }
+            RunnerCommand::PressKey {
+                key: Key::Return,
+                expect: None
+            }
         ]
     );
     assert_eq!(run.outcome.status, OutcomeStatus::Success);
@@ -666,7 +679,12 @@ fn a_lock_or_cancel_between_typing_and_the_return_question() {
     d.approve();
     assert_eq!(
         d.look(&typed),
-        Effect::Act(RunnerCommand::PressKey { key: Key::Return })
+        Effect::Act(RunnerCommand::PressKey {
+            key: Key::Return,
+            expect: Some(jarvis_proto::Expect {
+                bundle_id: "com.example.chat".to_owned(),
+            })
+        })
     );
     // Changed screen after the unlock: no Return, the model is told.
     let mut d = D::new();
@@ -846,7 +864,7 @@ fn compose(value: Option<&str>) -> Screen {
 fn a_typed_message_is_shown_before_send_and_a_prefilled_one_is_not() {
     let phone = || {
         Phone::new(compose(None), |cmd, _s: &Screen| match cmd {
-            RunnerCommand::TypeText { text } => Transition::Go(compose(Some(text))),
+            RunnerCommand::TypeText { text, .. } => Transition::Go(compose(Some(text))),
             _ => Transition::Stay,
         })
     };
@@ -986,7 +1004,8 @@ fn type_without_an_element_needs_a_listed_focused_field() {
     assert_eq!(
         r.acts.first(),
         Some(&RunnerCommand::TypeText {
-            text: "hello".to_owned()
+            text: "hello".to_owned(),
+            expect: None
         })
     );
 }

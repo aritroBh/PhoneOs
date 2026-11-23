@@ -119,6 +119,9 @@ public actor SessionDriver {
     /// The last observation the core was given, with the number of the effect that took
     /// it: what a confirmation is computed from (memory only; replaced by the next one).
     private var lastObservation: (number: Int, observation: RunnerObservation)?
+    /// Stale-screen guard, layer 2: every command's `expect` is checked against the
+    /// runner's front app before it is sent.
+    private let frontGuard = FrontAppGuard()
 
     /// Creates the session. Throws when the core rejects `memoryJSON` (corrupt or from an
     /// incompatible core); quarantine that memory and retry with `""` (fresh memory).
@@ -241,8 +244,8 @@ public actor SessionDriver {
             return await observe(screenshot: screenshot)
         case .infer(let request):
             return await infer(request)
-        case .act(let command):
-            return await act(command)
+        case .act(let command, let expect):
+            return await act(command, expect: expect)
         case .callTool(let call):
             return await callTool(call)
         case .confirm(let request):
@@ -313,13 +316,15 @@ public actor SessionDriver {
         }
     }
 
-    private func act(_ command: RunnerCommand) async -> Event {
+    private func act(_ command: RunnerCommand, expect: CommandExpect?) async -> Event {
         let runner = deps.runner
+        let frontGuard = frontGuard
         do {
-            let result = try await io(.act, configuration.actTimeout) {
-                try await runner.perform(command)
+            let checked = try await io(.act, configuration.actTimeout) {
+                try await frontGuard.perform(command, expect: expect, on: runner)
             }
-            return .actResult(result: result)
+            if let note = checked.note { emit(.note(note)) }
+            return .actResult(result: checked.result)
         } catch let error where isOurCancellation(error) {
             return stop(.cancelled)
         } catch {

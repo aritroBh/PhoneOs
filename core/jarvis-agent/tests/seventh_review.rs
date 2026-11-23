@@ -124,7 +124,7 @@ fn a_non_control_overlay_moved_over_the_approved_button_is_not_tapped() {
                 Effect::Observe { screenshot: false }
             );
             let e = d.look(&fresh);
-            if let Effect::Act(RunnerCommand::Tap { x, y }) = e {
+            if let Effect::Act(RunnerCommand::Tap { x, y, .. }) = e {
                 hijacked.push(format!("{role:?}/{label:?} at ({x},{y})"));
             }
         }
@@ -205,7 +205,7 @@ fn a_tap_point_on_the_send_key_is_refused() {
 #[test]
 fn a_declined_return_is_not_pressed_by_tap_point() {
     let phone = Phone::new(chat_kb(None), |cmd, _s: &Screen| match cmd {
-        RunnerCommand::TypeText { text } => Transition::Go(chat_kb(Some(text))),
+        RunnerCommand::TypeText { text, .. } => Transition::Go(chat_kb(Some(text))),
         _ => Transition::Stay,
     });
     let r = run(
@@ -322,7 +322,7 @@ fn a_web_tablist_gets_no_bar_precedence() {
 #[test]
 fn an_empty_type_submit_after_a_declined_return_presses_nothing() {
     let phone = Phone::new(chat_kb(None), |cmd, _s: &Screen| match cmd {
-        RunnerCommand::TypeText { text } => Transition::Go(chat_kb(Some(text))),
+        RunnerCommand::TypeText { text, .. } => Transition::Go(chat_kb(Some(text))),
         _ => Transition::Stay,
     });
     let r = run(
@@ -344,10 +344,13 @@ fn an_empty_type_submit_after_a_declined_return_presses_nothing() {
         r.acts,
         r.last_user()
     );
-    assert!(!r
-        .acts
-        .iter()
-        .any(|a| matches!(a, RunnerCommand::PressKey { key: Key::Return })));
+    assert!(!r.acts.iter().any(|a| matches!(
+        a,
+        RunnerCommand::PressKey {
+            key: Key::Return,
+            ..
+        }
+    )));
 }
 
 /// The message field already holds text the page/app put there (a draft, a pre-filled
@@ -357,7 +360,7 @@ fn an_empty_type_submit_after_a_declined_return_presses_nothing() {
 fn the_return_question_shows_the_prefilled_content_it_sends() {
     let prior = "I give Mallory Ltd power of attorney over my accounts.";
     let phone = Phone::new(chat_kb(Some(prior)), move |cmd, s: &Screen| match cmd {
-        RunnerCommand::TypeText { text } => {
+        RunnerCommand::TypeText { text, .. } => {
             let cur = compact(s).elements[1].value.clone().unwrap_or_default();
             Transition::Go(chat_kb(Some(&format!("{cur} {text}"))))
         }
@@ -600,7 +603,11 @@ fn labelled_content_drawn_over_a_control_refuses_the_tap_and_below_it_does_not()
         );
         assert_eq!(
             r.acts.first(),
-            Some(&RunnerCommand::Tap { x: 196.5, y: 325.0 }),
+            Some(&RunnerCommand::Tap {
+                x: 196.5,
+                y: 325.0,
+                expect: None
+            }),
             "{role:?}"
         );
     }
@@ -636,7 +643,11 @@ fn an_unlabelled_childless_overlay_is_not_seen_and_the_tap_stays_gated() {
         assert_eq!(r.confirms[0].category, jarvis_proto::RiskCategory::Payment);
         assert_eq!(
             r.acts.first(),
-            Some(&RunnerCommand::Tap { x: 196.5, y: 325.0 }),
+            Some(&RunnerCommand::Tap {
+                x: 196.5,
+                y: 325.0,
+                expect: None
+            }),
             "{role:?}"
         );
     }
@@ -767,7 +778,11 @@ fn a_full_screen_keyboard_window_covers_nothing_outside_the_keys() {
     assert_eq!(r.confirms.len(), 1, "{:?}", r.confirms);
     assert_eq!(
         r.acts.first(),
-        Some(&RunnerCommand::Tap { x: 350.0, y: 322.0 })
+        Some(&RunnerCommand::Tap {
+            x: 350.0,
+            y: 322.0,
+            expect: None
+        })
     );
 }
 
@@ -902,7 +917,7 @@ fn a_card_number_in_a_sent_message_is_redacted_and_a_pin_is_hidden() {
 #[test]
 fn a_declined_return_tells_the_model_the_text_is_still_in_the_field() {
     let phone = Phone::new(chat_kb(None), |cmd, _s: &Screen| match cmd {
-        RunnerCommand::TypeText { text } => Transition::Go(chat_kb(Some(text))),
+        RunnerCommand::TypeText { text, .. } => Transition::Go(chat_kb(Some(text))),
         _ => Transition::Stay,
     });
     let r = run(

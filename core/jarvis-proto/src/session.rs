@@ -527,4 +527,13 @@ pub struct Progress {
     /// Total time this session has spent waiting for unlocks, in milliseconds.
     #[serde(default)]
     pub locked_total_ms: u64,
+    /// Stale-screen guard: observations taken before acting because the plan was older than
+    /// `Policy::max_plan_age_ms` (the guard's extra cost).
+    #[serde(default)]
+    pub fresh_looks: u32,
+    /// Stale-screen guard: plans not carried out because the screen changed before the
+    /// action (a fresh look showed another app or another target, or the runner refused a
+    /// command as `RunnerFailure::Stale`); each was decided again.
+    #[serde(default)]
+    pub stale_plans: u32,
 }

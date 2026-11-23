@@ -111,7 +111,7 @@ struct LiveViewModelTests {
         #expect(counting.calls("timeline") <= all.count)
         // The commands the driver actually sent.
         let sent = all.compactMap { e -> RunnerCommand? in
-            if case .update(.effect(.act(let command), _)) = e { return command }
+            if case .update(.effect(.act(let command, _), _)) = e { return command }
             return nil
         }
         #expect(sent.count == 2)

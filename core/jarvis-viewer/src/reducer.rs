@@ -633,7 +633,7 @@ impl Reducer {
         let gesture;
         let caption;
         match command {
-            p::RunnerCommand::Tap { x, y } => {
+            p::RunnerCommand::Tap { x, y, .. } => {
                 let pt = ViewerPoint::new(x, y);
                 gesture = Gesture::Tap(pt);
                 if let Some((element, node)) = self
@@ -646,7 +646,9 @@ impl Reducer {
                 }
                 caption = pointer_caption("Tap", target.as_ref());
             }
-            p::RunnerCommand::LongPress { x, y, duration_ms } => {
+            p::RunnerCommand::LongPress {
+                x, y, duration_ms, ..
+            } => {
                 let pt = ViewerPoint::new(x, y);
                 gesture = Gesture::LongPress {
                     point: pt,
@@ -666,6 +668,7 @@ impl Reducer {
                 from,
                 to,
                 duration_ms,
+                ..
             } => {
                 let a = ViewerPoint::from(from);
                 let b = ViewerPoint::from(to);
@@ -681,7 +684,7 @@ impl Reducer {
                     .map(|(e, _)| e);
                 caption = swipe_caption(a, b);
             }
-            p::RunnerCommand::TypeText { text: raw } => {
+            p::RunnerCommand::TypeText { text: raw, .. } => {
                 let (hidden, plain, label) = self.typing_evidence(screen_id, source.as_ref());
                 let mut hasher = DefaultHasher::new();
                 raw.hash(&mut hasher);
@@ -696,7 +699,7 @@ impl Reducer {
                 });
                 gesture = Gesture::Type(None);
             }
-            p::RunnerCommand::PressKey { key } => {
+            p::RunnerCommand::PressKey { key, .. } => {
                 let name = key_name(key);
                 gesture = Gesture::Key(name.to_owned());
                 caption = if key == p::Key::Home {

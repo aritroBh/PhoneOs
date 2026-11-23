@@ -185,6 +185,55 @@ pub(crate) enum ObservePurpose {
     /// One more look at the home screen's search results after typing, before the held-back
     /// Return (which opens the top hit) is pressed.
     Settle(Box<Settle>),
+    /// Stale-screen guard: a fresh look before acting on a plan older than
+    /// `Policy::max_plan_age_ms`; the action runs (through the full gate, on the fresh
+    /// screen) only if the same app is in front and its target is the same control (see
+    /// `Session::plan_holds`).
+    Replan(Box<PlanBasis>),
+    /// Fifteenth review (F5): the look after a typing's (or a clear's) focusing tap, before
+    /// its `TypeText` (or Deletes): sent only if the planned field holds the focus (see
+    /// `Session::after_focus_tap`).
+    Focus(Box<FocusCheck>),
+}
+
+/// The rest of a typing's (or a clear's) commands, held after its focusing tap until a look
+/// shows where the focus went.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FocusCheck {
+    /// The commands still to send (the `TypeText`, or the Deletes, first).
+    pub queue: VecDeque<RunnerCommand>,
+    /// The action.
+    pub pending: Box<Pending>,
+}
+
+/// A screen-touching action the model (or a flow) chose, held while the session looks
+/// again because the observation it was planned on is older than `Policy::max_plan_age_ms`.
+/// `Debug` shows the action's name only.
+#[derive(Clone)]
+pub(crate) struct PlanBasis {
+    /// The action as chosen (element numbers of `seen`).
+    pub action: Action,
+    /// Who chose it.
+    pub source: Source,
+    /// The observation it was chosen on.
+    pub seen: crate::session::Current,
+}
+
+impl PartialEq for PlanBasis {
+    fn eq(&self, other: &Self) -> bool {
+        self.action == other.action
+            && self.source == other.source
+            && self.seen.same_observation(&other.seen)
+    }
+}
+
+impl std::fmt::Debug for PlanBasis {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlanBasis")
+            .field("action", &self.action.name())
+            .field("source", &self.source)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The look after an approval, with what it has used of its two retries: one activation

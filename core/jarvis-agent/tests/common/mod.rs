@@ -121,7 +121,8 @@ pub struct Run {
     pub outcome: Outcome,
     /// Every model request.
     pub requests: Vec<ModelRequest>,
-    /// Every runner command.
+    /// Every runner command, without its stale-screen expectation (what it does; the
+    /// expectation is in `effects`).
     pub acts: Vec<RunnerCommand>,
     /// Every confirmation request.
     pub confirms: Vec<ConfirmRequest>,
@@ -213,7 +214,7 @@ pub fn run(
                 }
             }
             Effect::Act(cmd) => {
-                out.acts.push(cmd.clone());
+                out.acts.push(cmd.without_expect());
                 match (phone.transition)(&cmd, &phone.screen) {
                     Transition::Stay => Event::ActResult(RunnerResult::ok()),
                     Transition::Go(s) => {
@@ -303,7 +304,7 @@ pub fn vision_config() -> SessionConfig {
 /// The point a runner command acts at, if any.
 pub fn point_of(cmd: &RunnerCommand) -> Option<Point> {
     match cmd {
-        RunnerCommand::Tap { x, y } | RunnerCommand::LongPress { x, y, .. } => {
+        RunnerCommand::Tap { x, y, .. } | RunnerCommand::LongPress { x, y, .. } => {
             Some(Point::new(*x, *y))
         }
         _ => None,

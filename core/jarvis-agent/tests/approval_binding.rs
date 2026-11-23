@@ -142,7 +142,7 @@ fn twin_pay_buttons_swapped_by_layout_do_not_pay_the_other_bill() {
     let mut d = D::new();
     let summary = d.ask_approve(&asked, pay_index(&asked));
     let e = d.look(&fresh);
-    if let Effect::Act(RunnerCommand::Tap { x, y }) = e {
+    if let Effect::Act(RunnerCommand::Tap { x, y, .. }) = e {
         let mallory = node_with_id(&fresh.root, "pay-mallory").unwrap();
         assert!(
             !mallory.frame.contains(Point::new(x, y)),
@@ -226,7 +226,7 @@ fn a_scroll_that_moves_a_row_out_of_the_shown_set_voids() {
     let mut d = D::new();
     let summary = d.ask_approve(&asked, pay_index(&asked));
     let e = d.look(&fresh);
-    if let Effect::Act(RunnerCommand::Tap { x, y }) = e {
+    if let Effect::Act(RunnerCommand::Tap { x, y, .. }) = e {
         let second = node_with_id(&fresh.root, "pay-2").unwrap();
         assert!(
             !second.frame.contains(Point::new(x, y)),
@@ -251,7 +251,7 @@ fn a_scroll_that_keeps_the_shown_set_taps_the_same_node_at_its_new_frame() {
     let mut d = D::new();
     d.ask_approve(&asked, pay_index(&asked));
     let e = d.look(&asked);
-    let Effect::Act(RunnerCommand::Tap { x, y }) = e else {
+    let Effect::Act(RunnerCommand::Tap { x, y, .. }) = e else {
         panic!("expected the tap, got {e:?}")
     };
     let first = node_with_id(&asked.root, "pay-1").unwrap();

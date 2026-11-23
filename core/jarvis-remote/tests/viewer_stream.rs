@@ -92,7 +92,7 @@ impl Phone {
 
     fn tap(&mut self, x: f64, y: f64) {
         self.number += 1;
-        let effect = p::Effect::Act(p::RunnerCommand::Tap { x, y });
+        let effect = p::Effect::Act(p::RunnerCommand::Tap { x, y, expect: None });
         self.live.apply(Update::Effect {
             effect: effect.clone(),
             number: self.number,

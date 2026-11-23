@@ -223,7 +223,7 @@ fn a_hidden_order_swap_after_the_approval_is_acted_on_and_asked_once() {
         r.acts
     );
     let weather_icon = rect(110.0, 300.0, 72.0, 94.0);
-    let RunnerCommand::Tap { x, y } = r.acts[0] else {
+    let RunnerCommand::Tap { x, y, .. } = r.acts[0] else {
         unreachable!()
     };
     assert!(weather_icon.contains(jarvis_proto::Point::new(x, y)));
