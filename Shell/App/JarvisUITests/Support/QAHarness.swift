@@ -353,25 +353,47 @@ enum SimulatorLock {
         return "pressLockButton performed"
     }
 
-    /// Wakes and unlocks a simulator without a passcode the way the probe found works (one
+    /// Wakes and unlocks a simulator without a passcode the way the probe found works (a
     /// home press), then brings `app` back to the front, as unlocking a phone returns to the
     /// app that was in front.
     ///
-    /// Repeated up to four times: in simulator run 83 the lock took 7 s to show (the lock
-    /// screen appeared 2.6 s after the lock notification), the one home press landed while
-    /// the simulator was still locking, and the app stayed in the background. A home press
-    /// on an unlocked simulator is harmless, so a repeat costs nothing.
+    /// State-aware, up to four rounds. Two failures seen in simulator runs:
+    /// - run 83: the lock took 7 s to show, the one home press landed while the simulator
+    ///   was still locking, and the app stayed in the background. So a round that ends with
+    ///   the app not in front presses home again.
+    /// - run 101: the home press on the lock screen started the unlock transition, the
+    ///   `activate()` 0.5 s later brought the app forward, and the unlock transition then
+    ///   finished and sent it back to the home screen about 2 s later (xcodebuild log:
+    ///   "Pressing Home button", "Activate dev.jarvis.app", the app in front at t+13 to
+    ///   t+14 s, SpringBoard from t+15 s, and no runner command in between). So the app
+    ///   counts as back only when it stays in front for a settle period, and home is never
+    ///   pressed while the app is in front.
     @MainActor
     static func unlock(returningTo app: XCUIApplication) -> String {
         var states: [String] = []
         for attempt in 1...4 {
-            XCUIDevice.shared.press(.home)
+            if attempt == 1 || app.state != .runningForeground {
+                XCUIDevice.shared.press(.home)
+                // Let the unlock transition finish before bringing the app back.
+                Thread.sleep(forTimeInterval: 1.5)
+            }
             app.activate()
-            if app.wait(for: .runningForeground, timeout: 5) {
+            if app.wait(for: .runningForeground, timeout: 5), staysInFront(app, for: 3) {
                 return "home pressed \(attempt)x; app back in front"
             }
             states.append("\(app.state.rawValue)")
         }
-        return "home pressed 4x; app not in front (states \(states.joined(separator: ", ")))"
+        return "home pressed up to 4x; app not in front (states \(states.joined(separator: ", ")))"
+    }
+
+    /// True when `app` is in the foreground at every check over `seconds`.
+    @MainActor
+    private static func staysInFront(_ app: XCUIApplication, for seconds: TimeInterval) -> Bool {
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end {
+            if app.state != .runningForeground { return false }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return app.state == .runningForeground
     }
 }
