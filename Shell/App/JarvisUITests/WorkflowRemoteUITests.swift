@@ -267,6 +267,7 @@ final class WorkflowRemoteUITests: QATestCase {
         XCTAssertTrue(never.label.lowercased().contains("deleting"), "never-remote note: \(never.label)")
     }
 
+    @MainActor
     func testWatchScreenLayoutPermission() {
         let app = launch(["-jarvis-playground", "-jarvis-reset", "-jarvis-seed-remote-device"])
         tab("Control", in: app).tap()
