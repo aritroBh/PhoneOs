@@ -498,27 +498,43 @@ private func shopScreen() -> Screen {
 
 private let payRequest = ConfirmRequest(category: .payment, summary: "Pay $512.40 to Example", app: "com.example.shop", phoneOnly: false)
 
-/// A run that observes the shop screen and asks to confirm `action`, fed through the adapter.
-private func asked(_ action: Action, taskId: String = "shop") -> (LiveViewModel, CoreApprovalTarget?) {
+/// The request the core sends when it asks about an action of kind `verb` on the shop screen:
+/// the target it resolved (the element with its frame, or the point in screen points) on that
+/// screen's digest; no target when neither is given. What the picture marks comes from this,
+/// never from the step history.
+private func stated(_ verb: ConfirmVerb, element: UInt32? = nil, frame: Rect? = nil, point: Point? = nil) -> ConfirmRequest {
+    let digest = (try? screenDigestHex(screen: shopScreen())) ?? ""
+    let target: ConfirmTarget? = element == nil && point == nil
+        ? nil
+        : ConfirmTarget(element: element, node: nil, frame: frame, point: point, digest: digest)
+    return ConfirmRequest(category: payRequest.category, summary: payRequest.summary, app: payRequest.app, phoneOnly: false,
+                          rows: [], stage: .whole, verb: verb, target: target)
+}
+
+/// A run that observes the shop screen and asks to confirm `action` (with `request`), fed
+/// through the adapter.
+private func asked(_ action: Action, taskId: String = "shop", request: ConfirmRequest = payRequest) -> (LiveViewModel, CoreApprovalTarget?) {
     let viewer = LiveViewModel()
     var events: [RunEvent] = [.update(.started(TaskSpec(id: taskId, text: "Pay")))]
     events.append(.update(.effect(.observe(screenshot: false), number: 1)))
     events.append(.update(.effectCompleted(.observe(screenshot: false), event: .observed(observation: ScreenObservation(
         screen: shopScreen(), screenshot: nil, deviceLocked: false)))))
-    events.append(.update(.effect(.confirm(request: payRequest), number: 2)))
+    events.append(.update(.effect(.confirm(request: request), number: 2)))
     events.append(.update(.progress(SessionProgress(step: 1, phase: .acting, lastAction: action, app: "com.example.shop",
                                                     modelCalls: 1, parseRetries: 0, waitingForUnlock: false, lockedWaitMs: 0,
                                                     lockedTotalMs: 0))))
-    events.append(.update(.confirmationPending(payRequest)))
+    events.append(.update(.confirmationPending(request)))
     for e in events { viewer.apply(e) }
     return (viewer, viewer.approvalTarget)
 }
 
-/// The index the core gives the element labelled `label` on the shop screen (read from a
-/// real confirmation's picture: tap each index until the outline lands on it).
+/// The index the core gives the element with `frame` on the shop screen (read from the
+/// picture: state each index with that frame until the outline lands on it; the viewer marks
+/// an element only when its frame is the stated one).
 private func index(of frame: Rect) -> UInt32? {
     (1...6).first { (i: UInt32) -> Bool in
-        guard case .outline(let rect, _)? = asked(.tap(element: i)).1?.mark else { return false }
+        let request = stated(.tap, element: i, frame: frame)
+        guard case .outline(let rect, _)? = asked(.tap(element: i), request: request).1?.mark else { return false }
         return rect == frame
     }
 }
@@ -533,17 +549,17 @@ private func close(_ a: Rect, _ b: Rect) -> Bool {
 
 @Suite("Approval preview: the target on the evaluated screen", .timeLimit(.minutes(1)))
 struct ApprovalTargetTests {
-    private func preview(_ action: Action) throws -> ApprovalPreview {
-        let (_, target) = asked(action)
-        return try #require(ApprovalPreview.make(prompt: .confirm(id: 1, request: payRequest), target: target,
+    private func preview(_ action: Action, _ request: ConfirmRequest) throws -> ApprovalPreview {
+        let (_, target) = asked(action, request: request)
+        return try #require(ApprovalPreview.make(prompt: .confirm(id: 1, request: request), target: target,
                                                  frames: ApprovalFrameStore(), appActive: true))
     }
 
     @Test("tap and long press outline the element; the label names it for VoiceOver")
     func tapAndLongPress() throws {
         let pay = try #require(index(of: payFrame))
-        for action in [Action.tap(element: pay), .longPress(element: pay, durationMs: 800)] {
-            let p = try preview(action)
+        for (action, verb) in [(Action.tap(element: pay), ConfirmVerb.tap), (.longPress(element: pay, durationMs: 800), .longPress)] {
+            let p = try preview(action, stated(verb, element: pay, frame: payFrame))
             guard case .outline(let rect) = p.mark else {
                 Issue.record("\(action): \(p.mark)")
                 continue
@@ -555,14 +571,16 @@ struct ApprovalTargetTests {
             #expect(p.key == ViewerFrameKey(taskId: "shop", observation: 1))
             #expect(p.screenSize == phoneSize)
         }
-        #expect(try preview(.longPress(element: pay, durationMs: 800)).caption.contains("press and hold"))
+        #expect(try preview(.longPress(element: pay, durationMs: 800),
+                            stated(.longPress, element: pay, frame: payFrame)).caption.contains("press and hold"))
     }
 
     @Test("type outlines the field (named, or the focused one)")
     func typing() throws {
         let note = try #require(index(of: noteFrame))
+        // Without an element the core resolves the focused field, and states it.
         for action in [Action.type(element: note, text: "hi", submit: false), .type(element: nil, text: "hi", submit: false)] {
-            let p = try preview(action)
+            let p = try preview(action, stated(.type, element: note, frame: noteFrame))
             guard case .outline(let rect) = p.mark else {
                 Issue.record("\(action): \(p.mark)")
                 continue
@@ -576,21 +594,23 @@ struct ApprovalTargetTests {
 
     @Test("tap_point marks the point; off the screen it marks nothing and the caption says so")
     func tapPoint() throws {
-        let p = try preview(.tapPoint(x: 0.5, y: 0.8))
+        let p = try preview(.tapPoint(x: 0.5, y: 0.8),
+                            stated(.tapPoint, point: Point(x: 0.5 * phoneSize.width, y: 0.8 * phoneSize.height)))
         guard case .point(let point) = p.mark else {
             Issue.record("\(p.mark)")
             return
         }
         #expect(abs(point.x - 0.5) < 1e-12 && abs(point.y - 0.8) < 1e-12)
         #expect(p.accessibilityLabel.hasPrefix("Marked: a point 50% across and 80% down"))
-        for off in [Action.tapPoint(x: 1.4, y: 0.5), .tapPoint(x: -0.1, y: 0.2)] {
-            let q = try preview(off)
+        for (x, y) in [(1.4, 0.5), (-0.1, 0.2)] {
+            let q = try preview(.tapPoint(x: x, y: y),
+                                stated(.tapPoint, point: Point(x: x * phoneSize.width, y: y * phoneSize.height)))
             #expect(q.mark == .none)
             #expect(q.caption.contains("not on the visible screen"), "\(q.caption)")
         }
-        let missing = try preview(.tap(element: 99))
+        let missing = try preview(.tap(element: 99), stated(.tap, element: 99))
         #expect(missing.mark == .none && missing.caption.contains("could not find"))
-        let home = try preview(.pressHome)
+        let home = try preview(.pressHome, stated(.pressHome))
         #expect(home.mark == .none && home.accessibilityLabel.hasPrefix("Nothing outlined."))
     }
 
@@ -844,12 +864,14 @@ struct ApprovalClaimTests {
 
     @Test("tap_point names no element; the caption says the picture is from when Jarvis asked")
     func tapPointNamesNothing() throws {
-        let (_, target) = asked(.tapPoint(x: 0.5, y: (700 + 25) / phoneSize.height))
+        let (_, target) = asked(.tapPoint(x: 0.5, y: (700 + 25) / phoneSize.height),
+                                request: stated(.tapPoint, point: Point(x: 0.5 * phoneSize.width, y: 700 + 25)))
         let t = try #require(target)
         #expect(!t.accessibilityLabel.contains("Pay"), "\(t.accessibilityLabel)")
         #expect(t.accessibilityLabel.contains("at the marked point"))
         #expect(t.caption == "The mark is where Jarvis will tap. The picture is from when Jarvis asked and may have changed.")
-        let (_, tap) = asked(.tap(element: 1))
+        let one = try #require([noteFrame, payFrame].first { index(of: $0) == 1 })
+        let (_, tap) = asked(.tap(element: 1), request: stated(.tap, element: 1, frame: one))
         #expect(try #require(tap).caption.hasSuffix("The picture is from when Jarvis asked and may have changed."))
     }
 

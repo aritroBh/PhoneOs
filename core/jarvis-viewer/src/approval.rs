@@ -9,14 +9,17 @@
 //! Like the rest of this crate it is a **display aid only**; the core alone decides what needs
 //! the owner's OK and re-checks the tree digest (never pixels) before it acts.
 //!
-//! The target comes from the action the core proposed (`Progress::last_action`) and the
-//! evaluated screen, indexed exactly as the core indexed it (`jarvis_observe::compact`): the
-//! element's on-screen frame for `tap`, `long_press`, `type`, `clear` and an element
-//! `scroll`/`swipe`; a point for `tap_point`; nothing (with a caption saying why) for
-//! Return, keyboard and app-level actions, an element that cannot be found, or a frame that
-//! is not on the screen. Never a box that might be wrong: where the part of a `type … submit`
-//! that is asked cannot be told for certain (`TypeStage::Unknown`), nothing is marked and
-//! the caption is the neutral [`UNMARKED_CAPTION`].
+//! What is asked and where is stated by the core in the request itself (`ConfirmRequest`'s
+//! `stage`, `verb` and `target`, set by the session when it decides to ask; never read from
+//! the question's text or the step history): the element's on-screen frame for `tap`,
+//! `long_press`, `type`, `clear` and an element `scroll`/`swipe`, looked up by the index the
+//! core resolved on the compact screen (`jarvis_observe::compact`); the point for
+//! `tap_point`; nothing (with a caption saying why) for Return, keyboard and app-level
+//! actions, an element that cannot be found, or a frame that is not on the screen. Never a
+//! box that might be wrong: a request without a target (or without a stated kind), a target
+//! on another screen (its digest differs from the evaluated screen's) or an element whose
+//! frame is not the one the core resolved marks nothing, with the neutral
+//! [`UNMARKED_CAPTION`].
 //!
 //! Privacy: labels go through the core's redaction ([`LabelCache`]); on runner-text screens
 //! the label comes only from the prompt the core rendered, as in the Live view. Nothing of
@@ -25,7 +28,7 @@
 use jarvis_proto as p;
 
 use crate::geometry::{ViewerPoint, ViewerRect, ViewerSize};
-use crate::privacy::{self, LabelCache};
+use crate::privacy::LabelCache;
 use crate::prompt::PromptElement;
 use crate::reducer::role_name;
 use crate::wire::FrameKey;
@@ -78,48 +81,6 @@ pub const UNMARKED_CAPTION: &str = "Jarvis could not mark the target; read the q
 /// The tail of every caption of a mark: the picture is not live.
 const PICTURE_AGE: &str = "The picture is from when Jarvis asked and may have changed.";
 
-/// Which part of a `type … submit` a confirmation asks about. The core gates such an action
-/// in two parts (the typing, then Return). Until the core sends the gated stage with the
-/// confirmation, the viewer tells them apart from the core's own summary only (preview
-/// review; the step history is not used: a typing refused by a lock refunds its step number,
-/// so "a typing in the same core step" does not mean the typing ran): `Type …` is the
-/// typing, `Press Return …` the Return part, anything else (a first-use question, …) is
-/// `Unknown` and nothing is marked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TypeStage {
-    /// Not a `type … submit` (the action is asked as a whole).
-    Whole,
-    /// The typing part: the field is outlined.
-    Typing,
-    /// The Return part (the typing already ran): nothing to outline.
-    Return,
-    /// Cannot be told for certain: nothing is marked, the caption is neutral.
-    Unknown,
-}
-
-impl TypeStage {
-    /// The stage of `action` that `request` asks about (see [`TypeStage`]).
-    pub(crate) fn of(action: Option<&p::Action>, request: &p::ConfirmRequest) -> TypeStage {
-        if !matches!(action, Some(p::Action::Type { submit: true, .. })) {
-            return TypeStage::Whole;
-        }
-        // The summary's head is written by the core (`jarvis_safety::summary_with`: "Type …
-        // into …"; `return_summary`: "Press Return … in …"), behind the fixed warning on a
-        // runner-text screen; on-screen text only ever follows the head.
-        let summary = request.summary.as_str();
-        let head = summary
-            .strip_prefix(jarvis_safety::UNVERIFIED_SCREEN_WARNING)
-            .unwrap_or(summary);
-        if head.starts_with("Press Return") {
-            TypeStage::Return
-        } else if head.starts_with("Type ") {
-            TypeStage::Typing
-        } else {
-            TypeStage::Unknown
-        }
-    }
-}
-
 /// The evaluated screen, as the reducer holds it.
 pub(crate) struct Evaluated<'a> {
     pub screen: &'a p::Screen,
@@ -127,75 +88,79 @@ pub(crate) struct Evaluated<'a> {
     pub typed: bool,
     /// The prompt's element list for this screen.
     pub sight: &'a [PromptElement],
-    /// Which part of a `type … submit` is asked.
-    pub stage: TypeStage,
 }
 
-/// The mark, caption and accessibility label for `action` on `evaluated`.
+/// The mark, caption and accessibility label for the confirmation `request` on `evaluated`.
+///
+/// What is asked comes from the request alone, as the core stated it when it asked: the part
+/// of the action (`stage`), its kind (`verb`) and its target (`target`, resolved by the core
+/// on the screen it evaluated). Nothing is read from the question's text or the step
+/// history. Fail closed: no target, a target on another screen (its digest differs from this
+/// screen's) or an element whose frame is not the one the core resolved marks nothing, with
+/// [`UNMARKED_CAPTION`].
 pub(crate) fn mark_for(
     evaluated: &Evaluated<'_>,
-    action: Option<&p::Action>,
+    request: &p::ConfirmRequest,
     labels: &mut LabelCache,
 ) -> (ApprovalMark, String, String) {
-    let Some(action) = action else {
-        return nothing("Jarvis named no control on this screen, so nothing is outlined.");
-    };
-    match evaluated.stage {
-        TypeStage::Whole | TypeStage::Typing => {}
-        TypeStage::Return => {
-            return nothing(
-                "Jarvis will press Return on the keyboard; there is no control to outline.",
-            )
-        }
-        TypeStage::Unknown => return nothing(UNMARKED_CAPTION),
+    if request.stage == p::ConfirmStage::Return {
+        return nothing(
+            "Jarvis will press Return on the keyboard; there is no control to outline.",
+        );
     }
-    let size = ViewerSize::from(evaluated.screen.size);
-    match action {
-        p::Action::Tap { element } => element_mark(evaluated, *element, "tap", size, labels),
-        p::Action::LongPress { element, .. } => {
-            element_mark(evaluated, *element, "press and hold", size, labels)
+    let verb = match request.verb {
+        p::ConfirmVerb::Tap | p::ConfirmVerb::TapPoint => "tap",
+        p::ConfirmVerb::LongPress => "press and hold",
+        p::ConfirmVerb::Type => "type",
+        p::ConfirmVerb::Clear => "clear",
+        p::ConfirmVerb::Scroll => "scroll",
+        p::ConfirmVerb::Swipe => "swipe",
+        p::ConfirmVerb::PressHome => {
+            return nothing("Jarvis will go to the home screen; nothing on this screen is tapped.")
         }
-        p::Action::Clear { element } => element_mark(evaluated, *element, "clear", size, labels),
-        p::Action::Type { element, .. } => match element.or_else(|| focused_index(evaluated)) {
-            Some(index) => element_mark(evaluated, index, "type", size, labels),
-            None => nothing(
+        p::ConfirmVerb::OpenApp => {
+            let name = labels
+                .label(Some(&request.app))
+                .unwrap_or_else(|| "an app".to_owned());
+            return nothing(&format!(
+                "Jarvis will open {name}; nothing on this screen is tapped."
+            ));
+        }
+        p::ConfirmVerb::OpenUrl => {
+            return nothing("Jarvis will open a link; nothing on this screen is tapped.")
+        }
+        p::ConfirmVerb::CallTool => {
+            return nothing("Jarvis will use a tool; nothing on this screen is tapped.")
+        }
+        p::ConfirmVerb::Other => return nothing(UNMARKED_CAPTION),
+    };
+    let Some(target) = &request.target else {
+        return match request.verb {
+            p::ConfirmVerb::Type => nothing(
                 "Jarvis will type into the focused field, which this screen does not show; nothing is outlined.",
             ),
-        },
-        p::Action::Scroll {
-            element: Some(index),
-            ..
-        } => element_mark(evaluated, *index, "scroll", size, labels),
-        p::Action::Swipe {
-            element: Some(index),
-            ..
-        } => element_mark(evaluated, *index, "swipe", size, labels),
-        p::Action::Scroll { element: None, .. } | p::Action::Swipe { element: None, .. } => {
-            nothing("Jarvis will swipe across the whole screen; nothing is outlined.")
-        }
-        p::Action::TapPoint { x, y } => point_mark(*x, *y, size),
-        p::Action::PressHome => {
-            nothing("Jarvis will go to the home screen; nothing on this screen is tapped.")
-        }
-        p::Action::OpenApp { app } => {
-            let name = labels.label(Some(app)).unwrap_or_else(|| "an app".to_owned());
-            nothing(&format!(
-                "Jarvis will open {name}; nothing on this screen is tapped."
-            ))
-        }
-        p::Action::OpenUrl { url } => {
-            let what = privacy::link_of(url).map_or_else(|| "a link".to_owned(), |l| l.to_string());
-            nothing(&format!(
-                "Jarvis will open {what}; nothing on this screen is tapped."
-            ))
-        }
-        p::Action::CallTool { name, .. } => {
-            let name = labels.label(Some(name)).unwrap_or_else(|| "a tool".to_owned());
-            nothing(&format!(
-                "Jarvis will use {name}; nothing on this screen is tapped."
-            ))
-        }
-        _ => nothing("Jarvis named no control on this screen, so nothing is outlined."),
+            p::ConfirmVerb::Scroll | p::ConfirmVerb::Swipe => {
+                nothing("Jarvis will swipe across the whole screen; nothing is outlined.")
+            }
+            _ => nothing(UNMARKED_CAPTION),
+        };
+    };
+    // The exact screen the core asked on (its raw digest), else nothing.
+    if target.digest.is_empty()
+        || jarvis_observe::screen_digest(evaluated.screen).to_hex() != target.digest
+    {
+        return nothing(UNMARKED_CAPTION);
+    }
+    let size = ViewerSize::from(evaluated.screen.size);
+    if request.verb == p::ConfirmVerb::TapPoint {
+        return match target.point {
+            Some(point) => point_mark(point, size),
+            None => nothing(UNMARKED_CAPTION),
+        };
+    }
+    match target.element {
+        Some(index) => element_mark(evaluated, index, target.frame, verb, size, labels),
+        None => nothing(UNMARKED_CAPTION),
     }
 }
 
@@ -212,22 +177,10 @@ fn usable(size: ViewerSize) -> Option<ViewerSize> {
     size.is_usable().then_some(size)
 }
 
-/// The focused text input of the compact screen: what `type` without an element types into.
-/// The same rule as the session's (`jarvis-agent` `session.rs`, `prepare` / `type_check` /
-/// `action_target`: the first listed element that is `focused && role.is_text_input()`), so a
-/// focused button never takes the outline from the field the text goes into (preview review).
-/// No such field: nothing is outlined.
-fn focused_index(evaluated: &Evaluated<'_>) -> Option<u32> {
-    jarvis_observe::compact(evaluated.screen)
-        .elements
-        .iter()
-        .find(|e| e.focused && e.role.is_text_input())
-        .map(|e| e.index)
-}
-
 fn element_mark(
     evaluated: &Evaluated<'_>,
     index: u32,
+    resolved: Option<p::Rect>,
     verb: &str,
     size: ViewerSize,
     labels: &mut LabelCache,
@@ -238,6 +191,10 @@ fn element_mark(
             "Jarvis could not find the control it will {verb} on this screen, so nothing is outlined."
         ));
     };
+    // The element the core resolved has exactly this frame, or nothing is marked.
+    if resolved != Some(element.frame) {
+        return nothing(UNMARKED_CAPTION);
+    }
     let role = role_name(&element.role);
     let label = if evaluated.typed {
         labels
@@ -283,12 +240,18 @@ fn element_mark(
     )
 }
 
-/// A `tap_point`: the point only. The core resolves a point to a control in more than one
-/// way (the gate's classifier takes the riskiest pressable element under it, the approval's
-/// pin the smallest listed control, `jarvis_safety::control_at`, on the session's own raw
-/// tree), so no element is named here: never one the core might not resolve to (preview
-/// review).
-fn point_mark(x: f64, y: f64, size: ViewerSize) -> (ApprovalMark, String, String) {
+/// A `tap_point`: the point the core will touch (in screen points), only. The core resolves
+/// a point to a control in more than one way (the gate's classifier takes the riskiest
+/// pressable element under it, the approval's pin the smallest listed control), so it states
+/// the point and no element is named here (preview review).
+fn point_mark(point: p::Point, size: ViewerSize) -> (ApprovalMark, String, String) {
+    let Some(size) = usable(size) else {
+        return nothing(
+            "The screen's size is unknown, so the point Jarvis will tap is not marked.",
+        );
+    };
+    let x = point.x / size.width;
+    let y = point.y / size.height;
     let on_screen =
         x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y);
     if !on_screen {
@@ -296,17 +259,11 @@ fn point_mark(x: f64, y: f64, size: ViewerSize) -> (ApprovalMark, String, String
             "The point Jarvis will tap is not on the visible screen, so nothing is marked.",
         );
     }
-    let Some(size) = usable(size) else {
-        return nothing(
-            "The screen's size is unknown, so the point Jarvis will tap is not marked.",
-        );
-    };
-    let point = ViewerPoint::new(x * size.width, y * size.height);
     let across = (x * 100.0).round();
     let down = (y * 100.0).round();
     (
         ApprovalMark::Point {
-            point,
+            point: ViewerPoint::new(point.x, point.y),
             unit: ViewerPoint::new(x, y),
         },
         format!("The mark is where Jarvis will tap. {PICTURE_AGE}"),
@@ -355,7 +312,24 @@ mod tests {
             screen: s,
             typed: true,
             sight: &[],
-            stage: TypeStage::Whole,
+        }
+    }
+
+    /// The request the core sends for `verb` on `target` (element 1 of `s`).
+    fn asked(s: &p::Screen, verb: p::ConfirmVerb, stage: p::ConfirmStage) -> p::ConfirmRequest {
+        let element = jarvis_observe::compact(s).elements.into_iter().next();
+        p::ConfirmRequest {
+            verb,
+            stage,
+            target: element
+                .map(|e| p::ConfirmTarget {
+                    element: Some(e.index),
+                    frame: Some(e.frame),
+                    digest: jarvis_observe::screen_digest(s).to_hex(),
+                    ..p::ConfirmTarget::default()
+                })
+                .map(Box::new),
+            ..p::ConfirmRequest::default()
         }
     }
 
@@ -367,8 +341,8 @@ mod tests {
             rect(100.0, 600.0, 200.0, 50.0),
         )]);
         let mut labels = LabelCache::new();
-        let (mark, caption, a11y) =
-            mark_for(&eval(&s), Some(&p::Action::Tap { element: 1 }), &mut labels);
+        let request = asked(&s, p::ConfirmVerb::Tap, p::ConfirmStage::Whole);
+        let (mark, caption, a11y) = mark_for(&eval(&s), &request, &mut labels);
         assert_eq!(
             mark,
             ApprovalMark::Outline {
@@ -388,17 +362,12 @@ mod tests {
     fn return_and_app_actions_mark_nothing() {
         let s = screen(vec![]);
         let mut labels = LabelCache::new();
-        let mut e = eval(&s);
-        e.stage = TypeStage::Return;
-        let typed = p::Action::Type {
-            element: None,
-            text: "x".to_owned(),
-            submit: true,
-        };
-        let (mark, caption, _) = mark_for(&e, Some(&typed), &mut labels);
+        let typed = asked(&s, p::ConfirmVerb::Type, p::ConfirmStage::Return);
+        let (mark, caption, _) = mark_for(&eval(&s), &typed, &mut labels);
         assert_eq!(mark, ApprovalMark::Nothing);
         assert!(caption.contains("Return"), "{caption}");
-        let (mark, caption, _) = mark_for(&eval(&s), Some(&p::Action::PressHome), &mut labels);
+        let home = asked(&s, p::ConfirmVerb::PressHome, p::ConfirmStage::Whole);
+        let (mark, caption, _) = mark_for(&eval(&s), &home, &mut labels);
         assert_eq!(mark, ApprovalMark::Nothing);
         assert!(caption.contains("home screen"), "{caption}");
     }

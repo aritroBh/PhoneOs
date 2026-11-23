@@ -225,6 +225,7 @@ pub fn random_update(rng: &mut Rng) -> Update {
             summary: String::new(),
             app: String::new(),
             phone_only: false,
+            ..Default::default()
         }),
         6 => Update::QuestionPending,
         7 => Update::AwaitingUnlock,

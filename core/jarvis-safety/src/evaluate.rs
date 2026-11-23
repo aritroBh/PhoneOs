@@ -1,8 +1,8 @@
 //! The single entry point the agent calls before executing an action.
 
 use jarvis_proto::{
-    Action, BarNode, CompactScreen, ConfirmRequest, Element, Policy, RawInput, RawNode,
-    RiskCategory, Role, ToolSpec, TrustLevel,
+    render_rows, Action, BarNode, CompactScreen, ConfirmRequest, ConfirmVerb, Element, Policy,
+    QuestionRow, QuestionRowKind, RawInput, RawNode, RiskCategory, Role, ToolSpec, TrustLevel,
 };
 
 use crate::actuation::{actuation, Actuation};
@@ -376,12 +376,38 @@ pub fn evaluate_owned(
     match gate_on(policy, category, level, action, screen, runner_text) {
         Gate::Allow => Decision::Allow,
         Gate::Deny => Decision::Deny(format!("{category:?} actions are not allowed")),
-        Gate::Confirm => Decision::Confirm(ConfirmRequest {
-            category,
-            summary: summary_with(action, screen, category, source, tree, typed),
-            app: affected_app,
-            phone_only,
-        }),
+        Gate::Confirm => {
+            let mut request = ConfirmRequest::from_rows(
+                category,
+                question_with(action, screen, category, source, tree, typed),
+                affected_app,
+            );
+            request.verb = verb_of(action);
+            request.phone_only = phone_only;
+            Decision::Confirm(request)
+        }
+    }
+}
+
+/// The kind of `action`, as a confirmation states it ([`ConfirmRequest::verb`]).
+pub fn verb_of(action: &Action) -> ConfirmVerb {
+    match action {
+        Action::Tap { .. } => ConfirmVerb::Tap,
+        Action::LongPress { .. } => ConfirmVerb::LongPress,
+        Action::Type { .. } => ConfirmVerb::Type,
+        Action::Clear { .. } => ConfirmVerb::Clear,
+        Action::Scroll { .. } => ConfirmVerb::Scroll,
+        Action::Swipe { .. } => ConfirmVerb::Swipe,
+        Action::TapPoint { .. } => ConfirmVerb::TapPoint,
+        Action::PressHome => ConfirmVerb::PressHome,
+        Action::OpenApp { .. } => ConfirmVerb::OpenApp,
+        Action::OpenUrl { .. } => ConfirmVerb::OpenUrl,
+        Action::CallTool { .. } => ConfirmVerb::CallTool,
+        Action::Wait { .. }
+        | Action::AskUser { .. }
+        | Action::Look
+        | Action::Done { .. }
+        | Action::Fail { .. } => ConfirmVerb::Other,
     }
 }
 
@@ -599,12 +625,12 @@ pub fn first_use_request(bundle_id: &str, app_name: Option<&str>) -> ConfirmRequ
         Some(name) => format!("Let Jarvis act in {} ({id})?", clean(name, MAX_QUOTE_CHARS)),
         None => format!("Let Jarvis act in {id}?"),
     };
-    ConfirmRequest {
-        category: RiskCategory::FirstUse,
-        summary: sanitize_screen_text_with_limit(&summary, MAX_SUMMARY_CHARS),
-        app: bundle_id.to_owned(),
-        phone_only: false,
-    }
+    ConfirmRequest::one_line(
+        RiskCategory::FirstUse,
+        QuestionRowKind::Action,
+        sanitize_screen_text_with_limit(&summary, MAX_SUMMARY_CHARS),
+        bundle_id.to_owned(),
+    )
 }
 
 /// Redacts, sanitises and caps `s`, turns `"` (and the quotation marks that look like it)
@@ -2866,9 +2892,9 @@ fn recipients_slot(
     distinct: (usize, usize),
     unverified: bool,
     budget: usize,
-) -> (String, Vec<usize>, usize) {
+) -> (Vec<QuestionRow>, Vec<usize>, usize) {
     if fields.is_empty() && says.is_empty() && !unverified {
-        return (String::new(), Vec::new(), 0);
+        return (Vec::new(), Vec::new(), 0);
     }
     let head = |mark: &str, n: usize| {
         if n > 1 {
@@ -2898,26 +2924,29 @@ fn recipients_slot(
         };
         format!("{}{}{tail}", head(mark, n), shown.join("; "))
     };
-    // (fields shown, field cap, short names, says shown, says cap)
-    let render = |l: (usize, usize, bool, usize, usize)| -> String {
+    // (fields shown, field cap, short names, says shown, says cap): the form's recipient
+    // fields, `Recipient not verified`, then what the screen says.
+    let parts = |l: (usize, usize, bool, usize, usize)| -> (String, String, String) {
         // Thirteenth review: `unverified` with entries listed (weak heads only) follows them.
         let not_verified = if unverified {
             format!(". {MARK_NOT_VERIFIED}")
         } else {
             String::new()
         };
-        let first = if fields.is_empty() {
-            not_verified
+        let listed = if fields.is_empty() {
+            String::new()
         } else {
-            format!(
-                "{}{not_verified}",
-                list(fields, MARK_RECIPIENTS, distinct.0, l.0, l.1, l.2)
-            )
+            list(fields, MARK_RECIPIENTS, distinct.0, l.0, l.1, l.2)
         };
-        format!(
-            "{first}{}",
-            list(says, MARK_SCREEN_SAYS, distinct.1, l.3, l.4, false)
+        (
+            listed,
+            not_verified,
+            list(says, MARK_SCREEN_SAYS, distinct.1, l.3, l.4, false),
         )
+    };
+    let render = |l: (usize, usize, bool, usize, usize)| -> String {
+        let (listed, not_verified, says) = parts(l);
+        format!("{listed}{not_verified}{says}")
     };
     let nf = fields.len().min(MAX_LISTED_RECIPIENTS);
     let ns = says.len().min(MAX_LISTED_RECIPIENTS);
@@ -2949,14 +2978,33 @@ fn recipients_slot(
     // The slot's minimum is the last level's length (`minimal`, see `summarize_with`), so
     // it fits but where the minimums had to be scaled down (behind the runner-text
     // warning, every slot at its minimum): there it is cut, marked `…`.
-    (hard_cut(&render(l), budget), shown, minimal)
+    let (listed, not_verified, says_part) = parts(l);
+    let rows = vec![
+        row(QuestionRowKind::Recipient, &listed),
+        row(QuestionRowKind::NotVerified, &not_verified),
+        row(QuestionRowKind::ScreenSays, &says_part),
+    ];
+    let joined = render_rows(&rows);
+    let cut = hard_cut(&joined, budget);
+    let rows = if cut == joined {
+        non_empty(rows)
+    } else {
+        split_cut(&rows, &cut)
+    };
+    (rows, shown, minimal)
 }
 
 /// Slot 5 (ninth review): the other facts — the row text after "next to", the item text
 /// after "under" (both drawn inside the action line), `Selected:` and `Fields:` — within
 /// `budget` characters: each part to 40, then 24, then 16 characters, then the lists as
-/// counts (`Selected: 3 options`, `Fields: 2 not shown`). Returns (inline, rest).
-fn other_slot(next_to: &str, under: &str, facts: &Facts, budget: usize) -> (String, String) {
+/// counts (`Selected: 3 options`, `Fields: 2 not shown`). Returns (inline, rest): the rest
+/// as its rows (the cap note, `Selected:`, `Fields:`).
+fn other_slot(
+    next_to: &str,
+    under: &str,
+    facts: &Facts,
+    budget: usize,
+) -> (String, Vec<QuestionRow>) {
     const LEVELS: [(usize, usize, usize, usize); 5] = [
         (MAX_NEIGHBOUR_CHARS, MAX_NEIGHBOUR_CHARS, 40, 40),
         (24, 30, 24, 24),
@@ -2964,7 +3012,7 @@ fn other_slot(next_to: &str, under: &str, facts: &Facts, budget: usize) -> (Stri
         (12, 12, 0, 0),
         (0, 0, 0, 0),
     ];
-    let render = |(n, u, sel, fld): (usize, usize, usize, usize)| -> (String, String) {
+    let render = |(n, u, sel, fld): (usize, usize, usize, usize)| -> (String, Vec<QuestionRow>) {
         let mut inline = String::new();
         if !next_to.is_empty() && n > 0 {
             inline.push_str(&format!(" next to \"{}\"", clean_label(next_to, n)));
@@ -2973,7 +3021,7 @@ fn other_slot(next_to: &str, under: &str, facts: &Facts, budget: usize) -> (Stri
             inline.push_str(&format!(" under \"{}\"", clean_label(under, u)));
         }
         // The cap note first: it is the last to be cut.
-        let mut rest = facts.note.clone();
+        let mut rest = vec![row(QuestionRowKind::Note, &facts.note)];
         if !facts.selected.is_empty() {
             let part = if sel == 0 {
                 Some(format!("Selected: {} options", facts.selected.len()))
@@ -2981,8 +3029,7 @@ fn other_slot(next_to: &str, under: &str, facts: &Facts, budget: usize) -> (Stri
                 fact_list(MARK_SELECTED, &facts.selected, 0, MAX_LISTED_SELECTED, sel)
             };
             if let Some(p) = part {
-                rest.push_str(". ");
-                rest.push_str(&p);
+                rest.push(row(QuestionRowKind::Selected, &format!(". {p}")));
             }
         }
         if let Some(p) = fact_list(
@@ -2992,22 +3039,27 @@ fn other_slot(next_to: &str, under: &str, facts: &Facts, budget: usize) -> (Stri
             MAX_LISTED_FIELDS,
             fld,
         ) {
-            rest.push_str(". ");
-            rest.push_str(&p);
+            rest.push(row(QuestionRowKind::Fields, &format!(". {p}")));
         }
-        (inline, rest)
+        (inline, non_empty(rest))
     };
-    let mut last = (String::new(), String::new());
+    let mut last = (String::new(), Vec::new());
     for l in LEVELS {
         let (i, r) = render(l);
-        if n_chars(&i) + n_chars(&r) <= budget {
+        if n_chars(&i) + n_chars(&render_rows(&r)) <= budget {
             return (i, r);
         }
         last = (i, r);
     }
     // Only the counts are left (the inline texts are gone at the last level): cut them.
     let (i, r) = last;
-    (i, hard_cut(&r, budget))
+    let joined = render_rows(&r);
+    let cut = hard_cut(&joined, budget);
+    if cut == joined {
+        (i, r)
+    } else {
+        (i, split_cut(&r, &cut))
+    }
 }
 
 /// The row text after "next to" and the item text after "under" of a press on `el`.
@@ -3113,6 +3165,24 @@ pub fn summary_with(
     tree: Option<&ScreenTree<'_>>,
     typed: &[TypedText],
 ) -> String {
+    render_rows(&question_with(
+        action, screen, category, source, tree, typed,
+    ))
+}
+
+/// The question [`summary_with`] renders, as its parts ([`QuestionRow`]): the summary is
+/// exactly these rows joined ([`render_rows`]). The rows are what the composer writes, slot
+/// by slot (the runner-text warning, the action line, what is sent, `Typed:`, the amounts,
+/// `To/Account:` or `Recipient not verified`, `Screen says:`, the cap note, `Selected:`,
+/// `Fields:`), so a display can lay them out without reading the text.
+pub fn question_with(
+    action: &Action,
+    screen: &CompactScreen,
+    category: RiskCategory,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+) -> Vec<QuestionRow> {
     with_source(source, |max| {
         summarize_with(action, screen, category, source, tree, typed, false, max)
     })
@@ -3133,6 +3203,21 @@ pub fn return_summary(
     tree: Option<&ScreenTree<'_>>,
     typed: &[TypedText],
 ) -> String {
+    render_rows(&return_question(
+        field, text, screen, category, source, tree, typed,
+    ))
+}
+
+/// The question [`return_summary`] renders, as its parts (see [`question_with`]).
+pub fn return_question(
+    field: u32,
+    text: &str,
+    screen: &CompactScreen,
+    category: RiskCategory,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+) -> Vec<QuestionRow> {
     let action = Action::Type {
         element: Some(field),
         text: text.to_owned(),
@@ -3143,15 +3228,65 @@ pub fn return_summary(
     })
 }
 
-/// A summary of at most [`MAX_SUMMARY_CHARS`] from `build(max)`, behind the warning on a
-/// runner-text screen.
-fn with_source(source: ScreenSource, build: impl Fn(usize) -> String) -> String {
+/// A question of at most [`MAX_SUMMARY_CHARS`] from `build(max)`, behind the warning (its
+/// own row) on a runner-text screen.
+fn with_source(
+    source: ScreenSource,
+    build: impl Fn(usize) -> Vec<QuestionRow>,
+) -> Vec<QuestionRow> {
     match source {
         ScreenSource::Typed => build(MAX_SUMMARY_CHARS),
         ScreenSource::RunnerText => {
             let room = MAX_SUMMARY_CHARS.saturating_sub(UNVERIFIED_SCREEN_WARNING.chars().count());
-            format!("{UNVERIFIED_SCREEN_WARNING}{}", build(room.max(120)))
+            let mut rows = vec![row(QuestionRowKind::Warning, UNVERIFIED_SCREEN_WARNING)];
+            rows.extend(build(room.max(120)));
+            rows
         }
+    }
+}
+
+/// A question row.
+fn row(kind: QuestionRowKind, text: &str) -> QuestionRow {
+    QuestionRow {
+        kind,
+        text: text.to_owned(),
+    }
+}
+
+/// `rows` without the empty ones.
+fn non_empty(rows: impl IntoIterator<Item = QuestionRow>) -> Vec<QuestionRow> {
+    rows.into_iter().filter(|r| !r.text.is_empty()).collect()
+}
+
+/// `cut` (the texts of `rows` joined, or a cut of that: a prefix of it ending in `…`) as the
+/// same rows: each row takes as many characters as its own text has, the last the rest.
+/// Rows left empty are dropped, so the rows still render to exactly `cut`.
+fn split_cut(rows: &[QuestionRow], cut: &str) -> Vec<QuestionRow> {
+    let mut chars = cut.chars();
+    let mut out = Vec::with_capacity(rows.len());
+    for (i, r) in rows.iter().enumerate() {
+        let n = if i + 1 == rows.len() {
+            usize::MAX
+        } else {
+            n_chars(&r.text)
+        };
+        let piece: String = chars.by_ref().take(n).collect();
+        out.push(QuestionRow {
+            kind: r.kind,
+            text: piece,
+        });
+    }
+    non_empty(out)
+}
+
+/// A slot's rows within its allotment, cut like [`fit_slot`] cuts its text.
+fn fit_rows(rows: Vec<QuestionRow>, allot: usize) -> Vec<QuestionRow> {
+    let joined = render_rows(&rows);
+    let cut = fit_slot(joined.clone(), allot);
+    if cut == joined {
+        non_empty(rows)
+    } else {
+        split_cut(&rows, &cut)
     }
 }
 
@@ -4450,7 +4585,7 @@ fn summarize_with(
     typed: &[TypedText],
     return_only: bool,
     max: usize,
-) -> String {
+) -> Vec<QuestionRow> {
     // Twelfth review: a bare Return (`type` with no text, `submit`) is worded and sent like
     // Return ("Press Return in …, which sends …"), never `Type "" into …`.
     let return_only =
@@ -4733,8 +4868,8 @@ fn summarize_with(
         unverified,
         a3,
     );
-    let recipients = fit_slot(recipients, a3);
-    room = room.saturating_sub(n_chars(&recipients));
+    let recipients = fit_rows(recipients, a3);
+    room = room.saturating_sub(n_chars(&render_rows(&recipients)));
     // A value shown under `To/Account:` (whole or cut) is not repeated under `Sends:`
     // (eleventh review, F4).
     let mut above = vec![false; sent.fields.len()];
@@ -4750,13 +4885,40 @@ fn summarize_with(
     // (5) The other facts.
     let a5 = slots.allot(4, room);
     let (inline, rest) = other_slot(&next_to, &under, &facts, a5);
-    let (inline, rest) = if n_chars(&inline) + n_chars(&rest) <= a5 {
+    let (inline, rest) = if n_chars(&inline) + n_chars(&render_rows(&rest)) <= a5 {
         (inline, rest)
     } else {
-        (String::new(), fit_slot(rest, a5))
+        (String::new(), fit_rows(rest, a5))
     };
-    let line = format!("{head}{inline}{tail}{sends}{typed_part}{amounts}{recipients}{rest}");
-    finish_summary(&line, max)
+    // The reading order: the action line (with `next to`/`under`), what is sent, `Typed:`,
+    // the amounts, the recipients, the other facts.
+    let mut rows = action_rows(action, &format!("{head}{inline}{tail}"));
+    rows.extend([
+        row(QuestionRowKind::Sends, &sends),
+        row(QuestionRowKind::Typed, &typed_part),
+        row(QuestionRowKind::Amount, &amounts),
+    ]);
+    rows.extend(recipients);
+    rows.extend(rest);
+    finish_question(non_empty(rows), max)
+}
+
+/// The action line as its rows: one `Action` row, except that the line of an `open_url` to
+/// an `sms:`/`mailto:` link the owner did not give ([`open_url_line`]) ends in what the link
+/// sends (`. Sends: Body: "…"`), its own `Sends` row. The link's parts are quoted through
+/// [`clean`], which neutralises the question's markers, so the first `. Sends: ` is the
+/// line's own.
+fn action_rows(action: &Action, line: &str) -> Vec<QuestionRow> {
+    if let Action::OpenUrl { .. } = action {
+        if let Some(k) = line.find(&format!(". {MARK_SENDS}: ")) {
+            let (what, sends) = line.split_at(k);
+            return vec![
+                row(QuestionRowKind::Action, what),
+                row(QuestionRowKind::Sends, sends),
+            ];
+        }
+    }
+    vec![row(QuestionRowKind::Action, line)]
 }
 
 /// The reserved slots of one summary (see `summarize_with`).
@@ -4836,6 +4998,76 @@ fn finish_summary(line: &str, max: usize) -> String {
         line.chars().count()
     );
     sanitize_screen_text_with_limit(line, max)
+}
+
+/// The final pass ([`finish_summary`]) over the composed rows, keeping them the question's
+/// exact parts: the summary is the joined rows sanitised; when that changes nothing (the
+/// parts are cleaned when written, so it normally does not) the rows stand, else each row
+/// sanitised on its own when they still join to the summary, else the summary as one row.
+fn finish_question(rows: Vec<QuestionRow>, max: usize) -> Vec<QuestionRow> {
+    let line = render_rows(&rows);
+    let summary = finish_summary(&line, max);
+    if summary == line {
+        debug_rows_hold_their_lines(&rows);
+        return rows;
+    }
+    let each = non_empty(rows.iter().map(|r| QuestionRow {
+        kind: r.kind,
+        text: sanitize_screen_text_with_limit(&r.text, max),
+    }));
+    if render_rows(&each) == summary {
+        debug_rows_hold_their_lines(&each);
+        return each;
+    }
+    vec![row(QuestionRowKind::Action, &summary)]
+}
+
+/// Debug builds (every test): a row that starts with a line's marker is of that line's
+/// family, and a row of a fact family starts with one of its family's markers. (A marker
+/// inside a row is not checked: a quoted screen value may hold marker-like text.)
+fn debug_rows_hold_their_lines(rows: &[QuestionRow]) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    const MARKERS: [(&str, QuestionRowKind); 12] = [
+        (". Amounts on screen", QuestionRowKind::Amount),
+        (". To/Account", QuestionRowKind::Recipient),
+        (". Screen says", QuestionRowKind::ScreenSays),
+        (". Recipient not verified", QuestionRowKind::NotVerified),
+        (". Sends:", QuestionRowKind::Sends),
+        (". The form holds:", QuestionRowKind::Sends),
+        (
+            ", which sends the field's whole content",
+            QuestionRowKind::Sends,
+        ),
+        (", which submits the form", QuestionRowKind::Sends),
+        (". Typed:", QuestionRowKind::Typed),
+        (". Fields:", QuestionRowKind::Fields),
+        (". Selected:", QuestionRowKind::Selected),
+        (". Facts from", QuestionRowKind::Note),
+    ];
+    for r in rows {
+        // A row cut at the slot's bound may end inside its own marker (`. Scr…`).
+        let cut = r.text.strip_suffix('…').unwrap_or(&r.text);
+        let starts: Vec<QuestionRowKind> = MARKERS
+            .iter()
+            .filter(|(m, _)| r.text.starts_with(m))
+            .map(|(_, k)| *k)
+            .collect();
+        let cut_of_own = MARKERS
+            .iter()
+            .any(|(m, k)| *k == r.kind && m.starts_with(cut));
+        let fact = !matches!(
+            r.kind,
+            QuestionRowKind::Action | QuestionRowKind::Warning | QuestionRowKind::Other
+        );
+        debug_assert!(
+            starts.iter().all(|k| *k == r.kind) && (!fact || !starts.is_empty() || cut_of_own),
+            "a {:?} row reads {:?}: {rows:?}",
+            r.kind,
+            r.text
+        );
+    }
 }
 
 /// What was typed, as a summary says it: quoted (at most `cap` characters), or "a secret
@@ -5144,3 +5376,6 @@ fn action_line(
         Action::Fail { reason } => whole(format!("Give up: {}", clean(reason, 120))),
     }
 }
+
+#[cfg(test)]
+mod question_rows;

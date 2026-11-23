@@ -513,6 +513,7 @@ fn activity() {
         summary: "Delete the account".into(),
         app: "Mail".into(),
         phone_only: false,
+        ..Default::default()
     }));
     assert_eq!(
         t.timeline().activity,

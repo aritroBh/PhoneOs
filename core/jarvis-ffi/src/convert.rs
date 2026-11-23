@@ -1122,12 +1122,20 @@ impl From<p::ConfirmRequest> for ConfirmRequest {
             summary,
             app,
             phone_only,
+            rows,
+            stage,
+            verb,
+            target,
         } = v;
         ConfirmRequest {
             category: category.into(),
             summary,
             app,
             phone_only,
+            rows: rows.into_iter().map(Into::into).collect(),
+            stage: stage.into(),
+            verb: verb.into(),
+            target: target.map(|t| (*t).into()),
         }
     }
 }
@@ -1139,12 +1147,126 @@ impl From<ConfirmRequest> for p::ConfirmRequest {
             summary,
             app,
             phone_only,
+            rows,
+            stage,
+            verb,
+            target,
         } = v;
         p::ConfirmRequest {
             category: category.into(),
             summary,
             app,
             phone_only,
+            rows: rows.into_iter().map(Into::into).collect(),
+            stage: stage.into(),
+            verb: verb.into(),
+            target: target.map(|t| Box::new(t.into())),
+        }
+    }
+}
+
+impl From<p::QuestionRow> for QuestionRow {
+    fn from(v: p::QuestionRow) -> Self {
+        QuestionRow {
+            display: v.display_text().to_owned(),
+            kind: v.kind.into(),
+            text: v.text,
+        }
+    }
+}
+
+impl From<QuestionRow> for p::QuestionRow {
+    fn from(v: QuestionRow) -> Self {
+        p::QuestionRow {
+            kind: v.kind.into(),
+            text: v.text,
+        }
+    }
+}
+
+macro_rules! same_enum {
+    ($ffi:ident, $proto:path, [$($v:ident),* $(,)?]) => {
+        impl From<$proto> for $ffi {
+            fn from(v: $proto) -> Self {
+                use $proto as P;
+                match v {
+                    $(P::$v => $ffi::$v,)*
+                }
+            }
+        }
+        impl From<$ffi> for $proto {
+            fn from(v: $ffi) -> Self {
+                use $proto as P;
+                match v {
+                    $($ffi::$v => P::$v,)*
+                }
+            }
+        }
+    };
+}
+
+same_enum!(
+    QuestionRowKind,
+    p::QuestionRowKind,
+    [
+        Action,
+        Warning,
+        Sends,
+        Typed,
+        Amount,
+        Recipient,
+        NotVerified,
+        ScreenSays,
+        Selected,
+        Fields,
+        Note,
+        Other,
+    ]
+);
+same_enum!(ConfirmStage, p::ConfirmStage, [Whole, Typing, Return]);
+same_enum!(
+    ConfirmVerb,
+    p::ConfirmVerb,
+    [
+        Other, Tap, LongPress, Type, Clear, Scroll, Swipe, TapPoint, PressHome, OpenApp, OpenUrl,
+        CallTool,
+    ]
+);
+
+impl From<p::ConfirmTarget> for ConfirmTarget {
+    fn from(v: p::ConfirmTarget) -> Self {
+        let p::ConfirmTarget {
+            element,
+            node,
+            frame,
+            point,
+            digest,
+        } = v;
+        ConfirmTarget {
+            element,
+            node,
+            frame: frame.map(Into::into),
+            point: point.map(Into::into),
+            digest,
+        }
+    }
+}
+
+impl From<ConfirmTarget> for p::ConfirmTarget {
+    fn from(v: ConfirmTarget) -> Self {
+        let ConfirmTarget {
+            element,
+            node,
+            frame,
+            point,
+            digest,
+        } = v;
+        p::ConfirmTarget {
+            element,
+            node,
+            frame: frame.map(Into::into),
+            point: point.map(Into::into),
+            digest,
         }
     }
 }

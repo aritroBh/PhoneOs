@@ -44,6 +44,16 @@ pub fn parse_runner_text_to_screen(snapshot: RunnerSnapshot) -> Result<Screen, J
     })
 }
 
+/// The exact digest of `screen` as lower-case hex: what `ConfirmTarget.digest` holds for the
+/// screen a confirmation was asked on (`jarvis_observe::screen_digest`), so a shell can tell
+/// whether a target belongs to a screen it holds.
+#[uniffi::export]
+pub fn screen_digest_hex(screen: Screen) -> Result<String, JarvisError> {
+    guarded("screen_digest_hex", || {
+        Ok(jarvis_observe::screen_digest(&p::Screen::from(screen)).to_hex())
+    })
+}
+
 /// The display-safe form of a piece of on-screen text: the same redaction the core applies
 /// before screen text reaches a prompt, a log or the owner's summary (card numbers, IBANs,
 /// one-time codes, API keys and tokens, labelled secrets and seed phrases masked; invisible

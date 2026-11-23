@@ -449,6 +449,7 @@ fn cmd_eval(args: &Args, out: &mut dyn Write) -> Result<i32, String> {
                 ],
                 summary: String::new(),
                 transcript: None,
+                requests: Vec::new(),
             },
         };
         if json {

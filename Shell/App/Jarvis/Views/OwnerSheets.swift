@@ -77,11 +77,7 @@ struct ConfirmationSheet: View {
                 .foregroundStyle(Theme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("confirm.title")
-            Text(request.summary)
-                .font(Theme.body)
-                .foregroundStyle(Theme.textSoft)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("confirm.summary")
+            ConfirmationQuestionView(question: ConfirmationQuestion(request))
             VStack(alignment: .leading, spacing: 4) {
                 Text(request.app)
                     .font(Theme.monoSmall)
@@ -120,6 +116,78 @@ struct ConfirmationSheet: View {
             if gone { images.reset() }
         }
         .onDisappear { images.reset() }
+    }
+}
+
+/// The core's question, part by part (`ConfirmationQuestion`, from the request's rows): the
+/// action prominent; what is sent, the recipient fields and the amounts as labelled rows;
+/// what the page itself says set apart in a secondary colour, labelled as from the page; the
+/// warnings in the warning colour. A request without rows shows its summary. For VoiceOver
+/// the question is one element (identifier `confirm.summary`) reading every line with its
+/// label.
+private struct ConfirmationQuestionView: View {
+    var question: ConfirmationQuestion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(question.lines) { line in
+                QuestionLineView(line: line)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(question.spoken)
+        .accessibilityIdentifier("confirm.summary")
+    }
+}
+
+/// One line of the question.
+private struct QuestionLineView: View {
+    var line: ConfirmationQuestion.Line
+
+    private var isPage: Bool { line.style == .page }
+
+    private var font: Font {
+        switch line.style {
+        case .action: return Theme.rowTitle
+        default: return Theme.body
+        }
+    }
+
+    private var textColor: Color {
+        switch line.style {
+        case .action: return Theme.textPrimary
+        case .fact: return Theme.textSoft
+        case .page: return Theme.textSecondary
+        case .warning: return Theme.warning
+        case .plain: return Theme.textSoft
+        }
+    }
+
+    private var labelColor: Color {
+        line.style == .warning ? Theme.warning : Theme.textTertiary
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let label = line.label {
+                Text(label)
+                    .font(Theme.meta)
+                    .foregroundStyle(labelColor)
+            }
+            Text(line.text)
+                .font(font)
+                .foregroundStyle(textColor)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, isPage ? 10 : 0)
+        .overlay(alignment: .leading) {
+            if isPage {
+                Rectangle()
+                    .fill(Theme.textTertiary)
+                    .frame(width: 2)
+            }
+        }
     }
 }
 

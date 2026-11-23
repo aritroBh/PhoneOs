@@ -81,7 +81,7 @@ pub struct RunCounts {
 }
 
 /// A confirmation request and the owner's decision.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConfirmRecord {
     /// What was asked.
     pub request: ConfirmRequest,

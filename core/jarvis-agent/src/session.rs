@@ -103,16 +103,17 @@ use jarvis_observe::{compact_view, diff, marks, screen_digest, screen_hash, Scre
 use std::collections::VecDeque;
 
 use jarvis_proto::{
-    Action, AppInfo, BarNode, CompactScreen, ConfirmRequest, Effect, Element, Event, ImageRef, Key,
-    ModelRequest, Observation, Outcome, OutcomeStatus, Point, Progress, RawInput, RawNode,
-    RequestKind, RiskCategory, RunnerCommand, SessionConfig, Size, TaskSpec, TimedEvent, ToolCall,
-    ToolResult, ToolSpec,
+    render_rows, Action, AppInfo, BarNode, CompactScreen, ConfirmRequest, ConfirmStage,
+    ConfirmTarget, Effect, Element, Event, ImageRef, Key, ModelRequest, Observation, Outcome,
+    OutcomeStatus, Point, Progress, QuestionRow, QuestionRowKind, RawInput, RawNode, RequestKind,
+    RiskCategory, RunnerCommand, SessionConfig, Size, TaskSpec, TimedEvent, ToolCall, ToolResult,
+    ToolSpec,
 };
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
     approval_context, check_app, check_app_name, check_confinement, control_at, evaluate_owned,
-    first_use_app, first_use_request, is_springboard, label_names_denied_app, redact,
-    redact_screen, return_summary, sanitize_screen_text, search_names_denied_app, summary_with,
+    first_use_app, first_use_request, is_springboard, label_names_denied_app, question_with,
+    redact, redact_screen, return_question, sanitize_screen_text, search_names_denied_app, verb_of,
     widget_names_denied_app, Budget, BudgetVerdict, Covered, CoveredBy, Decision, PointError,
     ScreenSource, ScreenTree, TypedText, Verdict,
 };
@@ -1667,6 +1668,16 @@ impl Session {
     /// the unverified-screen warning on runner text. The same function builds it when asked
     /// and when an approval is checked (A4: it must be identical).
     fn risk_summary(&self, gate: &Action, stage: Stage, category: RiskCategory) -> String {
+        render_rows(&self.risk_question(gate, stage, category))
+    }
+
+    /// The question [`Self::risk_summary`] renders, as its rows.
+    fn risk_question(
+        &self,
+        gate: &Action,
+        stage: Stage,
+        category: RiskCategory,
+    ) -> Vec<QuestionRow> {
         let tree = self.tree();
         let screen = &self.current.masked;
         let source = self.current.source;
@@ -1678,7 +1689,7 @@ impl Session {
                     text,
                     ..
                 },
-            ) => return_summary(
+            ) => return_question(
                 *field,
                 text,
                 screen,
@@ -1687,7 +1698,7 @@ impl Session {
                 Some(&tree),
                 &self.typed_here(),
             ),
-            _ => summary_with(
+            _ => question_with(
                 gate,
                 screen,
                 category,
@@ -1696,6 +1707,67 @@ impl Session {
                 &self.typed_here(),
             ),
         }
+    }
+
+    /// `request` with its question recomputed for `gate` (see [`Self::risk_summary`]).
+    fn with_risk_question(
+        &self,
+        mut request: ConfirmRequest,
+        gate: &Action,
+        stage: Stage,
+    ) -> ConfirmRequest {
+        request.rows = self.risk_question(gate, stage, request.category);
+        request.summary = render_rows(&request.rows);
+        request
+    }
+
+    /// `request` stating what it asks about, as decided here: the part of the action
+    /// (`stage`), its kind, and the target resolved on the current screen — the element the
+    /// gate judged (`action_target`, its raw node, its frame) and the point the planned
+    /// commands touch (`exec`, see `planned_point`), with the screen's digest. A `tap_point`
+    /// states its point only (the core resolves a point to an element in more than one
+    /// way). No target for an action without one on this screen.
+    fn stamped(
+        &self,
+        mut request: ConfirmRequest,
+        gate: &Action,
+        stage: Stage,
+        exec: &Exec,
+    ) -> ConfirmRequest {
+        request.stage = match stage {
+            Stage::Whole => ConfirmStage::Whole,
+            Stage::Typing => ConfirmStage::Typing,
+            Stage::Return => ConfirmStage::Return,
+        };
+        request.verb = verb_of(gate);
+        let screen = &self.current.screen;
+        let digest = self.current.digest.to_hex();
+        request.target = match gate {
+            Action::TapPoint { .. } => planned_point(exec).map(|p| ConfirmTarget {
+                point: Some(p),
+                digest,
+                ..ConfirmTarget::default()
+            }),
+            Action::Tap { .. }
+            | Action::LongPress { .. }
+            | Action::Type { .. }
+            | Action::Clear { .. }
+            | Action::Scroll { .. }
+            | Action::Swipe { .. } => action_target(gate, screen).map(|e| ConfirmTarget {
+                element: Some(e.index),
+                node: self.target_source(gate),
+                frame: Some(e.frame),
+                point: if stage == Stage::Return {
+                    None
+                } else {
+                    planned_point(exec)
+                },
+                digest,
+            }),
+            _ => None,
+        }
+        .map(Box::new);
+        request
     }
 
     /// Finishes when a budget is exhausted.
@@ -2359,11 +2431,11 @@ impl Session {
             check,
         };
         let risk = match decision {
-            Decision::Confirm(mut request) => {
+            Decision::Confirm(request) => {
                 // Describe the placeholder, never the substituted personal value, from the
                 // profile-masked screen (see `risk_summary`).
-                request.summary = self.risk_summary(&gate, stage, request.category);
-                Some(request)
+                let request = self.with_risk_question(request, &gate, stage);
+                Some(self.stamped(request, &gate, stage, &pending.exec))
             }
             Decision::Allow | Decision::Deny(_) => None,
         };
@@ -2405,17 +2477,18 @@ impl Session {
                     "{what} on the home screen is not a known app, and new apps are not allowed"
                 )));
             }
-            let request = ConfirmRequest {
-                category: RiskCategory::FirstUse,
-                summary: clean(
+            let request = ConfirmRequest::one_line(
+                RiskCategory::FirstUse,
+                QuestionRowKind::Action,
+                clean(
                     &format!(
                         "Let Jarvis open {what} from the home screen? It is not one of the known apps."
                     ),
                     200,
                 ),
-                app: screen.app_bundle_id.clone(),
-                phone_only: false,
-            };
+                screen.app_bundle_id.clone(),
+            );
+            let request = self.stamped(request, &gate, stage, &pending.exec);
             return Ok(Prepared::FirstUse {
                 pending,
                 app: None,
@@ -2433,6 +2506,7 @@ impl Session {
                 )));
             }
             let request = first_use_request(&app, self.app_name(&app).as_deref());
+            let request = self.stamped(request, &gate, stage, &pending.exec);
             return Ok(Prepared::FirstUse {
                 pending,
                 app: Some(app),
@@ -2771,9 +2845,9 @@ impl Session {
                 return self.decide(now);
             }
             Decision::Allow => None,
-            Decision::Confirm(mut request) => {
-                request.summary = self.risk_summary(&gate, Stage::Return, request.category);
-                Some(request)
+            Decision::Confirm(request) => {
+                let request = self.with_risk_question(request, &gate, Stage::Return);
+                Some(self.stamped(request, &gate, Stage::Return, &pending.exec))
             }
         };
         // Return in the home screen's search field opens the top result: asked like an
@@ -2787,18 +2861,19 @@ impl Session {
                 self.record_failure(&pending, &msg);
                 return self.decide(now);
             }
-            let request = ConfirmRequest {
-                category: RiskCategory::FirstUse,
-                summary: clean(
+            let request = ConfirmRequest::one_line(
+                RiskCategory::FirstUse,
+                QuestionRowKind::Action,
+                clean(
                     &format!(
                         "Let Jarvis open the top search result for \"{}\" from the home screen? It is not one of the known apps.",
                         clean(&text, 60)
                     ),
                     200,
                 ),
-                app: self.current.screen.app_bundle_id.clone(),
-                phone_only: false,
-            };
+                self.current.screen.app_bundle_id.clone(),
+            );
+            let request = self.stamped(request, &gate, Stage::Return, &pending.exec);
             let action = pending.action.clone();
             let source = pending.source;
             let prepared = Ok(Prepared::FirstUse {

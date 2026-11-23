@@ -513,7 +513,13 @@ pub enum Event {
 }
 
 /// A confirmation the owner must give before a risky action.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+///
+/// `summary` is the canonical text; `rows` are its parts in reading order (the summary is
+/// exactly their `text`s joined), written by the core's question composer, so a sheet can
+/// lay them out without reading the text. `stage`, `verb` and `target` say what is asked and
+/// where, as the core resolved it when it asked. `rows` and `target` default to empty, so
+/// a request built from text alone (no rows: show `summary`) still compiles.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ConfirmRequest {
     pub category: RiskCategory,
     pub summary: String,
@@ -521,6 +527,97 @@ pub struct ConfirmRequest {
     /// Only the owner on the phone may approve it, whatever its category (thirteenth
     /// review: a presumed submit, or a link the owner did not give).
     pub phone_only: bool,
+    #[uniffi(default = [])]
+    pub rows: Vec<QuestionRow>,
+    pub stage: ConfirmStage,
+    pub verb: ConfirmVerb,
+    #[uniffi(default = None)]
+    pub target: Option<ConfirmTarget>,
+}
+
+/// One part of a confirmation's question.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct QuestionRow {
+    /// The part's family (how a sheet styles it).
+    pub kind: QuestionRowKind,
+    /// The part's exact text in the summary, separators included.
+    pub text: String,
+    /// The text without the separator that joins it to the part before (`. `, `, `): what a
+    /// sheet shows as a row. Computed by the core; ignored on the way back in.
+    pub display: String,
+}
+
+/// Which family a part of a question belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum QuestionRowKind {
+    /// What Jarvis will do (or a whole one-line question).
+    Action,
+    /// A warning Jarvis writes (the unverified-screen warning).
+    Warning,
+    /// What the action sends (`Sends:`, `The form holds:`, `which sends …`).
+    Sends,
+    /// `Typed:` what Jarvis typed.
+    Typed,
+    /// `Amounts on screen:`.
+    Amount,
+    /// `To/Account:` the form's recipient fields with the values sent.
+    Recipient,
+    /// `Recipient not verified`.
+    NotVerified,
+    /// `Screen says:` recipient lines from the page's own text (not verified by the gate).
+    ScreenSays,
+    /// `Selected:`.
+    Selected,
+    /// `Fields:`.
+    Fields,
+    /// How the facts were read.
+    Note,
+    /// Anything else.
+    Other,
+}
+
+/// Which part of an action a confirmation asks about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ConfirmStage {
+    /// The action as a whole.
+    Whole,
+    /// The typing part of a `type … submit`.
+    Typing,
+    /// The Return part of a `type … submit` (the text is typed).
+    Return,
+}
+
+/// What kind of action a confirmation asks about (`other` when not stated).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ConfirmVerb {
+    Other,
+    Tap,
+    LongPress,
+    Type,
+    Clear,
+    Scroll,
+    Swipe,
+    TapPoint,
+    PressHome,
+    OpenApp,
+    OpenUrl,
+    CallTool,
+}
+
+/// The element (or point) an asked action acts on, as the core resolved it on the screen it
+/// evaluated (`digest`, lower-case hex of that screen's digest).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ConfirmTarget {
+    /// The element's index on the compact screen.
+    pub element: Option<u32>,
+    /// The element's raw node (index in the digest's order).
+    pub node: Option<u32>,
+    /// The element's frame in screen points.
+    pub frame: Option<Rect>,
+    /// The point the action touches, in screen points, when computed.
+    pub point: Option<Point>,
+    /// The evaluated screen's digest.
+    pub digest: String,
 }
 
 /// How a session ended.

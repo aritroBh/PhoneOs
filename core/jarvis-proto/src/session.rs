@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::action::Action;
+use crate::geometry::{Point, Rect};
 use crate::model::{ModelOutput, ModelRequest};
 use crate::policy::RiskCategory;
 use crate::runner::{RunnerCommand, RunnerResult};
@@ -152,11 +153,20 @@ impl TimedEvent {
 }
 
 /// What the core asks the user to approve.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The question is stated once, as data: `rows` are the question's parts in reading order,
+/// written by the code that writes the question (`jarvis_safety`), and `summary` is exactly
+/// those rows rendered ([`render_rows`]), so the two cannot disagree. `stage`, `verb` and
+/// `target` say what is asked and where, as the core resolved it when it decided to ask;
+/// nothing downstream needs to read them out of the text. A request decoded without the
+/// structured fields (older JSON) has no rows, `Whole`, `Other` and no target: a display
+/// then shows `summary` and marks nothing.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ConfirmRequest {
     /// Why confirmation is needed.
     pub category: RiskCategory,
-    /// Human-readable description of the pending action.
+    /// Human-readable description of the pending action: [`render_rows`] of `rows` when
+    /// there are rows. The canonical text (approval re-checks and remote control use it).
     pub summary: String,
     /// Bundle id (or tool app) the action affects.
     pub app: String,
@@ -168,6 +178,176 @@ pub struct ConfirmRequest {
     /// `false`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub phone_only: bool,
+    /// The question's parts in reading order; empty for a request built from text alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<QuestionRow>,
+    /// Which part of the action is asked (a `type … submit` is asked in two parts).
+    #[serde(default)]
+    pub stage: ConfirmStage,
+    /// What kind of action is asked.
+    #[serde(default)]
+    pub verb: ConfirmVerb,
+    /// The element (or point) on the evaluated screen the action acts on, as the core
+    /// resolved it when it asked; `None` for an action without a screen target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<Box<ConfirmTarget>>,
+}
+
+impl ConfirmRequest {
+    /// A request whose question is `rows` (its summary is [`render_rows`] of them).
+    pub fn from_rows(category: RiskCategory, rows: Vec<QuestionRow>, app: String) -> Self {
+        Self {
+            category,
+            summary: render_rows(&rows),
+            app,
+            rows,
+            ..Self::default()
+        }
+    }
+
+    /// A request whose question is one line of kind `kind`.
+    pub fn one_line(
+        category: RiskCategory,
+        kind: QuestionRowKind,
+        text: String,
+        app: String,
+    ) -> Self {
+        Self::from_rows(category, vec![QuestionRow { kind, text }], app)
+    }
+}
+
+/// Which family a part of a question belongs to (eleventh review's headings, markers and
+/// keywords: `jarvis_safety::QUESTION_HEADINGS`, `QUESTION_MARKERS`, `QUESTION_KEYWORDS`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionRowKind {
+    /// What Jarvis will do: the action line (verb, target, `next to`/`under`, app, screen
+    /// title), or a whole one-line question (first use, tools, …).
+    #[default]
+    Action,
+    /// A warning Jarvis writes (the unverified-screen warning on runner text).
+    Warning,
+    /// What the action sends: `Sends:`, `The form holds:`, `, which sends the field's whole
+    /// content`, `, which submits the form. Sends:`.
+    Sends,
+    /// `Typed:` what Jarvis typed (the Return part of a `type … submit`).
+    Typed,
+    /// `Amounts on screen:` the amounts and totals the screen shows.
+    Amount,
+    /// `To/Account:` the form's recipient-named fields with their values (what is sent).
+    Recipient,
+    /// `Recipient not verified`: a sending action whose form names no recipient.
+    NotVerified,
+    /// `Screen says:` recipient lines read from the page's text (page provenance: shown, not
+    /// verified by the gate).
+    ScreenSays,
+    /// `Selected:` the selected options.
+    Selected,
+    /// `Fields:` the screen's other fields.
+    Fields,
+    /// A note on how the facts were read (`Facts from the 250 nearest elements`).
+    Note,
+    /// Anything else.
+    Other,
+}
+
+/// One part of a question: its family and its exact text, separators included (a part
+/// after the first usually starts with `. ` or `, `). The question is the parts' texts
+/// joined with nothing between them ([`render_rows`]); [`QuestionRow::display_text`] is the
+/// part without its separators, for a display that lays the parts out as rows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionRow {
+    /// The part's family.
+    pub kind: QuestionRowKind,
+    /// The part's exact text in the summary.
+    pub text: String,
+}
+
+impl QuestionRow {
+    /// The text without the separator that joins it to the part before (`. `, `, `) and
+    /// without surrounding spaces.
+    pub fn display_text(&self) -> &str {
+        let t = self.text.trim();
+        let t = t
+            .strip_prefix(". ")
+            .or_else(|| t.strip_prefix(", "))
+            .unwrap_or(t);
+        t.trim()
+    }
+}
+
+/// The question's text: the rows' texts joined with nothing between them.
+pub fn render_rows(rows: &[QuestionRow]) -> String {
+    rows.iter().map(|r| r.text.as_str()).collect()
+}
+
+/// Which part of an action a confirmation asks about. A `type … submit` is gated in two
+/// parts: the typing, then (once the text checks out on the screen) Return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfirmStage {
+    /// The action as a whole (everything but the parts of a `type … submit`).
+    #[default]
+    Whole,
+    /// The typing part of a `type … submit`.
+    Typing,
+    /// The Return part of a `type … submit` (the text is already typed).
+    Return,
+}
+
+/// What kind of action a confirmation asks about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfirmVerb {
+    /// Not stated (a request built from text alone) or an action without a kind below.
+    #[default]
+    Other,
+    /// `tap`.
+    Tap,
+    /// `long_press`.
+    LongPress,
+    /// `type` (its Return part is [`ConfirmStage::Return`]).
+    Type,
+    /// `clear`.
+    Clear,
+    /// `scroll`.
+    Scroll,
+    /// `swipe`.
+    Swipe,
+    /// `tap_point`.
+    TapPoint,
+    /// `press_home`.
+    PressHome,
+    /// `open_app`.
+    OpenApp,
+    /// `open_url`.
+    OpenUrl,
+    /// `call_tool`.
+    CallTool,
+}
+
+/// The element (or point) an asked action acts on, as the core resolved it on the screen it
+/// evaluated. A display marks it only on exactly that screen (`digest`) and only when the
+/// element there still has this frame.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ConfirmTarget {
+    /// The element's index on the compact screen (as in the prompt), when the action names
+    /// or resolves to one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element: Option<u32>,
+    /// The element's raw node (its index in the screen digest's order), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<u32>,
+    /// The element's frame, in screen points.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<Rect>,
+    /// The point the action will touch, in screen points, when the core computed one (a
+    /// tap's or long press's planned point, a `tap_point`'s point).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub point: Option<Point>,
+    /// The evaluated screen's digest (lower-case hex of `jarvis_observe::screen_digest`).
+    #[serde(default)]
+    pub digest: String,
 }
 
 /// Final status of a task.

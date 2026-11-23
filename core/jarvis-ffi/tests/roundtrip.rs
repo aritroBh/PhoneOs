@@ -599,6 +599,7 @@ fn all_effects() -> Vec<p::Effect> {
             summary: "Pay $12".to_owned(),
             app: "com.example.shop".to_owned(),
             phone_only: false,
+            ..Default::default()
         }),
         p::Effect::AskUser {
             question: "Which one?".to_owned(),
@@ -923,6 +924,7 @@ fn every_effect_outcome_and_confirm_round_trips() {
         summary: "Delete 3 photos".to_owned(),
         app: "com.apple.mobileslideshow".to_owned(),
         phone_only: false,
+        ..Default::default()
     });
     // Thirteenth review: the phone-only flag crosses the FFI.
     rt::<_, f::ConfirmRequest>(p::ConfirmRequest {
@@ -930,7 +932,85 @@ fn every_effect_outcome_and_confirm_round_trips() {
         summary: "Tap \"Continue\" in Forum. Sends: Note: \"hi\"".to_owned(),
         app: "com.example.forum".to_owned(),
         phone_only: true,
+        ..Default::default()
     });
+}
+
+#[test]
+fn a_structured_question_round_trips_with_every_kind_stage_and_verb() {
+    use p::QuestionRowKind as K;
+    let kinds = [
+        K::Action,
+        K::Warning,
+        K::Sends,
+        K::Typed,
+        K::Amount,
+        K::Recipient,
+        K::NotVerified,
+        K::ScreenSays,
+        K::Selected,
+        K::Fields,
+        K::Note,
+        K::Other,
+    ];
+    let rows: Vec<p::QuestionRow> = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, k)| p::QuestionRow {
+            kind: *k,
+            text: if i == 0 {
+                "Tap 'Pay' in Shop".to_owned()
+            } else {
+                format!(". part {i}")
+            },
+        })
+        .collect();
+    let verbs = [
+        p::ConfirmVerb::Other,
+        p::ConfirmVerb::Tap,
+        p::ConfirmVerb::LongPress,
+        p::ConfirmVerb::Type,
+        p::ConfirmVerb::Clear,
+        p::ConfirmVerb::Scroll,
+        p::ConfirmVerb::Swipe,
+        p::ConfirmVerb::TapPoint,
+        p::ConfirmVerb::PressHome,
+        p::ConfirmVerb::OpenApp,
+        p::ConfirmVerb::OpenUrl,
+        p::ConfirmVerb::CallTool,
+    ];
+    let stages = [
+        p::ConfirmStage::Whole,
+        p::ConfirmStage::Typing,
+        p::ConfirmStage::Return,
+    ];
+    for (i, verb) in verbs.into_iter().enumerate() {
+        let mut q = p::ConfirmRequest::from_rows(
+            p::RiskCategory::Payment,
+            rows.clone(),
+            "com.example.shop".to_owned(),
+        );
+        q.verb = verb;
+        q.stage = stages[i % stages.len()];
+        q.target = (i % 2 == 0).then(|| {
+            Box::new(p::ConfirmTarget {
+                element: Some(3),
+                node: Some(9),
+                frame: Some(p::Rect::new(1.0, 2.0, 3.0, 4.0)),
+                point: Some(p::Point::new(2.5, 4.0)),
+                digest: "0f".repeat(32),
+            })
+        });
+        rt::<_, f::ConfirmRequest>(q.clone());
+        let ffi: f::ConfirmRequest = q.clone().into();
+        // The display text is the row without its separator.
+        assert_eq!(ffi.rows[0].display, "Tap 'Pay' in Shop");
+        assert_eq!(ffi.rows[1].display, "part 1");
+        assert_eq!(
+            ffi.rows.iter().map(|r| r.text.as_str()).collect::<String>(),
+            ffi.summary
+        );
+    }
 }
 
 #[test]

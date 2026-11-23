@@ -50,16 +50,16 @@
 //! # Approval picture
 //!
 //! On `ConfirmationPending` the reducer computes [`Reducer::approval`] (see
-//! [`crate::approval`]): the evaluated observation's key, its screen and the proposed
-//! action's target on it. Cleared by the next update of any other kind; never part of the
-//! timeline.
+//! [`crate::approval`]): the evaluated observation's key, its screen and the target the
+//! core resolved and stated in the request (`ConfirmRequest::target`). Cleared by the next
+//! update of any other kind; never part of the timeline.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use jarvis_proto as p;
 
-use crate::approval::{self, ApprovalTarget, Evaluated, TypeStage};
+use crate::approval::{self, ApprovalTarget, Evaluated};
 use crate::geometry::{ViewerPoint, ViewerRect, ViewerSize};
 use crate::privacy::{self, LabelCache};
 use crate::prompt::{prompt_elements, PromptElement};
@@ -217,8 +217,6 @@ pub struct Reducer {
     /// The current runner-text screen's parsed tree: approval lookups only (its wireframe was
     /// made when it was observed).
     text_root: Option<p::UiNode>,
-    /// The action the core proposed last (`Progress::last_action`).
-    last_action: Option<p::Action>,
     /// The approval sheet's picture of the confirmation pending now (not in the timeline).
     approval: Option<ApprovalTarget>,
 }
@@ -248,7 +246,6 @@ impl Reducer {
             labels: LabelCache::new(),
             evaluated: None,
             text_root: None,
-            last_action: None,
             approval: None,
         }
     }
@@ -274,18 +271,15 @@ impl Reducer {
             return None;
         };
         screen.root = root;
-        // Which part of a `type … submit` is asked: from the core's own question only, never
-        // from the step history (a typing refused by a lock refunds its step number, so the
-        // next proposal's typing question would pass for the Return part; preview review).
-        let stage = TypeStage::of(self.last_action.as_ref(), &request);
+        // What is asked and where: as the core stated it in the request (its stage, kind and
+        // resolved target), never from the question's text or the step history.
         let (mark, caption, accessibility_label) = approval::mark_for(
             &Evaluated {
                 screen: &screen,
                 typed,
                 sight: &self.sight,
-                stage,
             },
-            self.last_action.as_ref(),
+            &request,
             &mut self.labels,
         );
         let size = ViewerSize::from(screen.size);
@@ -425,7 +419,6 @@ impl Reducer {
                         steps_touched = true;
                     }
                 }
-                self.last_action.clone_from(&progress.last_action);
                 if let Some(action) = progress.last_action {
                     if self.resolve_pending(action) {
                         steps_touched = true;

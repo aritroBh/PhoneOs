@@ -18,27 +18,74 @@ use jarvis_viewer::{
     ApprovalMark, FrameKey, Reducer, ScreenSource, Update, ViewerRect, MAX_ELEMENTS,
 };
 
+/// A request stating nothing structured (as decoded from older JSON): no stage, kind or
+/// target.
 fn request(summary: &str) -> p::ConfirmRequest {
     p::ConfirmRequest {
         category: p::RiskCategory::Payment,
         summary: summary.to_owned(),
         app: "com.example.shop".to_owned(),
         phone_only: false,
+        ..Default::default()
+    }
+}
+
+/// The request the core sends when it asks about `action` (part `stage`) on the shop screen:
+/// its kind and the target the session resolves (`Session::stamped`: the element the action
+/// names, or the focused field for `type` without one, its frame, the screen's digest; a
+/// `tap_point`'s point in screen points).
+fn request_for(action: &p::Action, stage: p::ConfirmStage, summary: &str) -> p::ConfirmRequest {
+    let screen = shop_screen();
+    let compact = jarvis_observe::compact(&screen);
+    let digest = jarvis_observe::screen_digest(&screen).to_hex();
+    let index = match action {
+        p::Action::Type { element: None, .. } => compact
+            .elements
+            .iter()
+            .find(|e| e.focused && e.role.is_text_input())
+            .map(|e| e.index),
+        p::Action::TapPoint { .. } => None,
+        other => other.element(),
+    };
+    let target = match action {
+        p::Action::TapPoint { x, y } => Some(p::ConfirmTarget {
+            point: Some(p::Point::new(x * PHONE.width, y * PHONE.height)),
+            digest,
+            ..p::ConfirmTarget::default()
+        }),
+        _ => index.map(|i| p::ConfirmTarget {
+            element: Some(i),
+            frame: compact.get(i).map(|e| e.frame),
+            digest,
+            ..p::ConfirmTarget::default()
+        }),
+    }
+    .map(Box::new);
+    p::ConfirmRequest {
+        stage,
+        verb: jarvis_safety::verb_of(action),
+        target,
+        ..request(summary)
     }
 }
 
 /// The updates of a confirmation of `action` (the core counted the step when it proposed it).
 fn ask(run: &mut Run, action: p::Action, summary: &str) {
+    ask_part(run, action, p::ConfirmStage::Whole, summary);
+}
+
+/// [`ask`] for part `stage` of the action.
+fn ask_part(run: &mut Run, action: p::Action, stage: p::ConfirmStage, summary: &str) {
     run.number += 1;
-    let effect = p::Effect::Confirm(request(summary));
+    let request = request_for(&action, stage, summary);
+    let effect = p::Effect::Confirm(request.clone());
     run.updates.push(Update::Effect {
         effect,
         number: run.number,
     });
     run.updates
         .push(Update::Progress(progress(run.core_step + 1, Some(action))));
-    run.updates
-        .push(Update::ConfirmationPending(request(summary)));
+    run.updates.push(Update::ConfirmationPending(request));
 }
 
 fn shop_tree() -> p::UiNode {
@@ -131,7 +178,16 @@ fn a_tap_outlines_its_element_on_the_evaluated_observation() {
         }
     );
     assert_eq!(Some(a.screen_id), r.timeline().current_screen_id);
-    assert_eq!(a.request, request("Pay $512.40"));
+    assert_eq!(
+        a.request,
+        request_for(
+            &p::Action::Tap {
+                element: index_of("Pay $512.40"),
+            },
+            p::ConfirmStage::Whole,
+            "Pay $512.40"
+        )
+    );
     let frame = rect(16.0, 700.0, 361.0, 50.0);
     assert_eq!(
         a.mark,
@@ -239,18 +295,18 @@ fn the_return_part_of_a_submit_outlines_nothing() {
         text: "hi".to_owned(),
         submit: true,
     };
-    // Preview review: the part asked is read from the core's question (its summary's head),
-    // never from the step history, so these use the core's own summary heads (they were "s").
+    // The part asked is stated by the core in the request (`stage`), never read from the
+    // question's text or the step history.
     let typing = "Type \"hi\" into TextField \"Note\" in Shop";
     let ret = "Press Return in TextField \"Note\" in Shop";
     // The typing part: the field.
-    ask(&mut run, submit.clone(), typing);
+    ask_part(&mut run, submit.clone(), p::ConfirmStage::Typing, typing);
     assert!(matches!(
         reduce(&run).approval().unwrap().mark,
         ApprovalMark::Outline { .. }
     ));
     run.add(Update::EffectCompleted {
-        effect: p::Effect::Confirm(request(typing)),
+        effect: p::Effect::Confirm(request_for(&submit, p::ConfirmStage::Typing, typing)),
         event: p::Event::UserDecision { approved: true },
     });
     // The typing runs, the screen is looked at again, then Return is asked.
@@ -258,22 +314,24 @@ fn the_return_part_of_a_submit_outlines_nothing() {
     run.observe(observed_shop());
     let after_typing = run.clone();
     run.number += 1;
+    let asked_return = request_for(&submit, p::ConfirmStage::Return, ret);
     run.add(Update::Effect {
-        effect: p::Effect::Confirm(request(ret)),
+        effect: p::Effect::Confirm(asked_return.clone()),
         number: run.number,
     });
     run.add(Update::Progress(progress(
         run.core_step,
         Some(submit.clone()),
     )));
-    run.add(Update::ConfirmationPending(request(ret)));
+    run.add(Update::ConfirmationPending(asked_return));
     let a = reduce(&run).approval().cloned().unwrap();
     assert_eq!(a.mark, ApprovalMark::Nothing);
     assert!(a.caption.contains("Return"), "{}", a.caption);
     assert!(a.accessibility_label.starts_with("Nothing outlined."));
 
-    // A question whose part cannot be told (here the one-letter summary the old test used,
-    // or a first-use question): nothing marked, the neutral caption, no specific claim.
+    // A question that states no part, kind or target (decoded from older JSON; here the
+    // one-letter summary the old test used, or a first-use question): nothing marked, the
+    // neutral caption, no specific claim.
     for summary in ["s", "Let Jarvis open the top search result for \"hi\"?"] {
         let mut run = after_typing.clone();
         run.number += 1;
@@ -294,11 +352,11 @@ fn the_return_part_of_a_submit_outlines_nothing() {
         );
         assert!(!a.caption.contains("Return") && !a.caption.contains("will type"));
     }
-    // Behind the runner-text warning the core's head is still read.
+    // Behind the runner-text warning the stated part still decides.
     let mut run = Run::new("t");
     run.observe(observed_shop());
     let warned = format!("{}{typing}", jarvis_safety::UNVERIFIED_SCREEN_WARNING);
-    ask(&mut run, submit, &warned);
+    ask_part(&mut run, submit, p::ConfirmStage::Typing, &warned);
     assert!(matches!(
         reduce(&run).approval().unwrap().mark,
         ApprovalMark::Outline { .. }
@@ -476,4 +534,80 @@ fn the_picture_is_never_encoded() {
     assert!(!text.contains("from when Jarvis asked"), "{text}");
     assert!(!text.contains("\"mark\""), "{text}");
     assert!(!text.contains("observation"), "{text}");
+}
+
+/// The updates of a confirmation `request` of `action`, sent as is.
+fn ask_request(run: &mut Run, action: p::Action, request: p::ConfirmRequest) {
+    run.number += 1;
+    run.updates.push(Update::Effect {
+        effect: p::Effect::Confirm(request.clone()),
+        number: run.number,
+    });
+    run.updates
+        .push(Update::Progress(progress(run.core_step + 1, Some(action))));
+    run.updates.push(Update::ConfirmationPending(request));
+}
+
+/// What is asked is stated by the core (`stage`, `verb`, `target`); a target that does not
+/// match the evaluated screen marks nothing, with the neutral caption.
+#[test]
+fn a_target_that_does_not_match_the_evaluated_screen_marks_nothing() {
+    let tap = p::Action::Tap {
+        element: index_of("Pay $512.40"),
+    };
+    let base = request_for(&tap, p::ConfirmStage::Whole, "Pay");
+    let edit = |f: &dyn Fn(&mut p::ConfirmTarget)| {
+        let mut r = base.clone();
+        if let Some(t) = r.target.as_mut() {
+            f(t);
+        }
+        r
+    };
+    let mut no_target = base.clone();
+    no_target.target = None;
+    for request in [
+        edit(&|t| t.digest = "00".repeat(32)),
+        edit(&|t| t.digest.clear()),
+        edit(&|t| t.frame = Some(rect(16.0, 650.0, 361.0, 50.0))),
+        edit(&|t| t.frame = None),
+        no_target,
+    ] {
+        let mut run = Run::new("t");
+        run.observe(observed_shop());
+        ask_request(&mut run, tap.clone(), request.clone());
+        let a = reduce(&run).approval().cloned().unwrap();
+        assert_eq!(a.mark, ApprovalMark::Nothing, "{request:?}");
+        assert_eq!(
+            a.caption,
+            "Jarvis could not mark the target; read the question."
+        );
+    }
+    // The same request with its target intact outlines the button.
+    let mut run = Run::new("t");
+    run.observe(observed_shop());
+    ask_request(&mut run, tap, base);
+    assert!(matches!(
+        reduce(&run).approval().unwrap().mark,
+        ApprovalMark::Outline { .. }
+    ));
+}
+
+/// The step history decides nothing: a typing request outlines the field the core named,
+/// whatever the last proposed action says.
+#[test]
+fn the_request_not_the_last_action_decides_the_mark() {
+    let typing = p::Action::Type {
+        element: Some(index_of("Note")),
+        text: "hi".to_owned(),
+        submit: true,
+    };
+    let request = request_for(&typing, p::ConfirmStage::Typing, "Type");
+    let mut run = Run::new("t");
+    run.observe(observed_shop());
+    ask_request(&mut run, p::Action::PressHome, request);
+    let a = reduce(&run).approval().cloned().unwrap();
+    let ApprovalMark::Outline { frame, .. } = a.mark else {
+        panic!("{a:?}")
+    };
+    assert_eq!(frame, rect(16.0, 200.0, 361.0, 44.0).into());
 }

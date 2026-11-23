@@ -442,6 +442,10 @@ fn the_full_protocol_through_the_ffi_objects() {
                 summary: "Send \"I'm late\" to Sam".into(),
                 app: "com.apple.MobileSMS".into(),
                 phone_only: false,
+                rows: Vec::new(),
+                stage: ConfirmStage::Whole,
+                verb: ConfirmVerb::Other,
+                target: None,
             },
         },
     ));
@@ -502,6 +506,10 @@ fn the_full_protocol_through_the_ffi_objects() {
                 summary: "Pay 20 EUR".into(),
                 app: "com.example.bank".into(),
                 phone_only: false,
+                rows: Vec::new(),
+                stage: ConfirmStage::Whole,
+                verb: ConfirmVerb::Other,
+                target: None,
             },
         },
     ));

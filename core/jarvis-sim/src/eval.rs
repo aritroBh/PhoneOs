@@ -248,6 +248,10 @@ pub struct TaskResult {
     /// The judged run in full: prompts, replies and effects (JSON output only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcript: Option<TaskTranscript>,
+    /// Every confirmation the judged run asked, in order (not serialised: the transcript's
+    /// effects carry their text).
+    #[serde(skip)]
+    pub requests: Vec<jarvis_proto::ConfirmRequest>,
 }
 
 /// One task's run, for reading failures afterwards.
@@ -447,6 +451,11 @@ pub fn run_one(
                 .collect(),
             response_format: model.response_format(),
         }),
+        requests: report
+            .confirmations
+            .iter()
+            .map(|c| c.request.clone())
+            .collect(),
     })
 }
 

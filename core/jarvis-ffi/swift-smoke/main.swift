@@ -219,6 +219,24 @@ check("session 1 asked first use of Settings, then the setting",
           && first.confirms.last?.category == .systemSetting
           && first.confirms.last?.app == settingsBundle,
       "\(first.confirms)")
+check("every question is its rows joined, each row's display text set",
+      !first.confirms.isEmpty && first.confirms.allSatisfy { q in
+          !q.rows.isEmpty && q.rows.map { $0.text }.joined() == q.summary
+              && q.rows.allSatisfy { !$0.display.isEmpty && !$0.display.hasPrefix(". ") }
+      },
+      "\(first.confirms)")
+if let setting = first.confirms.last {
+    // The runner-text screen's warning is its own row; the setting tap states its target.
+    check("the setting question starts with its warning row and states a tap on a target",
+          setting.rows.first?.kind == .warning && setting.rows.contains { $0.kind == .action }
+              && setting.stage == .whole && setting.verb == .tap
+              && setting.target?.element != nil && setting.target?.frame != nil
+              && setting.target?.digest.count == 64,
+          "\(setting)")
+}
+check("a request built from text alone has no rows and no target",
+      ConfirmRequest(category: .delete, summary: "Delete", app: "a", phoneOnly: false, stage: .whole, verb: .other).rows.isEmpty
+          && ConfirmRequest(category: .delete, summary: "Delete", app: "a", phoneOnly: false, stage: .whole, verb: .other).target == nil)
 check("session 1 left the switch off", first.page == .wifiOff)
 let memory = jsonObject(first.memoryJson)
 check("finish() returned memory JSON that parses", memory != nil, String(first.memoryJson.prefix(200)))

@@ -21,6 +21,7 @@ fn req() -> p::ConfirmRequest {
         summary: "x".to_owned(),
         app: "com.apple.mobilemail".to_owned(),
         phone_only: false,
+        ..Default::default()
     }
 }
 

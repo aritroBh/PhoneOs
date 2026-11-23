@@ -148,6 +148,12 @@ impl ScreenDigest {
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
+
+    /// The digest as 64 lower-case hex digits (how a confirmation names the screen it was
+    /// asked on, `jarvis_proto::ConfirmTarget::digest`).
+    pub fn to_hex(&self) -> String {
+        self.0.iter().map(|b| format!("{b:02x}")).collect()
+    }
 }
 
 impl fmt::Debug for ScreenDigest {

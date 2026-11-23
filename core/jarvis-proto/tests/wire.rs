@@ -261,6 +261,7 @@ fn all_effects() -> Vec<Effect> {
             summary: "Send \"See you at 7\" to Alex".into(),
             app: "com.apple.MobileSMS".into(),
             phone_only: false,
+            ..Default::default()
         }),
         Effect::AskUser {
             question: "Which account?".into(),

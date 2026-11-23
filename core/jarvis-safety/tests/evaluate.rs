@@ -116,8 +116,13 @@ fn payment_tap_needs_confirmation_with_summary() {
                 .to_owned(),
             app: "com.amazon.Amazon".to_owned(),
             phone_only: false,
+            // The question's parts (their join is the summary, checked below).
+            rows: req.rows.clone(),
+            verb: jarvis_proto::ConfirmVerb::Tap,
+            ..ConfirmRequest::default()
         }
     );
+    assert_eq!(jarvis_proto::render_rows(&req.rows), req.summary);
 }
 
 #[test]

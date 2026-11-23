@@ -909,6 +909,10 @@ fn every_local_event_converts_and_progress_text_is_built_from_the_redacted_scree
                 summary: "Delete".into(),
                 app: "a".into(),
                 phone_only: false,
+                rows: Vec::new(),
+                stage: f::ConfirmStage::Whole,
+                verb: f::ConfirmVerb::Other,
+                target: None,
             },
         },
         f::LocalEvent::ConfirmResolved {

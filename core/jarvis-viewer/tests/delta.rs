@@ -649,6 +649,7 @@ fn the_approval_picture_never_enters_a_delta_or_a_snapshot() {
         summary: "SUMMARY-ONLY-ON-THE-SHEET".to_owned(),
         app: "com.example.shop".to_owned(),
         phone_only: false,
+        ..Default::default()
     };
     let mut run = Run::new("pay");
     run.observe(observed_full(
