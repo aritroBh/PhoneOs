@@ -31,17 +31,32 @@ final class SystemAppAgentTests: QATestCase {
         request.summary.contains("what it read there could be passed on here")
     }
 
+    /// The places a flow question names as read (between "Jarvis has read " and
+    /// " in this task;"), or nil when the request is not a flow question.
+    static func flowSources(_ request: ConfirmRequest) -> [String]? {
+        guard isFlowQuestion(request), let start = request.summary.range(of: "Jarvis has read "),
+              let end = request.summary.range(of: " in this task;", range: start.upperBound..<request.summary.endIndex)
+        else { return nil }
+        let list = request.summary[start.upperBound..<end.lowerBound]
+        return list.replacingOccurrences(of: " and ", with: ", ").components(separatedBy: ", ")
+    }
+
     /// Seventeenth review: a flow question whose sources are only Safari's own pages read
     /// before the link's page loaded — Safari's start page while the address is not yet a
     /// host ("Safari" with "web content in Safari", or "Safari (site not readable)").
     static func isSafariLoadingFlow(_ request: ConfirmRequest) -> Bool {
-        guard isFlowQuestion(request), let start = request.summary.range(of: "Jarvis has read "),
-              let end = request.summary.range(of: " in this task;", range: start.upperBound..<request.summary.endIndex)
-        else { return false }
-        let list = request.summary[start.upperBound..<end.lowerBound]
-        let names = list.replacingOccurrences(of: " and ", with: ", ").components(separatedBy: ", ")
+        guard let names = flowSources(request) else { return false }
         let own: Set<String> = ["Safari", "web content in Safari", "Safari (site not readable)"]
         return !names.isEmpty && names.allSatisfy { own.contains($0) }
+    }
+
+    /// Run 118: Safari's first-launch tip came up over the page after the page had been read.
+    /// The tip is Safari's own sheet (no web view, no address bar), so closing it is an input
+    /// into Safari after reading the site, and the core asks: a flow question for the tip's
+    /// "Close" naming exactly the page's own host.
+    static func isSafariTipDismissFlow(_ request: ConfirmRequest, host: String) -> Bool {
+        guard let names = flowSources(request) else { return false }
+        return request.summary.hasPrefix("Tap \"Close\"") && names == [host]
     }
 
     private let settingsId = "com.apple.Preferences"
@@ -190,6 +205,7 @@ final class SystemAppAgentTests: QATestCase {
         // button) and the one question for the submit, which must name the button and what is
         // sent. Anything else is declined, and fails the run with that reason.
         let safari = safariId
+        let host = URLComponents(url: server.baseURL, resolvingAgainstBaseURL: false)?.host ?? "127.0.0.1"
         let owner = QAOwner(transcript: run.transcript, decide: { request in
             if request.category == .firstUse { return true }
             // Home screen rule (sixteenth review): the run starts on the home screen, but its
@@ -200,6 +216,8 @@ final class SystemAppAgentTests: QATestCase {
             // page asks one flow question naming only Safari's own page, approved here. Any
             // other flow question is declined.
             if SystemAppAgentTests.isSafariLoadingFlow(request) { return request.app == safari }
+            // And the first-launch tip's "Close", when the tip comes up after the page was read.
+            if SystemAppAgentTests.isSafariTipDismissFlow(request, host: host) { return request.app == safari }
             return request.app == safari
                 && request.summary.contains("Send form")
                 && request.summary.contains("Ada Lovelace")
@@ -211,10 +229,14 @@ final class SystemAppAgentTests: QATestCase {
         // (fifteenth review, R1), and this owner would decline that too.
         let task = "Open \(url) in Safari and fill in the contact form with the name Ada Lovelace and the email ada@example.com"
         let outcome = try await run.run(task: task, model: model, owner: owner, firstUseApproval: true, driveOwnApp: false)
-        // At most one flow question, and only about Safari's own page read while loading.
+        // Flow questions: at most one about Safari's own page read while loading, at most one
+        // for closing Safari's first-launch tip after the page was read; no other.
         let flowQuestions = owner.confirms.filter(SystemAppAgentTests.isFlowQuestion)
-        XCTAssertTrue(flowQuestions.allSatisfy(SystemAppAgentTests.isSafariLoadingFlow), "a flow question named another place: \(owner.confirms)")
-        XCTAssertLessThanOrEqual(flowQuestions.count, 1, "\(owner.confirms)")
+        let loading = flowQuestions.filter(SystemAppAgentTests.isSafariLoadingFlow)
+        let tip = flowQuestions.filter { SystemAppAgentTests.isSafariTipDismissFlow($0, host: host) }
+        XCTAssertEqual(loading.count + tip.count, flowQuestions.count, "a flow question named another place: \(owner.confirms)")
+        XCTAssertLessThanOrEqual(loading.count, 1, "\(owner.confirms)")
+        XCTAssertLessThanOrEqual(tip.count, 1, "\(owner.confirms)")
         XCTAssertFalse(owner.confirms.contains { $0.summary.contains("This text is not from your request") }, "the owner's own words were asked: \(owner.confirms)")
         XCTAssertFalse(owner.confirms.contains { $0.summary.contains("Open a link") }, "a link the owner gave was asked: \(owner.confirms)")
         let submitted = await server.waitForSubmission(timeout: .seconds(5))
