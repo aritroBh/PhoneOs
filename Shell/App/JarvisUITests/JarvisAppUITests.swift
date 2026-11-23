@@ -187,10 +187,14 @@ final class JarvisAppUITests: QATestCase {
 
         let approve = app.buttons["confirm.approve"]
         require(approve, "the run after Just do what I said (first-use confirmation)", timeout: 20, in: app)
-        XCTAssertFalse(app.descendants(matching: .any)["run.skill"].firstMatch.exists,
-                       "Just do what I said ran with a skill")
+        // Approve first: in UI-test mode an unanswered sheet is withdrawn after 30 s and
+        // counts as declined. On a slow simulator (run 115) the whole-tree query below took
+        // 31 s while the sheet was up, and the run ended "the owner declined" before the tap.
         approve.tap()
         require(app.staticTexts["run.status"], "the run result", timeout: 30, in: app)
+        // The run screen keeps its header after the run ends; a skill's chip would be in it.
+        XCTAssertFalse(app.descendants(matching: .any)["run.skill"].firstMatch.exists,
+                       "Just do what I said ran with a skill")
     }
 
     /// A skills file with an entry the core cannot load: the banner lists the problems.

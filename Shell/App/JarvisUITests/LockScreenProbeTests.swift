@@ -29,6 +29,10 @@ final class LockScreenProbeTests: QATestCase {
     @MainActor
     func testLockScreenProbe() async throws {
         continueAfterFailure = true
+        // The probe records what the lock screen does and how long each step takes; on a slow
+        // simulator (run 115) its body took 160 s (one locked open-URL call: 56 s) and the
+        // teardown 26 s, past the default 180 s allowance, though every step succeeded.
+        executionTimeAllowance = 300
 
         // 1. Baseline.
         let app = launchPlayground()
