@@ -556,7 +556,9 @@ fn sweep(
     let (subset, scale, note): (Vec<&Element>, f64, Option<String>) = if full <= cfg.sweep_cap_s {
         (controls.to_vec(), 1.0, None)
     } else {
-        let want = ((1.0 / per.max(1e-9)) as usize).clamp(8, controls.len());
+        // `probe` is at most 8 and at most the number of controls: with fewer than 8 controls
+        // on a slow run `clamp(8, len)` had min > max and panicked.
+        let want = ((1.0 / per.max(1e-9)) as usize).clamp(probe, controls.len());
         let stride = controls.len().div_ceil(want);
         let sample: Vec<&Element> = controls.iter().step_by(stride).copied().collect();
         let scale = controls.len() as f64 / sample.len() as f64;

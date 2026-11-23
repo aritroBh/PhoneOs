@@ -60,6 +60,99 @@ pub(crate) fn fold_fullwidth(c: char) -> char {
     }
 }
 
+/// First code points (digit zero) of the Unicode decimal-digit blocks (category Nd) other
+/// than ASCII, each block holding ten consecutive digits. The mathematical digits
+/// (U+1D7CE..U+1D7FF) are five such blocks.
+const DIGIT_ZEROS: &[u32] = &[
+    0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6, 0x0D66,
+    0x0DE6, 0x0E50, 0x0ED0, 0x0F20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0, 0x1A80, 0x1A90,
+    0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0, 0xAA50, 0xABF0, 0xFF10,
+    0x104A0, 0x10D30, 0x10D40, 0x11066, 0x110F0, 0x11136, 0x111D0, 0x112F0, 0x11450, 0x114D0,
+    0x11650, 0x116C0, 0x11730, 0x118E0, 0x11950, 0x11BF0, 0x11C50, 0x11D50, 0x11DA0, 0x11F50,
+    0x16130, 0x16A60, 0x16AC0, 0x16B50, 0x16D70, 0x1CCF0, 0x1D7CE, 0x1D7D8, 0x1D7E2, 0x1D7EC,
+    0x1D7F6, 0x1E140, 0x1E2F0, 0x1E4F0, 0x1E5F1, 0x1E950, 0x1FBF0,
+];
+
+/// Sixteenth review (F4/F8): the value of a decimal digit in any script — ASCII, Arabic-Indic,
+/// Extended Arabic-Indic, Devanagari, Bengali, Thai, fullwidth, mathematical … (Unicode
+/// category Nd) — or `None`. The one digit test of the gate: every rule that asks "is this a
+/// digit" or reads a number goes through it ([`fold_digit`], [`fold_digits`], [`is_digit`]).
+pub(crate) fn digit_value(c: char) -> Option<u32> {
+    if c.is_ascii() {
+        return c.to_digit(10);
+    }
+    let u = u32::from(c);
+    DIGIT_ZEROS
+        .iter()
+        .find(|&&z| u >= z && u - z < 10)
+        .map(|&z| u - z)
+}
+
+/// Whether `c` is a decimal digit of any script ([`digit_value`]).
+pub(crate) fn is_digit(c: char) -> bool {
+    digit_value(c).is_some()
+}
+
+/// `c`, or the ASCII digit with its value when it is a decimal digit of another script (the
+/// Arabic decimal separator U+066B and thousands separator U+066C become `.` and `,`).
+pub(crate) fn fold_digit(c: char) -> char {
+    if c.is_ascii() {
+        return c;
+    }
+    // The Arabic decimal and thousands separators beside Arabic-Indic digits.
+    match c {
+        '\u{066B}' => return '.',
+        '\u{066C}' => return ',',
+        _ => {}
+    }
+    digit_value(c)
+        .and_then(|v| char::from_digit(v, 10))
+        .unwrap_or(c)
+}
+
+/// `s` with every decimal digit folded to ASCII ([`fold_digit`]); borrowed when `s` is ASCII
+/// (the common case costs one scan).
+pub(crate) fn fold_digits(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.is_ascii() {
+        std::borrow::Cow::Borrowed(s)
+    } else {
+        std::borrow::Cow::Owned(s.chars().map(fold_digit).collect())
+    }
+}
+
+/// Unicode category Sc (currency symbols), any script: the dollar and cent signs, the Latin-1
+/// currency signs, the Armenian, Arabic, N'Ko, Bengali, Gujarati, Tamil, Thai, Khmer and
+/// Currency Symbols blocks, and the other code points of the category, as plain or
+/// fullwidth forms.
+pub(crate) fn is_sc(c: char) -> bool {
+    matches!(
+        u32::from(fold_fullwidth(c)),
+        0x24 | 0xA2..=0xA5
+            | 0x58F
+            | 0x60B
+            | 0x7FE
+            | 0x7FF
+            | 0x9F2
+            | 0x9F3
+            | 0x9FB
+            | 0xAF1
+            | 0xBF9
+            | 0xE3F
+            | 0x17DB
+            | 0x20A0..=0x20CF
+            | 0xA838
+            | 0xFDFC
+            | 0xFE69
+            | 0xFFE0
+            | 0xFFE1
+            | 0xFFE5
+            | 0xFFE6
+            | 0x11FDD..=0x11FE0
+            | 0x1E2FF
+            | 0x1ECB0
+    )
+}
+
 /// Maps a letter from Unicode's styled alphabets (mathematical bold/italic/script...,
 /// circled letters) back to ASCII.
 fn fold_styled(c: char) -> char {
@@ -149,7 +242,7 @@ fn fold_confusable(c: char) -> char {
 /// Folds one character for look-alike-insensitive comparison: fullwidth and styled forms
 /// to ASCII, lowercase, then Cyrillic/Greek/accented look-alikes to ASCII letters.
 pub(crate) fn fold_char(c: char) -> char {
-    let c = fold_styled(fold_fullwidth(c));
+    let c = fold_digit(fold_styled(fold_fullwidth(c)));
     if let Some(a) = fold_upper_confusable(c) {
         return a;
     }
@@ -468,7 +561,7 @@ pub fn label_is_foreign(label: &str) -> bool {
 }
 
 /// True for apostrophe-like characters, which are deleted inside words (`don't` → `dont`).
-fn is_apostrophe(c: char) -> bool {
+pub(crate) fn is_apostrophe(c: char) -> bool {
     matches!(c, '\'' | '’' | '‘' | 'ʼ' | '`' | '´')
 }
 
@@ -536,7 +629,7 @@ pub(crate) fn tokens(text: &str) -> Vec<String> {
             prev_class = 0;
             continue;
         }
-        let c = fold_styled(fold_fullwidth(raw));
+        let c = fold_digit(fold_styled(fold_fullwidth(raw)));
         if !c.is_alphanumeric() {
             if !cur.is_empty() {
                 out.push(std::mem::take(&mut cur));
@@ -572,37 +665,38 @@ pub(crate) fn tokens(text: &str) -> Vec<String> {
 
 /// True for currency symbols that mark a price.
 pub(crate) fn is_currency_symbol(c: char) -> bool {
-    matches!(
-        fold_fullwidth(c),
-        '$' | '€'
-            | '£'
-            | '¥'
-            | '₹'
-            | '₩'
-            | '₽'
-            | '₺'
-            | '₪'
-            | '฿'
-            | '₫'
-            | '₱'
-            | '₴'
-            | '₦'
-            | '¢'
-            | '₣'
-            | '₡'
-            | '₲'
-            | '₵'
-            | '₸'
-            | '₼'
-            | '₾'
-            | '₿'
-            | '￥'
-            | '￡'
-            | '円'
-            | '元'
-            | '원'
-            | '₨'
-    )
+    is_sc(c)
+        || matches!(
+            fold_fullwidth(c),
+            '$' | '€'
+                | '£'
+                | '¥'
+                | '₹'
+                | '₩'
+                | '₽'
+                | '₺'
+                | '₪'
+                | '฿'
+                | '₫'
+                | '₱'
+                | '₴'
+                | '₦'
+                | '¢'
+                | '₣'
+                | '₡'
+                | '₲'
+                | '₵'
+                | '₸'
+                | '₼'
+                | '₾'
+                | '₿'
+                | '￥'
+                | '￡'
+                | '円'
+                | '元'
+                | '원'
+                | '₨'
+        )
 }
 
 /// ISO currency codes and words that turn an adjacent number into a price.
@@ -661,7 +755,7 @@ pub(crate) fn has_money_in(text: &str, toks: Option<&[String]>) -> bool {
     let chars: Vec<char> = text
         .chars()
         .filter(|c| !is_invisible(*c))
-        .map(fold_fullwidth)
+        .map(|c| fold_digit(fold_fullwidth(c)))
         .collect();
     for (i, c) in chars.iter().enumerate() {
         if !is_currency_symbol(*c) {
@@ -712,6 +806,60 @@ mod tests {
         assert_eq!(tokens("Ѕеnd"), ["send"]);
         assert_eq!(tokens("𝐏𝐚𝐲"), ["pay"]);
         assert_eq!(tokens("SEND"), ["send"]);
+    }
+
+    #[test]
+    fn digits_of_every_script_fold_to_ascii() {
+        // Arabic-Indic, Extended Arabic-Indic (Persian), Devanagari, Bengali, Thai,
+        // fullwidth, mathematical, N'Ko, Myanmar, Khmer.
+        for (written, folded) in [
+            ("\u{0665}\u{0660}\u{0660}", "500"),
+            ("\u{06F5}\u{06F0}\u{06F0}", "500"),
+            ("\u{096B}\u{0966}\u{0966}", "500"),
+            ("\u{09EB}\u{09E6}\u{09E6}", "500"),
+            ("\u{0E55}\u{0E50}\u{0E50}", "500"),
+            ("\u{FF15}\u{FF10}\u{FF10}", "500"),
+            ("\u{1D7D9}\u{1D7D8}", "10"),
+            ("\u{07C5}\u{07C0}", "50"),
+            ("\u{1045}\u{1040}", "50"),
+            ("\u{17E5}\u{17E0}", "50"),
+            ("500", "500"),
+        ] {
+            assert_eq!(fold_digits(written), folded, "{written:?}");
+            assert!(written.chars().all(is_digit), "{written:?}");
+        }
+        // Mixed scripts in one number fold digit by digit; the Arabic separators too.
+        assert_eq!(fold_digits("\u{0665}0\u{096B}"), "505");
+        assert_eq!(
+            fold_digits("\u{0665}\u{066C}\u{0660}\u{0660}\u{0660}\u{066B}\u{0665}"),
+            "5,000.5"
+        );
+        // Not digits: letters, other numerals, a superscript.
+        for c in [
+            'a', '\u{00B2}', '\u{2460}', '\u{2166}', '\u{4E94}', '.', ' ',
+        ] {
+            assert!(!is_digit(c), "{c:?}");
+            assert_eq!(fold_digit(c), c);
+        }
+        // Every block's ten digits are consecutive values.
+        for &z in DIGIT_ZEROS {
+            for v in 0..10u32 {
+                let c = char::from_u32(z + v).unwrap_or('x');
+                assert_eq!(digit_value(c), Some(v), "{c:?}");
+            }
+        }
+        // The folded forms are read as money.
+        for t in [
+            "\u{20B9}\u{096B},\u{0966}\u{0966}\u{0966}",
+            "\u{0665}\u{0660}\u{0660} $",
+            "\u{FF04}\u{FF15}\u{FF10}",
+            "$\u{0665}\u{0660}",
+            "\u{0E3F}\u{0E55}\u{0E50}",
+        ] {
+            assert!(has_money(t), "{t:?}");
+        }
+        assert!(tokens("\u{0665}\u{0660}\u{0660}") == ["500"]);
+        assert!(is_sc('\u{0E3F}') && is_sc('\u{20BF}') && is_sc('\u{FFE5}') && !is_sc('x'));
     }
 
     #[test]

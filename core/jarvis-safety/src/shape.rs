@@ -2,9 +2,9 @@
 //! value that names someone, the owner's own words. Each is decided by what the value *is*,
 //! never by what the page calls the field holding it.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
-use crate::text::{is_currency_symbol, CURRENCY_WORDS};
+use crate::text::{fold_digits, is_currency_symbol, CURRENCY_WORDS};
 use crate::validate::url_scheme;
 
 /// Schemes that make a link without `//` (`mailto:a@b`, `sms:+1555`): any of them, or a
@@ -95,41 +95,261 @@ pub(crate) fn link_shaped(text: &str) -> bool {
         || ((2..=63).contains(&n) && tld.chars().all(char::is_alphabetic))
 }
 
-/// The word tokens of the owner's-words rule: maximal alphanumeric runs, case-folded.
+/// The word tokens of number words and dates: maximal alphanumeric runs, case-folded.
 fn word_tokens(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(str::to_lowercase)
 }
 
-/// Most tokens of 1–2 letters (no digit) a text may hold unchecked ([`owner_words`]).
-pub(crate) const MAX_SHORT_TOKENS: usize = 3;
+/// Function words (sixteenth review, F5/F6) a model-written text may use although the owner
+/// did not write them: each at most once per text, at most [`MAX_FREE_WORDS`] of them in
+/// all, written in small letters or with the first letter capitalised ([`owner_words`]).
+/// Nothing else of one or two letters passes without the owner's text.
+pub(crate) const FUNCTION_WORDS: &[&str] = &[
+    "a", "an", "as", "at", "be", "by", "do", "go", "he", "hi", "i", "if", "in", "is", "it", "me",
+    "my", "no", "of", "ok", "on", "or", "so", "to", "up", "us", "we",
+];
 
-/// Fifteenth review (R1, the typing gate): whether model-written `text` is the owner's own
-/// words — the one test every egress of model text passes (typing, Return, a search, a
-/// link, a tool's string arguments). Every token of `text` (a maximal alphanumeric run,
-/// case-folded) occurs as a token of the owner's text (`owner`: the task's text typed or
-/// spoken on the phone, the running skill's instructions and the arguments captured on the
-/// phone, the profile values the owner did not mark sensitive), except tokens of 1–2
-/// letters without a digit, of which at most [`MAX_SHORT_TOKENS`] are let through; a
-/// token holding a digit is always compared, whatever its length (F7: `a4 b5` spells
-/// digits). Every link in `text` ([`links_in`]) must also be one the owner gave
-/// ([`crate::owner_gave_url`]). Empty `text` is the owner's (it sends nothing).
-pub(crate) fn owner_words(text: &str, owner: &[&str]) -> bool {
-    let mut own: Option<HashSet<String>> = None;
-    let mut short = 0usize;
-    for w in word_tokens(text) {
-        let digit = w.chars().any(|c| c.is_numeric());
-        if !digit && w.chars().count() <= 2 {
-            short += 1;
-            if short > MAX_SHORT_TOKENS {
-                return false;
+/// Most function words not written by the owner one text may hold.
+pub(crate) const MAX_FREE_WORDS: usize = 3;
+
+/// Most characters of sentence punctuation not written by the owner one text may hold.
+pub(crate) const MAX_FREE_PUNCT: usize = 3;
+
+/// Format characters the shared invisible set ([`crate::text::is_invisible`]) does not list:
+/// Arabic number signs and marks, the Syriac abbreviation mark, Kaithi and Brahmi number
+/// joiners, Egyptian hieroglyph format controls.
+fn format_char(c: char) -> bool {
+    crate::text::is_invisible(c)
+        || matches!(
+            u32::from(c),
+            0x0600..=0x0605
+                | 0x06DD
+                | 0x070F
+                | 0x0890
+                | 0x0891
+                | 0x08E2
+                | 0x110BD
+                | 0x110CD
+                | 0x13430..=0x1343F
+        )
+}
+
+/// One piece of a whitespace-separated run: an alphanumeric token (as written, digits of any
+/// script folded to ASCII, an apostrophe between two alphanumerics dropped) or a run of
+/// other characters.
+enum Piece {
+    Word(String),
+    Sym(String),
+}
+
+/// Splits one run (no whitespace) into [`Piece`]s.
+fn pieces_of_run(run: &str) -> Vec<Piece> {
+    let chars: Vec<char> = run.chars().map(crate::text::fold_digit).collect();
+    let mut out: Vec<Piece> = Vec::new();
+    for (i, &c) in chars.iter().enumerate() {
+        if c.is_alphanumeric() {
+            match out.last_mut() {
+                Some(Piece::Word(w)) => w.push(c),
+                _ => out.push(Piece::Word(c.to_string())),
             }
-            continue;
+        } else if crate::text::is_apostrophe(c)
+            && matches!(out.last(), Some(Piece::Word(_)))
+            && chars.get(i + 1).is_some_and(|n| n.is_alphanumeric())
+        {
+            // `don't`, `O'Brien`: one word.
+        } else {
+            match out.last_mut() {
+                Some(Piece::Sym(w)) => w.push(c),
+                _ => out.push(Piece::Sym(c.to_string())),
+            }
         }
-        let own = own.get_or_insert_with(|| owner.iter().flat_map(|o| word_tokens(o)).collect());
-        if !own.contains(&w) {
-            return false;
+    }
+    out
+}
+
+/// Whether `c` separates runs of a model-written text: space, tab, newline, carriage return.
+/// Any other whitespace (no-break space, ideographic space, line separator …) makes a text
+/// not the owner's.
+fn run_break(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r')
+}
+
+/// `lower` with its first letter capitalised.
+fn capitalised(lower: &str) -> String {
+    let mut it = lower.chars();
+    match it.next() {
+        Some(f) => f.to_uppercase().chain(it).collect(),
+        None => String::new(),
+    }
+}
+
+/// The owner's tokens (lowercase key → how often written, the spellings written) and symbol
+/// runs (→ how often written), summed over the owner's texts.
+#[derive(Default)]
+struct OwnerText {
+    words: HashMap<String, (usize, Vec<String>)>,
+    symbols: HashMap<String, usize>,
+}
+
+impl OwnerText {
+    fn new(owner: &[&str]) -> Self {
+        let mut me = Self::default();
+        for text in owner {
+            for run in text.split(char::is_whitespace).filter(|r| !r.is_empty()) {
+                for piece in pieces_of_run(run) {
+                    match piece {
+                        Piece::Word(w) => {
+                            let e = me.words.entry(w.to_lowercase()).or_default();
+                            e.0 += 1;
+                            if !e.1.contains(&w) {
+                                e.1.push(w);
+                            }
+                        }
+                        Piece::Sym(y) => *me.symbols.entry(y).or_default() += 1,
+                    }
+                }
+            }
+        }
+        me
+    }
+}
+
+/// Where a symbol run sits in its whitespace-separated run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Place {
+    Alone,
+    Leading,
+    Inner,
+    Trailing,
+}
+
+/// Whether `y` is ordinary sentence punctuation at `place`: at most 2 characters, leading
+/// `( [ " ' “ ‘ «`; trailing `. , ; : ! ? ) ] " ' ” ’ »`; inside a word only `-`; never alone.
+fn sentence_punctuation(y: &str, place: Place) -> bool {
+    let ok = |c: char| match place {
+        Place::Leading => matches!(
+            c,
+            '(' | '[' | '"' | '\'' | '\u{201C}' | '\u{2018}' | '\u{00AB}'
+        ),
+        Place::Trailing => matches!(
+            c,
+            '.' | ','
+                | ';'
+                | ':'
+                | '!'
+                | '?'
+                | ')'
+                | ']'
+                | '"'
+                | '\''
+                | '\u{201D}'
+                | '\u{2019}'
+                | '\u{00BB}'
+        ),
+        Place::Inner => c == '-',
+        Place::Alone => false,
+    };
+    y.chars().count() <= 2 && y.chars().all(ok)
+}
+
+/// Sixteenth review (F1, F5, F6), fifteenth review's R1 (the typing gate): whether
+/// model-written `text` is the owner's own words, the one test every egress of model text
+/// passes (typing, Return, a search, a link, a tool's arguments). `owner` is the task's text
+/// typed or spoken on the phone, the running skill's instructions and the arguments captured
+/// on the phone, and the profile values the owner did not mark sensitive.
+///
+/// **Every character of `text` is accounted for.** In order:
+/// 1. Invisible and format characters (zero-width, joiners, bidi marks, variation selectors,
+///    tag characters, controls but tab, newline and carriage return), and any whitespace
+///    other than space, tab, newline and carriage return, make it not the owner's.
+/// 2. `text` is split on those whitespace characters into runs. In a run, a *token* is a
+///    maximal run of letters and digits (digits of every script are folded to ASCII first;
+///    an apostrophe between two alphanumerics joins them: `O'Brien`, `don't`); a *symbol
+///    run* is a maximal run of the other characters.
+/// 3. A token passes when the owner wrote it, counted as a multiset: it is used at most as
+///    often as the owner wrote it (compared case-folded, summed over the owner texts), and
+///    is spelled as the owner spelled it, all in small letters, or with only its first
+///    letter capitalised (`SIGN`, `sIgN` are not the owner's unless the owner wrote them so).
+///    Otherwise it passes only as one of [`FUNCTION_WORDS`] (small letters or first letter
+///    capitalised), each at most once per text and at most [`MAX_FREE_WORDS`] in all. There is
+///    no other allowance: a token of one or two letters is compared like any other (`ei cj
+///    bd` spells digits).
+/// 4. A symbol run passes when the owner wrote the same contiguous run (counted as a
+///    multiset: `$`, `@`, `://`, the colon of `5:30`); otherwise only as ordinary sentence
+///    punctuation ([`sentence_punctuation`]: at most 2 characters, attached to a word, in an
+///    ordinary position), at most [`MAX_FREE_PUNCT`] characters of it in all. A run of
+///    symbols only (`$*@(!#`, Morse, emoji) passes only when the owner wrote that exact run.
+/// 5. Every link in `text` ([`links_in`]) is one the owner gave ([`crate::owner_gave_url`]).
+///
+/// The counts are per text. What a session types over several actions (an owner token and a
+/// few function words and marks per action) is covered by the session's cross-app flow rule
+/// (sixteenth review, Part A), not here; choosing and ordering the owner's own words stays a
+/// known gap, bounded by the counts. Empty `text` is the owner's (it sends nothing).
+pub(crate) fn owner_words(text: &str, owner: &[&str]) -> bool {
+    if text.is_empty() {
+        return true;
+    }
+    if text
+        .chars()
+        .any(|c| format_char(c) || (c.is_whitespace() && !run_break(c)))
+    {
+        return false;
+    }
+    let mut own: Option<OwnerText> = None;
+    let mut used: HashMap<String, usize> = HashMap::new();
+    let mut free_words: Vec<String> = Vec::new();
+    let mut free_punct = 0usize;
+    for run in text.split(run_break).filter(|r| !r.is_empty()) {
+        let pieces = pieces_of_run(run);
+        let has_word = pieces.iter().any(|p| matches!(p, Piece::Word(_)));
+        let last = pieces.len().saturating_sub(1);
+        for (k, piece) in pieces.into_iter().enumerate() {
+            let own = own.get_or_insert_with(|| OwnerText::new(owner));
+            match piece {
+                Piece::Word(w) => {
+                    let key = w.to_lowercase();
+                    let plain = w == key || w == capitalised(&key);
+                    let owned = own.words.get(&key).is_some_and(|(n, spellings)| {
+                        (plain || spellings.contains(&w))
+                            && used.get(&key).copied().unwrap_or(0) < *n
+                    });
+                    if owned {
+                        *used.entry(key).or_default() += 1;
+                    } else if plain
+                        && FUNCTION_WORDS.contains(&key.as_str())
+                        && free_words.len() < MAX_FREE_WORDS
+                        && !free_words.contains(&key)
+                    {
+                        free_words.push(key);
+                    } else {
+                        return false;
+                    }
+                }
+                Piece::Sym(y) => {
+                    let place = if !has_word {
+                        Place::Alone
+                    } else if k == 0 {
+                        Place::Leading
+                    } else if k == last {
+                        Place::Trailing
+                    } else {
+                        Place::Inner
+                    };
+                    let key = format!("\u{0}{y}");
+                    let n = own.symbols.get(&y).copied().unwrap_or(0);
+                    if used.get(&key).copied().unwrap_or(0) < n {
+                        *used.entry(key).or_default() += 1;
+                    } else if sentence_punctuation(&y, place)
+                        && free_punct + y.chars().count() <= MAX_FREE_PUNCT
+                    {
+                        free_punct += y.chars().count();
+                    } else {
+                        return false;
+                    }
+                }
+            }
         }
     }
     links_in(text)
@@ -262,6 +482,21 @@ fn currency_sign(c: char) -> bool {
         )
 }
 
+/// Sixteenth review (F4): a dotted abbreviation in a non-ASCII script (`د.إ`, `ر.س`, `դր.`):
+/// letters separated by dots, two to four letters, at least one not ASCII. The way Arabic
+/// and Armenian apps write a currency beside a number; ASCII ones (`a.m`, `e.g`) are not
+/// taken.
+pub(crate) fn dotted_abbreviation(w: &str) -> bool {
+    let w = w.trim_end_matches('.');
+    let letters = w.chars().filter(|c| c.is_alphabetic()).count();
+    (2..=4).contains(&letters)
+        && w.contains('.')
+        && w.chars().all(|c| c.is_alphabetic() || c == '.')
+        && !w.starts_with('.')
+        && !w.contains("..")
+        && !w.is_ascii()
+}
+
 /// Rule D: whether a piece next to a number is currency-like: it holds a currency sign
 /// (`$`, `US$`, `R$`, `€`); or it is a known currency word or code (`EUR`, `dollars`,
 /// `sats`); or it is 2–4 letters (any script; a trailing `.` dropped: `Fr.`) written all
@@ -270,6 +505,9 @@ fn currency_sign(c: char) -> bool {
 /// ("Code", "Room") is not.
 fn currency_like(piece: &str) -> bool {
     if piece.chars().any(currency_sign) {
+        return true;
+    }
+    if dotted_abbreviation(piece) {
         return true;
     }
     let dotted = piece.ends_with('.');
@@ -370,7 +608,8 @@ fn strip_value(v: &str) -> (String, bool) {
 /// attached or beside: `US$900`, `R$ 900,00`, `900 zł`, `CHF 900.-`, `50000 sats`, `0.5
 /// BTC`, `nine hundred dollars`) or a trailing `,-` / `.-` (`900,-`), and nothing else.
 pub(crate) fn money_shaped(v: &str) -> bool {
-    let (body, dashed) = strip_value(v);
+    let v = fold_digits(v);
+    let (body, dashed) = strip_value(&v);
     let ps = pieces(&body);
     let mut numbers = 0usize;
     let mut currency = dashed;
@@ -403,9 +642,41 @@ pub(crate) fn money_shaped(v: &str) -> bool {
     numbers == 1 && currency
 }
 
+/// Sixteenth review (F4): whether `v` is a number with one non-ASCII letter or symbol
+/// attached directly to it and nothing else (`Ξ0.5`, `0.5Ξ`, `₿2`): the shape of an amount in a
+/// currency the gate's lists do not know (ether, a new token or coin sign, a local symbol).
+/// Used only where a send or payment is judged ([`crate::evaluate`]'s read of the screen for
+/// money), never as money in general: one letter next to a number is also a unit (`5Ω`), which
+/// costs a question only on a screen that sends. A space or a second character is not this
+/// shape.
+pub(crate) fn symbol_amount(v: &str) -> bool {
+    let v = fold_digits(v);
+    let v = v.trim();
+    let mark = |c: char| {
+        !c.is_ascii()
+            && (c.is_alphabetic()
+                || is_currency_symbol(c)
+                || matches!(u32::from(c), 0x2100..=0x214F))
+    };
+    let number = |n: &str| {
+        n.chars().next().is_some_and(|c| c.is_ascii_digit())
+            && n.chars().last().is_some_and(|c| c.is_ascii_digit())
+            && n.chars()
+                .all(|c| c.is_ascii_digit() || matches!(c, ',' | '.' | '\''))
+    };
+    let mut it = v.chars();
+    let (first, last) = (it.next(), it.next_back());
+    match (first, last) {
+        (Some(f), _) if mark(f) => v.get(f.len_utf8()..).is_some_and(number),
+        (_, Some(l)) if mark(l) => v.get(..v.len() - l.len_utf8()).is_some_and(number),
+        _ => false,
+    }
+}
+
 /// Rule C: whether the gate cannot rule `v` out as an amount: a plain or grouped number
 /// (with or without a currency), money by its shape, or English number words alone.
 pub(crate) fn number_shaped(v: &str) -> bool {
+    let v = &*fold_digits(v);
     if crate::evaluate::money_or_number(v) || money_shaped(v) {
         return true;
     }
@@ -467,6 +738,7 @@ const DATE_WORDS: &[&str] = &[
 /// (`12/23/2026`, `2026-12-23`, `23.12.26`), or words that are all month or weekday names
 /// with numbers (`Nov 23, 2026`, `Monday 23rd`).
 pub(crate) fn date_shaped(v: &str) -> bool {
+    let v = fold_digits(v);
     let t = v.trim();
     if t.is_empty() {
         return false;
@@ -508,6 +780,7 @@ pub(crate) fn date_shaped(v: &str) -> bool {
 /// letter (a name, an email, a handle, an IBAN) or is a phone or account number (7–34
 /// digits, with only spaces, `-`, `.`, `(`, `)` and a leading `+` besides).
 pub(crate) fn names_someone(v: &str) -> bool {
+    let v = fold_digits(v);
     let t = v.trim();
     if t.is_empty() || date_shaped(t) {
         return false;

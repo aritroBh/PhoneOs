@@ -524,11 +524,30 @@ fn an_app_less_tool_follows_the_mode_not_the_foreground_rule() {
         name: "set_brightness".to_owned(),
         args: serde_json::json!({"level": 0.2}),
     };
+    // Sixteenth review (F7): the number is model text, so the owner's request states it.
+    let owner = ["Set the brightness to 0.2"];
+    let owned = |t: &ToolSpec| {
+        jarvis_safety::evaluate_owned(
+            &p,
+            &call,
+            &s,
+            Some(t),
+            jarvis_safety::ScreenSource::Typed,
+            None,
+            &[],
+            &owner,
+        )
+    };
     // A setting changed by a tool that acts in no app is not covered by Settings' trust.
     let t = tool("set_brightness", None, RiskCategory::SystemSetting);
     assert_eq!(
-        decision_category(&evaluate(&p, &call, &s, Some(&t))),
+        decision_category(&owned(&t)),
         Some(RiskCategory::SystemSetting)
+    );
+    // A number the owner did not state asks first, whatever the mode.
+    assert_eq!(
+        decision_category(&evaluate(&p, &call, &s, Some(&t))),
+        Some(RiskCategory::SendMessage)
     );
     // The same tool declared as acting in Settings is.
     let t = tool(
@@ -536,5 +555,5 @@ fn an_app_less_tool_follows_the_mode_not_the_foreground_rule() {
         Some("com.apple.Preferences"),
         RiskCategory::SystemSetting,
     );
-    assert_eq!(evaluate(&p, &call, &s, Some(&t)), Decision::Allow);
+    assert_eq!(owned(&t), Decision::Allow);
 }

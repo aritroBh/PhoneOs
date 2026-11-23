@@ -270,4 +270,43 @@ mod tests {
             ToolError::ArgsNotObject
         );
     }
+
+    /// Sixteenth review (F7): the gate reads a call's arguments as flat text and numbers;
+    /// `check_call` is what keeps them flat. Nested values, undeclared keys and values of the
+    /// wrong kind never reach it.
+    #[test]
+    fn only_declared_flat_parameters_pass() {
+        let tools = vec![tool("reminder_add", "Add", Tier::Native, None)];
+        for bad in [
+            json!({"title": {"a": "x"}}),
+            json!({"title": ["x"]}),
+            json!({"title": "x", "minutes": [5]}),
+            json!({"title": "x", "minutes": {"n": 5}}),
+        ] {
+            assert!(
+                matches!(
+                    check_call(&tools, "reminder_add", &bad),
+                    Err(ToolError::WrongType(..))
+                ),
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            check_call(
+                &tools,
+                "reminder_add",
+                &json!({"title": "x", "minutes": 5, "extra": {"k": 1}})
+            )
+            .unwrap_err(),
+            ToolError::Unexpected("extra".into())
+        );
+        // What passes holds the declared parameters only, each a string or a number.
+        let (_, args) = check_call(
+            &tools,
+            "reminder_add",
+            &json!({"title": 482913, "minutes": "5"}),
+        )
+        .unwrap();
+        assert_eq!(args, json!({"title": "482913", "minutes": 5}));
+    }
 }

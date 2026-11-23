@@ -296,9 +296,17 @@ pub fn egress_owned(action: &Action, owner: &[&str]) -> bool {
     match action {
         Action::Type { text, .. } => owner_words(text, owner),
         Action::CallTool { args, .. } => {
-            let mut strings = Vec::new();
-            crate::classify::tool_strings(args, &mut strings);
-            strings.iter().all(|s| owner_words(s, owner))
+            // Sixteenth review (F7): numbers are model text too; top-level keys are the
+            // declared parameter names (`check_call` rejects any other), nested keys ask.
+            let mut texts = Vec::new();
+            match args {
+                serde_json::Value::Object(m) => m
+                    .values()
+                    .for_each(|v| crate::classify::tool_texts(v, &mut texts)),
+                other => crate::classify::tool_texts(other, &mut texts),
+            }
+            texts.len() < crate::classify::MAX_TOOL_STRINGS
+                && texts.iter().all(|s| owner_words(s, owner))
         }
         _ => true,
     }
@@ -672,12 +680,13 @@ fn presumed_money(action: &Action, screen: &CompactScreen, tree: Option<&ScreenT
         money_value(v)
             || money_shaped(v)
             || (amount_like_name(name, None)
-                && (v.chars().any(|c| c.is_ascii_digit()) || has_number_word(v)))
+                && (v.chars().any(crate::text::is_digit) || has_number_word(v)))
     }) {
         return true;
     }
     let number = |v: &str| {
-        money_or_number(v)
+        let v = crate::text::fold_digits(v);
+        money_or_number(&v)
             && !(v.chars().all(|c| c.is_ascii_digit()) && v.len() >= MIN_PHONE_LIKE_DIGITS)
     };
     let payee = fields
@@ -888,7 +897,7 @@ fn screen_shows_money(screen: &CompactScreen) -> Option<bool> {
             if t.is_empty() {
                 continue;
             }
-            money |= money_shaped(t) || has_money(t);
+            money |= money_shaped(t) || has_money(t) || crate::shape::symbol_amount(t);
             context |= crate::text::tokens(t)
                 .iter()
                 .any(|w| PAYMENT_CONTEXT_WORDS.contains(&w.as_str()));
@@ -1557,6 +1566,7 @@ pub(crate) fn amount_ranges(chars: &[char]) -> Vec<(usize, usize)> {
     let mut out: Vec<(usize, usize)> = Vec::new();
     for (k, &(a, b)) in words.iter().enumerate() {
         let word = text(a, b);
+        let word = crate::text::fold_digits(&word);
         let range = if has_money(&word) {
             Some((a, b))
         } else if is_number(&word) {
@@ -1584,6 +1594,7 @@ pub(crate) fn amount_ranges(chars: &[char]) -> Vec<(usize, usize)> {
 
 /// A number as written in a label: digits with `,` or `.` separators.
 fn is_number(w: &str) -> bool {
+    let w = crate::text::fold_digits(w);
     w.chars().any(|c| c.is_ascii_digit())
         && w.chars()
             .all(|c| c.is_ascii_digit() || c == ',' || c == '.')
@@ -1591,6 +1602,17 @@ fn is_number(w: &str) -> bool {
 
 /// A currency word ("USD", "euros"), trailing punctuation ignored.
 fn is_currency_word(w: &str) -> bool {
+    // A lone currency sign beside a number ("5000 $") and a dotted abbreviation in another
+    // script ("5,000 د.إ") are currency words too (sixteenth review, F4).
+    let mut it = w.chars();
+    if let (Some(c), None) = (it.next(), it.next()) {
+        if crate::text::is_currency_symbol(c) {
+            return true;
+        }
+    }
+    if crate::shape::dotted_abbreviation(w) {
+        return true;
+    }
     let w = w
         .trim_matches(|c: char| !c.is_alphanumeric())
         .to_lowercase();
@@ -1602,6 +1624,7 @@ fn is_currency_word(w: &str) -> bool {
 /// separator is the decimal point when one or two digits follow it and every other
 /// separator groups thousands. `None` when it has no digits.
 pub(crate) fn amount_value(text: &str) -> Option<f64> {
+    let text = crate::text::fold_digits(text);
     let run: String = text
         .chars()
         .skip_while(|c| !c.is_ascii_digit())
@@ -2162,7 +2185,7 @@ fn lone_currency(text: &str) -> bool {
     let t = text.trim();
     !t.is_empty()
         && t.chars().count() <= 4
-        && !t.chars().any(|c| c.is_ascii_digit())
+        && !t.chars().any(crate::text::is_digit)
         && (has_money(&format!("{t}5")) || has_money(&format!("5 {t}")))
 }
 
@@ -2440,6 +2463,7 @@ const MIN_PLAIN_DIGIT_RUN: usize = 9;
 /// is not an amount (it may be an account number), nor are digit groups of a card number
 /// ("4111 1111 1111 1111").
 pub(crate) fn money_or_number(v: &str) -> bool {
+    let v = crate::text::fold_digits(v);
     let t = v.trim();
     let t = t
         .strip_prefix(['-', '+', '\u{2212}'])
@@ -3770,14 +3794,66 @@ pub fn question_noted(
 ) -> Vec<QuestionRow> {
     let mut notes = notes.to_vec();
     notes.extend(alert_rows(action, screen, tree));
-    with_source(source, |max| {
-        noted(max, &notes, |room| {
-            summarize_with(
-                action, screen, category, source, tree, typed, false, false, room,
-            )
+    amount_noted(screen, category, notes, |notes| {
+        with_source(source, |max| {
+            noted(max, notes, |room| {
+                summarize_with(
+                    action, screen, category, source, tree, typed, false, false, room,
+                )
+            })
         })
     })
 }
+
+/// Sixteenth review (F8): the question `build(notes)` composes, with [`MARK_AMOUNT_UNREAD`]
+/// after the action line when it is asked in a money context — a payment, or a send on a
+/// screen that shows money ([`screen_shows_money`]), or a payment on a screen with digits in
+/// a label — and found no amount to show: the owner
+/// is told the gate could not read the amount rather than shown a question that looks
+/// complete without one.
+fn amount_noted(
+    screen: &CompactScreen,
+    category: RiskCategory,
+    mut notes: Vec<QuestionRow>,
+    build: impl Fn(&[QuestionRow]) -> Vec<QuestionRow>,
+) -> Vec<QuestionRow> {
+    let mut rows = build(&notes);
+    // An amount the question shows anywhere (its rows, or the action line: "Pay $5") is read.
+    if rows
+        .iter()
+        .any(|r| r.kind == QuestionRowKind::Amount || has_money(&r.text))
+    {
+        return rows;
+    }
+    let money_context = match category {
+        RiskCategory::Payment => {
+            screen_shows_money(screen).is_some()
+                || screen
+                    .elements
+                    .iter()
+                    .any(|e| !is_secure_input(e) && e.label.chars().any(crate::text::is_digit))
+        }
+        RiskCategory::SendMessage | RiskCategory::PublicPost => {
+            screen_shows_money(screen).is_some()
+        }
+        _ => false,
+    };
+    if !money_context {
+        return rows;
+    }
+    let note = row(QuestionRowKind::Warning, &format!(". {MARK_AMOUNT_UNREAD}"));
+    // Within the bound the note goes in without composing the question again (a large page
+    // costs one composition); a question at the bound is composed again with room for it.
+    if render_rows(&rows).chars().count() + n_chars(&note.text) <= MAX_SUMMARY_CHARS {
+        insert_notes(&mut rows, std::slice::from_ref(&note));
+        return rows;
+    }
+    notes.push(note);
+    build(&notes)
+}
+
+/// The warning of a question in a money context that found no amount to show (F8).
+pub const MARK_AMOUNT_UNREAD: &str = "Amount not read";
 
 /// The rows `build(room)` composes within `max` less the notes, with the notes after the
 /// action line.
@@ -3791,7 +3867,13 @@ fn noted(
     }
     let need: usize = notes.iter().map(|r| n_chars(&r.text)).sum();
     let mut rows = build(max.saturating_sub(need).max(120));
-    // After the action line and what continues its sentence (`, which sends …`).
+    insert_notes(&mut rows, notes);
+    rows
+}
+
+/// `notes` into `rows` after the action line and what continues its sentence (`, which
+/// sends …`).
+fn insert_notes(rows: &mut Vec<QuestionRow>, notes: &[QuestionRow]) {
     let mut at = rows
         .iter()
         .position(|r| r.kind == QuestionRowKind::Action)
@@ -3802,7 +3884,6 @@ fn noted(
     for (k, n) in notes.iter().enumerate() {
         rows.insert(at + k, n.clone());
     }
-    rows
 }
 
 /// The summary of pressing Return in field `field` after the session typed `text` there (the
@@ -3855,11 +3936,13 @@ pub fn return_question_noted(
         text: text.to_owned(),
         submit: true,
     };
-    with_source(source, |max| {
-        noted(max, notes, |room| {
-            summarize_with(
-                &action, screen, category, source, tree, typed, true, false, room,
-            )
+    amount_noted(screen, category, notes.to_vec(), |notes| {
+        with_source(source, |max| {
+            noted(max, notes, |room| {
+                summarize_with(
+                    &action, screen, category, source, tree, typed, true, false, room,
+                )
+            })
         })
     })
 }
@@ -4660,8 +4743,7 @@ pub fn presumed_submit(
 /// [`presumed_submit`], knowing what the owner wrote for this task (`owner`, as for
 /// `evaluate_owned`): a search field is exempt from the presumption only while the text it
 /// submits (typed text, else its current value) is the owner's own words
-/// ([`owner_words`]: every token of 3 or more characters, and every digits-only token, is a
-/// token of the owner's text). Fourteenth review, Rule B: the field's name, which any page
+/// ([`owner_words`]: every character of it is accounted for by the owner's text). Fourteenth review, Rule B: the field's name, which any page
 /// controls, no longer exempts it alone.
 pub fn presumed_submit_owned(
     action: &Action,
@@ -5126,7 +5208,7 @@ fn fact_candidate(e: &Element) -> Candidate {
     if recipient_heading_alone(t) {
         return Candidate::HeadingAlone;
     }
-    if recipient_heading(t) || (t.chars().any(|c| c.is_ascii_digit()) && exact_total(t)) {
+    if recipient_heading(t) || (t.chars().any(crate::text::is_digit) && exact_total(t)) {
         return Candidate::Yes;
     }
     Candidate::No

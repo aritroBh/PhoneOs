@@ -38,7 +38,7 @@ pub(crate) const MAX_SCANNED_CONTROLS: usize = 32;
 pub(crate) const UNREADABLE_RISK: RiskCategory = RiskCategory::Unverified;
 
 /// Most string arguments of one tool call that are read.
-const MAX_TOOL_STRINGS: usize = 64;
+pub(crate) const MAX_TOOL_STRINGS: usize = 64;
 
 /// Classifies `action` on `screen`.
 ///
@@ -137,6 +137,29 @@ pub(crate) fn tool_strings(v: &serde_json::Value, out: &mut Vec<String>) {
     }
 }
 
+/// Sixteenth review (F7): every value of a tool call's arguments as text, for the owner's-words
+/// rule: strings as they are, numbers rendered as written (`482913`, `0.5`), and the keys of
+/// nested objects. Booleans carry one bit of a declared parameter and no text: they are not
+/// collected. Fail closed: no declared default exists to excuse a number, so a number the
+/// owner did not write asks. Depth-first, at most [`MAX_TOOL_STRINGS`] values.
+pub(crate) fn tool_texts(v: &serde_json::Value, out: &mut Vec<String>) {
+    if out.len() >= MAX_TOOL_STRINGS {
+        return;
+    }
+    match v {
+        serde_json::Value::String(s) => out.push(s.clone()),
+        serde_json::Value::Number(n) => out.push(n.to_string()),
+        serde_json::Value::Array(items) => items.iter().for_each(|i| tool_texts(i, out)),
+        serde_json::Value::Object(map) => {
+            for (k, i) in map {
+                out.push(k.clone());
+                tool_texts(i, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Whether `text` mentions a shortcut (`run_shortcut`, "Shortcuts").
 fn mentions_shortcut(text: &str) -> bool {
     tokens(&bounded(text))
@@ -192,7 +215,11 @@ fn matches_any(toks: &[String], table: &[Phrase]) -> bool {
 /// dashes, dots, parentheses or a leading `+`.
 fn has_phone_number(text: &str) -> bool {
     let mut digits = 0usize;
-    for c in text.chars().chain(std::iter::once('x')) {
+    for c in text
+        .chars()
+        .map(crate::text::fold_digit)
+        .chain(std::iter::once('x'))
+    {
         if c.is_ascii_digit() {
             digits += 1;
         } else if matches!(c, ' ' | '-' | '.' | '(' | ')' | '+' | '\u{a0}') {
