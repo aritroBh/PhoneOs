@@ -5,7 +5,7 @@
 //! | `tap` / `long_press` | `Tap` / `LongPress` at the element's tap point (below) |
 //! | `type` | `Tap` the element (at its tap point) when it is not focused, `TypeText` (skipped for empty text), `PressKey Return` when `submit` (the session carries a submit out in two gated parts and never plans one whole) |
 //! | `clear` | `Tap` near the field's trailing edge (caret to the end; another uncontested point of the field when that is covered), then `PressKey Delete` once per character of the current value (1..=[`MAX_CLEAR_DELETES`]); runners whose Delete clears the whole field just see a few extra no-op presses |
-//! | `scroll` / `swipe` | one `Swipe` from [`crate::gestures`]; on an element, its start point must be uncontested |
+//! | `scroll` / `swipe` | one `Swipe` from [`jarvis_safety::gestures::drag_gesture`]; on an element, its start point must be uncontested; element-less while the keyboard is up, above it; never starting or ending on the keyboard (fourteenth review, Rule H: refused, "dismiss the keyboard first") |
 //! | `tap_point` | `Tap` at the normalized point scaled by the screen size; never on the keyboard, and on a listed control only when nothing else contests it |
 //!
 //! **Tap points (sixth and seventh reviews).** Every point Jarvis taps or presses lands on
@@ -26,7 +26,9 @@ use std::collections::VecDeque;
 
 use jarvis_proto::{Action, AppInfo, CompactScreen, Key, Point, RunnerCommand};
 
-use jarvis_safety::gestures::{denormalize, gesture, GestureError, GestureKind};
+use jarvis_safety::gestures::{
+    denormalize, drag_gesture, GestureError, GestureKind, KEYBOARD_SHARE,
+};
 use jarvis_safety::{
     control_at, point_is_clear, tap_spot, Covered, CoveredBy, PointError, ScreenTree,
 };
@@ -210,8 +212,14 @@ pub(crate) fn plan(
                 Some(i) => Some(el(*i)?),
                 None => None,
             };
-            let g = gesture(kind, *direction, target.map(|t| t.frame), screen.size)
+            let g = drag_gesture(kind, *direction, target.map(|t| t.frame), screen)
                 .map_err(PlanError::Gesture)?;
+            // Fourteenth review (Rule H): no drag starts or ends on the keyboard (a key's
+            // drag enters or commits text). An element-less drag is planned above it; any
+            // drag that would still touch it is refused with a reason the model sees.
+            if on_keyboard(g.from, screen, tree) || on_keyboard(g.to, screen, tree) {
+                return Err(PlanError::Gesture(GestureError::OnKeyboard));
+            }
             // A drag on an element starts on it alone (the path is what the classifier read,
             // so the start is not moved).
             if let Some(t) = target {
@@ -241,6 +249,22 @@ pub(crate) fn plan(
         | Action::Fail { .. } => return Err(PlanError::NotUi),
     }
     Ok(q)
+}
+
+/// Whether `p` lies on the keyboard (fourteenth review, Rule H): inside a drawn keyboard
+/// node of the raw tree (its keys, its prediction bar), or, while a keyboard is up and the
+/// tree shows none, in the bottom [`KEYBOARD_SHARE`] of the screen.
+fn on_keyboard(p: Point, screen: &CompactScreen, tree: Option<&ScreenTree<'_>>) -> bool {
+    let mut drawn = tree
+        .map(|t| t.nodes)
+        .unwrap_or_default()
+        .iter()
+        .filter(|n| n.keyboard && !n.frame.is_empty())
+        .peekable();
+    if drawn.peek().is_some() {
+        return drawn.any(|n| n.frame.contains(p));
+    }
+    screen.keyboard_visible && p.y >= screen.size.height * (1.0 - KEYBOARD_SHARE)
 }
 
 /// Bundle id of the home screen.

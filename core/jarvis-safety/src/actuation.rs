@@ -19,6 +19,11 @@ use crate::gestures::GestureKind;
 pub(crate) enum Actuation<'a> {
     /// Presses this control: a tap, a long press, a `tap_point` resolved to an element.
     Press(&'a Element),
+    /// Fourteenth review (Rule E): presses something the screen does not list — a
+    /// `tap_point` that resolves to no element (a web canvas, a control without an
+    /// accessibility node). What it actuates is unknown: after typing, the whole screen is
+    /// its form.
+    PressUnknown,
     /// Drags this control: a swipe or scroll whose element reacts to the drag or is
     /// button-like, or that crosses a control reacting to it, or that starts on a
     /// button-like control (`classify::drag_target`).
@@ -46,7 +51,9 @@ pub(crate) fn actuation<'a>(action: &Action, screen: &'a CompactScreen) -> Actua
     };
     match action {
         Action::Tap { element } | Action::LongPress { element, .. } => press(screen.get(*element)),
-        Action::TapPoint { x, y } => press(tap_point(*x, *y, screen).1),
+        Action::TapPoint { x, y } => tap_point(*x, *y, screen)
+            .1
+            .map_or(Actuation::PressUnknown, Actuation::Press),
         Action::Swipe { direction, element } => drag(GestureKind::Swipe, *direction, element),
         Action::Scroll { direction, element } => drag(GestureKind::Scroll, *direction, element),
         Action::Type {

@@ -410,7 +410,26 @@ fn person(r: &mut Rng) -> (String, bool) {
 /// Whether a recipient field's value names someone (has a letter or digit): an empty or
 /// punctuation-only one is listed after the heading pairs.
 fn names_someone(value: &str) -> bool {
-    value.chars().any(char::is_alphanumeric)
+    // Fourteenth review (Rule G): a recipient field's value names someone when it is not a
+    // date and has a letter, or is a phone or account number (7–34 digits with only
+    // spaces, `-`, `.`, brackets and a leading `+` besides); "482913" names no one.
+    let t = value.trim();
+    let groups: Vec<&str> = t.split(['/', '-', '.']).collect();
+    let numeric_date = (2..=3).contains(&groups.len())
+        && groups
+            .iter()
+            .all(|g| (1..=4).contains(&g.len()) && g.chars().all(|c| c.is_ascii_digit()))
+        && (groups.len() == 3 || t.contains('/'));
+    if t.is_empty() || numeric_date {
+        return false;
+    }
+    let body = t.strip_prefix('+').unwrap_or(t);
+    let digits = body.chars().filter(char::is_ascii_digit).count();
+    t.chars().any(char::is_alphabetic)
+        || ((7..=34).contains(&digits)
+            && body
+                .chars()
+                .all(|c| c.is_ascii_digit() || matches!(c, ' ' | '-' | '.' | '(' | ')')))
 }
 
 /// Twelfth review: the public recipient-name rule (a closed list of heads, qualifiers and

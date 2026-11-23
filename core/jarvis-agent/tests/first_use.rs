@@ -474,7 +474,9 @@ fn tool_url_arguments_are_scheme_validated_before_the_call() {
     }];
     let r = run(
         c,
-        "Open the link",
+        // Fourteenth review (Rule A): a link in a tool argument passes the owner-gave-the-link
+        // gate like `open_url`; the owner gives it here (without it the call asks).
+        "Open the link https://example.com",
         MemoryStore::new(),
         Phone::still(home_screen()),
         Script::model(&[

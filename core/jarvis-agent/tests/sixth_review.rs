@@ -559,10 +559,26 @@ fn a_declined_return_leaves_the_text_and_tells_the_model() {
 /// A policy that does not ask for messages: Return is pressed at once after the typing.
 #[test]
 fn with_a_no_ask_policy_return_is_pressed_at_once() {
+    // Fourteenth review (Rule C): this Return is a message by its key ("send") that the gate
+    // raises to `Payment` by a guess (the "Gift $40.00" in its form); a guess is asked
+    // whatever the owner relaxed, so relaxing messages and payments now asks once, on the
+    // phone (deliberate change); a policy that confirms nothing at all still presses Return
+    // at once.
     let mut c = config();
     c.policy
         .confirm
         .retain(|k| !matches!(k, RiskCategory::SendMessage | RiskCategory::Payment));
+    let relaxed = run(
+        c,
+        "Tell Alice I'm on my way",
+        MemoryStore::new(),
+        chat_phone(),
+        Script::model(&[SEND, r#"{"action":"done","summary":"sent"}"#]).decisions(&[true]),
+    );
+    assert_eq!(relaxed.confirms.len(), 1, "{:?}", relaxed.confirms);
+    assert!(relaxed.confirms[0].phone_only, "{:?}", relaxed.confirms);
+    let mut c = config();
+    c.policy.confirm.clear();
     let run = run(
         c,
         "Tell Alice I'm on my way",

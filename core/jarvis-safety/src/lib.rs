@@ -50,6 +50,7 @@ mod hit;
 mod phrases;
 mod redact;
 mod sanitize;
+mod shape;
 mod text;
 mod validate;
 
@@ -63,14 +64,14 @@ pub use classify::classify;
 pub use confine::check_confinement;
 pub use evaluate::{
     classify_from, evaluate, evaluate_from, evaluate_owned, evaluate_with, first_use_app,
-    first_use_request, heading_like_name, owner_gave_url, presumed_submit, question_with,
-    recipient_field_name, return_question, return_summary, strong_recipient_field_name, summarize,
-    summary_for, summary_with, verb_of, Decision, ScreenSource, ScreenTree, TypedText,
-    QUESTION_HEADINGS, QUESTION_KEYWORDS, QUESTION_MARKERS, RECIPIENT_FIELD_HEADS,
-    RECIPIENT_FIELD_NEGATIVES, RECIPIENT_FIELD_QUALIFIERS, RECIPIENT_FIELD_STRONG_HEADS,
-    RECIPIENT_FIELD_WEAK_HEADS, UNVERIFIED_SCREEN_WARNING,
+    first_use_request, heading_like_name, owner_gave_url, presumed_submit, presumed_submit_owned,
+    question_with, recipient_field_name, return_question, return_summary,
+    strong_recipient_field_name, summarize, summary_for, summary_with, verb_of, Decision,
+    ScreenSource, ScreenTree, TypedText, QUESTION_HEADINGS, QUESTION_KEYWORDS, QUESTION_MARKERS,
+    RECIPIENT_FIELD_HEADS, RECIPIENT_FIELD_NEGATIVES, RECIPIENT_FIELD_QUALIFIERS,
+    RECIPIENT_FIELD_STRONG_HEADS, RECIPIENT_FIELD_WEAK_HEADS, UNVERIFIED_SCREEN_WARNING,
 };
-pub use gate::{changes_state, gate, gate_in, gate_on, Gate, TRUSTED_ALLOWED};
+pub use gate::{changes_state, gate, gate_in, gate_on, gate_owned, Gate, TRUSTED_ALLOWED};
 pub use hit::{
     control_at, point_is_clear, system_bar, takes_taps, tap_spot, tap_spot_under, Bar, Covered,
     CoveredBy, Edge, OccluderRule, PointError, GRID as TAP_GRID, OCCLUDER_RULE,

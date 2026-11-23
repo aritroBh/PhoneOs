@@ -172,7 +172,9 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     /// Ask the first time Jarvis acts in an app.
     public var firstUseApproval: Bool
     /// Categories the owner chose not to be asked about (removed from the core's default
-    /// confirmation list). Empty by default: the core asks for every risky category.
+    /// confirmation list). Empty by default: the core asks for every risky category. The core
+    /// still asks, on the phone only, about a request whose category it guessed (a presumed
+    /// submit, a send whose form may hold an amount, a link the owner did not give).
     public var relaxedCategories: [RiskCategoryOption]
     /// Categories never executed.
     public var denyCategories: [RiskCategoryOption]

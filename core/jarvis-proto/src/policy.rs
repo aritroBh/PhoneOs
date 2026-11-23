@@ -150,7 +150,11 @@ impl AppRule {
 pub struct Policy {
     /// Bundle ids the agent must never operate.
     pub denied_apps: Vec<String>,
-    /// Categories that need user confirmation before running.
+    /// Categories that need user confirmation before running. Removing a category relaxes
+    /// requests whose category was read from the control's own words; a request whose
+    /// category the gate guessed (`jarvis_safety`'s "unclear" requests: a presumed submit,
+    /// a send whose form may hold an amount, a link the owner did not give) is asked
+    /// whatever this list holds, unless it is empty (confirm nothing at all).
     pub confirm: Vec<RiskCategory>,
     /// Categories that are never executed. `None` is ignored here; `FirstUse` here means
     /// the agent may only act in apps approved earlier (or trusted).

@@ -8,9 +8,12 @@ use jarvis_proto::{
 use crate::actuation::{actuation, Actuation};
 use crate::app::{app_level, check_app, is_springboard, mode_level, Verdict};
 use crate::classify::{classify, type_target};
-use crate::gate::{changes_state, gate_on, Gate};
+use crate::gate::{changes_state, gate_owned, Gate};
 use crate::redact::{contains_secret, credential_like_field, redact, redact_screen};
 use crate::sanitize::sanitize_screen_text_with_limit;
+use crate::shape::{
+    has_number_word, link_shaped, money_shaped, names_someone, number_shaped, owner_words,
+};
 use crate::text::{has_money, CURRENCY_WORDS};
 use crate::validate::{looks_like_url, validate_action, validate_url};
 
@@ -261,6 +264,14 @@ pub fn evaluate_with(
 /// least `SendMessage` (so it asks; a call link stays `Call`) unless the link was given by
 /// the owner ([`owner_gave_url`]), and such a question is `phone_only`; a link the owner
 /// gave is classified as before (calls ask, other links do not). The session's gate.
+///
+/// Fourteenth review: the same link gate covers Return in any field submitting a link and
+/// links in a tool's arguments (Rule A); a search field is exempt from the presumed submit
+/// only with the owner's words in it (Rule B); and a request whose category the gate
+/// guessed — a presumed submit not read from its control's own words, a send-by-label
+/// whose form may hold an amount or names no verified recipient, a link the owner did not
+/// give — is unclear: asked whatever the owner relaxed ([`crate::gate_owned`]) and
+/// `phone_only` (Rule C).
 #[allow(clippy::too_many_arguments)]
 pub fn evaluate_owned(
     policy: &Policy,
@@ -347,33 +358,52 @@ pub fn evaluate_owned(
         }
         None => classify_from(action, screen, tool, source),
     };
-    // Thirteenth review (M1): only the owner on the phone approves what the gate guessed.
-    let mut phone_only = false;
-    if presumed_submit(action, screen, tree, typed) {
-        // A presumed submit is a control whose meaning the gate could not read: never
-        // remotely approvable unless its own words send (`reads_as_send`: not the screen's
-        // context, which is also a guess); a form whose values are money moves money
-        // (`presumed_money`).
-        phone_only = !reads_as_send(action, screen);
+    // Fourteenth review (Rule C): how the category was established. A category the
+    // control's own words or role gave (`read`) is READ; one the gate guessed — a presumed
+    // submit, a send-by-label whose form may hold an amount, a link the owner did not give —
+    // is UNCLEAR: asked whatever categories the owner relaxed, and approved on the phone
+    // only. Page-controlled words never lift either.
+    let mut unclear = false;
+    let presumed = presumed_submit_owned(action, screen, tree, typed, owner);
+    // Only a presumed submit or a send needs the control's own words (the cheap test first).
+    let read = if presumed || SENDING_CATEGORIES.contains(&category) {
+        own_category(action, screen)
+    } else {
+        RiskCategory::None
+    };
+    if presumed {
         category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
         if presumed_money(action, screen, tree) {
             category = crate::phrases::max_risk(category, RiskCategory::Payment);
         }
+        unclear |= category != read;
     }
-    // Thirteenth review (M3): a link the owner did not give carries screen data to whoever
-    // serves it; it asks (`classify`), and only the owner on the phone approves it.
-    if let Action::OpenUrl { url } = action {
-        if !owner_gave_url(url, owner) {
+    if !unclear && SENDING_CATEGORIES.contains(&read) {
+        unclear = sent_amount_unclear(action, screen, tree, read, category);
+    }
+    // Fourteenth review (Rule A): every way the model's own text becomes a navigation —
+    // `open_url`, Return (or the keyboard's Go key) in any field holding a link, a link in a
+    // tool's arguments — passes the owner-gave-the-link gate (thirteenth review, M3).
+    for url in navigated_links(action, screen) {
+        if !owner_gave_url(&url, owner) {
             // A call link stays `Call` (it asks as one); any other link sends.
-            if crate::classify::url_risk(url) == RiskCategory::None {
+            if crate::classify::url_risk(&url) == RiskCategory::None {
                 category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
             }
-            phone_only = true;
+            unclear = true;
         }
     }
     let runner_text =
         source == ScreenSource::RunnerText && !matches!(action, Action::CallTool { .. });
-    match gate_on(policy, category, level, action, screen, runner_text) {
+    match gate_owned(
+        policy,
+        category,
+        level,
+        action,
+        screen,
+        runner_text,
+        unclear,
+    ) {
         Gate::Allow => Decision::Allow,
         Gate::Deny => Decision::Deny(format!("{category:?} actions are not allowed")),
         Gate::Confirm => {
@@ -383,7 +413,7 @@ pub fn evaluate_owned(
                 affected_app,
             );
             request.verb = verb_of(action);
-            request.phone_only = phone_only;
+            request.phone_only = unclear;
             Decision::Confirm(request)
         }
     }
@@ -443,34 +473,54 @@ pub fn owner_gave_url(url: &str, owner: &[&str]) -> bool {
     })
 }
 
-/// Thirteenth review (M1): whether the form a presumed submit sends is money — decided by
-/// what its fields hold, not only by their names: a field (listed or not, the Return field
-/// included) holds a money-shaped value (a currency sign or code with a number: "$900",
-/// "900 EUR"); or a field named by an amount word or by a currency sign alone ("Amount",
-/// "€") holds a number; or a field under a strong recipient head ("To", "Recipient", "Send
-/// to") is filled and another field holds a plain number (who plus how much: "How much?",
-/// "Sum", "Value"); or a text inside the form (on a typed tree) shows an amount. Such a
-/// presumed submit is `Payment`.
-fn presumed_money(action: &Action, screen: &CompactScreen, tree: Option<&ScreenTree<'_>>) -> bool {
-    let (anchor, field) = match actuation(action, screen) {
-        Actuation::Press(t) | Actuation::Drag(t) => (t, None),
-        Actuation::Return(element) => match type_target(element, screen) {
-            Some(f) => (f, Some(f)),
-            None => return false,
-        },
-        Actuation::Navigation | Actuation::NoEffect => return false,
+/// The form an action actuates, and the field Return is pressed in: a pressed or dragged
+/// control's form, Return's field's form, or (fourteenth review, Rule E) for a press on
+/// something unlisted the whole screen. `None`: the action actuates nothing.
+fn actuated_form<'a, 't>(
+    action: &Action,
+    screen: &'a CompactScreen,
+    tree: Option<&ScreenTree<'t>>,
+) -> Option<(Form<'a, 't>, Option<&'a Element>)> {
+    match actuation(action, screen) {
+        Actuation::Press(t) | Actuation::Drag(t) => Some((form_of(t, screen, tree), None)),
+        Actuation::PressUnknown => Some((screen_form(screen, tree), None)),
+        Actuation::Return(element) => {
+            let f = type_target(element, screen)?;
+            Some((form_of(f, screen, tree), Some(f)))
+        }
+        Actuation::Navigation | Actuation::NoEffect => None,
+    }
+}
+
+/// Whether `e` is a value control whose value a form sends besides its text inputs
+/// (fourteenth review, Rule D): a picker, slider, stepper or segmented control, or a button
+/// that carries a value.
+fn value_control(e: &Element) -> bool {
+    !e.role.is_text_input()
+        && !is_secure_input(e)
+        && (is_value_role(&e.role) || (e.role == Role::Button && field_value(e).is_some()))
+}
+
+/// (name, value) of every filled non-secure field of `form` (listed, unlisted, and
+/// `field`), and of the value controls inside it ([`value_control`]; without a raw form
+/// root, every value control on the screen).
+fn form_values<'s>(
+    form: &Form<'s, '_>,
+    field: Option<&'s Element>,
+    screen: &'s CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> Vec<(String, String)> {
+    let name = |e: &Element| {
+        format!(
+            "{} {}",
+            field_name(e),
+            e.placeholder.as_deref().unwrap_or_default()
+        )
     };
-    let form = form_of(anchor, screen, tree);
-    // (name, value) of every filled non-secure field of the form.
-    let mut fields: Vec<(String, &str)> = Vec::new();
+    let mut fields: Vec<(String, String)> = Vec::new();
     for e in form.listed.iter().copied().chain(field) {
         if let Some(v) = field_value(e).filter(|_| !is_secure_input(e)) {
-            let name = format!(
-                "{} {}",
-                field_name(e),
-                e.placeholder.as_deref().unwrap_or_default()
-            );
-            fields.push((name, v));
+            fields.push((name(e), v.to_owned()));
         }
     }
     for r in &form.unlisted {
@@ -480,13 +530,42 @@ fn presumed_money(action: &Action, screen: &CompactScreen, tree: Option<&ScreenT
                 .filter_map(|x| x.as_deref())
                 .collect::<Vec<_>>()
                 .join(" ");
-            fields.push((name, v));
+            fields.push((name, v.to_owned()));
         }
     }
-    if fields
-        .iter()
-        .any(|(name, v)| money_value(v) || (amount_like_name(name, None) && money_or_number(v)))
-    {
+    for e in screen.elements.iter().filter(|e| value_control(e)) {
+        let inside = match (tree, form.root) {
+            (Some(t), Some(root)) => t.inside(e, root),
+            _ => true,
+        };
+        if let Some(v) = field_value(e).filter(|_| inside) {
+            fields.push((name(e), v.to_owned()));
+        }
+    }
+    fields
+}
+
+/// Thirteenth review (M1): whether the form a presumed submit sends is money — decided by
+/// what its fields hold, not only by their names. Fourteenth review (Rule D), by shape and
+/// tolerant: a field or value control holds a money-shaped value ([`money_shaped`]: a
+/// number with any currency-like piece next to it, `US$900`, `900 zł`, `CHF 900.-`,
+/// `900,-`, `0.5 BTC`, `nine hundred dollars`; or the older currency sign or code with a
+/// number); or one named by an amount word or a currency sign alone ("Amount", "€") holds
+/// anything with a digit or an English number word; or a field under a strong recipient
+/// head that names someone (Rule G) is filled and another holds a plain number (who plus
+/// how much); or a text inside the form (on a typed tree) shows an amount. Such a presumed
+/// submit is `Payment`.
+fn presumed_money(action: &Action, screen: &CompactScreen, tree: Option<&ScreenTree<'_>>) -> bool {
+    let Some((form, field)) = actuated_form(action, screen, tree) else {
+        return false;
+    };
+    let fields = form_values(&form, field, screen, tree);
+    if fields.iter().any(|(name, v)| {
+        money_value(v)
+            || money_shaped(v)
+            || (amount_like_name(name, None)
+                && (v.chars().any(|c| c.is_ascii_digit()) || has_number_word(v)))
+    }) {
         return true;
     }
     let number = |v: &str| {
@@ -495,7 +574,7 @@ fn presumed_money(action: &Action, screen: &CompactScreen, tree: Option<&ScreenT
     };
     let payee = fields
         .iter()
-        .position(|(name, _)| strong_recipient_field_name(name.trim()));
+        .position(|(name, v)| strong_recipient_field_name(name.trim()) && names_someone(v));
     if let Some(k) = payee {
         if fields
             .iter()
@@ -518,24 +597,96 @@ fn presumed_money(action: &Action, screen: &CompactScreen, tree: Option<&ScreenT
     }
 }
 
-/// Thirteenth review (M1): whether the control an action actuates says by its **own** words
-/// that it sends, pays, buys or posts — its label (and value, for a non-input) read through
-/// the action phrases without the screen's context, or a submit word (`Send`, `Post`,
-/// `Submit`, …); for Return, the Return key's label. A presumed submit that does not is
-/// `phone_only`.
-fn reads_as_send(action: &Action, screen: &CompactScreen) -> bool {
-    let tables = crate::phrases::action_tables(&screen.app_bundle_id);
-    let sends = |text: &str| {
-        SENDING_CATEGORIES.contains(&crate::phrases::match_label(text, &tables).category)
-            || crate::text::tokens(text)
-                .iter()
-                .any(|t| SUBMIT_WORDS.contains(&t.as_str()))
+/// Fourteenth review (Rule C): whether a control that sends by its own words (`read`, one
+/// of [`SENDING_CATEGORIES`]) is still unclear: its form holds a value the gate cannot rule
+/// out as an amount ([`number_shaped`], in any field or value control) while no amount
+/// classification was made (the category stayed a message or a post), or while no field
+/// under a strong recipient head names someone (`Recipient not verified`).
+fn sent_amount_unclear(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+    read: RiskCategory,
+    category: RiskCategory,
+) -> bool {
+    let Some((form, field)) = actuated_form(action, screen, tree) else {
+        return false;
     };
-    match actuation(action, screen) {
-        Actuation::Press(t) | Actuation::Drag(t) => sends(&crate::classify::element_text(t)),
-        Actuation::Return(_) => screen.cues.return_key.as_deref().is_some_and(sends),
-        Actuation::Navigation | Actuation::NoEffect => false,
+    let fields = form_values(&form, field, screen, tree);
+    if !fields.iter().any(|(_, v)| number_shaped(v)) {
+        return false;
     }
+    let not_money = !matches!(category, RiskCategory::Payment | RiskCategory::Purchase);
+    let verified = fields
+        .iter()
+        .any(|(name, v)| strong_recipient_field_name(name.trim()) && names_someone(v));
+    (not_money && matches!(read, RiskCategory::SendMessage | RiskCategory::PublicPost)) || !verified
+}
+
+/// Fourteenth review (Rule A): the links `action` navigates to — `open_url`'s; the text
+/// Return (or the keyboard's Go/Search/Return key) submits in a field when it is
+/// link-shaped ([`link_shaped`]: the typed text, else the field's current value), in any
+/// field; and every link in a tool's arguments.
+fn navigated_links(action: &Action, screen: &CompactScreen) -> Vec<String> {
+    match action {
+        Action::OpenUrl { url } => vec![url.clone()],
+        Action::CallTool { args, .. } => {
+            let mut strings = Vec::new();
+            crate::classify::tool_strings(args, &mut strings);
+            strings
+                .into_iter()
+                .filter(|s| looks_like_url(s) || link_shaped(s))
+                .map(|s| s.trim().to_owned())
+                .collect()
+        }
+        // Return (`actuation`'s `Return`; matched on the action so other actions pay nothing).
+        Action::Type {
+            element,
+            text,
+            submit: true,
+        } => submitted_link(type_target(*element, screen), text)
+            .into_iter()
+            .collect(),
+        // The keyboard's own submit key, on a screen that lists keys.
+        Action::Tap { element } | Action::LongPress { element, .. } => match screen.get(*element) {
+            Some(k) if k.role == Role::Key && submit_key_label(&k.label) => {
+                let field = screen
+                    .elements
+                    .iter()
+                    .find(|e| e.focused && e.role.is_text_input());
+                submitted_link(field, "").into_iter().collect()
+            }
+            _ => Vec::new(),
+        },
+        Action::Type { submit: false, .. }
+        | Action::Clear { .. }
+        | Action::Scroll { .. }
+        | Action::Swipe { .. }
+        | Action::TapPoint { .. }
+        | Action::PressHome
+        | Action::OpenApp { .. }
+        | Action::Wait { .. }
+        | Action::AskUser { .. }
+        | Action::Look
+        | Action::Done { .. }
+        | Action::Fail { .. } => Vec::new(),
+    }
+}
+
+/// Whether a keyboard key's label submits its field (Return, Go, Search, …).
+fn submit_key_label(label: &str) -> bool {
+    let l = label.trim().to_lowercase();
+    l == "return" || l == "enter" || SUBMIT_RETURN_KEYS.contains(&l.as_str())
+}
+
+/// The link Return submits in `field` after typing `text`: the typed text when it is
+/// link-shaped, else the field's current value when that is (never a secure field's).
+fn submitted_link(field: Option<&Element>, text: &str) -> Option<String> {
+    if link_shaped(text) {
+        return Some(text.trim().to_owned());
+    }
+    let f = field.filter(|f| !is_secure_input(f))?;
+    field_value(f).filter(|v| link_shaped(v)).map(str::to_owned)
 }
 
 /// Fewest digits of a plain digit run read as a phone or account number rather than an
@@ -546,6 +697,32 @@ const MIN_PHONE_LIKE_DIGITS: usize = 7;
 /// else (thirteenth review: makes a presumed submit `Payment` whatever the field's name).
 fn money_value(v: &str) -> bool {
     money_or_number(v) && has_money(v)
+}
+
+/// Whether a value is shown as an amount (seventh review: a money amount or a plain or
+/// grouped number; fourteenth review, Rule D: or money by its shape, `R$ 900,00`, `900,-`).
+/// Number words count as amounts for the category (Rule D) but are not quoted as one.
+fn amount_shown(v: &str) -> bool {
+    money_or_number(v) || money_shaped(v)
+}
+
+/// Fourteenth review (Rule C): the category the actuated control's **own** words give —
+/// its label (and value, for a non-input) read through the action phrases without the
+/// screen's context; for Return, the Return key's label. `None` for anything else. A
+/// category the gate reaches otherwise (a presumption, the screen's context) on a presumed
+/// submit is a guess.
+fn own_category(action: &Action, screen: &CompactScreen) -> RiskCategory {
+    let tables = crate::phrases::action_tables(&screen.app_bundle_id);
+    let own = |text: &str| crate::phrases::match_label(text, &tables).category;
+    match actuation(action, screen) {
+        Actuation::Press(t) | Actuation::Drag(t) => own(&crate::classify::element_text(t)),
+        Actuation::Return(_) => screen
+            .cues
+            .return_key
+            .as_deref()
+            .map_or(RiskCategory::None, own),
+        Actuation::PressUnknown | Actuation::Navigation | Actuation::NoEffect => RiskCategory::None,
+    }
 }
 
 /// The control a tap or long press names (a `tap_point`'s is resolved by the classifier and
@@ -664,6 +841,8 @@ const MARK_FIELDS: &str = "Fields";
 const MARK_NOT_VERIFIED: &str = "Recipient not verified";
 const MARK_SHOWN_ABOVE: &str = "(shown above)";
 const MARK_LOOKALIKE: &str = "(look-alike letters)";
+/// Fourteenth review (Rule I): a link whose host follows a `user@` part.
+const MARK_USER_INFO: &str = "(a user name before the host, not shown)";
 const MARK_NEAREST: &str = "(nearest)";
 const MARK_TITLE: &str = "screen \"";
 const MARK_SITE: &str = "site \"";
@@ -689,6 +868,7 @@ pub const QUESTION_MARKERS: &[&str] = &[
     MARK_NOT_VERIFIED,
     MARK_SHOWN_ABOVE,
     MARK_LOOKALIKE,
+    MARK_USER_INFO,
     MARK_NEAREST,
     MARK_TITLE,
     MARK_SITE,
@@ -785,6 +965,7 @@ const PHRASE_MARKERS: &[&str] = &[
     MARK_NOT_VERIFIED,
     MARK_SHOWN_ABOVE,
     MARK_LOOKALIKE,
+    MARK_USER_INFO,
     MARK_NEAREST,
     MARK_MORE_SAYS,
 ];
@@ -1240,7 +1421,8 @@ const AMOUNT_FIELD_WORDS: &[&str] = &["amount", "total", "price", "tip", "quanti
 /// charge, billed, renews.
 const CHARGE_WORD_STARTS: &[&str] = &["total", "due", "pay", "charg", "bill", "subtotal", "renew"];
 /// Words after "per" that make a recurring charge ("per month").
-const PER_PERIOD_WORDS: &[&str] = &["year", "yr", "annum", "month", "mo", "week", "wk", "day"];
+pub(crate) const PER_PERIOD_WORDS: &[&str] =
+    &["year", "yr", "annum", "month", "mo", "week", "wk", "day"];
 /// Period suffixes written after a slash ("$9.99/mo").
 const SLASH_PERIODS: &[&str] = &[
     "/yr", "/year", "/mo", "/month", "/week", "/wk", "/day", "/ year", "/ mo", "/ month",
@@ -1296,7 +1478,7 @@ pub(crate) fn value_quotable(
     value: &str,
 ) -> bool {
     !(is_value_role(role) || role.is_text_input())
-        || (amount_like_name(label, placeholder) && money_or_number(value))
+        || (amount_like_name(label, placeholder) && amount_shown(value))
 }
 
 /// Roles of [`is_value_field`].
@@ -1675,7 +1857,7 @@ fn amount_facts(screen: &CompactScreen, anchor: &Anchor<'_, '_>) -> Vec<AmountFa
         if is_value_field(e) {
             // Only an amount-like field holding an amount or a plain number shows its
             // value here (sixth review; see `summary_with`).
-            if let Some(v) = field_value(e).filter(|v| amount_like_field(e) && money_or_number(v)) {
+            if let Some(v) = field_value(e).filter(|v| amount_like_field(e) && amount_shown(v)) {
                 let chars: Vec<char> = v.chars().collect();
                 let ranges = amount_ranges(&chars);
                 let value = if ranges.is_empty() {
@@ -1870,7 +2052,7 @@ const MIN_PLAIN_DIGIT_RUN: usize = 9;
 /// month", "$9.99/mo", "per month"). A plain run of [`MIN_PLAIN_DIGIT_RUN`] or more digits
 /// is not an amount (it may be an account number), nor are digit groups of a card number
 /// ("4111 1111 1111 1111").
-fn money_or_number(v: &str) -> bool {
+pub(crate) fn money_or_number(v: &str) -> bool {
     let t = v.trim();
     let t = t
         .strip_prefix(['-', '+', '\u{2212}'])
@@ -1980,7 +2162,7 @@ fn field_facts(
         let value = field_value(e);
         let t = match value {
             Some(_) if credential_like_field(e) => format!("{name} (hidden)"),
-            Some(v) if amount_like_field(e) && money_or_number(v) => continue,
+            Some(v) if amount_like_field(e) && amount_shown(v) => continue,
             Some(v) if raw.get(e.index).is_some_and(|r| typed_here(r, typed)) => {
                 format!("{name}: {v}")
             }
@@ -3661,9 +3843,6 @@ fn what_is_sent<'a>(
         mode: SendMode::Tap,
         sends: false,
     };
-    let Some(t) = target else {
-        return none();
-    };
     let raw_len = |e: &Element| {
         raw.get(e.index)
             .and_then(|r| r.value.as_deref())
@@ -3679,13 +3858,27 @@ fn what_is_sent<'a>(
                 .any(|x| x.field == r.fingerprint || (!v.is_empty() && x.text.trim() == v))
         })
     };
-    let form = || form_of(t, screen, tree);
     // Thirteenth review: from the one classification of what the action actuates.
-    let kind = if return_only && matches!(action, Action::Type { .. }) {
-        Actuation::Return(Some(t.index))
-    } else {
-        actuation(action, raw)
+    let kind = match target {
+        Some(t) if return_only && matches!(action, Action::Type { .. }) => {
+            Actuation::Return(Some(t.index))
+        }
+        _ => actuation(action, raw),
     };
+    // Fourteenth review (Rule E): a press on something unlisted sends what the whole screen
+    // holds, as far as anyone can tell.
+    if matches!(kind, Actuation::PressUnknown) {
+        let f = screen_form(screen, tree);
+        if !f.has_filled() {
+            return none();
+        }
+        let c = jarvis_proto::Point::new(screen.size.width / 2.0, screen.size.height / 2.0);
+        return sent_of(f, SendMode::Tap, None, c, true, raw, typed);
+    }
+    let Some(t) = target else {
+        return none();
+    };
+    let form = || form_of(t, screen, tree);
     let (form, mode, first) = match kind {
         Actuation::Return(_) if return_only => {
             let f = form();
@@ -3717,7 +3910,40 @@ fn what_is_sent<'a>(
             }
             (f, SendMode::Tap, None)
         }
-        Actuation::Return(_) | Actuation::Navigation | Actuation::NoEffect => return none(),
+        Actuation::Return(_)
+        | Actuation::PressUnknown
+        | Actuation::Navigation
+        | Actuation::NoEffect => return none(),
+    };
+    let sends = mode != SendMode::Tap
+        || tap_sends(t, category)
+        || matches!(category, RiskCategory::Unverified);
+    sent_of(form, mode, first, t.frame.center(), sends, raw, typed)
+}
+
+/// What a form sends (see [`what_is_sent`]): `first` (Return's own field) first, then the
+/// form's fields, the ones nearest `center` read first.
+fn sent_of<'a>(
+    form: Form<'a, '_>,
+    mode: SendMode,
+    first: Option<&'a Element>,
+    center: jarvis_proto::Point,
+    sends: bool,
+    raw: &CompactScreen,
+    typed: &[TypedText],
+) -> Sent<'a> {
+    let raw_len = |e: &Element| {
+        raw.get(e.index)
+            .and_then(|r| r.value.as_deref())
+            .map_or(0, n_chars)
+    };
+    let typed_in = |e: &Element| {
+        raw.get(e.index).is_some_and(|r| {
+            let v = r.value.as_deref().map(str::trim).unwrap_or_default();
+            typed
+                .iter()
+                .any(|x| x.field == r.fingerprint || (!v.is_empty() && x.text.trim() == v))
+        })
     };
     // (rank, position, field): typed 0, recipient- or amount-named 1, the rest 2.
     let rank = |f: &SentField| {
@@ -3736,7 +3962,7 @@ fn what_is_sent<'a>(
     let mut read: Vec<usize> = (0..form.listed.len()).collect();
     let listed_more = read.len().saturating_sub(MAX_LISTED_INPUTS);
     if listed_more > 0 {
-        let c = t.frame.center();
+        let c = center;
         let dist = |k: usize| {
             form.listed.get(k).map_or(f64::MAX, |e| {
                 let d = e.frame.center();
@@ -3782,9 +4008,6 @@ fn what_is_sent<'a>(
         .len()
         .saturating_add(form.unlisted_more)
         .saturating_add(listed_more);
-    let sends = mode != SendMode::Tap
-        || tap_sends(t, category)
-        || matches!(category, RiskCategory::Unverified);
     Sent {
         fields,
         total,
@@ -3964,11 +4187,34 @@ fn sends_slot(sent: &Sent<'_>, above: &[bool], budget: usize) -> String {
 ///
 /// **Eleventh review: Return.** `type … submit` (the Return part, gated on the screen after
 /// the typing) is presumed to submit too, see [`presumed_return`].
+///
+/// **Fourteenth review.** A press on something the screen does not list (a `tap_point`
+/// resolving to no element, Rule E) is presumed to submit when the state is set and any
+/// input on the screen is filled (the form is the screen). A search field is exempt only
+/// while what it submits is the owner's own words (Rule B, [`presumed_submit_owned`]); this
+/// function knows no owner text, so no search field is exempt here. Every label exemption
+/// is a whole-label match (Rule F, [`not_submit_label`]).
 pub fn presumed_submit(
     action: &Action,
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
     typed: &[TypedText],
+) -> bool {
+    presumed_submit_owned(action, screen, tree, typed, &[])
+}
+
+/// [`presumed_submit`], knowing what the owner wrote for this task (`owner`, as for
+/// `evaluate_owned`): a search field is exempt from the presumption only while the text it
+/// submits (typed text, else its current value) is the owner's own words
+/// ([`owner_words`]: every token of 3 or more characters, and every digits-only token, is a
+/// token of the owner's text). Fourteenth review, Rule B: the field's name, which any page
+/// controls, no longer exempts it alone.
+pub fn presumed_submit_owned(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+    owner: &[&str],
 ) -> bool {
     if is_springboard(&screen.app_bundle_id) {
         return false;
@@ -3985,7 +4231,7 @@ pub fn presumed_submit(
                 Action::Type { text, .. } => text.as_str(),
                 _ => "",
             };
-            return presumed_return(element, text, screen, tree, typed);
+            return presumed_return(element, text, screen, tree, typed, owner);
         }
         Actuation::Press(t) => {
             // Pressing a value control (slider, picker, stepper) sets its value.
@@ -4001,6 +4247,11 @@ pub fn presumed_submit(
                 return false;
             }
             t
+        }
+        // Fourteenth review (Rule E): what an unlisted spot is cannot be read; after
+        // typing, any filled input on the screen may be what it submits.
+        Actuation::PressUnknown => {
+            return form_presumes(&screen_form(screen, tree), None, owner);
         }
         Actuation::Navigation | Actuation::NoEffect => return false,
     };
@@ -4021,7 +4272,38 @@ pub fn presumed_submit(
         }
     }
     let form = form_of(t, screen, tree);
-    form_presumes(&form, None)
+    form_presumes(&form, None, owner)
+}
+
+/// The whole screen as one form (fourteenth review, Rule E): every listed text input and,
+/// on a raw tree, every unlisted one (at most [`MAX_UNLISTED_INPUTS`]).
+fn screen_form<'a, 't>(screen: &'a CompactScreen, tree: Option<&ScreenTree<'t>>) -> Form<'a, 't> {
+    let inputs: Vec<&Element> = screen
+        .elements
+        .iter()
+        .filter(|e| e.role.is_text_input())
+        .collect();
+    let mut unlisted: Vec<&RawInput> = Vec::new();
+    let mut has_secure = inputs.iter().any(|e| is_secure_input(e));
+    if let Some(t) = tree {
+        let listed: std::collections::BTreeSet<u32> = t.sources.iter().copied().collect();
+        for r in t.inputs.iter().filter(|r| !listed.contains(&r.node)) {
+            if r.secure || r.role == Role::SecureTextField {
+                has_secure = true;
+            } else {
+                unlisted.push(r);
+            }
+        }
+    }
+    let unlisted_more = unlisted.len().saturating_sub(MAX_UNLISTED_INPUTS);
+    unlisted.truncate(MAX_UNLISTED_INPUTS);
+    Form {
+        listed: inputs.into_iter().filter(|e| !is_secure_input(e)).collect(),
+        unlisted,
+        has_secure,
+        unlisted_more,
+        root: None,
+    }
 }
 
 /// A slider (thirteenth review: dragged to its end, a "slide to …" control submits).
@@ -4034,47 +4316,68 @@ fn slider_like(role: &Role) -> bool {
 }
 
 /// Whether a field is a search field: role `SearchField`, or "search" in its name or
-/// placeholder.
+/// placeholder. Fourteenth review: this only names the field; a search field is exempt
+/// from the presumption only with the owner's words in it ([`search_exempt`]).
 fn search_named(role: &Role, name: &str, placeholder: Option<&str>) -> bool {
     *role == Role::SearchField
         || has_word(name, &["search"])
         || has_word(placeholder.unwrap_or_default(), &["search"])
 }
 
-/// Whether `form` makes a submit presumed (tenth review): it holds a filled, non-search,
-/// non-secure text input, listed or not, and is not a login form (narrowing (a)). With
-/// `also` (eleventh review: Return after `type`), that field counts too — as filled by the
-/// text being typed when `also` says so.
-fn form_presumes(form: &Form<'_, '_>, also: Option<(&Element, bool)>) -> bool {
+/// Rule B: whether a search-named field submitting `text` is exempt from the presumed
+/// submit: every word of it is the owner's ([`owner_words`]).
+fn search_exempt(
+    role: &Role,
+    name: &str,
+    placeholder: Option<&str>,
+    text: &str,
+    owner: &[&str],
+) -> bool {
+    search_named(role, name, placeholder) && owner_words(text, owner)
+}
+
+/// Whether `form` makes a submit presumed (tenth review): it holds a filled, non-secure
+/// text input, listed or not, that is not a search field holding the owner's words (Rule
+/// B), and is not a login form (narrowing (a)). With `also` (eleventh review: Return after
+/// `type`), that field counts too — as filled by the text being typed when that is not
+/// empty.
+fn form_presumes(form: &Form<'_, '_>, also: Option<(&Element, &str)>, owner: &[&str]) -> bool {
     // Narrowing (a), ninth review: a login form (a secure field, and only email or
     // username fields filled besides) is not presumed submitted by what Jarvis typed in the
     // email field; the target's own label is still classified, and typing the password is
     // handed to the owner as before.
-    let also_name = also
-        .filter(|(e, filled)| *filled || field_value(e).is_some())
-        .map(|(e, _)| {
-            format!(
-                "{} {}",
-                field_name(e),
-                e.placeholder.as_deref().unwrap_or_default()
-            )
-        });
+    let filled = |e: &Element, text: &str| !text.trim().is_empty() || field_value(e).is_some();
+    let also_name = also.filter(|(e, text)| filled(e, text)).map(|(e, _)| {
+        format!(
+            "{} {}",
+            field_name(e),
+            e.placeholder.as_deref().unwrap_or_default()
+        )
+    });
     if form.has_secure && form.filled_names().chain(also_name).all(|n| login_name(&n)) {
         return false;
     }
-    // Tenth review: any filled, non-search, non-secure text input of the form, listed or
-    // not — the typed field is no longer re-identified (its fingerprint changes when a
-    // placeholder hides or a counter moves, the app reformats the text, …).
-    let open = |e: &Element| {
-        !search_named(&e.role, &field_name(e), e.placeholder.as_deref()) && !is_secure_input(e)
+    // Tenth review: any filled, non-secure text input of the form, listed or not — the
+    // typed field is no longer re-identified (its fingerprint changes when a placeholder
+    // hides or a counter moves, the app reformats the text, …). Fourteenth review: a search
+    // field counts unless it holds the owner's words.
+    let open = |e: &Element, text: &str| {
+        !is_secure_input(e)
+            && !(search_exempt(
+                &e.role,
+                &field_name(e),
+                e.placeholder.as_deref(),
+                text,
+                owner,
+            ) && field_value(e).is_none_or(|v| owner_words(v, owner)))
     };
-    if also.is_some_and(|(e, filled)| open(e) && (filled || field_value(e).is_some())) {
+    if also.is_some_and(|(e, text)| filled(e, text) && open(e, text)) {
         return true;
     }
     let listed = form
         .listed
         .iter()
-        .any(|e| open(e) && field_value(e).is_some());
+        .any(|e| field_value(e).is_some() && open(e, ""));
     listed
         || form.unlisted.iter().any(|r| {
             let name = r
@@ -4083,28 +4386,32 @@ fn form_presumes(form: &Form<'_, '_>, also: Option<(&Element, bool)>) -> bool {
                 .or(r.placeholder.as_deref())
                 .or(r.identifier.as_deref())
                 .unwrap_or_default();
-            !search_named(&r.role, name, r.placeholder.as_deref())
-                && !r.secure
+            let value = r.value.as_deref().unwrap_or_default();
+            !r.secure
                 && r.role != Role::SecureTextField
-                && r.value.as_deref().is_some_and(|v| !v.trim().is_empty())
+                && !value.trim().is_empty()
+                && !search_exempt(&r.role, name, r.placeholder.as_deref(), value, owner)
         })
 }
 
 /// Eleventh review (F1): whether Return after `type` into `element` (the `submit` of a
 /// `type`, gated as its own part on the screen after the typing) is presumed to submit what
 /// the form holds. The typing itself sets the app's "typed here" state, so this holds
-/// whenever the field is not a search field, not secure and not a multi-line text view
-/// whose Return inserts a line break (Return key not a submit label: that Return is no
-/// submit), and the form — the field included, counted as filled by `text` when it is not
-/// empty — holds a filled non-search, non-secure input (narrowing (a), the login form,
-/// unchanged). Empty `text` (Return alone) needs the state already set (`typed`) or,
-/// thirteenth review, the field itself to hold text (what Return sends is observed).
+/// whenever the field is not secure, not a search field holding the owner's words
+/// (fourteenth review, Rule B: the typed text and the field's value are both the owner's)
+/// and not a multi-line text view whose Return inserts a line break (Return key not a
+/// submit label: that Return is no submit), and the form — the field included, counted as
+/// filled by `text` when it is not empty — holds a filled input that counts (narrowing
+/// (a), the login form, unchanged). Empty `text` (Return alone) needs the state already
+/// set (`typed`) or, thirteenth review, the field itself to hold text (what Return sends
+/// is observed).
 fn presumed_return(
     element: Option<u32>,
     text: &str,
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
     typed: &[TypedText],
+    owner: &[&str],
 ) -> bool {
     let types = !text.trim().is_empty();
     let Some(field) = type_target(element, screen) else {
@@ -4118,11 +4425,13 @@ fn presumed_return(
     }
     if !field.role.is_text_input()
         || is_secure_input(field)
-        || search_named(
+        || (search_exempt(
             &field.role,
             &field_name(field),
             field.placeholder.as_deref(),
-        )
+            text,
+            owner,
+        ) && field_value(field).is_none_or(|v| owner_words(v, owner)))
     {
         return false;
     }
@@ -4132,7 +4441,7 @@ fn presumed_return(
         return false;
     }
     let form = form_of(field, screen, tree);
-    form_presumes(&form, Some((field, types)))
+    form_presumes(&form, Some((field, text)), owner)
 }
 
 /// Field names of a login form's account field (narrowing (a), ninth review): email,
@@ -4147,60 +4456,137 @@ fn login_name(name: &str) -> bool {
     has_word(&lower, LOGIN_NAME_WORDS) || lower.contains("email") || lower.contains("username")
 }
 
-/// Words of a control next to a composer that clearly do not submit it (see
-/// [`presumed_submit`]); SF Symbol names split into these words too (`xmark.circle`,
-/// `face.smiling`, `paperclip`, `mic.fill`).
-const NOT_SUBMIT_WORDS: &[&str] = &[
-    "forgot",
+/// Whole labels of a control next to a composer that clearly does not submit it (see
+/// [`presumed_submit`]; fourteenth review, Rule F: a closed list of whole phrases, compared
+/// with the whole label — a label that merely contains one of these words is not exempt).
+const NOT_SUBMIT_PHRASES: &[&str] = &[
+    "forgot password",
+    "forgot your password",
+    "forgot username",
+    "forgot your username",
+    "forgot email",
+    "forgot id",
+    "forgot apple id",
+    "forgot password or apple id",
     "cancel",
     "close",
     "back",
+    "go back",
     "dismiss",
-    "xmark",
     "clear",
+    "clear text",
+    "clear search",
     "delete",
     "emoji",
     "emojis",
-    "smiling",
+    "emoji keyboard",
     "sticker",
     "stickers",
     "dictate",
     "dictation",
     "microphone",
     "mic",
-    "waveform",
+    "voice input",
     "attach",
+    "attach file",
     "attachment",
     "attachments",
+    "add attachment",
     "paperclip",
     "add",
     "plus",
+    "add photo",
+    "add photos",
     "photo",
     "photos",
+    "photo library",
     "camera",
+    "take photo",
     "keyboard",
+    "next keyboard",
+    "hide keyboard",
+    "dismiss keyboard",
     "globe",
     "format",
     "formatting",
-    "textformat",
+    "text format",
+    "text formatting",
     "bold",
     "italic",
     "underline",
     "strikethrough",
     "expand",
     "collapse",
-    "chevron",
     "show",
     "hide",
-    "eye",
+    "show password",
+    "hide password",
 ];
 
-/// Whether `label` names a control that clearly does not submit (see [`NOT_SUBMIT_WORDS`]).
+/// SF Symbol names (as an unlabelled image button's label) that clearly do not submit
+/// (Rule F): one of these, optionally followed by [`SF_SYMBOL_VARIANTS`] components
+/// (`xmark.circle.fill`, `eye.slash`).
+const NOT_SUBMIT_SYMBOLS: &[&str] = &[
+    "xmark",
+    "face.smiling",
+    "paperclip",
+    "mic",
+    "waveform",
+    "plus",
+    "photo",
+    "photo.on.rectangle",
+    "photo.on.rectangle.angled",
+    "camera",
+    "globe",
+    "keyboard",
+    "keyboard.chevron.compact.down",
+    "textformat",
+    "textformat.alt",
+    "bold",
+    "italic",
+    "underline",
+    "strikethrough",
+    "chevron.down",
+    "chevron.up",
+    "chevron.left",
+    "chevron.backward",
+    "eye",
+    "delete.left",
+];
+
+/// Variant components an SF Symbol name may carry after its base.
+const SF_SYMBOL_VARIANTS: &[&str] = &["fill", "circle", "square", "slash", "badge", "rectangle"];
+
+/// Whether `label` names a control that clearly does not submit (fourteenth review, Rule
+/// F): its **whole** label — trimmed, case-folded, inner spaces collapsed, punctuation at
+/// the ends dropped — equals one of [`NOT_SUBMIT_PHRASES`], or it is an SF Symbol name of
+/// [`NOT_SUBMIT_SYMBOLS`]. "Back to shop", "Continue & close" or "Add comment" are not.
 fn not_submit_label(label: &str) -> bool {
-    label
-        .split(|c: char| !c.is_alphanumeric())
-        .map(str::to_lowercase)
-        .any(|w| NOT_SUBMIT_WORDS.contains(&w.as_str()))
+    let lower = label.trim().to_lowercase();
+    let symbol = lower.trim();
+    if !symbol.is_empty()
+        && symbol
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.')
+        && NOT_SUBMIT_SYMBOLS.iter().any(|base| {
+            symbol == *base
+                || symbol.strip_prefix(base).is_some_and(|rest| {
+                    rest.starts_with('.')
+                        && rest
+                            .split('.')
+                            .skip(1)
+                            .all(|v| SF_SYMBOL_VARIANTS.contains(&v))
+                })
+        })
+    {
+        return true;
+    }
+    let phrase = lower
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    NOT_SUBMIT_PHRASES.contains(&phrase.as_str())
 }
 
 /// The summary's reserved slots (ninth review), in priority order, each as (minimum,
@@ -4699,7 +5085,7 @@ fn summarize_with(
             let Some(v) = f
                 .value
                 .as_deref()
-                .filter(|v| !f.recipient && money_or_number(v))
+                .filter(|v| !f.recipient && amount_shown(v))
             else {
                 continue;
             };
@@ -4736,7 +5122,9 @@ fn summarize_with(
     let mut says_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     if pays {
         for (i, f) in sent.fields.iter().enumerate().filter(|(_, f)| f.recipient) {
-            let Some(v) = f.value.as_deref() else {
+            // Fourteenth review (Rule G): a value that names no one (a date, a bare number) is
+            // no recipient entry; it stays under `Sends:`.
+            let Some(v) = f.value.as_deref().filter(|v| names_someone(v)) else {
                 continue;
             };
             let key = recipient_key(v);
@@ -5149,20 +5537,7 @@ fn open_url_line(url: &str, category: RiskCategory, cap: usize) -> String {
     let url = url.trim();
     let (scheme, rest) = url.split_once(':').unwrap_or(("", url));
     let scheme = scheme.to_ascii_lowercase();
-    let quoted = |text: &str, cap: usize| {
-        let n = n_chars(text);
-        if n <= cap {
-            format!("\"{}\"", clean(text, cap))
-        } else {
-            let head: String = text.chars().take(cap).collect();
-            format!(
-                "\"{}…\" ({} more character{} not shown)",
-                clean(&head, cap),
-                n - cap,
-                plural(n - cap)
-            )
-        }
-    };
+    let quoted = quote_cut;
     if matches!(
         scheme.as_str(),
         "sms" | "smsto" | "mms" | "mailto" | "imessage"
@@ -5208,13 +5583,50 @@ fn open_url_line(url: &str, category: RiskCategory, cap: usize) -> String {
         );
     }
     let after = rest.strip_prefix("//").unwrap_or(rest);
+    format!(
+        "Open a link that was not in your request: {}://{}",
+        clean(&scheme, 24),
+        link_place(after, cap)
+    )
+}
+
+/// `text` quoted, at most `cap` characters of it, the cut stated.
+fn quote_cut(text: &str, cap: usize) -> String {
+    let n = n_chars(text);
+    if n <= cap {
+        format!("\"{}\"", clean(text, cap))
+    } else {
+        let head: String = text.chars().take(cap).collect();
+        format!(
+            "\"{}…\" ({} more character{} not shown)",
+            clean(&head, cap),
+            n - cap,
+            plural(n - cap)
+        )
+    }
+}
+
+/// Where a web link goes, as the question shows it (`after`: the link after its scheme and
+/// `//`): its authority exactly — the full host (over 40 characters: its first 12 and last
+/// 24; `(look-alike letters)` for a non-ASCII letter or a punycode label) and, fourteenth
+/// review (Rule I), its port — with a `user@` part left out but stated
+/// ([`MARK_USER_INFO`]: `user@host` is a spoofing device), then the path and query quoted
+/// to `cap` characters, the cut stated.
+fn link_place(after: &str, cap: usize) -> String {
     let split = after.find(['/', '?', '#']).unwrap_or(after.len());
     let (authority, path) = after.split_at(split);
     // The host is what follows any `user@` and precedes any port.
-    let host = authority.rsplit('@').next().unwrap_or_default();
-    let host = match host.rsplit_once(':') {
-        Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
-        _ => host,
+    let user_info = authority.contains('@');
+    let host_port = authority.rsplit('@').next().unwrap_or_default();
+    let (host, port) = match host_port.rsplit_once(':') {
+        Some((h, port))
+            if !port.is_empty()
+                && port.chars().all(|c| c.is_ascii_digit())
+                && !h.ends_with(':') =>
+        {
+            (h, Some(port))
+        }
+        _ => (host_port, None),
     };
     let lookalike = host.chars().any(|c| !c.is_ascii() && c.is_alphabetic())
         || host
@@ -5236,22 +5648,40 @@ fn open_url_line(url: &str, category: RiskCategory, cap: usize) -> String {
     } else {
         clean(host, MAX_HOST_CHARS)
     };
-    let mark = if lookalike {
-        format!(" {MARK_LOOKALIKE}")
-    } else {
-        String::new()
-    };
+    let port = port
+        .map(|p| format!(":{}", clean(p, 8)))
+        .unwrap_or_default();
+    let mut mark = String::new();
+    if lookalike {
+        mark.push_str(&format!(" {MARK_LOOKALIKE}"));
+    }
+    if user_info {
+        mark.push_str(&format!(" {MARK_USER_INFO}"));
+    }
     let path = if path.is_empty() || path == "/" {
         String::new()
     } else {
-        format!(", path and query {}", quoted(path, cap))
+        format!(", path and query {}", quote_cut(path, cap))
     };
-    format!(
-        "Open a link that was not in your request: {}://{host_shown}{mark}{path}",
-        clean(&scheme, 24)
-    )
+    format!("{host_shown}{port}{mark}{path}")
 }
 
+/// Fourteenth review (Rule A): how the question shows a link that Return submits in a
+/// field — exactly as the `open_url` question shows it ([`link_place`]), its scheme when it
+/// has one.
+fn submitted_link_text(link: &str, cap: usize) -> String {
+    let link = link.trim();
+    let scheme = crate::validate::url_scheme(link);
+    match link.split_once("://") {
+        Some((s, after)) if scheme.is_some() => {
+            format!("{}://{}", clean(s, 24), link_place(after, cap))
+        }
+        _ if scheme.is_some_and(|s| crate::shape::BARE_LINK_SCHEMES.contains(&s.as_str())) => {
+            quote_cut(link, cap)
+        }
+        _ => link_place(link, cap),
+    }
+}
 /// What `action` does, without the screen's facts, as (head, tail): the tail is ` in App`
 /// for actions in the foreground app (`next to`/`under` go between them), empty otherwise.
 /// The target's label is quoted at most `label` characters, the app's name `app`.
@@ -5286,6 +5716,15 @@ fn action_line(
         } => {
             let target = type_target(*element, screen);
             let what = typed_words(text, category, target, label);
+            // Fourteenth review (Rule A): Return that submits a link opens it; the question
+            // shows the link as the `open_url` question does.
+            let link = if *submit && category != RiskCategory::Credential {
+                submitted_link(target, text)
+                    .map(|l| format!(", which opens the link {}", submitted_link_text(&l, label)))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
             let into = target.map_or_else(
                 || "the focused field".to_owned(),
                 |t| describe_with(t, label),
@@ -5300,10 +5739,10 @@ fn action_line(
                     .map(|k| format!(" (\"{k}\")"))
                     .unwrap_or_default();
                 // What it sends (the field's whole content) and what was typed follow.
-                return (format!("Press Return{key} in {into}"), in_app);
+                return (format!("Press Return{key} in {into}{link}"), in_app);
             }
             let ret = if *submit { " and press Return" } else { "" };
-            (format!("Type {what} into {into}{ret}"), in_app)
+            (format!("Type {what} into {into}{ret}{link}"), in_app)
         }
         Action::Clear { element } => (
             format!("Clear {}", describe_index_with(screen, *element, label)),

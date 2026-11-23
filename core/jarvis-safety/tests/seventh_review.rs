@@ -162,7 +162,29 @@ fn return_reads_the_field_name_and_the_typed_text() {
     let d = return_in(tf(2, "Confirmation", ""), "DELETE", "return", "Danger zone");
     assert!(matches!(d, Decision::Confirm(_)), "{d:?}");
     let search = el(2, Role::SearchField, "Search");
-    let d = return_in(search, "delete", "search", "Photos");
+    // Fourteenth review (Rule B): the search field's leniency rests on the owner's words —
+    // "delete" the owner asked for does not ask; without the owner's text it is a presumed
+    // submit and asks (deliberate change, was `Allow`).
+    let d = return_in(search.clone(), "delete", "search", "Photos");
+    assert!(matches!(d, Decision::Confirm(_)), "{d:?}");
+    let mut s = app_screen(vec![label(1, "Photos"), search]);
+    s.keyboard_visible = true;
+    s.cues.return_key = Some("search".to_owned());
+    let a = Action::Type {
+        element: Some(2),
+        text: "delete".into(),
+        submit: true,
+    };
+    let d = jarvis_safety::evaluate_owned(
+        &Policy::default(),
+        &a,
+        &s,
+        None,
+        ScreenSource::Typed,
+        None,
+        &[],
+        &["Find my photos that mention delete"],
+    );
     assert_eq!(d, Decision::Allow);
     let d = return_in(
         tf(2, "Type CONFIRM to transfer", ""),

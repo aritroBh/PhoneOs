@@ -5,6 +5,10 @@
 //! written at c4c1bda (the thirteenth review's commit), before the question became rows,
 //! by running these same cases there. And each question is exactly its rows rendered, with
 //! each line in a row of its family.
+//!
+//! Fourteenth review (Rule C), one line changed: "weak head alone" is now `phone_only`
+//! (`true`): a "Send money" whose form holds an amount while no strong-head field names
+//! the payee (`Recipient not verified`) is unclear. Its question text is unchanged.
 
 #![allow(
     clippy::unwrap_used,

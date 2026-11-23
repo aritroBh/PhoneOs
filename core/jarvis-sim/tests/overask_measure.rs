@@ -13,7 +13,7 @@
 
 use jarvis_observe::compact_view;
 use jarvis_proto::{Action, Direction, Policy, Role};
-use jarvis_safety::{evaluate_with, Decision, ScreenSource, ScreenTree, TypedText};
+use jarvis_safety::{evaluate_owned, evaluate_with, Decision, ScreenSource, ScreenTree, TypedText};
 use jarvis_sim::bench::fixtures::{default_dir, load_all};
 
 fn asks(d: &Decision) -> bool {
@@ -51,6 +51,27 @@ fn over_asking_on_real_trees() {
                 typed,
             )
         };
+        // Fourteenth review: phone-only questions among the taps with the state set, the
+        // same taps with "Sending a message" relaxed, and `type … submit` of the owner's own
+        // words (and of other words) into every text input.
+        let mut relaxed = Policy::default();
+        relaxed
+            .confirm
+            .retain(|c| *c != jarvis_proto::RiskCategory::SendMessage);
+        let owner = ["What's the weather in Paris"];
+        let owned = |p: &Policy, a: &Action, typed: &[TypedText]| {
+            evaluate_owned(
+                p,
+                a,
+                &v.screen,
+                None,
+                ScreenSource::Typed,
+                Some(&tree),
+                typed,
+                &owner,
+            )
+        };
+        let mut extra = [0usize; 5];
         let mut row = [0usize; 7];
         for e in v.screen.elements.iter().filter(|e| {
             e.enabled && !matches!(e.role, Role::StaticText | Role::Key) && !e.role.is_text_input()
@@ -59,6 +80,10 @@ fn over_asking_on_real_trees() {
             let tap = Action::Tap { element: e.index };
             row[1] += usize::from(asks(&gate(&tap, &[])));
             row[2] += usize::from(asks(&gate(&tap, &state)));
+            extra[0] += usize::from(
+                matches!(owned(&policy, &tap, &state), Decision::Confirm(ref r) if r.phone_only),
+            );
+            extra[1] += usize::from(asks(&owned(&relaxed, &tap, &state)));
             for (k, dir) in [(3, Direction::Right), (5, Direction::Up)] {
                 let swipe = Action::Swipe {
                     direction: dir,
@@ -82,6 +107,21 @@ fn over_asking_on_real_trees() {
             };
             returns.1 += usize::from(asks(&gate(&ret, &[])));
         }
+        for e in v.screen.elements.iter().filter(|e| e.role.is_text_input()) {
+            extra[2] += 1;
+            for (k, text) in [(3, "weather Paris"), (4, "cheap flights")] {
+                let ret = Action::Type {
+                    element: Some(e.index),
+                    text: text.to_owned(),
+                    submit: true,
+                };
+                extra[k] += usize::from(asks(&owned(&policy, &ret, &[])));
+            }
+        }
+        println!(
+            "{:<20} taps with state: phone only {} | asked with SendMessage relaxed {} | inputs {}: type+Return owner's words asks {}, other words asks {}",
+            f.name, extra[0], extra[1], extra[2], extra[3], extra[4]
+        );
         println!(
             "{:<20} filled inputs {} | bare Return asks {}",
             f.name, returns.0, returns.1

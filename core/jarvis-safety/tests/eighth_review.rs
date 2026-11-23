@@ -187,7 +187,9 @@ fn probe_many_sent_fields_do_not_silently_cut_the_charge() {
 // ---- Regression tests for the eighth review's fixes ---------------------------------------
 
 use jarvis_proto::{CompactScreen, RiskCategory};
-use jarvis_safety::{evaluate_with, presumed_submit, summary_with, TypedText};
+use jarvis_safety::{
+    evaluate_with, presumed_submit, presumed_submit_owned, summary_with, TypedText,
+};
 
 const BOUND: usize = 480;
 
@@ -450,15 +452,31 @@ fn a_tap_after_typing_in_a_composer_is_presumed_to_send() {
         None,
         &typed
     ));
-    // A search field keeps its leniency.
+    // A search field keeps its leniency while it holds the owner's own words (fourteenth
+    // review, Rule B: the leniency rests on the owner's text, not the field's name; without
+    // the owner's text, or with other words, it is presumed — deliberate change).
     let mut s = composer("socks", "Done");
     s.elements[1].role = Role::SearchField;
     s.elements[1].label = "Search".to_owned();
-    assert!(!presumed_submit(
+    assert!(!presumed_submit_owned(
+        &Action::Tap { element: 3 },
+        &s,
+        None,
+        &typed_message("socks"),
+        &["Find socks"]
+    ));
+    assert!(presumed_submit(
         &Action::Tap { element: 3 },
         &s,
         None,
         &typed_message("socks")
+    ));
+    assert!(presumed_submit_owned(
+        &Action::Tap { element: 3 },
+        &s,
+        None,
+        &typed_message("socks"),
+        &["Find shoes"]
     ));
     // An emptied field sends nothing.
     let s = composer("", "Done");

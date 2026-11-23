@@ -62,6 +62,40 @@ pub enum GestureError {
     /// The element lies entirely in the reserved system-gesture area.
     #[error("the element is at the very edge of the screen, where system gestures live")]
     OutsideSafeArea,
+    /// Fourteenth review (Rule H): the drag would start or end on the keyboard (its keys
+    /// enter text; a drag from a key can commit a word).
+    #[error(
+        "the keyboard is up and this drag would start or end on its keys; dismiss the keyboard first"
+    )]
+    OnKeyboard,
+}
+
+/// Share of the screen height, from the bottom, that an element-less drag leaves to the
+/// keyboard while one is up (fourteenth review, Rule H; generous on purpose: the iPhone
+/// keyboard takes about 40 % in portrait).
+pub const KEYBOARD_SHARE: f64 = 0.5;
+
+/// The drag the runner makes for a scroll or swipe on `frame` on `screen` (fourteenth
+/// review, Rule H): [`gesture`] on the element's frame, or for an element-less drag while a
+/// keyboard is up on the part of the screen above [`KEYBOARD_SHARE`] (never on the keys).
+/// The classifier reads the same path the commands send.
+pub fn drag_gesture(
+    kind: GestureKind,
+    direction: Direction,
+    frame: Option<Rect>,
+    screen: &jarvis_proto::CompactScreen,
+) -> Result<Gesture, GestureError> {
+    let frame = frame.or_else(|| {
+        screen.keyboard_visible.then(|| {
+            Rect::new(
+                0.0,
+                0.0,
+                screen.size.width,
+                screen.size.height * (1.0 - KEYBOARD_SHARE),
+            )
+        })
+    });
+    gesture(kind, direction, frame, screen.size)
 }
 
 /// The rectangle gestures may use on a screen of `size`.

@@ -18,8 +18,8 @@ use jarvis_proto::{
     TaskSpec, TimedEvent, TrustLevel,
 };
 use jarvis_safety::{
-    approval_context, classify, evaluate_from, gate_on, redact_screen, sanitize_screen_text,
-    summary_with, takes_taps, tap_spot, ScreenSource, ScreenTree,
+    approval_context, classify, evaluate_from, evaluate_owned, gate_on, redact_screen,
+    sanitize_screen_text, summary_with, takes_taps, tap_spot, ScreenSource, ScreenTree,
 };
 
 use super::gen::perturb;
@@ -435,12 +435,19 @@ pub fn run_case(id: &str, screen: &Screen, cfg: &Cfg) -> CaseResult {
                 plan,
                 || (),
                 |()| {
-                    evaluate_from(
+                    // Fourteenth review (Rule B): the search field's leniency rests on the
+                    // owner's words, so the task the stage stands for gives them ("search
+                    // for hello world"): `evaluate.return` keeps measuring the unasked
+                    // search Return it always measured, not the question's composition.
+                    evaluate_owned(
                         &policy,
                         black_box(action),
                         compact,
                         None,
                         ScreenSource::Typed,
+                        None,
+                        &[],
+                        &["Search for hello world"],
                     )
                 },
             );

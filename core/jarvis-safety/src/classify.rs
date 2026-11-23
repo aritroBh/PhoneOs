@@ -7,7 +7,7 @@ use jarvis_proto::{
     Action, CompactScreen, Direction, Element, Point, RiskCategory, Role, Tier, ToolSpec,
 };
 
-use crate::gestures::{finger_direction, gesture, GestureKind};
+use crate::gestures::{drag_gesture, finger_direction, GestureKind};
 use crate::phrases::{
     action_tables, in_app, match_label, match_tokens, match_whole, max_risk, severity,
     sf_symbol_risk, LabelRisk, Phrase, RuleTarget, ACTION_PHRASES, APP_RULES,
@@ -940,7 +940,7 @@ fn gesture_risk(
     }
     // Without a computable path (unknown screen size, an element in the system-gesture
     // margin) the runner gets no command at all; nothing more to read.
-    if let Ok(g) = gesture(kind, direction, target.map(|e| e.frame), screen.size) {
+    if let Ok(g) = drag_gesture(kind, direction, target.map(|e| e.frame), screen) {
         let crossed: Vec<&Element> = crossed_controls(r, g.from, g.to, finger)
             .into_iter()
             .filter(|el| !target.is_some_and(|t| t.index == el.index))
@@ -983,7 +983,7 @@ pub(crate) fn drag_target(
             return Some(el);
         }
     }
-    let g = gesture(kind, direction, target.map(|e| e.frame), screen.size).ok()?;
+    let g = drag_gesture(kind, direction, target.map(|e| e.frame), screen).ok()?;
     if let Some(el) = crossed_controls(&r, g.from, g.to, finger)
         .into_iter()
         .find(|el| !target.is_some_and(|t| t.index == el.index))

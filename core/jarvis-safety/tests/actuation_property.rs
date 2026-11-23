@@ -13,6 +13,8 @@
 //! actuates the control — tap, long press, `tap_point` on it, a swipe or scroll on it in
 //! any direction, and, for a slider across the middle of the screen, a sideways swipe or
 //! scroll with no element — the gate asks and the question says `Sends:` with the field.
+//! Fourteenth review (Rule E): a `tap_point` on a spot no listed element covers is presumed
+//! too (the form is the screen).
 //! A tap on a slider sets its value (not presumed, as before). `classify_variant` below is a
 //! `match` over every `Action` variant with no wildcard arm, so a new variant does not
 //! compile until this test decides it.
@@ -48,10 +50,13 @@ impl Rng {
 /// What the test expects of an action on the form's control: it actuates the control and
 /// must be presumed (`true`), or it is not this test's business (`false`). Exhaustive over
 /// `Action`.
-fn classify_variant(a: &Action, control: &Element) -> bool {
-    let slider = control.role == Role::Slider;
+/// `control` is what the action is on; `None` for a `tap_point` that resolves to no listed
+/// element (fourteenth review, Rule E: a press on something unknown is presumed too).
+fn classify_variant(a: &Action, control: Option<&Element>) -> bool {
+    let slider = control.is_some_and(|c| c.role == Role::Slider);
     match a {
-        Action::Tap { .. } | Action::LongPress { .. } | Action::TapPoint { .. } => !slider,
+        Action::Tap { .. } | Action::LongPress { .. } => control.is_some() && !slider,
+        Action::TapPoint { .. } => !slider,
         Action::Swipe { .. } | Action::Scroll { .. } => true,
         // Return in a field has its own property test (jarvis-observe's presumed submit).
         Action::Type { .. } => false,
@@ -149,9 +154,26 @@ fn form(seed: u64) -> usize {
             });
         }
     }
+    // Fourteenth review (Rule E): a `tap_point` on a spot no listed element covers (a web
+    // canvas, an unlisted control).
+    let spot = jarvis_proto::Point::new(8.0 + r.below(377) as f64, 180.0 + r.below(600) as f64);
+    let unlisted = !s.elements.iter().any(|e| e.frame.contains(spot));
     let mut checked = 0;
-    for a in &actions {
-        if !classify_variant(a, &control) {
+    let on: Vec<(Action, Option<&Element>)> = actions
+        .into_iter()
+        .map(|a| (a, Some(&control)))
+        .chain(unlisted.then(|| {
+            (
+                Action::TapPoint {
+                    x: spot.x / s.size.width,
+                    y: spot.y / s.size.height,
+                },
+                None,
+            )
+        }))
+        .collect();
+    for (a, target) in &on {
+        if !classify_variant(a, *target) {
             continue;
         }
         checked += 1;

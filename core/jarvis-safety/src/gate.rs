@@ -87,6 +87,31 @@ pub fn gate_on(
     }
 }
 
+/// [`gate_on`] plus the **unclear rule** (fourteenth review, Rule C): a request whose
+/// category the gate guessed (`unclear`: a presumed submit, a send-by-label whose form may
+/// hold an amount or names no verified recipient, a link the owner did not give) is
+/// confirmed whatever the trust level or the categories the owner relaxed — a guess is not
+/// relaxable. Only a denial (a deny-listed app, a denied category) takes precedence, and
+/// an owner who confirms nothing at all (`policy.confirm` empty) keeps that meaning (no
+/// request asks except by the screen-source rule). The one decision point the session's
+/// gate (`evaluate_owned`) uses.
+pub fn gate_owned(
+    policy: &Policy,
+    category: RiskCategory,
+    level: TrustLevel,
+    action: &Action,
+    screen: &CompactScreen,
+    runner_text: bool,
+    unclear: bool,
+) -> Gate {
+    match gate_on(policy, category, level, action, screen, runner_text) {
+        Gate::Allow if unclear && category != RiskCategory::None && !policy.confirm.is_empty() => {
+            Gate::Confirm
+        }
+        other => other,
+    }
+}
+
 /// Whether `action` can change state: everything except `Wait`, `Look`, `Done`, `Fail`,
 /// `AskUser` and a plain vertical `Scroll` (one whose target, if any, is not a picker,
 /// slider or switch, where dragging changes the value). `PressHome`, `OpenApp`, `OpenUrl`,

