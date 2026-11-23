@@ -72,6 +72,7 @@ pub fn system_prompt() -> String {
          - To search, type the owner's own words from the task; other words need the owner's approval.\n\
          - Each step says what changed on screen. Do not redo a step that worked.\n\
          - \"… more below\" means the list continues: scroll before deciding something is missing.\n\
+         - A line ending \"(under the tab bar: scroll)\" or \"(covered)\" is hidden under a bar, the keyboard or another element: scroll to bring it clear before tapping it, or the tap is refused.\n\
          - For saved personal data type {{{{profile.KEY}}}} with a key from Profile keys; never invent it.\n\
          - Never guess passwords or codes. For Face ID, passcode, CAPTCHA or a missing detail use ask_user.\n\
          - tap_point (x,y from 0 to 1) only when a screenshot is attached and the target has no number.\n\

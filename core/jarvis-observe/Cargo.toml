@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 jarvis-proto.workspace = true
+jarvis-safety.workspace = true
 serde.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

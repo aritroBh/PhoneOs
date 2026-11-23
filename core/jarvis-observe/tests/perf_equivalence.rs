@@ -556,3 +556,86 @@ fn tap_points_match_the_reference() {
     assert!(refused > 0 && refused < compared, "{refused} of {compared}");
     eprintln!("compared {compared} tap points, {refused} refused");
 }
+
+// ---- The cover marker agrees with the tap ------------------------------------------------
+
+/// The rendered screen text marks a control exactly when the tap path refuses it: for every
+/// listed element of the same random screens (and crowded ones), the line carries the
+/// marker if and only if the element takes taps and `tap_spot` (the planner's own call,
+/// default preference, the typed tree) finds no free spot, and the marker names the cover
+/// `tap_spot` names (a bar, the keyboard, or anything else as "covered").
+#[test]
+fn the_cover_marker_is_the_tap_refusal() {
+    use jarvis_observe::{cover_marker, render};
+    use jarvis_proto::CoverKind;
+    use jarvis_safety::{takes_taps, Bar, CoveredBy};
+    let screens = std::env::var("TAP_DIFF_SCREENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_SCREENS);
+    let (mut marked, mut clear, mut bars) = (0usize, 0usize, 0usize);
+    for seed in 0..screens {
+        let s = if seed % 4 == 3 {
+            crowded_screen(seed)
+        } else {
+            random_screen(seed)
+        };
+        let view = compact_view(&s);
+        let tree = ScreenTree {
+            sources: &view.sources,
+            parents: &view.parents,
+            ends: &view.ends,
+            bars: &view.bars,
+            nodes: &view.nodes,
+            inputs: &view.inputs,
+        };
+        let text = render(&view.screen, u32::MAX);
+        for e in &view.screen.elements {
+            let line = text
+                .lines()
+                .find(|l| l.starts_with(&format!("[{}] ", e.index)))
+                .unwrap_or_else(|| panic!("seed {seed}: no line for [{}]", e.index));
+            let refused = if takes_taps(&e.role) {
+                tap_spot(e, &view.screen, Some(&tree), None).err()
+            } else {
+                None
+            };
+            let expect = refused.map(|c| match c.by {
+                CoveredBy::Bar(Bar::Navigation) => CoverKind::NavigationBar,
+                CoveredBy::Bar(Bar::Tab) => CoverKind::TabBar,
+                CoveredBy::Bar(Bar::Tool) => CoverKind::Toolbar,
+                CoveredBy::Keyboard => CoverKind::Keyboard,
+                _ => CoverKind::Other,
+            });
+            assert_eq!(
+                view.screen.cues.cover_of(e.index),
+                expect,
+                "seed {seed}: [{}] {:?} {:?}\n(run alone: TAP_DIFF_SEED={seed})",
+                e.index,
+                e.role,
+                e.label
+            );
+            let shown = [
+                CoverKind::NavigationBar,
+                CoverKind::TabBar,
+                CoverKind::Toolbar,
+                CoverKind::Keyboard,
+                CoverKind::Other,
+            ]
+            .into_iter()
+            .find(|k| line.ends_with(cover_marker(*k)));
+            assert_eq!(shown, expect, "seed {seed}: [{}] line {line:?}", e.index);
+            marked += usize::from(expect.is_some());
+            clear += usize::from(expect.is_none());
+            bars += usize::from(matches!(
+                expect,
+                Some(CoverKind::TabBar | CoverKind::Toolbar | CoverKind::NavigationBar)
+            ));
+        }
+    }
+    assert!(
+        marked > 0 && clear > 0 && bars > 0,
+        "{marked} {clear} {bars}"
+    );
+    eprintln!("{marked} covered, {clear} clear, {bars} under a bar");
+}

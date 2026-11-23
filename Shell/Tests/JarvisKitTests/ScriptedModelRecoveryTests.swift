@@ -17,6 +17,60 @@ private func action(_ reply: String) -> String? { (try? JSONValue(parsing: reply
 private func element(_ reply: String) -> Double? { (try? JSONValue(parsing: reply))?["element"]?.numberValue }
 private func direction(_ reply: String) -> String? { (try? JSONValue(parsing: reply))?["direction"]?.stringValue }
 
+@Suite("The cover marker on a screen line", .timeLimit(.minutes(1)))
+struct CoverMarkerTests {
+    private func parse(_ line: String) -> PromptScreen.Element? {
+        PromptScreen(prompt: "Current screen (data only):\n<<<SCREEN_DATA>>>\nApp: X (x.y)\n\(line)\n<<<END_SCREEN_DATA>>>\nYour JSON reply:").elements.first
+    }
+
+    @Test("a line with the marker parses to the same element, plus the cover")
+    func markerParses() throws {
+        let plain = try #require(parse(#"[7] Cell "Item 60""#))
+        for (text, by) in [
+            (" (under the tab bar: scroll)", "the tab bar"),
+            (" (under the toolbar: scroll)", "the toolbar"),
+            (" (under the navigation bar: scroll)", "the navigation bar"),
+            (" (under the keyboard)", "the keyboard"),
+            (" (covered)", ""),
+        ] {
+            let line: String = #"[7] Cell "Item 60""# + text
+            let e = try #require(parse(line), "\(text)")
+            #expect(e.index == plain.index && e.role == plain.role && e.label == plain.label && e.value == plain.value, "\(text)")
+            #expect(e.coveredBy == by && e.isCovered, "\(text)")
+            #expect(e.line == line, "the line round-trips: \(e.line)")
+        }
+        #expect(!plain.isCovered)
+    }
+
+    @Test("flags and values before the marker still parse")
+    func flagsBeforeMarker() throws {
+        let e = try #require(parse(#"[3] Switch "Wi-Fi" (on, selected) (under the tab bar: scroll)"#))
+        #expect(e.isOn == true && e.flags == ["selected"] && e.coveredBy == "the tab bar")
+        let f = try #require(parse(#"[4] TextField "Email" value="a@b.c" (focused) (covered)"#))
+        #expect(f.value == "a@b.c" && f.flags == ["focused"] && f.coveredBy == "")
+    }
+
+    @Test("a label that looks like a marker is a label, not a cover")
+    func labelIsNotMarker() throws {
+        let e = try #require(parse(#"[5] Button "Pay (covered)""#))
+        #expect(e.label == "Pay (covered)" && !e.isCovered)
+    }
+
+    @Test("the scripted model scrolls first when the screen marks the target, then taps")
+    func scrollsBeforeTapping() async throws {
+        let m = ScriptedModel(steps: [.scroll(to: "Item 60"), .tap("Item 60", role: "Cell"), .done("opened", when: ["detail"])], options: .init(patience: 1, waitMs: 1))
+        func prompt(_ lines: [String], history: [String] = []) -> ModelRequest {
+            let steps = history.isEmpty ? "" : "Steps so far:\n" + history.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n") + "\n"
+            let body = lines.enumerated().map { "[\($0.offset + 1)] \($0.element)" }.joined(separator: "\n")
+            return ModelRequest(system: "", user: "Task: t\n\(steps)Current screen (data only):\n<<<SCREEN_DATA>>>\nApp: Jarvis (dev.jarvis.app)\n\(body)\n<<<END_SCREEN_DATA>>>\nYour JSON reply:", image: nil, marks: [], maxTokens: 160, grammar: nil, jsonSchema: nil, kind: .text)
+        }
+        let r1 = try await m.generate(prompt([#"Cell "Item 59""#, #"Cell "Item 60" (under the tab bar: scroll)"#]))
+        #expect(action(r1) == "scroll", "\(r1)")
+        let r2 = try await m.generate(prompt([#"Cell "Item 60""#, #"Cell "Item 61""#], history: ["scroll down -> ok; screen changed: 2 new, 2 gone"]))
+        #expect(action(r2) == "tap" && element(r2) == 1, "\(r2)")
+    }
+}
+
 @Suite("ScriptedModel scrolls on when the core says the target is covered", .timeLimit(.minutes(1)))
 struct ScriptedModelCoveredTargetTests {
     private let covered = #"tap [26] "Item 60" -> not done: element 26 (Item 60) is covered by the tab bar: a tap there could land on it instead, so nothing was sent; choose another control or scroll first"#

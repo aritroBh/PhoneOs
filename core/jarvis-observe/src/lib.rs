@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 mod compact;
+mod cover;
 mod diff;
 mod digest;
 mod fingerprint;
@@ -25,5 +26,7 @@ pub use digest::order_free_census;
 pub use digest::{screen_digest, screen_digest_input, ScreenDigest};
 pub use fingerprint::{fingerprint, fnv1a64, identity_key};
 pub use lookup::{find_by_fingerprint, marks, resolve, ResolveError};
-pub use render::{estimate_tokens, render, role_name, switch_state, MORE_ABOVE, MORE_BELOW};
+pub use render::{
+    cover_marker, estimate_tokens, render, role_name, switch_state, MORE_ABOVE, MORE_BELOW,
+};
 pub use runner_text::{parse_runner_text, ParseError, ParsedTree};

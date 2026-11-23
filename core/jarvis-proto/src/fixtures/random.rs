@@ -5,7 +5,7 @@
 //! fingerprints, empty, `NaN` and overlapping frames, rows of equal tiles beside each other,
 //! and every screen cue.
 
-use crate::compact::{CompactScreen, Element, ScreenCues};
+use crate::compact::{CompactScreen, CoverKind, CoveredControl, Element, ScreenCues};
 use crate::geometry::{Rect, Size};
 use crate::ui::Role;
 
@@ -271,6 +271,26 @@ pub fn random_compact_screen(seed: u64) -> CompactScreen {
         }
         elements.push(random_element(&mut r, index, size));
     }
+    // Covered controls: ascending, unique indices (some screens, a few controls each).
+    // (Its own generator: the other fields' draws stay what they were.)
+    let mut covered: Vec<CoveredControl> = Vec::new();
+    let mut c = Rng::new(seed ^ 0xC0E7);
+    if c.chance(40) {
+        for e in &elements {
+            if c.chance(10) && covered.last().is_none_or(|l| l.index < e.index) {
+                covered.push(CoveredControl {
+                    index: e.index,
+                    by: *c.pick(&[
+                        CoverKind::NavigationBar,
+                        CoverKind::TabBar,
+                        CoverKind::Toolbar,
+                        CoverKind::Keyboard,
+                        CoverKind::Other,
+                    ]),
+                });
+            }
+        }
+    }
     CompactScreen {
         app_bundle_id: (*r.pick(APPS)).to_owned(),
         app_name: match r.below(4) {
@@ -294,6 +314,7 @@ pub fn random_compact_screen(seed: u64) -> CompactScreen {
             return_key: r.chance(30).then(|| {
                 (*r.pick(&["return", "send", "go", "search", "done", "Return"])).to_owned()
             }),
+            covered,
         },
     }
 }

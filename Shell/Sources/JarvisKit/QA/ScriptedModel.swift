@@ -456,6 +456,17 @@ public final class ScriptedModel: ModelProvider {
                 guard let element = query.find(in: screen) else {
                     return waitOrFail(index, label, "no element matches \(query)", screen, &s)
                 }
+                // The screen says the target is under a bar or another control: a tap would
+                // be refused, so scroll first (the same bounded extra scrolls as after a
+                // covered refusal; once spent the tap is tried and the refusal ends the step).
+                if element.isCovered, s.coverScrolls[index, default: 0] < Self.maxCoverScrolls {
+                    let extra = s.coverScrolls[index, default: 0]
+                    s.coverScrolls[index] = extra + 1
+                    s.waits = 0
+                    let direction = coverScrollDirection(for: index)
+                    return (index, Self.json(["action": "scroll", "direction": .string(direction)], thought: "uncover the target"),
+                            "\(label): the screen marks the target covered (\(element.line)); extra scroll \(extra + 1)/\(Self.maxCoverScrolls) \(direction), then tap")
+                }
                 s.cursor += 1
                 s.waits = 0
                 s.pending = (index, query)

@@ -355,11 +355,11 @@ fn token_estimates_stay_close_to_the_known_numbers() {
         ("playground_home", 71, 71),
         ("toggles_off", 62, 62),
         ("safari_start_page", 149, 149),
-        ("settings_root", 119, 133),
+        ("settings_root", 119, 145), // 140 with the cover markers on rows under the tab bar
         ("settings_general", 178, 185),
         ("settings_about", 134, 134),
         ("login_keyboard", 61, 61),
-        ("long_list_scrolled", 151, 164),
+        ("long_list_scrolled", 151, 175), // 171 with the cover markers
         ("alert_dialog", 34, 41),
     ];
     for (name, before, ceiling) in table {

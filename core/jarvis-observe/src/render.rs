@@ -1,6 +1,6 @@
 //! Prompt text for a compact screen, degraded gracefully to fit a token budget.
 
-use jarvis_proto::{CompactScreen, Element, Role};
+use jarvis_proto::{CompactScreen, CoverKind, Element, Role};
 
 /// Label caps (in characters) tried in order when the full text is over budget.
 const LABEL_CAPS: [usize; 4] = [48, 32, 20, 12];
@@ -95,6 +95,28 @@ pub fn switch_state(e: &Element) -> Option<&'static str> {
         "0" | "false" | "off" => Some("off"),
         _ => None,
     }
+}
+
+/// The marker after a covered control's line: a tap on it would be refused (see
+/// `jarvis_observe::compact`'s `cues.covered`). Fixed text; the cover is named by its role
+/// only, never by its label.
+pub fn cover_marker(by: CoverKind) -> &'static str {
+    match by {
+        CoverKind::NavigationBar => " (under the navigation bar: scroll)",
+        CoverKind::TabBar => " (under the tab bar: scroll)",
+        CoverKind::Toolbar => " (under the toolbar: scroll)",
+        CoverKind::Keyboard => " (under the keyboard)",
+        CoverKind::Other => " (covered)",
+    }
+}
+
+/// `e`'s line, with the cover marker when the screen's cues say a tap on it is refused.
+fn line_of(screen: &CompactScreen, e: &Element, cap: Option<usize>) -> String {
+    let mut line = element_line(e, cap);
+    if let Some(by) = screen.cues.cover_of(e.index) {
+        line.push_str(cover_marker(by));
+    }
+    line
 }
 
 fn element_line(e: &Element, cap: Option<usize>) -> String {
@@ -206,7 +228,7 @@ fn text_within(
     let mut out = header.to_owned();
     for e in &screen.elements {
         out.push('\n');
-        out.push_str(&element_line(e, cap));
+        out.push_str(&line_of(screen, e, cap));
         if !fits(out.len() + footer.len()) {
             return None;
         }
@@ -313,7 +335,7 @@ pub fn render(screen: &CompactScreen, budget_tokens: u32) -> String {
     let lines: Vec<String> = screen
         .elements
         .iter()
-        .map(|e| element_line(e, last_cap))
+        .map(|e| line_of(screen, e, last_cap))
         .collect();
     let line_len = |i: usize| lines.get(i).map_or(0, |l| l.len() + 1);
     let all: usize = (0..lines.len()).map(line_len).sum();
@@ -418,7 +440,7 @@ mod reference {
         let mut out = header(screen);
         for e in shown.iter().take(keep) {
             out.push('\n');
-            out.push_str(&element_line(e, plan.cap));
+            out.push_str(&line_of(screen, e, plan.cap));
         }
         if !plan.omitted_texts.is_empty() {
             out.push_str(&format!(

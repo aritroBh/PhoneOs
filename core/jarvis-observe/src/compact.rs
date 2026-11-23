@@ -976,7 +976,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         }
     }
 
-    let screen_out = CompactScreen {
+    let mut screen_out = CompactScreen {
         app_bundle_id: screen.app_bundle_id.clone(),
         app_name: screen.app_name.clone(),
         size: screen.size,
@@ -987,6 +987,17 @@ pub fn compact_view(screen: &Screen) -> CompactView {
             ..cues(alert.unwrap_or(&screen.root), bounds, &layout)
         },
     };
+    // Which listed controls a tap would be refused for (the tap path's own decision).
+    screen_out.cues.covered = crate::cover::covered_controls(
+        &screen_out,
+        &crate::cover::Shape {
+            sources: &sources,
+            parents: &index.parents,
+            ends: &index.ends,
+            bars: &bars,
+            nodes: &nodes,
+        },
+    );
     CompactView {
         screen: screen_out,
         sources,

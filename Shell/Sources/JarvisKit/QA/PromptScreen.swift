@@ -17,8 +17,13 @@ public struct PromptScreen: Sendable, Equatable {
         public var isOn: Bool?
         /// Other flags (`focused`, `selected`, `disabled`), without the switch state.
         public var flags: [String]
+        /// What the core says covers the element, when the line ends in its cover marker: a tap
+        /// would be refused, so the model must scroll first. The role the core names
+        /// (`the tab bar`, `the toolbar`, `the navigation bar`, `the keyboard`), or `""` for
+        /// `(covered)`; `nil` when the line has no marker. Fixed core text, never screen text.
+        public var coveredBy: String?
 
-        public init(index: UInt32, role: String, label: String, value: String? = nil, placeholder: String? = nil, isOn: Bool? = nil, flags: [String] = []) {
+        public init(index: UInt32, role: String, label: String, value: String? = nil, placeholder: String? = nil, isOn: Bool? = nil, flags: [String] = [], coveredBy: String? = nil) {
             self.index = index
             self.role = role
             self.label = label
@@ -26,7 +31,12 @@ public struct PromptScreen: Sendable, Equatable {
             self.placeholder = placeholder
             self.isOn = isOn
             self.flags = flags
+            self.coveredBy = coveredBy
         }
+
+        /// Whether the line carries the cover marker (`(under the tab bar: scroll)`,
+        /// `(under the keyboard)`, `(covered)`).
+        public var isCovered: Bool { coveredBy != nil }
 
         /// What a run view shows next to the label: `On` / `Off` for a switch, else the value.
         public var displayValue: String? {
@@ -41,6 +51,11 @@ public struct PromptScreen: Sendable, Equatable {
             if let value { s += " value=\"\(value)\"" } else if let placeholder { s += " placeholder=\"\(placeholder)\"" }
             let all = (isOn.map { [$0 ? "on" : "off"] } ?? []) + flags
             if !all.isEmpty { s += " (\(all.joined(separator: ", ")))" }
+            if let coveredBy {
+                if coveredBy.isEmpty { s += " (covered)" }
+                else if coveredBy == "the keyboard" { s += " (under the keyboard)" }
+                else { s += " (under \(coveredBy): scroll)" }
+            }
             return s
         }
     }
@@ -220,6 +235,16 @@ public struct PromptScreen: Sendable, Equatable {
             guard let (text, rest) = readQuoted(s) else { return element }
             if key == "value" { element.value = text } else { element.placeholder = text }
             s = rest
+        }
+        // The cover marker is the line's last part, after the flags.
+        if s.hasSuffix(" (covered)") {
+            element.coveredBy = ""
+            s = s.dropLast(" (covered)".count)
+        } else if s.hasSuffix(")"), let open = s.range(of: " (under ", options: .backwards) {
+            var name = s[open.upperBound...].dropLast()
+            if name.hasSuffix(": scroll") { name = name.dropLast(": scroll".count) }
+            element.coveredBy = String(name)
+            s = s[..<open.lowerBound]
         }
         if s.hasPrefix(" ("), s.hasSuffix(")") {
             for flag in s.dropFirst(2).dropLast().split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) {

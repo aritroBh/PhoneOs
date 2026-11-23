@@ -32,7 +32,9 @@ pub mod ui;
 pub mod fixtures;
 
 pub use action::{Action, Direction};
-pub use compact::{BarNode, CompactScreen, Element, RawInput, RawNode, ScreenCues};
+pub use compact::{
+    BarNode, CompactScreen, CoverKind, CoveredControl, Element, RawInput, RawNode, ScreenCues,
+};
 pub use geometry::{Point, Rect, Size};
 pub use model::{Mark, ModelOutput, ModelProfile, ModelRequest, RequestKind};
 pub use policy::{

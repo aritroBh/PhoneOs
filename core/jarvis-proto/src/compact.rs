@@ -82,13 +82,56 @@ pub struct ScreenCues {
     /// it reaches a prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_key: Option<String>,
+    /// Listed controls a tap would be refused for because something covers them (no free
+    /// tap spot: `jarvis_safety::tap_spot` returns `Err`), by ascending element index.
+    /// Roles only, never screen text. The rendered line says so (`jarvis_observe::render`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covered: Vec<CoveredControl>,
 }
 
 impl ScreenCues {
     /// True when there is nothing to say.
     pub fn is_empty(&self) -> bool {
-        !self.more_above && !self.more_below && self.page.is_none() && self.return_key.is_none()
+        !self.more_above
+            && !self.more_below
+            && self.page.is_none()
+            && self.return_key.is_none()
+            && self.covered.is_empty()
     }
+
+    /// What covers element `index`, if a tap on it would be refused for cover.
+    pub fn cover_of(&self, index: u32) -> Option<CoverKind> {
+        let at = self
+            .covered
+            .binary_search_by_key(&index, |c| c.index)
+            .ok()?;
+        self.covered.get(at).map(|c| c.by)
+    }
+}
+
+/// What takes the touch from a covered control, by role only (the cover's own label is
+/// screen text and never travels).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CoverKind {
+    /// A full-width navigation bar.
+    NavigationBar,
+    /// A full-width tab bar.
+    TabBar,
+    /// A full-width bottom toolbar.
+    Toolbar,
+    /// The on-screen keyboard.
+    Keyboard,
+    /// Another control or node (a sheet, a banner, a floating button, ...).
+    Other,
+}
+
+/// A listed control that a tap would be refused for (see [`ScreenCues::covered`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoveredControl {
+    /// The element's index in the screen.
+    pub index: u32,
+    /// What covers it.
+    pub by: CoverKind,
 }
 
 /// A raw navigation, tab or tool bar node of the tree a compact screen was built from: bars
