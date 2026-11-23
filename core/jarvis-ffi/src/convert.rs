@@ -1140,6 +1140,7 @@ impl From<p::ConfirmRequest> for ConfirmRequest {
             stage,
             verb,
             target,
+            flow_only,
         } = v;
         ConfirmRequest {
             category: category.into(),
@@ -1150,6 +1151,7 @@ impl From<p::ConfirmRequest> for ConfirmRequest {
             stage: stage.into(),
             verb: verb.into(),
             target: target.map(|t| (*t).into()),
+            flow_only,
         }
     }
 }
@@ -1165,6 +1167,7 @@ impl From<ConfirmRequest> for p::ConfirmRequest {
             stage,
             verb,
             target,
+            flow_only,
         } = v;
         p::ConfirmRequest {
             category: category.into(),
@@ -1175,6 +1178,7 @@ impl From<ConfirmRequest> for p::ConfirmRequest {
             stage: stage.into(),
             verb: verb.into(),
             target: target.map(|t| Box::new(t.into())),
+            flow_only,
         }
     }
 }
@@ -1234,6 +1238,8 @@ same_enum!(
         Selected,
         Fields,
         Note,
+        Flow,
+        Insert,
         Other,
     ]
 );

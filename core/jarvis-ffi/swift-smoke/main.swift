@@ -241,6 +241,10 @@ if let setting = first.confirms.last {
 check("a request built from text alone has no rows and no target",
       ConfirmRequest(category: .delete, summary: "Delete", app: "a", phoneOnly: false, stage: .whole, verb: .other).rows.isEmpty
           && ConfirmRequest(category: .delete, summary: "Delete", app: "a", phoneOnly: false, stage: .whole, verb: .other).target == nil)
+check("the flow and insert row kinds are their own kinds, not notes",
+      QuestionRow(kind: .flow, text: ". x", display: "x").kind == .flow
+          && QuestionRow(kind: .insert, text: ". y", display: "y").kind == .insert
+          && QuestionRowKind.flow != .note && QuestionRowKind.insert != .note)
 check("session 1 left the switch off", first.page == .wifiOff)
 let memory = jsonObject(first.memoryJson)
 check("finish() returned memory JSON that parses", memory != nil, String(first.memoryJson.prefix(200)))

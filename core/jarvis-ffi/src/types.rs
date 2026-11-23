@@ -549,6 +549,11 @@ pub struct ConfirmRequest {
     pub verb: ConfirmVerb,
     #[uniffi(default = None)]
     pub target: Option<ConfirmTarget>,
+    /// Asked for the flow alone (Rule T): what Jarvis read elsewhere in this task could be
+    /// passed on here, and nothing else in the action asks. Its category is `SendMessage`;
+    /// a sheet words it by this flag.
+    #[uniffi(default = false)]
+    pub flow_only: bool,
 }
 
 /// One part of a confirmation's question.
@@ -588,6 +593,10 @@ pub enum QuestionRowKind {
     Fields,
     /// How the facts were read.
     Note,
+    /// What Jarvis read elsewhere in this task that this input could pass on.
+    Flow,
+    /// A paste or AutoFill control: content Jarvis cannot show will be entered.
+    Insert,
     /// Anything else.
     Other,
 }

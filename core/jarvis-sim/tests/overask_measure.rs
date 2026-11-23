@@ -194,7 +194,10 @@ fn flow_contexts_on_real_trees() {
     let mut inserts_total = 0usize;
     let mut inputs_total = 0usize;
     for f in &fixtures {
-        let v = compact_view(&f.screen);
+        // Home screen rule: the model is shown a SpringBoard screen without its widgets.
+        let shown = jarvis_safety::home_view(&f.screen);
+        let raw = shown.as_ref().unwrap_or(&f.screen);
+        let v = compact_view(raw);
         let tree = ScreenTree {
             sources: &v.sources,
             parents: &v.parents,
@@ -203,7 +206,11 @@ fn flow_contexts_on_real_trees() {
             nodes: &v.nodes,
             inputs: &v.inputs,
         };
-        let ctx = jarvis_safety::observed_context(&f.screen, &v.screen, ScreenSource::Typed);
+        let ctx = jarvis_safety::observed_context(raw, &v.screen, ScreenSource::Typed);
+        if f.name == "springboard_home" {
+            // Was a read (its Maps and Calendar widgets); now it shows icons only.
+            assert!(ctx.is_none(), "{ctx:?}");
+        }
         let mut inserts = 0usize;
         let mut inputs = 0usize;
         for e in v.screen.elements.iter().filter(|e| e.enabled) {

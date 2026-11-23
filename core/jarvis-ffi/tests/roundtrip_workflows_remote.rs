@@ -913,6 +913,7 @@ fn every_local_event_converts_and_progress_text_is_built_from_the_redacted_scree
                 stage: f::ConfirmStage::Whole,
                 verb: f::ConfirmVerb::Other,
                 target: None,
+                flow_only: false,
             },
         },
         f::LocalEvent::ConfirmResolved {

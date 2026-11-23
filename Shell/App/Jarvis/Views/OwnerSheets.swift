@@ -77,6 +77,12 @@ struct ConfirmationSheet: View {
                 .foregroundStyle(Theme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("confirm.title")
+            if let subtitle = wording.subtitle {
+                Text(subtitle)
+                    .font(Theme.meta)
+                    .foregroundStyle(Theme.textSecondary)
+                    .accessibilityIdentifier("confirm.subtitle")
+            }
             ConfirmationQuestionView(question: ConfirmationQuestion(request))
             VStack(alignment: .leading, spacing: 4) {
                 Text(request.app)

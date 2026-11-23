@@ -126,7 +126,7 @@ use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
     approval_context, check_app, check_app_name, check_confinement, control_at, copy_control,
     egress_owned, evaluate_egress, first_use_app, first_use_request, flow_checked, flow_note,
-    in_alert, insert_control, is_springboard, label_names_denied_app, not_owner_note,
+    home_view, in_alert, insert_control, is_springboard, label_names_denied_app, not_owner_note,
     observed_context, paste_note, point_is_clear, question_noted, redact, redact_screen,
     return_question_noted, sanitize_screen_text, search_names_denied_app, sensitive_note,
     touches_screen, verb_of, widget_names_denied_app, Budget, BudgetVerdict, Confinement, Covered,
@@ -2061,7 +2061,15 @@ impl Session {
     fn ingest(&mut self, obs: Observation) {
         // The digest is taken from the raw tree before compaction cuts or drops anything.
         let digest = screen_digest(&obs.screen);
-        let mut view = compact_view(&obs.screen);
+        // Sixteenth review (home screen rule): what a widget shows never reaches the model,
+        // a prompt, a history line, a note or the Live view. On a SpringBoard screen
+        // everything below works on the tree without widget content (`home_view`; the
+        // digest above is of the raw tree), and no screenshot is kept (a screenshot shows
+        // the widgets).
+        let home = home_view(&obs.screen);
+        let raw = home.as_ref().unwrap_or(&obs.screen);
+        let at_home = home.is_some();
+        let mut view = compact_view(raw);
         // Thirteenth review (H1): text that entered a field without `TypeText` sets the
         // app's "typed here" state (`TypedState::observed`).
         self.act.observed(
@@ -2075,7 +2083,7 @@ impl Session {
         self.screen_locked = false;
         self.own_hidden =
             self.is_agent_app(&obs.screen.app_bundle_id) && !self.config.drive_own_app;
-        let context = observed_context(&obs.screen, &view.screen, self.incoming_source);
+        let context = observed_context(raw, &view.screen, self.incoming_source);
         self.here = context
             .clone()
             .unwrap_or_else(|| FlowContext::app(&obs.screen.app_bundle_id));
@@ -2104,7 +2112,7 @@ impl Session {
             inputs: masked_inputs(view.inputs, &self.memory),
             source: self.incoming_source,
             screen: Arc::new(screen),
-            screenshot: obs.screenshot,
+            screenshot: obs.screenshot.filter(|_| !at_home),
             seen: true,
             at_ms: 0,
         };
@@ -2308,6 +2316,7 @@ impl Session {
             .count();
         self.config.model.supports_vision
             && !self.own_hidden
+            && !is_springboard(&self.current.screen.app_bundle_id)
             && actionable < MIN_ACTIONABLE
             && self.vision_hash != Some(self.current.hash)
     }
@@ -3158,6 +3167,7 @@ impl Session {
         let mut request = ConfirmRequest::from_rows(RiskCategory::SendMessage, rows, app);
         request.verb = verb_of(gate);
         request.phone_only = true;
+        request.flow_only = true;
         request
     }
 

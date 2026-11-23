@@ -449,6 +449,7 @@ fn the_full_protocol_through_the_ffi_objects() {
                 stage: ConfirmStage::Whole,
                 verb: ConfirmVerb::Other,
                 target: None,
+                flow_only: false,
             },
         },
     ));
@@ -513,6 +514,7 @@ fn the_full_protocol_through_the_ffi_objects() {
                 stage: ConfirmStage::Whole,
                 verb: ConfirmVerb::Other,
                 target: None,
+                flow_only: false,
             },
         },
     ));

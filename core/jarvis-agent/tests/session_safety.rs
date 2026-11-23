@@ -1132,6 +1132,13 @@ fn a_home_screen_label_that_names_a_denied_app_is_not_tapped() {
             Script::model(&[&tap, &tap]),
         );
         assert!(r.acts.is_empty(), "{label}: {:?}", r.acts);
+        if widget {
+            // Home screen rule (sixteenth review): a widget is not shown to the model at
+            // all, so it cannot be tapped, whatever it names; its text is in no prompt.
+            assert!(!r.all_prompt_text().contains(label), "{label}");
+            assert_ne!(r.outcome.status, OutcomeStatus::Success, "{label}");
+            continue;
+        }
         assert_eq!(r.outcome.status, OutcomeStatus::Blocked, "{label}");
     }
 }
@@ -1286,12 +1293,11 @@ fn a_tap_point_on_the_return_key_never_opens_a_denied_top_hit() {
             ]),
         );
         assert!(r.acts.is_empty(), "key '{key}': {:?}", r.acts);
-        assert!(
-            r.all_prompt_text()
-                .contains("could open Wallet, which is on the deny list"),
-            "{}",
-            r.last_user()
-        );
+        // Home screen rule (sixteenth review): no screenshot of the home screen is given to
+        // the model, so the tap by point is refused outright (before the Return check, which
+        // `spotlight_results_*` and the held-Return tests still cover for a typed Return).
+        let refused_for_screenshot = r.all_prompt_text().contains("tap_point needs a screenshot");
+        assert!(refused_for_screenshot, "{}", r.last_user());
         assert_eq!(
             r.outcome.status,
             OutcomeStatus::Failed,
@@ -1346,6 +1352,15 @@ fn an_unresolved_home_screen_tap_is_always_asked() {
             ]),
         );
         assert!(r.acts.is_empty(), "{:?}", r.acts);
+        // Home screen rule (sixteenth review): the model is never given a screenshot of the
+        // home screen (it shows the widgets), so a tap_point there is refused at once, before
+        // the checks below could run; nothing is asked and nothing is sent.
+        assert!(r.confirms.is_empty(), "{:?}", r.confirms);
+        let no_screenshot = r.all_prompt_text().contains("tap_point needs a screenshot");
+        assert!(no_screenshot, "{}", r.all_prompt_text());
+        if no_screenshot {
+            continue;
+        }
         // Seventh review: a tap_point on the keyboard (here its Return key, the first case)
         // is refused in every app before any launch question; was: asked like any
         // unresolved tap (deliberate change). A point on no listed element is still asked.

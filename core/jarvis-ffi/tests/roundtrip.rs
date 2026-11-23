@@ -969,6 +969,8 @@ fn a_structured_question_round_trips_with_every_kind_stage_and_verb() {
         K::Selected,
         K::Fields,
         K::Note,
+        K::Flow,
+        K::Insert,
         K::Other,
     ];
     let rows: Vec<p::QuestionRow> = kinds

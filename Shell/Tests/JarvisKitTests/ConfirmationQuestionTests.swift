@@ -84,3 +84,70 @@ struct ConfirmationQuestionTests {
         }
     }
 }
+
+/// Sixteenth review: the flow question (Rule T) and the paste note (Rule P) have their own
+/// row kinds; a question asked for the flow alone reads as that, not as sending a message.
+@Suite("ConfirmationWording for flow and paste questions", .timeLimit(.minutes(1)))
+struct FlowWordingTests {
+    private static let flowText = ". Jarvis has read Messages in this task; what it read there could be passed on here"
+    private static let pasteText = ". This enters content Jarvis cannot show (the clipboard or AutoFill) into Safari"
+
+    private func row(_ kind: QuestionRowKind, _ text: String) -> QuestionRow {
+        let display = text.hasPrefix(". ") ? String(text.dropFirst(2)) : text
+        return QuestionRow(kind: kind, text: text, display: display)
+    }
+
+    private func request(_ category: RiskCategory, _ rows: [QuestionRow], flowOnly: Bool) -> ConfirmRequest {
+        ConfirmRequest(category: category, summary: rows.map(\.text).joined(), app: "com.apple.mobilesafari", phoneOnly: true,
+                       rows: rows, stage: .whole, verb: .tap, target: nil, flowOnly: flowOnly)
+    }
+
+    @Test("a question asked for the flow alone has its own title and names the app")
+    func flowOnly() {
+        let q = request(.sendMessage, [row(.action, "Tap 'Next' in Safari"), row(.flow, Self.flowText)], flowOnly: true)
+        let wording = ConfirmationWording(q, appName: "Safari")
+        #expect(wording.title == "Let Jarvis use what it read here?")
+        #expect(wording.subtitle == "In Safari")
+        #expect(wording.chip != riskCategoryTitle(.sendMessage))
+        #expect(!wording.title.contains("Go ahead") && !wording.title.lowercased().contains("send"))
+        // The sheet still shows the action and the flow note, and reads them as one element.
+        let question = ConfirmationQuestion(q)
+        #expect(question.lines.map(\.kind) == [.action, .flow])
+        #expect(question.lines[1].label == "Read earlier" && question.lines[1].style == .warning)
+        #expect(question.summary == q.summary)
+    }
+
+    @Test("a question with a category of its own keeps it and shows the flow as a labelled row")
+    func merged() {
+        let q = request(.payment, [row(.action, "Tap 'Pay' in Shop"), row(.amount, ". Amounts on screen: $5.00"), row(.flow, Self.flowText)], flowOnly: false)
+        let wording = ConfirmationWording(q, appName: "Shop")
+        #expect(wording.title == "Go ahead in Shop?")
+        #expect(wording.chip == riskCategoryTitle(.payment))
+        #expect(wording.subtitle == nil)
+        let flow = ConfirmationQuestion(q).lines.last
+        #expect(flow?.kind == .flow && flow?.label == "Read earlier" && flow?.style == .warning)
+        // A real send question with a flow row is not worded as a flow question either.
+        let send = request(.sendMessage, [row(.action, "Tap 'Send' in Messages"), row(.sends, ". Sends: 'hi'"), row(.flow, Self.flowText)], flowOnly: false)
+        #expect(ConfirmationWording(send, appName: "Messages").title == "Go ahead in Messages?")
+    }
+
+    @Test("a paste question keeps its category title and labels the insert row")
+    func paste() {
+        let q = request(.sendMessage, [row(.action, "Tap 'Paste' in Safari"), row(.insert, Self.pasteText), row(.flow, Self.flowText)], flowOnly: false)
+        let wording = ConfirmationWording(q, appName: "Safari")
+        #expect(wording.title == "Go ahead in Safari?")
+        #expect(wording.subtitle == nil)
+        let lines = ConfirmationQuestion(q).lines
+        #expect(lines.map(\.kind) == [.action, .insert, .flow])
+        #expect(lines[1].label == "Entered without being shown" && lines[1].style == .warning)
+        #expect(ConfirmationQuestion(q).spoken.contains("Entered without being shown: This enters content Jarvis cannot show"))
+    }
+
+    @Test("without the flag, a flow row alone does not change the wording (text-only requests)")
+    func noFlag() {
+        let q = request(.sendMessage, [row(.action, "Tap 'Next' in Safari"), row(.flow, Self.flowText)], flowOnly: false)
+        #expect(ConfirmationWording(q, appName: "Safari").title == "Go ahead in Safari?")
+        let plain = ConfirmRequest(category: .sendMessage, summary: "Tap Send", app: "x")
+        #expect(plain.flowOnly == false)
+    }
+}

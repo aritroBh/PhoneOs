@@ -191,6 +191,15 @@ pub struct ConfirmRequest {
     /// resolved it when it asked; `None` for an action without a screen target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<Box<ConfirmTarget>>,
+    /// Sixteenth review (Rule T): the question is asked for the flow alone — the action
+    /// would have run unasked, but what Jarvis read elsewhere in this task could reach where
+    /// it goes. Its category is `SendMessage` (what was read could be sent on), which is
+    /// not what the owner is asked: a sheet words it by this flag, not by the category.
+    /// `false` for a question that has a risk question of its own (with or without a
+    /// `Flow` row). A paired remote device never sees it (category and summary only).
+    /// Omitted on the wire when `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flow_only: bool,
 }
 
 impl ConfirmRequest {
@@ -247,6 +256,12 @@ pub enum QuestionRowKind {
     Fields,
     /// A note on how the facts were read (`Facts from the 250 nearest elements`).
     Note,
+    /// Sixteenth review (Rule T): `Jarvis has read X in this task; what it read there could
+    /// be passed on here`: what was read elsewhere and could be passed on by this input.
+    Flow,
+    /// Sixteenth review (Rule P): `This enters content Jarvis cannot show (the clipboard or
+    /// AutoFill) into X`: the note of a paste or AutoFill control.
+    Insert,
     /// Anything else.
     Other,
 }

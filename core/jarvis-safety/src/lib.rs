@@ -76,7 +76,8 @@ pub use evaluate::{
     RECIPIENT_FIELD_WEAK_HEADS, UNVERIFIED_SCREEN_WARNING,
 };
 pub use flow::{
-    copy_control, flow_checked, insert_control, observed_context, Confinement, FlowContext,
+    copy_control, flow_checked, home_view, insert_control, observed_context, Confinement,
+    FlowContext,
 };
 pub use gate::{changes_state, gate, gate_in, gate_on, gate_owned, Gate, TRUSTED_ALLOWED};
 pub use hit::{

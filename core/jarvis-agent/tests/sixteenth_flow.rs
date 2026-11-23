@@ -19,8 +19,8 @@ use common::*;
 use jarvis_memory::MemoryStore;
 use jarvis_proto::fixtures::{keyboard, node, rect, screen, text, IPHONE_SIZE};
 use jarvis_proto::{
-    AppInfo, Effect, ParamKind, RiskCategory, Role, RunnerCommand, Screen, SessionConfig, Tier,
-    ToolParam, ToolResult, ToolSpec, UiNode,
+    render_rows, AppInfo, Effect, ParamKind, QuestionRowKind, RiskCategory, Role, RunnerCommand,
+    Screen, SessionConfig, Tier, ToolParam, ToolResult, ToolSpec, UiNode,
 };
 
 const FLOW: &str = "what it read there could be passed on here";
@@ -300,6 +300,14 @@ fn a_two_app_task_asks_once() {
     );
     assert_eq!(fq[0].category, RiskCategory::SendMessage);
     assert!(fq[0].phone_only);
+    // The sheet words it as a flow question (not as sending a message): the flag, and the
+    // note as its own row kind, whose texts still add up to the summary.
+    assert!(fq[0].flow_only);
+    assert_eq!(
+        fq[0].rows.iter().map(|r| r.kind).collect::<Vec<_>>(),
+        vec![QuestionRowKind::Action, QuestionRowKind::Flow]
+    );
+    assert_eq!(render_rows(&fq[0].rows), fq[0].summary);
     // After the one approval: the tap, the scroll and the second tap all went out.
     let touches = r
         .acts
@@ -408,11 +416,146 @@ fn home_screen_icons_are_not_a_read_a_banner_is() {
         "{}",
         fq[0].summary
     );
-    let widget = node(Role::Button, "Calendar", rect(200.0, 300.0, 180.0, 180.0))
-        .with_value("Widget, Stack")
-        .with_identifier("Calendar");
-    let r = go(home(vec![widget]));
+    // Home screen rule: a widget is not shown to the model, so it is not a read (before
+    // this rule a home screen with a widget asked a flow question at the next app's input).
+    let r = go(home(vec![secret_widget()]));
+    assert!(flows(&r).is_empty(), "{:?}", r.confirms);
+}
+
+const WIDGET_SECRET: &str = "ZEBRAQUILL4417";
+
+/// A calendar widget as SpringBoard draws it (a button with the value "Widget, Stack")
+/// holding text and a control a page-chosen text could ride on.
+fn secret_widget() -> UiNode {
+    node(
+        Role::Button,
+        &format!("Calendar {WIDGET_SECRET}"),
+        rect(200.0, 300.0, 180.0, 180.0),
+    )
+    .with_value("Widget, Stack")
+    .with_identifier(format!("Calendar {WIDGET_SECRET}"))
+    .with_children(vec![
+        text(
+            &format!("Meeting about {WIDGET_SECRET} at 3pm"),
+            rect(210.0, 310.0, 160.0, 20.0),
+        ),
+        node(
+            Role::Button,
+            &format!("Reply {WIDGET_SECRET}"),
+            rect(210.0, 400.0, 100.0, 30.0),
+        ),
+    ])
+}
+
+/// Home screen rule: a task that starts on the home screen (the voice path) with a widget
+/// holding a secret never shows the secret to the model or in any other output, and the
+/// first tap in the next app asks no flow question.
+#[test]
+fn a_widgets_text_reaches_no_prompt_and_asks_no_flow_question() {
+    let a = article("news.example");
+    let next = index_of(&a, "Next");
+    let mut c = cfg();
+    c.model.supports_vision = true;
+    let r = run(
+        c,
+        "Open Safari and tap next",
+        MemoryStore::new(),
+        phone(
+            home(vec![secret_widget()]),
+            vec![(SAFARI, a.clone())],
+            |_, _| Transition::Stay,
+        ),
+        Script::model(&[&open("Safari"), &tap(next), DONE]).decisions(&[true]),
+    );
+    assert!(flows(&r).is_empty(), "{:?}", r.confirms);
+    assert!(r
+        .acts
+        .iter()
+        .any(|c| matches!(c, RunnerCommand::Tap { .. })));
+    assert!(!r.requests.is_empty());
+    let prompts = r.all_prompt_text();
+    assert!(!prompts.contains(WIDGET_SECRET), "{prompts}");
+    assert!(prompts.contains("Settings"), "icons stay: {prompts}");
+    let outputs = format!(
+        "{:?} {:?} {:?} {:?}",
+        r.effects, r.outcome, r.questions, r.confirms
+    );
+    assert!(!outputs.contains(WIDGET_SECRET), "{outputs}");
+    // No screenshot of the home screen (it shows the widgets) goes to the model.
+    assert!(r.requests[0].image.is_none());
+}
+
+/// A banner stays visible and counts as a read; so does an alert, which is shown in full
+/// while the widget under it is not.
+#[test]
+fn a_banner_or_alert_on_the_home_screen_is_shown_and_read_but_the_widget_is_not() {
+    let a = article("news.example");
+    let next = index_of(&a, "Next");
+    let go = |start: Screen| {
+        run(
+            cfg(),
+            "Open https://news.example/ and tap next",
+            MemoryStore::new(),
+            phone(start, vec![(SAFARI, a.clone())], |_, _| Transition::Stay),
+            Script::model(&[
+                r#"{"action":"open_url","url":"https://news.example/"}"#,
+                &tap(next),
+                DONE,
+            ])
+            .decisions(&[true]),
+        )
+    };
+    let banner = UiNode::new(
+        Role::Other("NotificationBanner".into()),
+        rect(8.0, 50.0, 377.0, 80.0),
+    )
+    .with_children(vec![text(
+        "Bank: your statement is ready",
+        rect(16.0, 60.0, 300.0, 20.0),
+    )]);
+    let r = go(home(vec![secret_widget(), banner]));
     assert_eq!(flows(&r).len(), 1, "{:?}", r.confirms);
+    let prompts = r.all_prompt_text();
+    assert!(prompts.contains("your statement is ready"), "{prompts}");
+    assert!(!prompts.contains(WIDGET_SECRET), "{prompts}");
+
+    let alert = UiNode::new(Role::Alert, rect(40.0, 300.0, 313.0, 200.0))
+        .with_label("Low Battery")
+        .with_children(vec![
+            text("Battery is low", rect(50.0, 320.0, 290.0, 20.0)),
+            node(Role::Button, "OK", rect(50.0, 440.0, 290.0, 44.0)),
+        ]);
+    let r = go(home(vec![secret_widget(), alert]));
+    assert_eq!(flows(&r).len(), 1, "{:?}", r.confirms);
+    let prompts = r.all_prompt_text();
+    assert!(prompts.contains("Battery is low"), "{prompts}");
+    assert!(prompts.contains("OK"), "{prompts}");
+    assert!(!prompts.contains(WIDGET_SECRET), "{prompts}");
+}
+
+/// An icon under a widget is still covered: the widget's stub keeps its frame, so the tap
+/// on the icon is refused as before (nothing is sent), though the widget itself is gone.
+#[test]
+fn an_icon_under_a_dropped_widget_is_still_refused_as_covered() {
+    let mut cover = secret_widget();
+    cover.frame = rect(20.0, 100.0, 180.0, 120.0);
+    let covered = home(vec![cover]);
+    let i = index_of(&covered, "Settings");
+    let r = run(
+        cfg(),
+        "Open Settings",
+        MemoryStore::new(),
+        Phone::still(covered),
+        Script::model(&[&tap(i), &tap(i), DONE]),
+    );
+    assert!(
+        !r.acts
+            .iter()
+            .any(|c| matches!(c, RunnerCommand::Tap { .. })),
+        "{:?}",
+        r.acts
+    );
+    assert!(!r.all_prompt_text().contains(WIDGET_SECRET));
 }
 
 /// Two sites in one browser are two contexts (host from the chrome); a fake address bar
@@ -745,6 +888,9 @@ fn one_question_for_typing_its_return_and_the_flow() {
     );
     assert!(q.summary.contains(FLOW), "{}", q.summary);
     assert!(q.phone_only);
+    // It has a question of its own: not a flow-only question, the flow is one more row.
+    assert!(!q.flow_only);
+    assert!(q.rows.iter().any(|r| r.kind == QuestionRowKind::Flow));
     assert!(r
         .acts
         .iter()
@@ -840,6 +986,10 @@ fn paste_after_copy_names_the_source() {
         q.summary
     );
     assert!(q.summary.contains(FLOW), "{}", q.summary);
+    assert!(!q.flow_only);
+    assert!(q.rows.iter().any(|r| r.kind == QuestionRowKind::Insert));
+    assert!(q.rows.iter().any(|r| r.kind == QuestionRowKind::Flow));
+    assert_eq!(render_rows(&q.rows), q.summary);
     // The Copy tap ran, the Paste did not.
     assert_eq!(
         r.acts

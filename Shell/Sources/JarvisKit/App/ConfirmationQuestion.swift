@@ -72,6 +72,12 @@ public struct ConfirmationQuestion: Sendable, Equatable {
         case .selected: return ("Selected", .plain)
         case .fields: return ("Other fields", .plain)
         case .note: return (nil, .plain)
+        // Rule T: what Jarvis read earlier in this task could be passed on by this input. A
+        // question for the flow alone is worded by `ConfirmationWording`; in a question that
+        // asks about something else this is the labelled row that says what else is at stake.
+        case .flow: return ("Read earlier", .warning)
+        // Rule P: a paste or AutoFill control enters content the question cannot show.
+        case .insert: return ("Entered without being shown", .warning)
         case .other: return (nil, .plain)
         }
     }

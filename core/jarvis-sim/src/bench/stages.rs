@@ -584,6 +584,11 @@ fn sweep(
 
 fn session_stages(out: &mut CaseResult, id: &str, screen: &Screen, tap_index: u32, cfg: &Cfg) {
     let plan = &cfg.plan;
+    // A session shows the model a home screen without its widgets (`home_view`), so the
+    // tap it is told to make goes to the first control the model is shown.
+    let tap_index = jarvis_safety::home_view(screen)
+        .and_then(|h| tap_targets(&jarvis_observe::compact(&h)).first().copied())
+        .unwrap_or(tap_index);
     let wants_any = [
         "step.observe_infer",
         "step.reply_act",

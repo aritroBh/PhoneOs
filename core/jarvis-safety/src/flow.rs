@@ -32,6 +32,7 @@ use jarvis_proto::{Action, CompactScreen, Element, RiskCategory, Role, Screen, U
 use crate::actuation::{actuation, touches_screen, Actuation};
 use crate::app::is_springboard;
 use crate::evaluate::{ScreenSource, ScreenTree};
+use crate::hit::takes_taps;
 
 /// Where content comes from and goes to (Rule T).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -200,6 +201,128 @@ fn home_icons_only(screen: &CompactScreen) -> bool {
             _ => false,
         }
     })
+}
+
+/// Sixteenth review, home screen rule: what a widget shows is not shown to the model.
+///
+/// On a SpringBoard screen (bundle id `com.apple.springboard`, an OS fact) this returns the
+/// tree the model gets: launch targets and the OS chrome needed to act are kept — app icons
+/// and folders (buttons that are not widgets), the dock, the page dots, the search pill, the
+/// status bar, the keyboard, `Icon` and app-switcher `card` nodes — and every alert, sheet, banner or notification subtree is
+/// kept **unchanged and in full** (the model must see and dismiss those; they count as a
+/// read, [`observed_context`]). Spotlight's field and result rows (cells, tables) are kept
+/// too: the owner's typing chooses them, the denied-app check reads them, and a screen that
+/// shows them is a read as before.
+///
+/// A widget is a button SpringBoard gives the value "Widget" (or "Widget, Stack"; see the
+/// real `springboard_home` fixture) and the Today view's scroll view (identifier
+/// `left-of-home…`). Everything else on the screen that is not classified above fails
+/// closed: it is treated as widget content. A dropped node is replaced by a **stub**: the
+/// same frame and drawing flags, no label, value, identifier, placeholder or children, role
+/// `Other`. The stub is not listed (it has no label) and cannot be tapped, but it still
+/// covers what lies under it, so an icon under a widget is refused as covered as before.
+/// There is no marker line: nothing from a widget, not even its name, reaches the prompt.
+///
+/// `None` for any other app. The digest of the screen is taken from the raw tree, not from
+/// this one.
+pub fn home_view(screen: &Screen) -> Option<Screen> {
+    if !is_springboard(&screen.app_bundle_id) {
+        return None;
+    }
+    let mut out = screen.clone();
+    out.root = home_node(&screen.root);
+    Some(out)
+}
+
+/// A dropped node: its frame and drawing flags only.
+fn home_stub(n: &UiNode) -> UiNode {
+    UiNode {
+        // A control stays a (disabled, unlabelled) control, so it still takes touches from
+        // what lies under it as a cover; anything else is a plain node.
+        role: if takes_taps(&n.role) {
+            Role::Button
+        } else {
+            Role::Other("Other".to_owned())
+        },
+        label: None,
+        value: None,
+        identifier: None,
+        placeholder: None,
+        frame: n.frame,
+        enabled: false,
+        visible: n.visible,
+        hittable: n.hittable,
+        focused: false,
+        selected: false,
+        secure: false,
+        children: Vec::new(),
+    }
+}
+
+/// Whether a SpringBoard node is a widget: the value SpringBoard gives it, or the Today
+/// view's scroll view.
+fn home_widget(n: &UiNode) -> bool {
+    let value = n.value.as_deref().unwrap_or_default().trim().to_lowercase();
+    let label = n.label.as_deref().unwrap_or_default().trim().to_lowercase();
+    value == "widget"
+        || value.starts_with("widget,")
+        || label.ends_with(" widget")
+        || n.identifier
+            .as_deref()
+            .is_some_and(|i| i.to_lowercase().starts_with("left-of-home"))
+}
+
+/// Whether a SpringBoard node (not a widget, not alert-like) is kept.
+fn home_kept(n: &UiNode) -> bool {
+    let label = n.label.as_deref().unwrap_or_default().trim().to_lowercase();
+    let value = n.value.as_deref().unwrap_or_default().trim().to_lowercase();
+    match &n.role {
+        Role::Application
+        | Role::Window
+        | Role::Button
+        | Role::TextField
+        | Role::SecureTextField
+        | Role::TextView
+        | Role::SearchField
+        | Role::Cell
+        | Role::Table
+        | Role::CollectionView
+        | Role::Keyboard
+        | Role::Key
+        | Role::ScrollView => true,
+        Role::StaticText | Role::Image => {
+            (label.is_empty() || label == "search") && value.is_empty()
+        }
+        Role::Other(name) => {
+            let name = name.to_lowercase();
+            name.contains("pageindicator")
+                || name.contains("statusbar")
+                || name == "icon"
+                || name == "card"
+                || label == "dock"
+                || label == "search"
+                || label.contains("scroll bar")
+                || (label.is_empty() && value.is_empty())
+                || (label.is_empty() && value.starts_with("page "))
+        }
+        _ => false,
+    }
+}
+
+fn home_node(n: &UiNode) -> UiNode {
+    if alert_like_role(&n.role) {
+        return n.clone();
+    }
+    if home_widget(n) || !home_kept(n) {
+        return home_stub(n);
+    }
+    // The status bar is OS chrome whose labels (time, signal, battery) the model may read.
+    if matches!(&n.role, Role::Other(name) if name.to_lowercase().contains("statusbar")) {
+        return n.clone();
+    }
+    let mut out = n.clone();
+    out.children = n.children.iter().map(home_node).collect();
+    out
 }
 
 /// Rule T: the context of an observation, or `None` when it is not something Jarvis read

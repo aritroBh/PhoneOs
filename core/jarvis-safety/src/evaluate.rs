@@ -332,7 +332,7 @@ pub fn flow_note(places: &[String]) -> QuestionRow {
         (Some(_), n) => format!("{} and {n} more", names.join(", ")),
     };
     row(
-        QuestionRowKind::Note,
+        QuestionRowKind::Flow,
         &format!(". Jarvis has read {list} in this task; {MARK_FLOW}"),
     )
 }
@@ -352,7 +352,7 @@ pub fn paste_note(place: &str, copied_in: &[String]) -> QuestionRow {
             names.join(", ")
         ));
     }
-    row(QuestionRowKind::Note, &text)
+    row(QuestionRowKind::Insert, &text)
 }
 
 /// The note of a typing that holds profile values the owner marked sensitive (R1, F2):
@@ -622,6 +622,7 @@ pub fn flow_request(
     let mut request = ConfirmRequest::from_rows(RiskCategory::SendMessage, rows, app);
     request.verb = verb_of(action);
     request.phone_only = true;
+    request.flow_only = true;
     request
 }
 

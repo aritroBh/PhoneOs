@@ -13,6 +13,9 @@ public struct ConfirmationWording: Sendable, Equatable {
     public var chip: String
     /// Set for a home-screen launch: what the owner is being asked to let Jarvis open.
     public var homeScreenTarget: String?
+    /// A line under the title: for a question asked for the flow alone, where the input goes
+    /// (the app's name); `nil` otherwise.
+    public var subtitle: String?
 
     /// SpringBoard's bundle id, the `app` of a home-screen launch request.
     public static let springboard = "com.apple.springboard"
@@ -22,10 +25,21 @@ public struct ConfirmationWording: Sendable, Equatable {
         if request.category == .firstUse, request.app == Self.springboard,
            let target = Self.homeScreenTarget(in: request.summary) {
             homeScreenTarget = target
+            subtitle = nil
             title = "Open \(target) from the Home Screen?"
             chip = "Home Screen"
+        } else if request.flowOnly, request.rows.contains(where: { $0.kind == .flow }) {
+            // Rule T asked for the flow alone: the core sends it as `SendMessage` (what was read
+            // could be sent on), but nothing is being sent; the owner is asked whether what
+            // Jarvis read elsewhere may be used here. A question with a real category of its
+            // own (even with a flow row) keeps that category's wording, below.
+            homeScreenTarget = nil
+            subtitle = "In \(appName)"
+            title = "Let Jarvis use what it read here?"
+            chip = "Use of what was read"
         } else {
             homeScreenTarget = nil
+            subtitle = nil
             title = request.category == .firstUse ? "Let Jarvis act in \(appName)?" : "Go ahead in \(appName)?"
             chip = riskCategoryTitle(request.category)
         }

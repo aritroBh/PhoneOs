@@ -58,6 +58,9 @@ final class SystemAppAgentTests: QATestCase {
         XCTAssertEqual(XCUIApplication(bundleIdentifier: settingsId).state, .runningForeground, outcome.explanation)
         XCTAssertTrue(owner.confirms.contains { $0.category == .firstUse && $0.app == settingsId },
                       "first use of Settings was not approved through the gate; confirmations: \(owner.confirms)")
+        // This owner approves everything, so a flow question would pass unseen: assert none was
+        // asked (home screen rule, sixteenth review: the widgets are not shown to the model).
+        XCTAssertFalse(owner.confirms.contains(where: SystemAppAgentTests.isFlowQuestion), "a flow question was asked after the home screen: \(owner.confirms)")
     }
 
     /// The Settings icon is a known app (`KnownApps.common`), so since the core checks a
@@ -105,11 +108,10 @@ final class SystemAppAgentTests: QATestCase {
         let settings = settingsId
         let owner = QAOwner(transcript: run.transcript, decide: { request in
             // The icon question, and (a first-launch sheet's button is an action in Settings)
-            // Settings' own first use; and (sixteenth review, Rule T) the question that lets
-            // what Jarvis read on the home screen (its widgets) reach Settings, which that
-            // dismissal tap asks. Nothing else.
-            (request.category == .firstUse && ["com.apple.springboard", settings].contains(request.app))
-                || (request.app == settings && SystemAppAgentTests.isFlowQuestion(request))
+            // Settings' own first use. Nothing else: the home screen's widgets are not shown
+            // to the model, so the home screen is not something Jarvis read, and no flow
+            // question (Rule T) is asked when the first input goes into Settings.
+            request.category == .firstUse && ["com.apple.springboard", settings].contains(request.app)
         })
         let unknownToCore = KnownApps.common.filter { $0.name != "Settings" }
         let outcome = try await run.run(
@@ -117,6 +119,9 @@ final class SystemAppAgentTests: QATestCase {
             firstUseApproval: true, knownApps: unknownToCore
         )
 
+        // Home screen rule (sixteenth review): the widgets' contents never reach the model,
+        // so reading the home screen is not a read and no flow question was asked.
+        XCTAssertFalse(owner.confirms.contains(where: SystemAppAgentTests.isFlowQuestion), "a flow question was asked after the home screen: \(owner.confirms)")
         let asked = try XCTUnwrap(owner.confirms.first, "tapping an icon the core cannot name asked nothing\n\(outcome.explanation)")
         XCTAssertEqual(owner.confirms.filter { $0.app == "com.apple.springboard" }.count, 1, "\(owner.confirms)")
         XCTAssertEqual(asked.category, .firstUse)
@@ -152,11 +157,9 @@ final class SystemAppAgentTests: QATestCase {
         let safari = safariId
         let owner = QAOwner(transcript: run.transcript, decide: { request in
             if request.category == .firstUse { return true }
-            // Sixteenth review (Rule T): the run starts on the home screen, whose widgets are
-            // something Jarvis read; the first input into Safari (a first-launch sheet's
-            // button, or the first typing) asks once whether that may reach Safari. The owner
-            // allows it (only the home screen and Safari itself are named).
-            if request.app == safari && SystemAppAgentTests.isFlowQuestion(request) { return true }
+            // Home screen rule (sixteenth review): the run starts on the home screen, but its
+            // widgets are not shown to the model, so it is not a read and no flow question
+            // (Rule T) is asked at the first input into Safari; one would be declined here.
             return request.app == safari
                 && request.summary.contains("Send form")
                 && request.summary.contains("Ada Lovelace")
@@ -168,6 +171,7 @@ final class SystemAppAgentTests: QATestCase {
         // (fifteenth review, R1), and this owner would decline that too.
         let task = "Open \(url) in Safari and fill in the contact form with the name Ada Lovelace and the email ada@example.com"
         let outcome = try await run.run(task: task, model: model, owner: owner, firstUseApproval: true)
+        XCTAssertFalse(owner.confirms.contains(where: SystemAppAgentTests.isFlowQuestion), "a flow question was asked after the home screen: \(owner.confirms)")
         XCTAssertFalse(owner.confirms.contains { $0.summary.contains("This text is not from your request") }, "the owner's own words were asked: \(owner.confirms)")
         XCTAssertFalse(owner.confirms.contains { $0.summary.contains("Open a link") }, "a link the owner gave was asked: \(owner.confirms)")
         let submitted = await server.waitForSubmission(timeout: .seconds(5))

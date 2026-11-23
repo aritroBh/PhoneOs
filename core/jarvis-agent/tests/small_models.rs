@@ -175,12 +175,16 @@ fn long_press_and_tap_point_on_a_denied_icon_are_refused_too() {
         "{:?}",
         run2.acts
     );
-    assert_eq!(
-        run2.outcome.status,
-        OutcomeStatus::Blocked,
+    // Home screen rule (sixteenth review): no screenshot of the home screen reaches the
+    // model (it shows the widgets), so a tap by point there is refused for that reason
+    // (was: Blocked by the deny list); nothing is tapped either way.
+    assert!(
+        run2.all_prompt_text()
+            .contains("tap_point needs a screenshot"),
         "{}",
-        run2.outcome.summary
+        run2.all_prompt_text()
     );
+    assert_ne!(run2.outcome.status, OutcomeStatus::Success);
 }
 
 /// A known, allowed app's icon is just a launch, as with `open_app`: no prompt at the tap;
