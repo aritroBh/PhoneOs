@@ -124,12 +124,13 @@ use jarvis_proto::{
 };
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
-    approval_context, check_app, check_app_name, check_confinement, control_at, egress_owned,
-    evaluate_egress, first_use_app, first_use_request, in_alert, is_springboard,
-    label_names_denied_app, not_owner_note, point_is_clear, question_noted, redact, redact_screen,
+    approval_context, check_app, check_app_name, check_confinement, control_at, copy_control,
+    egress_owned, evaluate_egress, first_use_app, first_use_request, flow_checked, flow_note,
+    in_alert, insert_control, is_springboard, label_names_denied_app, not_owner_note,
+    observed_context, paste_note, point_is_clear, question_noted, redact, redact_screen,
     return_question_noted, sanitize_screen_text, search_names_denied_app, sensitive_note,
-    touches_screen, verb_of, widget_names_denied_app, Budget, BudgetVerdict, Covered, CoveredBy,
-    Decision, PointError, ScreenSource, ScreenTree, TypedText, Verdict,
+    touches_screen, verb_of, widget_names_denied_app, Budget, BudgetVerdict, Confinement, Covered,
+    CoveredBy, Decision, FlowContext, PointError, ScreenSource, ScreenTree, TypedText, Verdict,
 };
 
 use crate::act::{Out, TypedState};
@@ -146,8 +147,8 @@ use crate::profile::{
 use crate::prompt::{self, PromptParts, ACTION_MAX_TOKENS};
 use crate::schema::{action_gbnf, action_json_schema};
 use crate::state::{
-    ApprovalLook, Exec, FocusCheck, Late, ObservePurpose, Pending, PlanBasis, Resume, Settle,
-    Source, Stage, State, TypeCheck,
+    ApprovalLook, Exec, FlowAsk, FocusCheck, Late, ObservePurpose, Pending, PlanBasis, Resume,
+    Settle, Source, Stage, State, TypeCheck,
 };
 use crate::tools::{check_call, relevant, signature, MAX_TOOLS};
 use crate::typing::{check_typed, correction_deletes, TypedVerdict};
@@ -537,6 +538,22 @@ pub struct Session {
     fresh_looks: u32,
     /// Stale-screen guard: plans not carried out because the screen changed (`Progress`).
     stale_plans: u32,
+    /// Sixteenth review (Rule T): what this task read, what the clipboard may hold, the
+    /// flows the owner allowed or declined.
+    confine: Confinement,
+    /// Contexts whose content (or text derived from it: history lines, notes, a tool's
+    /// result) may enter the next model prompt; they are read when it is built.
+    exposed: BTreeSet<FlowContext>,
+    /// The context of the current observation (where an input goes).
+    here: FlowContext,
+    /// Jarvis's own app is in front and this run does not drive it: the model gets a stub
+    /// and nothing there can be acted on.
+    own_hidden: bool,
+    /// Sixteenth review (F9): the latest observation was of the lock screen.
+    screen_locked: bool,
+    /// Sixteenth review: the approved flow question when a first-use question follows it
+    /// (the look after the last approval checks the flow question's record).
+    prior_approval: Option<ConfirmRequest>,
 }
 
 impl std::fmt::Debug for Session {
@@ -696,6 +713,12 @@ impl Session {
             replans: 0,
             fresh_looks: 0,
             stale_plans: 0,
+            confine: Confinement::new(),
+            exposed: BTreeSet::new(),
+            here: FlowContext::App(String::new()),
+            own_hidden: false,
+            screen_locked: false,
+            prior_approval: None,
         }
     }
 
@@ -877,7 +900,16 @@ impl Session {
                 request,
                 approves_app,
                 then,
-            } => self.on_confirm(now, pending, request, approves_app, then, event, state_name),
+                then_app,
+            } => self.on_confirm(
+                now,
+                pending,
+                request,
+                approves_app,
+                (then, then_app),
+                event,
+                state_name,
+            ),
             State::AwaitingAnswer { described } => {
                 self.on_answer(now, described, event, state_name)
             }
@@ -912,6 +944,7 @@ impl Session {
             locked_total_ms: self.locked_total_ms,
             fresh_looks: self.fresh_looks,
             stale_plans: self.stale_plans,
+            screen_locked: self.screen_locked || matches!(self.state, State::AwaitingUnlock { .. }),
         }
     }
 
@@ -960,6 +993,7 @@ impl Session {
             other => return self.protocol_error(now, &other, state),
         };
         if obs.device_locked {
+            self.screen_locked = true;
             let state = State::AwaitingObservation { purpose };
             return self.interrupt(now, state, LockSignal::Reply, false);
         }
@@ -1123,6 +1157,11 @@ impl Session {
 
     /// Records a tool's result in the history, budget, log and recording.
     fn record_tool(&mut self, pending: &Pending, result: &ToolResult) {
+        // Sixteenth review (Rule T): the tool's result enters the history, so the next
+        // prompt reads it.
+        if let Exec::Tool(call) = &pending.exec {
+            self.exposed.insert(FlowContext::Tool(call.name.clone()));
+        }
         if result.ok {
             let out = self.safe_text(&result.output, MAX_RESULT_CHARS);
             let line = if out.is_empty() {
@@ -1149,21 +1188,49 @@ impl Session {
         pending: Box<Pending>,
         request: ConfirmRequest,
         approves_app: Option<String>,
-        then: Option<ConfirmRequest>,
+        (then, then_app): (Option<ConfirmRequest>, Option<String>),
         event: Event,
         state: &str,
     ) -> Out {
         match event {
             Event::UserDecision { approved: true } => {
-                if let Some(app) = approves_app {
-                    self.approved_apps.insert(app);
+                match approves_app {
+                    Some(app) => {
+                        self.approved_apps.insert(app);
+                    }
+                    // Sixteenth review (Rule T): the flow this question named is allowed
+                    // for the rest of the task.
+                    None => {
+                        if let Some(f) = &pending.flow {
+                            self.confine.allow(&f.target, &f.sources);
+                        }
+                    }
                 }
                 match then {
-                    Some(next) => self.ask_confirm(now, *pending, next, None, None),
-                    None => self.after_approval(*pending, request),
+                    Some(next) => {
+                        // The flow question asked before a first use (Rule T asks it first):
+                        // its approval is what the look after the last approval checks.
+                        if then_app.is_some() {
+                            self.prior_approval = Some(request);
+                        }
+                        self.ask_confirm(now, *pending, next, then_app, None)
+                    }
+                    None => {
+                        let request = match self.prior_approval.take() {
+                            Some(prior) if request.category == RiskCategory::FirstUse => prior,
+                            _ => request,
+                        };
+                        self.after_approval(*pending, request)
+                    }
                 }
             }
             Event::UserDecision { approved: false } => {
+                self.prior_approval = None;
+                let flow = pending
+                    .flow
+                    .clone()
+                    .filter(|_| approves_app.is_none())
+                    .map(Box::new);
                 self.apply_decline(
                     &request,
                     approves_app,
@@ -1171,6 +1238,7 @@ impl Session {
                     &pending.action,
                     pending.source,
                     pending.stage,
+                    flow.as_deref(),
                 );
                 self.decide(now)
             }
@@ -1180,6 +1248,7 @@ impl Session {
 
     /// Records the owner's "no": a declined app is off limits, a declined risk category
     /// finishes the session if asked again.
+    #[allow(clippy::too_many_arguments)]
     fn apply_decline(
         &mut self,
         request: &ConfirmRequest,
@@ -1188,6 +1257,7 @@ impl Session {
         action: &Action,
         source: Source,
         stage: Stage,
+        flow: Option<&FlowAsk>,
     ) {
         self.repeat = None;
         self.declined_open = Some(format!("\"{}\"", clean(&request.summary, 120)));
@@ -1196,7 +1266,18 @@ impl Session {
                 self.declined_apps.insert(app);
                 prompt::RESULT_APP_DECLINED
             }
+            // Sixteenth review (Rule T): a question asked for the flow alone blocks that
+            // flow for the task, never a risk category.
+            None if flow.is_some_and(|f| f.only) => {
+                if let Some(f) = flow {
+                    self.confine.decline(&f.target, &f.sources);
+                }
+                prompt::RESULT_FLOW_DECLINED
+            }
             None => {
+                if let Some(f) = flow {
+                    self.confine.decline(&f.target, &f.sources);
+                }
                 // A step-by-step confirmation of a harmless-looking action says nothing
                 // about the next one; risky categories are remembered.
                 if request.category != RiskCategory::None {
@@ -1305,6 +1386,11 @@ impl Session {
                 approves_app,
                 ..
             } => {
+                let flow = pending
+                    .flow
+                    .clone()
+                    .filter(|_| approves_app.is_none())
+                    .map(Box::new);
                 let late = Late::Decision {
                     request,
                     approves_app,
@@ -1312,6 +1398,7 @@ impl Session {
                     source: pending.source,
                     action: pending.action.clone(),
                     stage: pending.stage,
+                    flow,
                 };
                 if pending.source == Source::Replay && pending.stage != Stage::Return {
                     // A flow step is derived again from the fresh screen.
@@ -1371,7 +1458,10 @@ impl Session {
             Event::Tick | Event::DeviceLocked | Event::ObserveFailed { .. } => {
                 self.await_unlock(now, resume, late)
             }
-            Event::Observed(obs) if obs.device_locked => self.await_unlock(now, resume, late),
+            Event::Observed(obs) if obs.device_locked => {
+                self.screen_locked = true;
+                self.await_unlock(now, resume, late)
+            }
             Event::DeviceUnlocked => {
                 self.end_wait(late);
                 self.resume_observe(resume)
@@ -1409,6 +1499,7 @@ impl Session {
                     source,
                     action,
                     stage,
+                    flow,
                 }) => {
                     // A "no" is always safe to honour. A "yes" is not carried across the
                     // lock: the owner approves a screen they can see, so it is asked again.
@@ -1420,6 +1511,7 @@ impl Session {
                             &action,
                             source,
                             stage,
+                            flow.as_deref(),
                         );
                         resume = Resume::Decide;
                     }
@@ -1661,17 +1753,32 @@ impl Session {
         };
         // A4 and the gate: nothing new is asked, and an approved risk is the same category
         // with the identical summary, recomputed for this target on this screen.
+        // Sixteenth review: a question asked for the flow alone (Rule T) was approved when
+        // nothing else asks now and its summary is the same.
+        let flow = pending.flow.as_ref();
+        let flow_only = flow.is_some_and(|f| f.only);
         match self.gate_decision(&executed, &gate, None) {
+            Decision::Allow if flow_only => {
+                let same = approved.is_some_and(|a| {
+                    a.category == RiskCategory::SendMessage
+                        && a.summary == self.risk_summary(&gate, pending.stage, a.category, flow)
+                });
+                if !same {
+                    return None;
+                }
+            }
             Decision::Allow => {
                 if approved.is_some() {
                     return None;
                 }
             }
             Decision::Deny(_) => return None,
+            Decision::Confirm(_) if flow_only => return None,
             Decision::Confirm(request) => {
                 let same = approved.is_some_and(|a| {
                     a.category == request.category
-                        && a.summary == self.risk_summary(&gate, pending.stage, request.category)
+                        && a.summary
+                            == self.risk_summary(&gate, pending.stage, request.category, flow)
                 });
                 if !same {
                     return None;
@@ -1954,11 +2061,35 @@ impl Session {
     fn ingest(&mut self, obs: Observation) {
         // The digest is taken from the raw tree before compaction cuts or drops anything.
         let digest = screen_digest(&obs.screen);
-        let view = compact_view(&obs.screen);
+        let mut view = compact_view(&obs.screen);
         // Thirteenth review (H1): text that entered a field without `TypeText` sets the
         // app's "typed here" state (`TypedState::observed`).
-        self.act
-            .observed(&view.screen.app_bundle_id, view.input_marks);
+        self.act.observed(
+            &view.screen.app_bundle_id,
+            std::mem::take(&mut view.input_marks),
+        );
+        // Sixteenth review (Rule T): where this observation is, and whether it is something
+        // Jarvis read (its content may enter the next prompt). Jarvis's own app, when the
+        // run does not drive it, is neither read nor shown: the model gets a stub, and none
+        // of its labels can reach a history line.
+        self.screen_locked = false;
+        self.own_hidden =
+            self.is_agent_app(&obs.screen.app_bundle_id) && !self.config.drive_own_app;
+        let context = observed_context(&obs.screen, &view.screen, self.incoming_source);
+        self.here = context
+            .clone()
+            .unwrap_or_else(|| FlowContext::app(&obs.screen.app_bundle_id));
+        if let Some(c) = context.filter(|_| !self.own_hidden) {
+            self.exposed.insert(c);
+        }
+        if self.own_hidden {
+            view.screen.elements.clear();
+            view.screen.cues = Default::default();
+            view.sources.clear();
+            view.nodes.clear();
+            view.inputs.clear();
+            view.bars.clear();
+        }
         let screen = view.screen;
         self.current = Current {
             hash: screen_hash(&screen),
@@ -2000,8 +2131,14 @@ impl Session {
     /// fields the session typed (the only field values it may quote besides amounts) and
     /// the unverified-screen warning on runner text. The same function builds it when asked
     /// and when an approval is checked (A4: it must be identical).
-    fn risk_summary(&self, gate: &Action, stage: Stage, category: RiskCategory) -> String {
-        render_rows(&self.risk_question(gate, stage, category))
+    fn risk_summary(
+        &self,
+        gate: &Action,
+        stage: Stage,
+        category: RiskCategory,
+        flow: Option<&FlowAsk>,
+    ) -> String {
+        render_rows(&self.risk_question(gate, stage, category, flow))
     }
 
     /// The question [`Self::risk_summary`] renders, as its rows.
@@ -2010,11 +2147,26 @@ impl Session {
         gate: &Action,
         stage: Stage,
         category: RiskCategory,
+        flow: Option<&FlowAsk>,
     ) -> Vec<QuestionRow> {
         let tree = self.tree();
         let screen = &self.current.masked;
         let source = self.current.source;
-        let notes = self.egress_notes(gate);
+        let mut notes = self.egress_notes(gate);
+        // Sixteenth review: Rule P's note (what the clipboard may hold), then Rule T's.
+        if insert_control(gate, &self.current.screen, Some(&tree)).is_some() {
+            let place = self.flow_name(&self.here);
+            let copied: Vec<FlowContext> = self.confine.clipboard().cloned().collect();
+            notes.push(paste_note(&place, &self.flow_names(&copied)));
+        }
+        // A question asked for the flow alone states the action as one of no risk.
+        let category = match flow {
+            Some(f) if f.only => RiskCategory::None,
+            _ => category,
+        };
+        if let Some(f) = flow {
+            notes.push(f.note.clone());
+        }
         match (stage, gate) {
             (
                 Stage::Return,
@@ -2051,8 +2203,9 @@ impl Session {
         mut request: ConfirmRequest,
         gate: &Action,
         stage: Stage,
+        flow: Option<&FlowAsk>,
     ) -> ConfirmRequest {
-        request.rows = self.risk_question(gate, stage, request.category);
+        request.rows = self.risk_question(gate, stage, request.category, flow);
         request.summary = render_rows(&request.rows);
         request
     }
@@ -2154,6 +2307,7 @@ impl Session {
             .filter(|e| e.enabled && e.role.is_interactive())
             .count();
         self.config.model.supports_vision
+            && !self.own_hidden
             && actionable < MIN_ACTIONABLE
             && self.vision_hash != Some(self.current.hash)
     }
@@ -2168,9 +2322,14 @@ impl Session {
     }
 
     fn infer(&mut self, kind: RequestKind) -> Out {
+        // Sixteenth review (Rule T): everything this prompt carries — the screen, history
+        // lines and notes derived from earlier screens, tool results — is now read.
+        for context in std::mem::take(&mut self.exposed) {
+            self.confine.read(context);
+        }
         let screenshot = match kind {
-            RequestKind::Vision => self.current.screenshot.clone(),
-            RequestKind::Text => None,
+            RequestKind::Vision if !self.own_hidden => self.current.screenshot.clone(),
+            RequestKind::Vision | RequestKind::Text => None,
         };
         let vision = screenshot.is_some();
         let request = self.build_request(screenshot);
@@ -2195,6 +2354,9 @@ impl Session {
         let mut notes = self.notes.clone();
         if let Some(c) = &self.correction {
             notes.push(c.clone());
+        }
+        if self.own_hidden {
+            notes.push(prompt::OWN_APP_STUB.to_owned());
         }
         let vision = screenshot.is_some();
         let parts = PromptParts {
@@ -2273,6 +2435,13 @@ impl Session {
         if let Some(stop) = self.repeat_check(now, &action, source) {
             return stop;
         }
+        // Sixteenth review (Rule T): a replayed typing's recorded text (from an earlier task)
+        // enters this task's history: what the model reads next includes it.
+        if source == Source::Replay
+            && matches!(&action, Action::Type { text, .. } if !text.trim().is_empty())
+        {
+            self.exposed.insert(FlowContext::Memory);
+        }
         self.last_repeat_key = None;
         if action.is_ui() || matches!(action, Action::Look) {
             let key = (
@@ -2340,9 +2509,15 @@ impl Session {
                 request,
                 then,
             }) => {
+                let flow_only = pending.flow.as_ref().is_some_and(|f| f.only);
+                // Sixteenth review (Rule T): the flow question (with the risk it merges) is
+                // asked before the first use.
+                if let (Some(risk), true) = (then.clone(), pending.flow.is_some()) {
+                    return self.ask_confirm_then(now, pending, risk, None, Some(request), app);
+                }
                 if let Some(next) = then
                     .as_ref()
-                    .filter(|n| self.declined.contains(&n.category))
+                    .filter(|n| !flow_only && self.declined.contains(&n.category))
                 {
                     let summary = format!(
                         "Blocked: the owner already declined a {} action.",
@@ -2406,7 +2581,23 @@ impl Session {
         approves_app: Option<String>,
         then: Option<ConfirmRequest>,
     ) -> Out {
-        if approves_app.is_none() && self.declined.contains(&request.category) {
+        self.ask_confirm_then(now, pending, request, approves_app, then, None)
+    }
+
+    /// [`Self::ask_confirm`] with the app `then` approves (a first use asked after the flow
+    /// question, Rule T).
+    fn ask_confirm_then(
+        &mut self,
+        now: u64,
+        pending: Pending,
+        request: ConfirmRequest,
+        approves_app: Option<String>,
+        then: Option<ConfirmRequest>,
+        then_app: Option<String>,
+    ) -> Out {
+        // A question asked for the flow alone is not a risk category the owner declined.
+        let flow_only = approves_app.is_none() && pending.flow.as_ref().is_some_and(|f| f.only);
+        if approves_app.is_none() && !flow_only && self.declined.contains(&request.category) {
             let summary = format!(
                 "Blocked: the owner already declined a {} action.",
                 category_name(request.category)
@@ -2418,6 +2609,7 @@ impl Session {
             request: request.clone(),
             approves_app,
             then,
+            then_app,
         };
         Out::confirm(request)
     }
@@ -2494,6 +2686,11 @@ impl Session {
             return Err(Reject::Blocked(
                 self.declined_message(&screen.app_bundle_id),
             ));
+        }
+        // Sixteenth review: Jarvis's own app, when this run does not drive it, is shown to
+        // the model as a stub; nothing there is acted on (or looked at).
+        if uses_foreground_app(action) && self.own_hidden {
+            return Err(Reject::NotDone(prompt::RESULT_OWN_APP.to_owned()));
         }
         // 1. Normalise: resolve app names, check tool calls, gate tap_point on vision.
         let mut tool: Option<&ToolSpec> = None;
@@ -2765,15 +2962,31 @@ impl Session {
             exec,
             check,
             covers_return: None,
+            flow: None,
         };
+        // Sixteenth review (Rule T): an input into this context while something read
+        // elsewhere in this task is not allowed into it asks (merged into the action's own
+        // question when it has one). A home-screen tap that launches a known app is an app
+        // choice, like `open_app` (not gated). A replayed step's input was fixed before this
+        // task read anything (its slots are filled from the task's own words).
+        let launches_known_app = matches!(home, Some(HomeLaunch::App { .. }));
+        if source == Source::Model && !launches_known_app {
+            pending.flow = self.flow_for(&gate, tool, decision == Decision::Allow)?;
+        }
         let risk = match decision {
             Decision::Confirm(request) => {
                 // Describe the placeholder, never the substituted personal value, from the
                 // profile-masked screen (see `risk_summary`).
-                let request = self.with_risk_question(request, &gate, stage);
+                let mut request =
+                    self.with_risk_question(request, &gate, stage, pending.flow.as_ref());
+                request.phone_only |= pending.flow.is_some();
                 Some(self.stamped(request, &gate, stage, &pending.exec))
             }
-            Decision::Allow | Decision::Deny(_) => None,
+            Decision::Allow => pending.flow.as_ref().map(|f| {
+                let request = self.flow_request(&gate, stage, tool, f);
+                self.stamped(request, &gate, stage, &pending.exec)
+            }),
+            Decision::Deny(_) => None,
         };
         // Fifteenth review (R1): the one question about a typing and its Return.
         if let (Some(r), Action::Type { submit: true, .. }, Stage::Typing) = (&risk, &gate, stage) {
@@ -2860,6 +3073,94 @@ impl Session {
         })
     }
 
+    /// Sixteenth review (Rule T): the flow `gate` would make — the contexts read in this
+    /// task (and, for a paste, what the clipboard may hold) that the owner has not allowed
+    /// into the one its input goes to (the context in front; a tool's own context) — or
+    /// `None`. `only`: nothing else asks about the action. A flow the owner already declined
+    /// in this task is refused (`Blocked`): it blocks this flow only, never a category.
+    fn flow_for(
+        &self,
+        gate: &Action,
+        tool: Option<&ToolSpec>,
+        only: bool,
+    ) -> Result<Option<FlowAsk>, Reject> {
+        if !flow_checked(gate) {
+            return Ok(None);
+        }
+        let target = match (gate, tool) {
+            (Action::CallTool { name, .. }, _) => FlowContext::Tool(name.clone()),
+            _ => self.here.clone(),
+        };
+        let pasting = insert_control(gate, &self.current.screen, Some(&self.tree())).is_some();
+        let sources = self.confine.unallowed(&target, pasting);
+        if sources.is_empty() {
+            return Ok(None);
+        }
+        if self.confine.is_declined(&target, &sources) {
+            return Err(Reject::Blocked(format!(
+                "the owner did not allow what Jarvis read in {} to reach {}",
+                self.flow_names(&sources).join(", "),
+                self.flow_name(&target)
+            )));
+        }
+        let note = flow_note(&self.flow_names(&sources));
+        Ok(Some(FlowAsk {
+            target,
+            sources,
+            note,
+            only,
+        }))
+    }
+
+    /// How a question names `context` (an app by its display name).
+    fn flow_name(&self, context: &FlowContext) -> String {
+        context.display(|b| self.app_name_ci(b))
+    }
+
+    /// [`Self::flow_name`] of each of `contexts`.
+    fn flow_names(&self, contexts: &[FlowContext]) -> Vec<String> {
+        contexts.iter().map(|c| self.flow_name(c)).collect()
+    }
+
+    /// The display name of `bundle_id` (compared ignoring ASCII case).
+    fn app_name_ci(&self, bundle_id: &str) -> Option<String> {
+        if self
+            .current
+            .screen
+            .app_bundle_id
+            .eq_ignore_ascii_case(bundle_id)
+        {
+            if let Some(n) = &self.current.screen.app_name {
+                return Some(n.clone());
+            }
+        }
+        self.apps
+            .iter()
+            .find(|a| a.bundle_id.eq_ignore_ascii_case(bundle_id))
+            .map(|a| a.name.clone())
+    }
+
+    /// Sixteenth review (Rule T): the question asked for the flow alone (the action would
+    /// run unasked): `SendMessage` (what was read could be sent on), phone only, the action
+    /// line composed as an action of no risk, then the flow's note.
+    fn flow_request(
+        &self,
+        gate: &Action,
+        stage: Stage,
+        tool: Option<&ToolSpec>,
+        flow: &FlowAsk,
+    ) -> ConfirmRequest {
+        let app = match (gate, tool.and_then(|t| t.app.clone())) {
+            (Action::CallTool { .. }, Some(app)) => app,
+            _ => self.current.screen.app_bundle_id.clone(),
+        };
+        let rows = self.risk_question(gate, stage, RiskCategory::SendMessage, Some(flow));
+        let mut request = ConfirmRequest::from_rows(RiskCategory::SendMessage, rows, app);
+        request.verb = verb_of(gate);
+        request.phone_only = true;
+        request
+    }
+
     fn unknown_app_message(&self, app: &str) -> String {
         let names: Vec<String> = self
             .config
@@ -2881,6 +3182,11 @@ impl Session {
 
     /// Sends the first command (or the tool call) of an approved action.
     fn execute(&mut self, mut pending: Pending) -> Out {
+        // Sixteenth review (Rule P): Copy or Cut here puts this context on the clipboard; a
+        // later Paste names it (and Rule T counts it as a source of the paste).
+        if copy_control(&pending.gate, &self.current.screen) {
+            self.confine.copied(self.here.clone());
+        }
         match &mut pending.exec {
             Exec::Tool(call) => {
                 let call = call.clone();
@@ -3171,7 +3477,12 @@ impl Session {
                     matches!(&decision, Decision::Confirm(r)
                 if jarvis_safety::max_risk(r.category, *category) == *category
                     && (*phone_only || !r.phone_only))
-                        && self.risk_summary(&typing.gate, Stage::Typing, *category) == *summary
+                        && self.risk_summary(
+                            &typing.gate,
+                            Stage::Typing,
+                            *category,
+                            typing.flow.as_ref(),
+                        ) == *summary
                 });
         let decision = if covered { Decision::Allow } else { decision };
         let home = if is_springboard(&screen.app_bundle_id) {
@@ -3192,6 +3503,20 @@ impl Session {
         }]));
         pending.check = None;
         pending.covers_return = None;
+        // Sixteenth review (Rule T): Return is an input here too. The typing passed the same
+        // rule on the same read set (no prompt in between), so this asks only when the
+        // typing did not (a replayed typing whose Return the model chose cannot happen: the
+        // pair is one step of one source).
+        pending.flow = None;
+        if pending.source == Source::Model && !matches!(decision, Decision::Deny(_)) {
+            match self.flow_for(&gate, None, decision == Decision::Allow) {
+                Ok(flow) => pending.flow = flow,
+                Err(_) => {
+                    self.record_failure(&pending, prompt::RESULT_FLOW_DECLINED);
+                    return self.decide(now);
+                }
+            }
+        }
         let risk = match decision {
             Decision::Deny(reason) => {
                 let msg = format!(
@@ -3201,9 +3526,14 @@ impl Session {
                 self.record_failure(&pending, &msg);
                 return self.decide(now);
             }
-            Decision::Allow => None,
+            Decision::Allow => pending.flow.as_ref().map(|f| {
+                let request = self.flow_request(&gate, Stage::Return, None, f);
+                self.stamped(request, &gate, Stage::Return, &pending.exec)
+            }),
             Decision::Confirm(request) => {
-                let request = self.with_risk_question(request, &gate, Stage::Return);
+                let mut request =
+                    self.with_risk_question(request, &gate, Stage::Return, pending.flow.as_ref());
+                request.phone_only |= pending.flow.is_some();
                 Some(self.stamped(request, &gate, Stage::Return, &pending.exec))
             }
         };

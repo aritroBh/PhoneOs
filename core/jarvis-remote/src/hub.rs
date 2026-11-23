@@ -325,7 +325,9 @@ pub enum LocalEvent {
         progress: Progress,
         /// Screen text for remotes with `see_screen_text`. Build it from
         /// `jarvis_safety::redact_screen` output (secure fields already empty); the hub
-        /// redacts it again before sending.
+        /// redacts it again before sending. Dropped when `progress.screen_locked` or
+        /// `progress.waiting_for_unlock` is set (sixteenth review, F9: no lock-screen
+        /// content reaches a remote device).
         screen_text: Option<String>,
     },
     /// The session asks for a confirmation. The hub assigns it an id; read it with
@@ -999,6 +1001,12 @@ impl RemoteHub {
                 progress,
                 screen_text,
             } => {
+                // Sixteenth review (F9): no lock-screen content ever goes to a remote
+                // device. The session says when its latest observation was of the lock
+                // screen (or it waits for an unlock); its screen text is dropped here,
+                // whatever the shell passed.
+                let screen_text =
+                    screen_text.filter(|_| !progress.screen_locked && !progress.waiting_for_unlock);
                 self.broadcast(&mut fx, |hub, c| {
                     let p = hub.permissions(c.device_id)?;
                     (c.subscribed && p.see_progress).then_some(())?;

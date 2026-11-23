@@ -80,7 +80,7 @@ impl ScreenTree<'_> {
 
     /// The raw ancestors of `el`'s node, innermost first, the root excepted (it holds
     /// everything, so it is no one's container).
-    fn ancestors(&self, el: &Element) -> Vec<u32> {
+    pub(crate) fn ancestors(&self, el: &Element) -> Vec<u32> {
         let mut out = Vec::new();
         let mut at = self.source(el).and_then(|s| self.parent_of(s));
         while let Some(p) = at {
@@ -318,6 +318,43 @@ pub fn not_owner_note() -> QuestionRow {
     row(QuestionRowKind::Note, &format!(". {MARK_NOT_OWNER}"))
 }
 
+/// Sixteenth review (Rule T): the note of a question about an input into a place while
+/// `places` (display names of the contexts read in this task and not yet allowed into it,
+/// in order) could flow there: `. Jarvis has read Messages, example.com and 2 more in this
+/// task; what it read there could be passed on here`. At most 4 places are named.
+pub fn flow_note(places: &[String]) -> QuestionRow {
+    let names: Vec<String> = places.iter().take(4).map(|p| clean(p, 40)).collect();
+    let more = places.len().saturating_sub(names.len());
+    let list = match (names.split_last(), more) {
+        (None, _) => "other places".to_owned(),
+        (Some((last, [])), 0) => last.clone(),
+        (Some((last, rest)), 0) => format!("{} and {last}", rest.join(", ")),
+        (Some(_), n) => format!("{} and {n} more", names.join(", ")),
+    };
+    row(
+        QuestionRowKind::Note,
+        &format!(". Jarvis has read {list} in this task; {MARK_FLOW}"),
+    )
+}
+
+/// Sixteenth review (Rule P): the note of a question about pressing a control that inserts
+/// content Jarvis cannot show (the clipboard, AutoFill) into `place` (the app or site in
+/// front, display name); `copied_in` names where Jarvis pressed Copy or Cut in this task.
+pub fn paste_note(place: &str, copied_in: &[String]) -> QuestionRow {
+    let mut text = format!(
+        ". This enters {MARK_PASTE} (the clipboard or AutoFill) into {}",
+        clean(place, 40)
+    );
+    if !copied_in.is_empty() {
+        let names: Vec<String> = copied_in.iter().take(3).map(|p| clean(p, 40)).collect();
+        text.push_str(&format!(
+            "; Jarvis copied text in {} in this task",
+            names.join(", ")
+        ));
+    }
+    row(QuestionRowKind::Note, &text)
+}
+
 /// The note of a typing that holds profile values the owner marked sensitive (R1, F2):
 /// names the keys, never the values. `keys` are the owner's own key names.
 pub fn sensitive_note(keys: &[&str]) -> QuestionRow {
@@ -496,6 +533,13 @@ pub fn evaluate_egress(
         category = crate::phrases::max_risk(category, floor);
         unclear = true;
     }
+    // Sixteenth review (Rule P): a control that inserts content the question cannot show
+    // (Paste, AutoFill, password items) always asks, phone only.
+    let inserts = crate::flow::insert_control(action, screen, tree);
+    if let Some(floor) = inserts {
+        category = crate::phrases::max_risk(category, floor);
+        unclear = true;
+    }
     // Fifteenth review (R1): model text that is not the owner's asks before it reaches the
     // phone (Rule A's links are part of it: `owner_words` checks every link in the text).
     let not_owner =
@@ -506,7 +550,7 @@ pub fn evaluate_egress(
     }
     let runner_text =
         source == ScreenSource::RunnerText && !matches!(action, Action::CallTool { .. });
-    match gate_owned(
+    let gate = match gate_owned(
         policy,
         category,
         level,
@@ -515,14 +559,22 @@ pub fn evaluate_egress(
         runner_text,
         unclear,
     ) {
+        // Rule P asks whatever the owner relaxed (only a denial refuses).
+        Gate::Allow if inserts.is_some() => Gate::Confirm,
+        other => other,
+    };
+    match gate {
         Gate::Allow => Decision::Allow,
         Gate::Deny => Decision::Deny(format!("{category:?} actions are not allowed")),
         Gate::Confirm => {
-            let notes = if not_owner {
+            let mut notes = if not_owner {
                 vec![not_owner_note()]
             } else {
                 Vec::new()
             };
+            if inserts.is_some() {
+                notes.push(paste_note(&place_name(screen), &[]));
+            }
             let mut request = ConfirmRequest::from_rows(
                 category,
                 question_noted(action, screen, category, source, tree, typed, &notes),
@@ -531,6 +583,97 @@ pub fn evaluate_egress(
             request.verb = verb_of(action);
             request.phone_only = unclear;
             Decision::Confirm(request)
+        }
+    }
+}
+
+/// The display name of the app in front (its name, else its bundle id).
+fn place_name(screen: &CompactScreen) -> String {
+    screen
+        .app_name
+        .clone()
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| screen.app_bundle_id.clone())
+}
+
+/// Sixteenth review (Rule T): a question asked for the flow alone — the action would run
+/// unasked, but `places` (contexts read in this task, not yet allowed into the one in
+/// front) could reach it. Category `SendMessage` (what was read could be sent on), phone
+/// only; its action line is composed as an action of no risk, followed by [`flow_note`].
+#[allow(clippy::too_many_arguments)]
+pub fn flow_request(
+    action: &Action,
+    screen: &CompactScreen,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+    places: &[String],
+    app: String,
+) -> ConfirmRequest {
+    let rows = question_noted(
+        action,
+        screen,
+        RiskCategory::None,
+        source,
+        tree,
+        typed,
+        &[flow_note(places)],
+    );
+    let mut request = ConfirmRequest::from_rows(RiskCategory::SendMessage, rows, app);
+    request.verb = verb_of(action);
+    request.phone_only = true;
+    request
+}
+
+/// Sixteenth review: [`evaluate_egress`] under Rule T. `places` are the display names of
+/// the contexts read in this task that the owner has not allowed into the one this input
+/// goes to (the session's [`crate::Confinement::unallowed`]); empty, or an action that puts
+/// no input anywhere ([`crate::flow_checked`]), gives `evaluate_egress`'s decision. Else a
+/// denial stays a denial, a question gains [`flow_note`] and becomes phone only (one
+/// question, never two), and an action that would run unasked asks for the flow alone
+/// ([`flow_request`]).
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_confined(
+    policy: &Policy,
+    action: &Action,
+    screen: &CompactScreen,
+    tool: Option<&ToolSpec>,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+    owner: &[&str],
+    places: &[String],
+) -> Decision {
+    let decision = evaluate_egress(
+        policy, action, screen, tool, source, tree, typed, owner, false,
+    );
+    if places.is_empty() || !crate::flow::flow_checked(action) {
+        return decision;
+    }
+    match decision {
+        Decision::Deny(r) => Decision::Deny(r),
+        Decision::Allow => {
+            let app = match (action, tool.and_then(|t| t.app.clone())) {
+                (Action::CallTool { .. }, Some(app)) => app,
+                _ => screen.app_bundle_id.clone(),
+            };
+            Decision::Confirm(flow_request(
+                action, screen, source, tree, typed, places, app,
+            ))
+        }
+        Decision::Confirm(mut r) => {
+            let mut notes = Vec::new();
+            if !egress_owned(action, owner) {
+                notes.push(not_owner_note());
+            }
+            if crate::flow::insert_control(action, screen, tree).is_some() {
+                notes.push(paste_note(&place_name(screen), &[]));
+            }
+            notes.push(flow_note(places));
+            r.rows = question_noted(action, screen, r.category, source, tree, typed, &notes);
+            r.summary = render_rows(&r.rows);
+            r.phone_only = true;
+            Decision::Confirm(r)
         }
     }
 }
@@ -1198,7 +1341,7 @@ pub fn first_use_request(bundle_id: &str, app_name: Option<&str>) -> ConfirmRequ
 /// Redacts, sanitises and caps `s`, turns `"` (and the quotation marks that look like it)
 /// into `'` so it can sit inside quotes, and neutralises the question's own markers
 /// ([`defang`], [`neutralise_markers`]).
-fn clean(s: &str, max: usize) -> String {
+pub(crate) fn clean(s: &str, max: usize) -> String {
     let quoted: String = sanitize_screen_text_with_limit(&redact(s), max)
         .chars()
         .map(|c| match c {
@@ -1238,6 +1381,10 @@ const MARK_NOT_OWNER: &str = "This text is not from your request";
 /// Fifteenth review (R4): a tap inside an alert.
 const MARK_ALERT: &str = "This answers an alert";
 const MARK_PERMISSION: &str = "This answers a system alert and may grant a permission";
+/// Sixteenth review (Rule T): what was read elsewhere could reach this place.
+const MARK_FLOW: &str = "what it read there could be passed on here";
+/// Sixteenth review (Rule P): a control that inserts content the question cannot show.
+const MARK_PASTE: &str = "content Jarvis cannot show";
 
 /// Every heading the question writes, each followed by a colon (or ` (N …):`) in a
 /// question (eleventh review: the single source the composer, [`defang`] and the property
@@ -1266,6 +1413,8 @@ pub const QUESTION_MARKERS: &[&str] = &[
     MARK_NOT_OWNER,
     MARK_ALERT,
     MARK_PERMISSION,
+    MARK_FLOW,
+    MARK_PASTE,
 ];
 
 /// Twelfth review: the other words the composer writes at the start of the question or of
@@ -1364,6 +1513,8 @@ const PHRASE_MARKERS: &[&str] = &[
     MARK_NOT_OWNER,
     MARK_ALERT,
     MARK_PERMISSION,
+    MARK_FLOW,
+    MARK_PASTE,
 ];
 
 /// Whether `c` reads as a colon ([`crate::text::colon_shaped`]; eleventh review: every
@@ -1420,7 +1571,19 @@ fn neutralise_markers(s: &str) -> String {
         };
         let mut i = 0usize;
         while i + m.len() <= folded.len() {
-            if folded.get(i) == Some(&first) && folded.get(i..i + m.len()) == Some(m.as_slice()) {
+            // Sixteenth review: a letter outside ASCII stands for any letter of the marker
+            // (no look-alike table decides: Georgian `ყ` for `y` was missed by the fold).
+            let same = |k: usize, want: char| {
+                folded.get(i + k) == Some(&want)
+                    || (want.is_ascii_alphabetic()
+                        && chars
+                            .get(i + k)
+                            .is_some_and(|c| crate::text::non_ascii_letter(*c)))
+            };
+            if i + m.len() <= folded.len()
+                && same(0, first)
+                && m.iter().enumerate().all(|(k, w)| same(k, *w))
+            {
                 for c in chars.iter_mut().skip(i).take(m.len()) {
                     *c = match *c {
                         c if c.is_whitespace() => '-',

@@ -86,6 +86,9 @@ fn states() -> Vec<(&'static str, Vec<Event>, Phase)> {
                 Event::Start,
                 observed(),
                 model(r#"{"action":"call_tool","name":"note","args":{"text":"hi"}}"#),
+                // Sixteenth review (Rule T): the task read the screen, so a tool call with
+                // arguments asks first (phone only); approved, the tool runs.
+                Event::UserDecision { approved: true },
             ],
             Phase::CallingTool,
         ),

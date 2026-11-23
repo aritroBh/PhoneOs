@@ -255,9 +255,20 @@ fn typing_in_one_app_presumes_nothing_in_another() {
             r#"{"action":"open_app","app":"com.example.shop"}"#,
             &format!(r#"{{"action":"tap","element":{done}}}"#),
             r#"{"action":"fail","reason":"x"}"#,
-        ]),
+        ])
+        // Sixteenth review (Rule T): the typing into the chat after reading the shop, and the
+        // tap in the shop after reading the chat, each ask once whether what was read in the
+        // other app may reach it (approved here). No presumed-submit question.
+        .decisions(&[true, true]),
     );
-    assert!(r.confirms.is_empty(), "{:#?}", r.confirms);
+    assert!(
+        r.confirms.iter().all(|c| c
+            .summary
+            .contains("what it read there could be passed on here")
+            && !c.summary.contains("Sends:")),
+        "{:#?}",
+        r.confirms
+    );
     assert!(r
         .acts
         .iter()

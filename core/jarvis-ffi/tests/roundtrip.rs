@@ -867,6 +867,7 @@ fn policy_task_and_config_round_trip() {
             p::AppInfo::new("com.apple.MobileSMS", "Messages"),
         ],
         agent_bundle_id: Some("com.example.jarvis".to_owned()),
+        drive_own_app: true,
         skill: Some(p::SkillContext {
             id: "text-someone".to_owned(),
             name: "Text someone".to_owned(),
@@ -1058,6 +1059,7 @@ fn every_phase_and_progress_round_trips() {
             locked_total_ms: 50,
             fresh_looks: 4,
             stale_plans: 1,
+            screen_locked: phase == p::Phase::WaitingForUnlock,
         });
     }
     rt_try::<_, f::SessionProgress>(p::Progress::default());

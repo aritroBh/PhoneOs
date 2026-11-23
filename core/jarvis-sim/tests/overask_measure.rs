@@ -183,3 +183,45 @@ fn over_asking_on_real_trees() {
         fifteen[0], fifteen[1], fifteen[2], fifteen[3], fifteen[4]
     );
 }
+
+/// Sixteenth review: the context of each real tree (Rule T: whether it counts as a read and
+/// how its place is named), the enabled controls a tap on which is Rule P's insert-content
+/// control (each asks whatever the policy), and the enabled controls in all (each input
+/// asks once per place after another place was read, then once per new source).
+#[test]
+fn flow_contexts_on_real_trees() {
+    let fixtures = load_all(&default_dir()).unwrap();
+    let mut inserts_total = 0usize;
+    let mut inputs_total = 0usize;
+    for f in &fixtures {
+        let v = compact_view(&f.screen);
+        let tree = ScreenTree {
+            sources: &v.sources,
+            parents: &v.parents,
+            ends: &v.ends,
+            bars: &v.bars,
+            nodes: &v.nodes,
+            inputs: &v.inputs,
+        };
+        let ctx = jarvis_safety::observed_context(&f.screen, &v.screen, ScreenSource::Typed);
+        let mut inserts = 0usize;
+        let mut inputs = 0usize;
+        for e in v.screen.elements.iter().filter(|e| e.enabled) {
+            let a = Action::Tap { element: e.index };
+            if jarvis_safety::flow_checked(&a) {
+                inputs += 1;
+            }
+            if jarvis_safety::insert_control(&a, &v.screen, Some(&tree)).is_some() {
+                inserts += 1;
+                println!("  {}: insert control {:?} {:?}", f.name, e.role, e.label);
+            }
+        }
+        inserts_total += inserts;
+        inputs_total += inputs;
+        println!(
+            "{}: context {:?}; enabled controls {inputs}; Rule P controls {inserts}",
+            f.name, ctx
+        );
+    }
+    println!("TOTAL enabled controls {inputs_total}; Rule P controls {inserts_total}");
+}

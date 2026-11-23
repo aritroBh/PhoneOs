@@ -314,6 +314,9 @@ fn when_jarvis_is_the_asked_app_the_sheet_settles_without_an_activation() {
     };
     let mut c = agent_config();
     c.policy.mode = jarvis_proto::PolicyMode::StepByStep;
+    // Sixteenth review: a run that drives Jarvis's own app says so (the simulator's
+    // Playground runs); without it the model gets a stub for Jarvis's screens.
+    c.drive_own_app = true;
     let mut d = Driver::new(c);
     d.step(Event::Start);
     assert!(matches!(d.observed(&sheet(false)), Effect::Infer(_)));

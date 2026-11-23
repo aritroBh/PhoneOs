@@ -21,6 +21,12 @@ final class SystemAppAgentTests: QATestCase {
                     when: [ElementQuery("You can now view these items in the menu", match: .contains, roles: ["StaticText"])]),
     ]
 
+    /// Sixteenth review (Rule T): a question that asks whether what Jarvis read elsewhere in
+    /// the task may reach the app in front (the core's flow note).
+    static func isFlowQuestion(_ request: ConfirmRequest) -> Bool {
+        request.summary.contains("what it read there could be passed on here")
+    }
+
     private let settingsId = "com.apple.Preferences"
     private let safariId = "com.apple.mobilesafari"
 
@@ -99,8 +105,11 @@ final class SystemAppAgentTests: QATestCase {
         let settings = settingsId
         let owner = QAOwner(transcript: run.transcript, decide: { request in
             // The icon question, and (a first-launch sheet's button is an action in Settings)
-            // Settings' own first use; nothing else.
-            request.category == .firstUse && ["com.apple.springboard", settings].contains(request.app)
+            // Settings' own first use; and (sixteenth review, Rule T) the question that lets
+            // what Jarvis read on the home screen (its widgets) reach Settings, which that
+            // dismissal tap asks. Nothing else.
+            (request.category == .firstUse && ["com.apple.springboard", settings].contains(request.app))
+                || (request.app == settings && SystemAppAgentTests.isFlowQuestion(request))
         })
         let unknownToCore = KnownApps.common.filter { $0.name != "Settings" }
         let outcome = try await run.run(
@@ -143,6 +152,11 @@ final class SystemAppAgentTests: QATestCase {
         let safari = safariId
         let owner = QAOwner(transcript: run.transcript, decide: { request in
             if request.category == .firstUse { return true }
+            // Sixteenth review (Rule T): the run starts on the home screen, whose widgets are
+            // something Jarvis read; the first input into Safari (a first-launch sheet's
+            // button, or the first typing) asks once whether that may reach Safari. The owner
+            // allows it (only the home screen and Safari itself are named).
+            if request.app == safari && SystemAppAgentTests.isFlowQuestion(request) { return true }
             return request.app == safari
                 && request.summary.contains("Send form")
                 && request.summary.contains("Ada Lovelace")

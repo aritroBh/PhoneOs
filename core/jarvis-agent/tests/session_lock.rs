@@ -448,12 +448,31 @@ fn a_question_answered_while_locked_is_kept_an_unanswered_one_is_dropped() {
     );
 }
 
+/// The model's tool call, approved on the phone when it asks (sixteenth review, Rule T:
+/// the task read Settings, and a tool call with arguments is an input into the tool).
+fn call_approved(s: &mut Session, now: u64, call: &str) -> Effect {
+    match s.step(ev(now, model(call))) {
+        Effect::Confirm(r) => {
+            assert!(
+                r.summary.contains("could be passed on here"),
+                "{}",
+                r.summary
+            );
+            s.step(ev(now + 1, Event::UserDecision { approved: true }))
+        }
+        other => other,
+    }
+}
+
 #[test]
 fn a_tool_result_while_locked_is_recorded_a_missing_one_is_unknown() {
     let call = r#"{"action":"call_tool","name":"note","args":{"text":"hi"}}"#;
     let mut s = session();
     thinking(&mut s);
-    assert!(matches!(s.step(ev(30, model(call))), Effect::CallTool(_)));
+    assert!(matches!(
+        call_approved(&mut s, 30, call),
+        Effect::CallTool(_)
+    ));
     expect_wait(&s.step(ev(40, Event::DeviceLocked)));
     expect_wait(&s.step(ev(
         50,
@@ -469,7 +488,7 @@ fn a_tool_result_while_locked_is_recorded_a_missing_one_is_unknown() {
 
     let mut s = session();
     thinking(&mut s);
-    s.step(ev(30, model(call)));
+    call_approved(&mut s, 30, call);
     expect_wait(&s.step(ev(40, Event::DeviceLocked)));
     s.step(ev(60, Event::DeviceUnlocked));
     let r = expect_infer(s.step(ev(70, observed(settings_screen()))));
@@ -481,7 +500,7 @@ fn a_tool_result_while_locked_is_recorded_a_missing_one_is_unknown() {
     // A result arriving after the unlock is out of protocol.
     let mut s2 = session();
     thinking(&mut s2);
-    s2.step(ev(30, model(call)));
+    call_approved(&mut s2, 30, call);
     s2.step(ev(40, Event::DeviceLocked));
     s2.step(ev(50, Event::DeviceUnlocked));
     let o = finished(s2.step(ev(

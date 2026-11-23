@@ -149,6 +149,17 @@ pub(crate) const RESULT_DECLINED: &str =
 /// History result for a declined first-use approval.
 pub(crate) const RESULT_APP_DECLINED: &str =
     "not done: the owner does not want Jarvis to act in this app. Do not use it again; leave it or use fail";
+/// Sixteenth review: the note a prompt carries while Jarvis's own app is in front and the
+/// run does not drive it (its screen is not shown).
+pub(crate) const OWN_APP_STUB: &str =
+    "Jarvis's own app is in front; its screen is not shown. Open the app the task needs (open_app or open_url) or press_home.";
+/// Sixteenth review: an action inside Jarvis's own app when the run does not drive it.
+pub(crate) const RESULT_OWN_APP: &str =
+    "not done: Jarvis does not operate its own app; open the app the task needs (open_app or open_url) or press_home";
+/// Sixteenth review (Rule T): the owner declined letting what Jarvis read elsewhere reach
+/// this place.
+pub(crate) const RESULT_FLOW_DECLINED: &str =
+    "not done: the owner did not allow what you read elsewhere in this task to reach this place. Do not act here again; use fail or ask the owner";
 /// History result when vision is not available.
 pub(crate) const RESULT_NO_VISION: &str = "not available: this model reads the element list only";
 /// History result when `look` takes a screenshot.

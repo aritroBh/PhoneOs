@@ -732,6 +732,10 @@ pub struct SessionProgress {
     /// Stale-screen guard: plans not carried out because the screen changed first.
     #[uniffi(default = 0)]
     pub stale_plans: u32,
+    /// Sixteenth review (F9): the latest observation was of the lock screen (no unlocked one
+    /// since). Remote control never sends a screen with it set (the hub drops it).
+    #[uniffi(default = false)]
+    pub screen_locked: bool,
 }
 
 /// The task the owner asked for.
@@ -761,6 +765,11 @@ pub struct SessionConfig {
     pub known_apps: Vec<AppInfo>,
     /// Bundle id of the Jarvis app itself (never needs first-use approval).
     pub agent_bundle_id: Option<String>,
+    /// Sixteenth review: drive Jarvis's own app (`agentBundleId`). Off by default: the
+    /// model then gets a one-line stub for Jarvis's own screens and cannot act there. The
+    /// simulator UI tests turn it on for the Playground.
+    #[uniffi(default = false)]
+    pub drive_own_app: bool,
     /// The skill this session runs under (owner's guidance in the prompt; with
     /// `confineToApps`, actions outside the skill's apps are refused). Defaults to `nil`,
     /// so existing Swift initializers keep compiling.

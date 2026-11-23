@@ -547,6 +547,7 @@ fn progress_for_viewer(p_: SessionProgress) -> p::Progress {
         locked_total_ms,
         fresh_looks,
         stale_plans,
+        screen_locked,
     } = p_;
     p::Progress {
         step,
@@ -560,6 +561,7 @@ fn progress_for_viewer(p_: SessionProgress) -> p::Progress {
         locked_total_ms,
         fresh_looks,
         stale_plans,
+        screen_locked,
     }
 }
 

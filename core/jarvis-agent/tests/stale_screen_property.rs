@@ -278,9 +278,16 @@ fn session(seed: u64) {
                     Event::ActResult(RunnerResult::ok())
                 }
             }
-            Effect::Confirm(_) => {
+            Effect::Confirm(req) => {
                 now += 100;
                 confirms_for_reply += 1;
+                // Sixteenth review (Rule T): after an app switch the first tap in the other
+                // app asks whether what was read in the first may reach it. Its approval is
+                // bound to the exact screen (A1), so a change elsewhere on the page voids it
+                // (fail closed): the "sent exactly once" books apply to unasked taps only.
+                if req.summary.contains("could be passed on here") {
+                    once = false;
+                }
                 Event::UserDecision { approved: true }
             }
             Effect::AskUser { .. } => Event::UserAnswer {

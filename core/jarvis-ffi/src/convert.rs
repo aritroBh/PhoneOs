@@ -1442,6 +1442,7 @@ impl From<p::Progress> for SessionProgress {
             locked_total_ms,
             fresh_looks,
             stale_plans,
+            screen_locked,
         } = v;
         SessionProgress {
             step,
@@ -1455,6 +1456,7 @@ impl From<p::Progress> for SessionProgress {
             locked_total_ms,
             fresh_looks,
             stale_plans,
+            screen_locked,
         }
     }
 }
@@ -1475,6 +1477,7 @@ impl TryFrom<SessionProgress> for p::Progress {
             locked_total_ms,
             fresh_looks,
             stale_plans,
+            screen_locked,
         } = v;
         Ok(p::Progress {
             step,
@@ -1488,6 +1491,7 @@ impl TryFrom<SessionProgress> for p::Progress {
             locked_total_ms,
             fresh_looks,
             stale_plans,
+            screen_locked,
         })
     }
 }
@@ -1544,6 +1548,7 @@ impl From<p::SessionConfig> for SessionConfig {
             model,
             known_apps,
             agent_bundle_id,
+            drive_own_app,
             skill,
         } = v;
         SessionConfig {
@@ -1552,6 +1557,7 @@ impl From<p::SessionConfig> for SessionConfig {
             model: model.into(),
             known_apps: known_apps.into_iter().map(Into::into).collect(),
             agent_bundle_id,
+            drive_own_app,
             skill: skill.map(Into::into),
         }
     }
@@ -1565,6 +1571,7 @@ impl From<SessionConfig> for p::SessionConfig {
             model,
             known_apps,
             agent_bundle_id,
+            drive_own_app,
             skill,
         } = v;
         p::SessionConfig {
@@ -1573,6 +1580,7 @@ impl From<SessionConfig> for p::SessionConfig {
             model: model.into(),
             known_apps: known_apps.into_iter().map(Into::into).collect(),
             agent_bundle_id,
+            drive_own_app,
             skill: skill.map(Into::into),
         }
     }
@@ -2766,10 +2774,19 @@ impl TryFrom<LocalEvent> for r::LocalEvent {
     fn try_from(v: LocalEvent) -> Result<Self, JarvisError> {
         Ok(match v {
             LocalEvent::SessionStarted { task_id } => r::LocalEvent::SessionStarted { task_id },
-            LocalEvent::Progress { progress, screen } => r::LocalEvent::Progress {
-                progress: progress.try_into()?,
-                screen_text: screen.map(|s| remote_screen_text(&s.into())),
-            },
+            LocalEvent::Progress { progress, screen } => {
+                // Sixteenth review (F9): no lock-screen content goes to a remote device. A
+                // screen passed with a progress that says the latest observation was locked
+                // (or the session waits for an unlock) is dropped here, and the hub drops
+                // the text again on the same flags.
+                let locked = progress.screen_locked || progress.waiting_for_unlock;
+                r::LocalEvent::Progress {
+                    progress: progress.try_into()?,
+                    screen_text: screen
+                        .filter(|_| !locked)
+                        .map(|s| remote_screen_text(&s.into())),
+                }
+            }
             LocalEvent::ConfirmRequested { request } => r::LocalEvent::ConfirmRequested {
                 request: request.into(),
             },

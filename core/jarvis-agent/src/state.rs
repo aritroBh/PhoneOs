@@ -85,6 +85,25 @@ pub(crate) struct Pending {
     /// for more on the screen after the typing (a riskier category, or phone only when the
     /// typing was not).
     pub covers_return: Option<(jarvis_proto::RiskCategory, bool, String)>,
+    /// Sixteenth review (Rule T): the flow this action's question asks about — contexts read
+    /// in this task that the owner has not allowed into the one the input goes to. Its note
+    /// is part of the question (and of the summary an approval is checked against).
+    pub flow: Option<FlowAsk>,
+}
+
+/// Sixteenth review (Rule T): a flow an action's question asks the owner to allow.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FlowAsk {
+    /// Where the input goes.
+    pub target: jarvis_safety::FlowContext,
+    /// The contexts read in this task (or held on the clipboard, for a paste) not yet
+    /// allowed into `target`.
+    pub sources: Vec<jarvis_safety::FlowContext>,
+    /// The question's note naming them.
+    pub note: jarvis_proto::QuestionRow,
+    /// The question is asked for the flow alone (the action would otherwise run unasked):
+    /// its decline blocks this flow only, never a risk category.
+    pub only: bool,
 }
 
 /// What a `type` action must leave in its field, checked after the text was typed.
@@ -165,6 +184,8 @@ pub(crate) enum Late {
         /// Which part of the model step was asked about (a declined Return leaves the text
         /// typed).
         stage: Stage,
+        /// The flow the question asked about (Rule T), when it did.
+        flow: Option<Box<FlowAsk>>,
     },
     /// `AskUser`: an answer that arrives is recorded.
     Answer {
@@ -320,6 +341,9 @@ pub(crate) enum State {
         approves_app: Option<String>,
         /// The risk confirmation still to ask once this one is approved.
         then: Option<ConfirmRequest>,
+        /// Sixteenth review: when `then` is a first-use approval asked after the flow
+        /// question (Rule T asks the flow first), the app it approves.
+        then_app: Option<String>,
     },
     /// `Effect::AskUser` is outstanding.
     AwaitingAnswer {

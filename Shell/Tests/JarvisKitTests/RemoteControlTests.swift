@@ -85,6 +85,42 @@ struct RemoteControlTests {
         }
     }
 
+    /// Sixteenth review (F9): no lock-screen content goes to a remote device. The phone starts
+    /// locked with a code on its lock screen; a paired device that may see screen text gets
+    /// progress while the run waits for the unlock, and none of it carries the lock screen.
+    @Test("a locked observation's screen never reaches a remote device")
+    func lockScreenTextNeverSent() async throws {
+        let phone = LockScreenPhone(lockedPolls: 3)
+        let r = RemoteHarness(
+            "remote-lock-screen",
+            rules: ScriptedOwner.Rules(approve: [.firstUse], decline: [.systemSetting, .delete, .sendMessage], yes: true),
+            demoRunner: { _, _ in phone }
+        )
+        defer { r.cleanUp() }
+        let paired = try await r.pairDevice("Test Mac")
+        let deviceId = try #require(paired.deviceId)
+        var permissions = try newDeviceRemotePermissions()
+        permissions.seeScreenText = true
+        try r.service.setPermissions(deviceId: deviceId, permissions)
+        try paired.send(.subscribe)
+        try await Task.sleep(for: .milliseconds(50))
+        let mark = paired.messages.count
+        try paired.send(.startTask(text: "Turn off Wi-Fi"))
+        _ = try await paired.waitForMessage(after: mark, where: isFinished)
+        var texts: [String] = []
+        var sawProgress = false
+        for m in paired.messages.dropFirst(mark) {
+            if case .progress(_, _, _, _, let screenText, _) = m {
+                sawProgress = true
+                if let screenText { texts.append(screenText) }
+            }
+        }
+        #expect(sawProgress, "no progress reached the device")
+        #expect(phone.lockedSnapshots > 0, "the run never observed the lock screen")
+        #expect(!texts.contains { $0.contains(LockScreenPhone.secret) }, "lock-screen text reached a remote: \(texts)")
+        #expect(texts.contains { $0.contains("Wi-Fi") }, "unlocked screen text should still reach the device: \(texts)")
+    }
+
     @Test("storeChanged is written before any later effect; the real pairing follows the rule")
     func persistBeforeEffects() async throws {
         let r = RemoteHarness("remote-order")
@@ -425,4 +461,33 @@ struct RemoteDecisionBindingTests {
         #expect(audit(r, "Ignored") == 0)
         _ = try await value(of: task, "the declined run to end")
     }
+}
+
+/// A demo phone whose lock screen shows a code (a notification preview) while it is locked.
+private final class LockScreenPhone: PhoneRunner, Sendable {
+    static let secret = "482913"
+    private let inner: DemoPhone
+    private let locked = Mutex(0)
+
+    init(lockedPolls: Int) { inner = DemoPhone(lockedPolls: lockedPolls) }
+
+    var lockedSnapshots: Int { locked.withLock { $0 } }
+
+    func snapshot(includeScreenshot: Bool) async throws -> RunnerObservation {
+        guard inner.isLocked else { return try await inner.snapshot(includeScreenshot: includeScreenshot) }
+        locked.withLock { $0 += 1 }
+        let size = DemoPhone.screenSize
+        let banner = UiNode(role: .staticText, label: "Bank: your code is \(Self.secret)", value: nil, identifier: nil,
+                            placeholder: nil, frame: Rect(x: 16, y: 200, width: 361, height: 40), enabled: true,
+                            visible: true, hittable: false, focused: false, selected: false, secure: false, children: [])
+        let root = UiNode(role: .application, label: "SpringBoard", value: nil, identifier: nil, placeholder: nil,
+                          frame: Rect(x: 0, y: 0, width: size.width, height: size.height), enabled: true, visible: true,
+                          hittable: false, focused: false, selected: false, secure: false, children: [banner])
+        return RunnerObservation(root: root, appBundleId: "com.apple.springboard", appName: nil, screenSize: size,
+                                 deviceLocked: true)
+    }
+
+    func perform(_ command: RunnerCommand) async throws -> RunnerResult { try await inner.perform(command) }
+
+    func lockState() async throws -> DeviceLockState { try await inner.lockState() }
 }

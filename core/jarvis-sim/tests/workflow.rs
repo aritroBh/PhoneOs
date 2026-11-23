@@ -244,19 +244,32 @@ fn three_step_workflow_with_a_confined_skill_runs_end_to_end() {
         assert!(launched(wifi, "com.apple.Preferences"));
         // Runner text: `open_app` and the tap on the Wi-Fi row ask too (unverified
         // screen; `open_app` is a runner action that changes state).
+        // Sixteenth review (Rule T): this session starts on the Messages thread the first
+        // step left in front (the model reads it), so its first input into Settings (the
+        // Wi-Fi row) asks first whether that may reach Settings (`SendMessage` for the flow
+        // alone; on runner text merged into that tap's own `Unverified` question), then the
+        // first use, as one question each.
         assert_eq!(
             wifi.confirm_categories(),
             per_mode(
                 mode,
-                vec![RiskCategory::FirstUse, RiskCategory::SystemSetting],
+                vec![
+                    RiskCategory::SendMessage,
+                    RiskCategory::FirstUse,
+                    RiskCategory::SystemSetting
+                ],
                 vec![
                     RiskCategory::Unverified,
-                    RiskCategory::FirstUse,
                     RiskCategory::Unverified,
+                    RiskCategory::FirstUse,
                     RiskCategory::SystemSetting
                 ]
             )
         );
+        assert!(wifi.confirmations.iter().any(|c| c
+            .request
+            .summary
+            .contains("Jarvis has read Messages in this task")));
         // Approvals carry over in memory like for any two sessions.
         assert!(wifi.memory.is_app_approved(MESSAGES));
         assert!(wifi.memory.is_app_approved("com.apple.Preferences"));

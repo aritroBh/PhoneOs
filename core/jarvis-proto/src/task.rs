@@ -81,8 +81,16 @@ pub struct SessionConfig {
     pub model: ModelProfile,
     /// Installed apps for name to bundle id resolution.
     pub known_apps: Vec<AppInfo>,
-    /// Bundle id of the Jarvis app itself, which never needs first-use approval.
+    /// Bundle id of the Jarvis app itself, which never needs first-use approval. An OS
+    /// fact the shell passes (its own `Bundle.main.bundleIdentifier`).
     pub agent_bundle_id: Option<String>,
+    /// Sixteenth review: whether this run drives Jarvis's own app (`agent_bundle_id`). Off
+    /// (the default, also when absent from JSON): while Jarvis's own app is in front the
+    /// model gets a fixed one-line stub instead of its screen (no labels, values or
+    /// screenshot), nothing there can be acted on, and that screen is not something Jarvis
+    /// read (confinement, Rule T). The simulator UI tests turn it on to drive the
+    /// Playground screens; then the own app is a context like any other.
+    pub drive_own_app: bool,
     /// The skill this session runs under, if any: adds the owner's guidance to the prompt
     /// and, with `confine_to_apps`, keeps the session inside the skill's apps. Absent from
     /// JSON written before skills existed (and omitted when `None`).

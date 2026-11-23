@@ -151,6 +151,7 @@ fn progress() -> SessionProgress {
         locked_total_ms: 0,
         fresh_looks: 0,
         stale_plans: 0,
+        screen_locked: false,
     }
 }
 

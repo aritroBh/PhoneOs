@@ -150,7 +150,11 @@ final class QARun {
         maxDurationMs: UInt64 = 150_000,
         // A wrong lock signal must end the run as Interrupted within seconds, not after the
         // core's 30-minute default.
-        maxLockedWaitMs: UInt64 = 20_000
+        maxLockedWaitMs: UInt64 = 20_000,
+        // Sixteenth review: these runs drive Jarvis's own app (the Playground screens), so
+        // the core must show the model its screens and treat it as a place like any other
+        // (Rule T). The app itself never sets this for real tasks.
+        driveOwnApp: Bool = true
     ) async throws -> QAOutcome {
         let transcript = transcript
         let runner = runner
@@ -169,6 +173,7 @@ final class QARun {
             capabilities: model.capabilities,
             knownApps: knownApps,
             agentBundleId: "dev.jarvis.app",
+            driveOwnApp: driveOwnApp,
             adjustPolicy: { policy in
                 policy.firstUseApproval = firstUseApproval
                 policy.maxSteps = maxSteps

@@ -536,4 +536,10 @@ pub struct Progress {
     /// command as `RunnerFailure::Stale`); each was decided again.
     #[serde(default)]
     pub stale_plans: u32,
+    /// Sixteenth review (F9): the latest observation the session received was taken while
+    /// the phone was locked (the lock screen), and no unlocked observation has come since.
+    /// No screen text of such an observation may go to a remote device: the hub drops it
+    /// whatever the shell passes (`jarvis_remote`).
+    #[serde(default)]
+    pub screen_locked: bool,
 }

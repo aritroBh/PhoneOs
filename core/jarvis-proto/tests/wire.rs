@@ -539,6 +539,7 @@ fn session_config_and_progress_round_trip() {
         },
         known_apps: vec![AppInfo::new("com.apple.MobileSMS", "Messages")],
         agent_bundle_id: Some("com.example.jarvis".into()),
+        drive_own_app: true,
         skill: None,
     };
     round_trip(&cfg);
@@ -559,6 +560,7 @@ fn session_config_and_progress_round_trip() {
         locked_total_ms: 90_000,
         fresh_looks: 6,
         stale_plans: 2,
+        screen_locked: true,
     });
     round_trip(&Progress::default());
     // Progress JSON from before the counters existed still loads.
@@ -567,6 +569,7 @@ fn session_config_and_progress_round_trip() {
             .unwrap();
     assert_eq!((old.model_calls, old.parse_retries), (0, 0));
     assert!(!old.waiting_for_unlock);
+    assert!(!old.screen_locked);
     assert_eq!((old.locked_wait_ms, old.locked_total_ms), (0, 0));
 }
 

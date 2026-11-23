@@ -708,13 +708,22 @@ public final class RemoteControlService {
             }
         case .session(_, .update(let update)):
             switch update {
+            // Sixteenth review (F9): no lock-screen content ever goes to a remote device. A
+            // screen observed while the phone was locked is never kept (the last one is
+            // dropped too), and none is sent while the core says the latest observation
+            // was locked or it waits for an unlock (the hub drops it again on the same
+            // flags).
             case .effectCompleted(.observe, .observed(let observation)):
-                lastScreen = observation.screen
+                lastScreen = observation.deviceLocked ? nil : observation.screen
             case .effectCompleted(.observe, .observedRunnerText(let snapshot)):
-                lastScreen = try? parseRunnerTextToScreen(snapshot: snapshot)
+                lastScreen = snapshot.deviceLocked ? nil : (try? parseRunnerTextToScreen(snapshot: snapshot))
+            case .effectCompleted(_, .deviceLocked):
+                lastScreen = nil
             case .progress(let progress):
                 // The typed screen: the core builds and redacts any text remotes see.
-                enqueue(.local(.progress(progress: progress, screen: lastScreen)))
+                let locked = progress.screenLocked || progress.waitingForUnlock
+                if locked { lastScreen = nil }
+                enqueue(.local(.progress(progress: progress, screen: locked ? nil : lastScreen)))
             case .confirmationPending(let request):
                 enqueue(.confirmRequested(request))
             case .effectCompleted(.confirm, let decision):
