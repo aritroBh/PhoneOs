@@ -224,12 +224,16 @@ final class AppModel: ObservableObject {
         // 0.5 s / 1 s and a lock wait ends after 20 s, so a wrong lock signal fails a test in
         // seconds. The demo phone stays locked for 12 polls (about 6 s) so the "Unlock to
         // continue" card is on screen long enough to be checked.
+        // An unanswered question is withdrawn (and counts as declined) after 120 s here, 600 s
+        // in the app proper. It was 30 s: on a slow simulator a UI test's own checks of the
+        // sheet (whole-tree queries of 10-30 s each, runs 115 and 117) outlasted it and the
+        // run ended "the owner declined" before the test tapped Approve.
         self.coordinator = JarvisCoordinator(
             paths: paths, selection: launch.playground ? .demo : .live,
             // Seventeenth review: Jarvis's own bundle id is an OS fact, never a literal.
             agentBundleId: Bundle.main.bundleIdentifier ?? "dev.jarvis.app",
             configuration: launch.playground
-                ? DriverConfiguration(humanTimeout: .seconds(30), unlockPollInterval: .milliseconds(500), lockWatchInterval: .seconds(1))
+                ? DriverConfiguration(humanTimeout: .seconds(120), unlockPollInterval: .milliseconds(500), lockWatchInterval: .seconds(1))
                 : DriverConfiguration(),
             demoLockedPolls: launch.playground && launch.demoLocked ? 12 : 0,
             maxLockedWaitOverrideMs: launch.playground ? 20_000 : nil
