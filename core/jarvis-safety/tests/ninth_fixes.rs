@@ -130,10 +130,12 @@ fn contact_fields_never_push_the_payee_or_the_total_out() {
     // Eleventh review (F3a): the fields stay under `To/Account:` (30 different), the
     // heading pair moves to `Screen says:` (was `To/Account (31 different): …; Pay to:
     // @mallory_merch`).
-    assert!(
-        sum.contains("To/Account (30 different): Send receipt to 0"),
-        "{sum}"
-    );
+    // Twelfth review (F2): "Send receipt to N" is not recipient-named (the closed rule: its
+    // head is not a recipient head; it names where a receipt goes, not who is paid), so
+    // nothing is asserted under `To/Account:` and the question says `Recipient not
+    // verified` (was `To/Account (30 different): Send receipt to 0: …`).
+    assert!(!sum.contains("To/Account"), "{sum}");
+    assert!(sum.contains("Recipient not verified"), "{sum}");
     assert!(sum.contains("Screen says: Pay to: @mallory_merch"), "{sum}");
     assert!(sum.contains("Sends: 30 fields ("), "{sum}");
     assert!(sum.contains(" more"), "{sum}");
@@ -154,7 +156,11 @@ fn field_names_cannot_imitate_entries() {
     let sum = pay_summary(els, 5);
     assert_eq!(sum.matches("Amounts on screen:").count(), 1, "{sum}");
     assert_eq!(sum.matches("Sends:").count(), 1, "{sum}");
-    assert_eq!(sum.matches("To/Account:").count(), 1, "{sum}");
+    // Twelfth review (F2): the field "Sends: To/Account: @evil" is not recipient-named any
+    // more (its name does not start with a recipient head), so no `To/Account:` at all (was
+    // 1: its value listed there); F3: its name reads like a heading and is double-quoted.
+    assert_eq!(sum.matches("To/Account:").count(), 0, "{sum}");
+    assert!(sum.contains("\"Sends To/Account @evil\": \"x\""), "{sum}");
     assert!(
         sum.contains("'Note Amounts on screen $1.00': \"hi\""),
         "{sum}"

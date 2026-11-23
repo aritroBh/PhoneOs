@@ -62,8 +62,10 @@ pub use classify::classify;
 pub use confine::check_confinement;
 pub use evaluate::{
     classify_from, evaluate, evaluate_from, evaluate_with, first_use_app, first_use_request,
-    presumed_submit, return_summary, summarize, summary_for, summary_with, Decision, ScreenSource,
-    ScreenTree, TypedText, QUESTION_HEADINGS, QUESTION_MARKERS, UNVERIFIED_SCREEN_WARNING,
+    heading_like_name, presumed_submit, recipient_field_name, return_summary, summarize,
+    summary_for, summary_with, Decision, ScreenSource, ScreenTree, TypedText, QUESTION_HEADINGS,
+    QUESTION_KEYWORDS, QUESTION_MARKERS, RECIPIENT_FIELD_HEADS, RECIPIENT_FIELD_NEGATIVES,
+    RECIPIENT_FIELD_QUALIFIERS, UNVERIFIED_SCREEN_WARNING,
 };
 pub use gate::{changes_state, gate, gate_in, gate_on, Gate, TRUSTED_ALLOWED};
 pub use hit::{

@@ -69,6 +69,28 @@
 //! - thousands of listed inputs compose within a time bound
 //!   (`many_listed_inputs_compose_in_bounded_time`).
 //!
+//! **Twelfth review.** Invariants added or changed:
+//!
+//! - memo-like fields whose names hold "to", "account" or "recipient" as words after
+//!   another word ("Note to recipient", "Message to Mallory", "Reference for account
+//!   statement", "From account", "Transfer note to account"), filled with attacker or model text,
+//!   while the real payee is shown unheaded (an avatar and a name): none is ever listed
+//!   under `To/Account:`, whose entries are only fields recipient-named by the public rule
+//!   (`jarvis_safety::recipient_field_name`); `Recipient not verified` is said exactly when
+//!   the action is a send, payment, purchase or post **by its own label** and no true
+//!   recipient field is sent — never on a merely presumed submit (a `SendMessage` the gate
+//!   raised because `presumed_submit` holds, while the label's own classification,
+//!   `classify_from`, is not a send);
+//! - field and option names drawn from the composer's own wording (`QUESTION_HEADINGS`,
+//!   `QUESTION_MARKERS`, `QUESTION_KEYWORDS`), after a name tag, glued or spaced, in
+//!   look-alike letters or not: the name is always in quotes in the question, never a bare
+//!   heading before a colon of ours;
+//! - recipient names with one letter replaced by a non-ASCII letter of any script (the
+//!   generator's own choice, no folding table: Cherokee, Armenian, Latin Extended-B,
+//!   Cyrillic, Greek, Lisu, Georgian, mathematical letters) are flagged `(look-alike
+//!   letters)`; accented Latin names (`José`, `Müller`, `Łukasz`) and names wholly in
+//!   another script are not.
+//!
 //! The generator is seeded (xorshift, as `jarvis-observe/tests/digest_agreement.rs`); a
 //! failure names its seed, and `QUESTION_SEED=<seed>` runs that one form alone. The default
 //! count keeps a debug run short; `QUESTION_FORMS=50000` runs the full sweep
@@ -79,8 +101,8 @@ mod common;
 use common::{app_screen, button, el, label};
 use jarvis_proto::{Action, CompactScreen, Element, RawInput, RawNode, Rect, RiskCategory, Role};
 use jarvis_safety::{
-    return_summary, summary_with, ScreenSource, ScreenTree, TypedText, QUESTION_HEADINGS,
-    QUESTION_MARKERS,
+    classify_from, presumed_submit, recipient_field_name, return_summary, summary_with,
+    ScreenSource, ScreenTree, TypedText, QUESTION_HEADINGS, QUESTION_KEYWORDS, QUESTION_MARKERS,
 };
 
 /// Forms checked by default (debug build); `QUESTION_FORMS` overrides (the full sweep is
@@ -299,17 +321,91 @@ fn forged_marker(r: &mut Rng) -> String {
     format!("{FORGE}{m}")
 }
 
-/// The oracle's copy of the words that make a field recipient-named.
-const RECIPIENT_WORDS: &[&str] = &[
-    "to",
-    "recipient",
-    "recipients",
-    "payee",
-    "beneficiary",
-    "account",
-    "acct",
-    "iban",
+/// Twelfth review: memo-like field names holding "to", "account" or "recipient" after
+/// another word. None names the recipient.
+const MEMO: &[&str] = &[
+    "Note to recipient",
+    "Message to Mallory",
+    "Add a note to your payment",
+    "Reference for account statement",
+    "From account",
+    "Memo for recipient",
+    "Transfer note to account",
+    "Reply to",
+    "What's this for? (to recipient)",
+    "Note to self",
+    "Description for account",
+    "Comment to payee",
 ];
+
+/// Twelfth review: the tag before a field or option name drawn from the composer's own
+/// wording; every occurrence in a question must be followed by a closing quote (or a cut).
+const NAME_TAG: &str = "Zn";
+
+/// Twelfth review: a name drawn from the composer's wording (headings, markers, keywords),
+/// maybe in look-alike letters, glued to or spaced from [`NAME_TAG`].
+fn heading_name(r: &mut Rng, k: usize) -> String {
+    let all: Vec<&str> = QUESTION_HEADINGS
+        .iter()
+        .chain(QUESTION_MARKERS)
+        .chain(QUESTION_KEYWORDS)
+        .copied()
+        .collect();
+    let h = r.pick(&all).trim_end_matches('"').trim().to_owned();
+    let h = if r.chance(30) { lookalike(r, &h) } else { h };
+    if r.chance(50) {
+        format!("{k}{NAME_TAG}{h}")
+    } else {
+        format!("{k} {NAME_TAG} {h}")
+    }
+}
+
+/// Twelfth review: payee names for the look-alike invariant, and letters of many scripts
+/// (no folding table) and accented Latin ones.
+const PERSONS: &[&str] = &["Alice Smith", "Bob Jones", "Carol White", "Mallory Merch"];
+const FOREIGN_LETTERS: &[char] = &[
+    '\u{13DA}',  // Cherokee S
+    '\u{13AA}',  // Cherokee A
+    '\u{01C0}',  // Latin letter dental click (|)
+    '\u{0131}',  // dotless i
+    '\u{0138}',  // kra
+    '\u{017F}',  // long s
+    '\u{0430}',  // Cyrillic a
+    '\u{043E}',  // Cyrillic o
+    '\u{03BF}',  // Greek omicron
+    '\u{0585}',  // Armenian oh
+    '\u{0570}',  // Armenian ho
+    '\u{A4E2}',  // Lisu S
+    '\u{10E7}',  // Georgian
+    '\u{1D41A}', // mathematical bold a
+    '\u{2C9F}',  // Coptic o
+    '\u{0251}',  // Latin alpha
+    '\u{0261}',  // script g
+    '\u{1D00}',  // small capital A
+];
+const ACCENTED: &[char] = &['é', 'ü', 'Ł', 'ñ', 'ø', 'ç', 'Ś', 'ő', 'à', 'Ž'];
+const WHOLE_SCRIPT: &[&str] = &["Мария Петрова", "Ἀλέξανδρος", "李小龙", "Արամ"];
+
+/// A payee name value and whether it must be flagged `(look-alike letters)`.
+fn person(r: &mut Rng) -> (String, bool) {
+    let base: Vec<char> = r.pick(PERSONS).chars().collect();
+    let at = r.below(base.len() as u64) as usize;
+    let at = if base[at] == ' ' { 0 } else { at };
+    match r.below(4) {
+        0 => {
+            let mut v = base.clone();
+            v[at] = *r.pick(FOREIGN_LETTERS);
+            (v.into_iter().collect(), true)
+        }
+        1 => {
+            let mut v = base.clone();
+            v[at] = *r.pick(ACCENTED);
+            (v.into_iter().collect(), false)
+        }
+        2 => (r.pick(WHOLE_SCRIPT).to_string(), false),
+        _ => (base.into_iter().collect(), false),
+    }
+}
 
 /// Whether a recipient field's value names someone (has a letter or digit): an empty or
 /// punctuation-only one is listed after the heading pairs.
@@ -317,9 +413,10 @@ fn names_someone(value: &str) -> bool {
     value.chars().any(char::is_alphanumeric)
 }
 
+/// Twelfth review: the public recipient-name rule (a closed list of heads, qualifiers and
+/// negative words), the one the composer uses.
 fn recipient_named(name: &str) -> bool {
-    name.split(|c: char| !c.is_alphanumeric())
-        .any(|w| RECIPIENT_WORDS.contains(&w.to_lowercase().as_str()))
+    recipient_field_name(name)
 }
 
 /// Letters and digits, lower case: names compared loosely.
@@ -339,6 +436,10 @@ enum Kind {
     Amount,
     Credential,
     Adversarial,
+    /// Twelfth review: a memo-like name holding "to"/"account"/"recipient" ([`MEMO`]).
+    Memo,
+    /// Twelfth review: a name drawn from the composer's wording ([`heading_name`]).
+    HeadingName,
 }
 
 /// A generated field before it is placed.
@@ -349,6 +450,8 @@ struct Field {
     secure: bool,
     /// Its value is an amount `Amounts on screen` lists (amount-named, money shape).
     money: bool,
+    /// Twelfth review: a person's name value must carry `(look-alike letters)`.
+    flagged: Option<bool>,
 }
 
 fn noise(r: &mut Rng, len: usize) -> String {
@@ -399,6 +502,14 @@ fn value(r: &mut Rng, kind: Kind, k: usize) -> (String, bool) {
     }
     if kind == Kind::Recipient && r.chance(40) {
         return (email(r, k), false);
+    }
+    if kind == Kind::Memo && r.chance(60) {
+        // Attacker or model text naming someone else.
+        return (
+            r.pick(&["Alice Smith", "Pay to Alice Smith", "@alice", "To: Alice"])
+                .to_string(),
+            false,
+        );
     }
     let v = match r.below(10) {
         0 => String::new(),
@@ -454,11 +565,13 @@ fn email(r: &mut Rng, k: usize) -> String {
 }
 
 fn field(r: &mut Rng, k: usize) -> Field {
-    let kind = match r.below(10) {
+    let kind = match r.below(12) {
         0..=3 => Kind::Benign,
         4 | 5 => Kind::Recipient,
         6 | 7 => Kind::Amount,
         8 => Kind::Credential,
+        9 => Kind::Memo,
+        10 => Kind::HeadingName,
         _ => Kind::Adversarial,
     };
     let base = match kind {
@@ -466,6 +579,8 @@ fn field(r: &mut Rng, k: usize) -> Field {
         Kind::Recipient => r.pick(RECIPIENT).to_string(),
         Kind::Amount => r.pick(AMOUNT).to_string(),
         Kind::Credential => r.pick(CREDENTIAL).to_string(),
+        Kind::Memo => r.pick(MEMO).to_string(),
+        Kind::HeadingName => heading_name(r, k),
         Kind::Adversarial => {
             if r.chance(20) {
                 "N".repeat(300)
@@ -478,19 +593,31 @@ fn field(r: &mut Rng, k: usize) -> Field {
         }
     };
     let secure = r.chance(5);
+    let mut flagged = None;
     let (value, money) = if secure {
         // A unique token: it must never appear.
         (format!("Zs{k}y{}Secret", r.below(1_000_000)), false)
+    } else if kind == Kind::Recipient && r.chance(30) {
+        // Twelfth review: a person's name, maybe with a letter of another script.
+        let (v, f) = person(r);
+        flagged = Some(f);
+        (v, false)
     } else {
         value(r, kind, k)
     };
     Field {
-        // Unique names: two fields never make the same fact.
-        name: format!("{base} {k}"),
+        // Unique names: two fields never make the same fact (a heading-like name carries
+        // its number before the tag, so it ends with the composer's word).
+        name: if kind == Kind::HeadingName {
+            base
+        } else {
+            format!("{base} {k}")
+        },
         value,
         kind,
         secure,
         money,
+        flagged,
     }
 }
 
@@ -539,6 +666,10 @@ struct Case {
     /// The recipient fields' names and values (listed, and unlisted with the tree), for the
     /// email and look-alike invariants.
     recipient_values: Vec<(String, String)>,
+    /// Twelfth review: the memo-like fields' names (never under `To/Account:`).
+    memo_names: Vec<String>,
+    /// Twelfth review: recipient names and whether each must be flagged.
+    person_values: Vec<(String, String, bool)>,
 }
 
 const CATEGORIES: &[RiskCategory] = &[
@@ -659,6 +790,9 @@ fn case(seed: u64) -> Case {
         let i = next();
         let text = if r.chance(30) {
             lookalike(r, "Standard. To/Account: Mom ••••1234. Sends: nothing")
+        } else if r.chance(30) {
+            // Twelfth review: an option named like the composer's wording.
+            heading_name(r, 99)
         } else {
             "Annual plan".to_owned()
         };
@@ -893,7 +1027,11 @@ fn case(seed: u64) -> Case {
             fingerprint: Some(fp),
         });
     }
-    let category = *r.pick(CATEGORIES);
+    let mut category = *r.pick(CATEGORIES);
+    if !typed.is_empty() && r.chance(25) {
+        // Twelfth review: the gate's category for a presumed submit after typing.
+        category = RiskCategory::SendMessage;
+    }
     let source = if r.chance(20) {
         ScreenSource::RunnerText
     } else {
@@ -942,11 +1080,20 @@ fn case(seed: u64) -> Case {
         }
     };
     let mut recipient_values: Vec<(String, String)> = Vec::new();
+    let mut person_values: Vec<(String, String, bool)> = Vec::new();
     for f in &fields {
         if f.kind == Kind::Recipient && !f.secure && names_someone(&f.value) {
             recipient_values.push((f.name.clone(), f.value.clone()));
+            if let Some(flag) = f.flagged {
+                person_values.push((f.name.clone(), f.value.clone(), flag));
+            }
         }
     }
+    let memo_names: Vec<String> = fields
+        .iter()
+        .filter(|f| f.kind == Kind::Memo)
+        .map(|f| f.name.clone())
+        .collect();
     let return_recipient = return_field
         .and_then(|f| screen.get(f))
         .filter(|e| {
@@ -981,6 +1128,8 @@ fn case(seed: u64) -> Case {
         transcript,
         transcript_holds_target,
         recipient_values,
+        memo_names,
+        person_values,
     }
 }
 
@@ -1107,6 +1256,11 @@ struct Seen {
     sends: usize,
     sends_capped: usize,
     amounts: usize,
+    memo: usize,
+    presumed_only: usize,
+    heading_names: usize,
+    persons_flagged: usize,
+    persons_plain: usize,
 }
 
 fn check(seed: u64, seen: &mut Seen) -> std::time::Duration {
@@ -1172,6 +1326,35 @@ fn check(seed: u64, seen: &mut Seen) -> std::time::Duration {
     for m in QUESTION_MARKERS {
         let forged = format!("{FORGE}{m}");
         assert!(!squeezed.contains(&forged), "{forged:?}: {}", ctx());
+    }
+    // Twelfth review (F3): a field or option named like the composer's wording is always
+    // quoted — every word of ours after the name tag ends in a closing quote (or a cut).
+    let entries: Vec<String> = QUESTION_HEADINGS
+        .iter()
+        .chain(QUESTION_MARKERS)
+        .chain(QUESTION_KEYWORDS)
+        .map(|h| h.trim_end_matches('"').trim().to_owned())
+        .collect();
+    for (at, _) in squeezed.match_indices(NAME_TAG) {
+        seen.heading_names += 1;
+        let rest = squeezed[at + NAME_TAG.len()..].trim_start();
+        for h in &entries {
+            if let Some(after) = rest.strip_prefix(h.as_str()) {
+                let next = after.chars().next();
+                if next.is_some_and(char::is_alphanumeric) {
+                    // A longer word ("Typed" after "Type"): checked as its own entry.
+                    continue;
+                }
+                // A `Fields:` entry is cut from its middle as a whole (` … `): the name's
+                // opening quote stays and no colon of ours follows it.
+                let cut = after.trim_start().starts_with('…');
+                assert!(
+                    matches!(next, Some('"' | '\'' | '\u{2019}' | '…')) || next.is_none() || cut,
+                    "a heading-like name is not quoted ({h:?}): {}",
+                    ctx()
+                );
+            }
+        }
     }
     // 5. No secret.
     for s in &c.secrets {
@@ -1304,11 +1487,76 @@ fn check(seed: u64, seen: &mut Seen) -> std::time::Duration {
         seen.recipient_fields += 1;
         assert!(!to_items.is_empty(), "no To/Account: {}", ctx());
     }
-    if in_app && pays && fields.is_empty() {
+    // Twelfth review: `Recipient not verified` only on an action that sends, pays, buys or
+    // posts by its own label. The category passed in is the gate's; a `SendMessage` the
+    // gate raised for a presumed submit after typing (`presumed_submit`) is not the
+    // action's own: there its label's classification decides.
+    let gated = match c.return_field {
+        Some(f) => Action::Type {
+            element: Some(f),
+            text: "thanks".to_owned(),
+            submit: true,
+        },
+        None => c.action.clone(),
+    };
+    let presumed = presumed_submit(&gated, &c.screen, tree, &c.typed);
+    let sending = |k: RiskCategory| {
+        matches!(
+            k,
+            RiskCategory::Payment
+                | RiskCategory::SendMessage
+                | RiskCategory::Purchase
+                | RiskCategory::PublicPost
+        )
+    };
+    let own_sends = if presumed && c.category == RiskCategory::SendMessage {
+        sending(classify_from(&gated, &c.screen, None, c.source))
+    } else {
+        sending(c.category)
+    };
+    if in_app && pays && own_sends && fields.is_empty() {
         seen.unverified += 1;
         assert!(
             sum.contains(". Recipient not verified") && to_items.is_empty(),
             "{}",
+            ctx()
+        );
+    }
+    if in_app && pays && !own_sends {
+        seen.presumed_only += 1;
+        assert!(
+            !sum.contains(". Recipient not verified"),
+            "Recipient not verified on an action that does not send by its label: {}",
+            ctx()
+        );
+    }
+    // Twelfth review (F2): a memo-like field is never asserted as the recipient.
+    for item in &to_items {
+        for m in &c.memo_names {
+            seen.memo += 1;
+            assert!(
+                !item_is(item, m),
+                "a memo field is listed under To/Account ({m:?}): {}",
+                ctx()
+            );
+        }
+    }
+    // Twelfth review (F4): a person's name with a letter of another script is flagged; an
+    // accented Latin name or one wholly in another script is not.
+    for item in &to_items {
+        let Some((_, value, flag)) = c.person_values.iter().find(|(n, _, _)| item_is(item, n))
+        else {
+            continue;
+        };
+        if *flag {
+            seen.persons_flagged += 1;
+        } else {
+            seen.persons_plain += 1;
+        }
+        assert_eq!(
+            item.contains("(look-alike letters)"),
+            *flag,
+            "{value:?} in {item:?}: {}",
             ctx()
         );
     }
@@ -1319,16 +1567,30 @@ fn check(seed: u64, seen: &mut Seen) -> std::time::Duration {
         let tail: String = p.chars().skip(n.saturating_sub(12)).collect();
         let shown = says_slot.contains(start.trim_end()) && says_slot.contains(tail.trim_start());
         // Left out only by a count, and only when the screen names several.
+        // Twelfth review: the count reads `N more lines naming a recipient` (was `N not
+        // shown`).
+        let count_words = " more lines naming a recipient";
         let counted = says_head
             .as_deref()
             .is_some_and(|h| h.contains("different)"))
-            && (says_more || sum.contains("Screen says: ") && says_slot.ends_with("not shown"));
+            && (says_more || sum.contains("Screen says: ") && says_slot.ends_with(count_words));
         // Behind the runner-text warning with every slot at its minimum, the count itself
         // may be cut (marked `…`, the documented scaling gap).
         let only_count = sum.contains(". Screen says: ")
-            && (says_slot.ends_with(" not shown")
+            && (says_slot.ends_with(count_words)
                 || (c.source == ScreenSource::RunnerText && says_slot.ends_with('…')));
-        assert!(shown || counted || only_count, "payee {p:?}: {}", ctx());
+        // Twelfth review: behind the runner-text warning the slot's cut mark can follow the
+        // count itself (`… and 3 more…`): the payee is still among the counted ones.
+        let counted_cut = c.source == ScreenSource::RunnerText
+            && says_head
+                .as_deref()
+                .is_some_and(|h| h.contains("different)"))
+            && says_slot.trim_end_matches('…').ends_with(" more");
+        assert!(
+            shown || counted || only_count || counted_cut,
+            "payee {p:?}: {}",
+            ctx()
+        );
         let name = p.split_once(": ").map_or(p.as_str(), |(_, n)| n);
         assert!(
             !to_slot.contains(&format!(": {name}")),
@@ -1499,7 +1761,9 @@ fn every_question_keeps_the_charge_and_the_payee_and_announces_what_it_leaves_ou
         "{forms} forms; slowest summary {slowest:?}; checked: total {}, several totals {}, \
          payee {}, recipient fields {}, recipient not verified {}, decoys {}, transcript \
          apart {} / inside shown {}, emails {} ({} cut, {} mixed), look-alike markers {}, \
-         forged markers {}, sends {} ({} capped), amounts {}",
+         forged markers {}, sends {} ({} capped), amounts {}; twelfth review: memo fields \
+         checked {}, presumed-only sends {}, heading-like names {}, person names {} flagged / \
+         {} plain",
         seen.total,
         seen.totals_ambiguous,
         seen.payee,
@@ -1515,7 +1779,12 @@ fn every_question_keeps_the_charge_and_the_payee_and_announces_what_it_leaves_ou
         seen.forged,
         seen.sends,
         seen.sends_capped,
-        seen.amounts
+        seen.amounts,
+        seen.memo,
+        seen.presumed_only,
+        seen.heading_names,
+        seen.persons_flagged,
+        seen.persons_plain
     );
     // The generator exercises every invariant.
     assert!(seen.total > 0 && seen.payee > 0 && seen.sends_capped > 0 && seen.amounts > 0);
@@ -1532,6 +1801,13 @@ fn every_question_keeps_the_charge_and_the_payee_and_announces_what_it_leaves_ou
             && seen.transcript_inside > 0
             && seen.emails_cut > 0
             && seen.emails_mixed > 0
+    );
+    assert!(
+        seen.memo > 0
+            && seen.presumed_only > 0
+            && seen.heading_names > 0
+            && seen.persons_flagged > 0
+            && seen.persons_plain > 0
     );
     // 7. Bounded time (a debug build; generous).
     assert!(slowest.as_secs() < 2, "{slowest:?}");
@@ -1640,4 +1916,90 @@ fn many_listed_inputs_compose_in_bounded_time() {
         assert!(sum.contains("$5.00"), "{sum}");
         assert!(took.as_millis() < 1_000, "{n}: {took:?}");
     }
+}
+
+/// Twelfth review (wording): on comment-like forms after typing — benign and memo-like
+/// fields, one of them typed by Jarvis, no recipient field — the gate asks for a neutral
+/// button ("Continue", "Done", "Looks good") as a presumed submit and for a sending one
+/// ("Send", "Pay now", "Post") by its label. `Recipient not verified` is said exactly when
+/// the button's own classification (`classify_from`) sends, pays, buys or posts.
+/// `PRESUMED_FORMS` sets the count (default 500).
+#[test]
+fn presumed_submits_do_not_say_recipient_not_verified() {
+    let n: u64 = std::env::var("PRESUMED_FORMS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(500);
+    let (mut presumed_only, mut own) = (0usize, 0usize);
+    for seed in 1..=n {
+        let r = &mut Rng::new(seed ^ 0x7E1F);
+        let heading = *r.pick(&["Tell us about your stay", "Contact the seller", "Feedback"]);
+        let mut els = vec![label(1, heading)];
+        let mut typed = Vec::new();
+        let k = 1 + r.below(4) as u32;
+        for i in 0..k {
+            let name = if r.chance(50) {
+                *r.pick(BENIGN)
+            } else {
+                *r.pick(MEMO)
+            };
+            let mut e = el(2 + i, Role::TextField, &format!("{name} {i}"));
+            let v = format!("My home address is {i} Elm St");
+            e.value = Some(v.clone());
+            if i == 0 {
+                typed.push(TypedText {
+                    field: e.fingerprint,
+                    text: v,
+                });
+            }
+            els.push(e);
+        }
+        let target = 2 + k;
+        let text = if r.chance(60) {
+            *r.pick(&["Continue", "Done", "Looks good", "Next step"])
+        } else {
+            *r.pick(&["Send", "Pay now", "Post", "Send message"])
+        };
+        els.push(button(target, text));
+        let s = app_screen(els);
+        let action = Action::Tap { element: target };
+        let source = if r.chance(20) {
+            ScreenSource::RunnerText
+        } else {
+            ScreenSource::Typed
+        };
+        let d = jarvis_safety::evaluate_with(
+            &jarvis_proto::Policy::default(),
+            &action,
+            &s,
+            None,
+            source,
+            None,
+            &typed,
+        );
+        let jarvis_safety::Decision::Confirm(req) = d else {
+            continue;
+        };
+        let sends = matches!(
+            classify_from(&action, &s, None, source),
+            RiskCategory::Payment
+                | RiskCategory::SendMessage
+                | RiskCategory::Purchase
+                | RiskCategory::PublicPost
+        );
+        if sends {
+            own += 1;
+        } else {
+            presumed_only += 1;
+        }
+        assert_eq!(
+            req.summary.contains(". Recipient not verified"),
+            sends,
+            "seed {seed} ({:?}): {}",
+            req.category,
+            req.summary
+        );
+    }
+    println!("{n} comment forms: {presumed_only} presumed-only questions, {own} by label");
+    assert!(presumed_only > 0 && own > 0);
 }

@@ -461,6 +461,8 @@ const MARK_LOOKALIKE: &str = "(look-alike letters)";
 const MARK_NEAREST: &str = "(nearest)";
 const MARK_TITLE: &str = "screen \"";
 const MARK_SITE: &str = "site \"";
+/// Twelfth review: `. Screen says: N more lines naming a recipient` (was `N not shown`).
+const MARK_MORE_SAYS: &str = "more lines naming a recipient";
 
 /// Every heading the question writes, each followed by a colon (or ` (N …):`) in a
 /// question (eleventh review: the single source the composer, [`defang`] and the property
@@ -484,7 +486,93 @@ pub const QUESTION_MARKERS: &[&str] = &[
     MARK_NEAREST,
     MARK_TITLE,
     MARK_SITE,
+    MARK_MORE_SAYS,
 ];
+
+/// Twelfth review: the other words the composer writes at the start of the question or of
+/// one of its parts (the action line's verbs, the runner-text warning, the cap note). With
+/// [`QUESTION_HEADINGS`] and [`QUESTION_MARKERS`] they are what a page-derived name must
+/// not read as ([`heading_like_name`]).
+pub const QUESTION_KEYWORDS: &[&str] = &[
+    "Tap",
+    "Long-press",
+    "Turn on",
+    "Turn off",
+    "Type",
+    "Press Return",
+    "Clear",
+    "Scroll",
+    "Swipe",
+    "Run",
+    "Open",
+    "Warning",
+    "Facts from",
+];
+
+/// The lower-cased words of `s` with look-alikes folded (letters and digits only).
+fn folded_words(s: &str) -> Vec<String> {
+    let folded: String = s
+        .chars()
+        .take(4 * MAX_FIELD_NAME_CHARS)
+        .map(crate::text::fold_char)
+        .collect::<String>()
+        .to_lowercase();
+    folded
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Twelfth review (F3): whether a page-derived name (a field's, an option's, a tool
+/// argument's key, a role's) reads like something the composer writes — after look-alike
+/// folding its words equal, start with or end with the words of an entry of
+/// [`QUESTION_HEADINGS`], [`QUESTION_MARKERS`] or [`QUESTION_KEYWORDS`], or its letters end
+/// with that entry's letters (glued: "MySends"), or it holds any letter outside ASCII (no
+/// look-alike table decides). Such a name is always shown in quotes, and
+/// a real heading never is, so a quoted name cannot pass for one.
+pub fn heading_like_name(name: &str) -> bool {
+    // A letter outside ASCII (or a combining mark) is quoted whatever it reads as: no
+    // table of look-alikes decides (as `defang` since the eleventh review).
+    if name
+        .chars()
+        .any(|c| crate::text::non_ascii_letter(c) || crate::text::is_combining(c))
+    {
+        return true;
+    }
+    let words = folded_words(name);
+    if words.is_empty() {
+        return false;
+    }
+    let glued: String = words.concat();
+    static ENTRIES: std::sync::OnceLock<Vec<(Vec<String>, String)>> = std::sync::OnceLock::new();
+    let entries = ENTRIES.get_or_init(|| {
+        QUESTION_HEADINGS
+            .iter()
+            .chain(QUESTION_MARKERS)
+            .chain(QUESTION_KEYWORDS)
+            .map(|entry| {
+                let e = folded_words(entry);
+                let g = e.concat();
+                (e, g)
+            })
+            .filter(|(e, _)| !e.is_empty())
+            .collect()
+    });
+    entries
+        .iter()
+        .any(|(e, g)| words.starts_with(e) || words.ends_with(e) || glued.ends_with(g.as_str()))
+}
+
+/// `name` in double quotes when it is [`heading_like_name`] (its own `"` already turned
+/// into another mark by cleaning), else as it is.
+fn quote_heading_like(name: String) -> String {
+    if heading_like_name(&name) {
+        format!("\"{name}\"")
+    } else {
+        name
+    }
+}
 
 /// The phrase markers page text could otherwise spell out ([`neutralise_markers`]).
 const PHRASE_MARKERS: &[&str] = &[
@@ -492,6 +580,7 @@ const PHRASE_MARKERS: &[&str] = &[
     MARK_SHOWN_ABOVE,
     MARK_LOOKALIKE,
     MARK_NEAREST,
+    MARK_MORE_SAYS,
 ];
 
 /// Whether `c` reads as a colon ([`crate::text::colon_shaped`]; eleventh review: every
@@ -878,7 +967,15 @@ fn describe_with(el: &Element, max: usize) -> String {
     match text {
         Some(t) => format!("\"{}\"", clean_label(t, max)),
         // An `Other` role's name is the tree's text (tenth review: cleaned like a label).
-        None => format!("{} #{}", clean(el.role.as_str(), 24), el.index),
+        None => {
+            let role = clean(el.role.as_str(), 24);
+            // Twelfth review (F3): a role named like a heading is quoted.
+            if heading_like_name(&role) {
+                format!("'{role}' #{}", el.index)
+            } else {
+                format!("{role} #{}", el.index)
+            }
+        }
     }
 }
 
@@ -1536,6 +1633,8 @@ fn selected_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<Strin
         if t.is_empty() || ranked.iter().any(|(_, _, x)| *x == t) {
             continue;
         }
+        // Twelfth review (F3): an option named like a heading is quoted.
+        let t = quote_heading_like(t);
         let chars: Vec<char> = t.chars().collect();
         let near_amount = !amount_ranges(&chars).is_empty()
             || (!e.frame.is_empty()
@@ -1662,10 +1761,11 @@ fn field_facts(
             continue;
         }
         let name = field_name(e);
+        // Twelfth review (F3): a heading-like name is quoted (cleaning makes it `'…'`).
         let name = if name.is_empty() {
             "A field".to_owned()
         } else {
-            name
+            quote_heading_like(name)
         };
         let value = field_value(e);
         let t = match value {
@@ -1696,18 +1796,124 @@ fn fact_text(el: &Element) -> String {
     }
 }
 
-/// Words that say who is paid or messaged ("To", "Pay to", "Recipient", "Send to",
-/// "Account").
-const RECIPIENT_WORDS: &[&str] = &[
+/// Twelfth review: a field is **recipient-named** only by a closed rule (the single source
+/// the composer and the property tests use, see [`recipient_field_name`]). Its name, look-
+/// alikes folded and lower-cased, a trailing `:`/`*`/`(required)`/`(optional)` dropped,
+/// starts with one of these heads (whole words)…
+pub const RECIPIENT_FIELD_HEADS: &[&str] = &[
     "to",
+    "send to",
+    "sending to",
+    "pay to",
+    "paying",
+    "transfer to",
+    "email to",
     "recipient",
     "recipients",
     "payee",
     "beneficiary",
-    "account",
-    "acct",
     "iban",
+    "to account",
+    "account",
+    "account number",
+    "account no",
 ];
+
+/// …and every word after the head is one of these qualifiers ("Recipient's email",
+/// "Payee account number", "To phone") or a number ("Recipient 2")…
+pub const RECIPIENT_FIELD_QUALIFIERS: &[&str] = &[
+    "name", "email", "e-mail", "address", "number", "no", "phone", "mobile", "account", "iban",
+    "handle", "username", "id", "'s",
+];
+
+/// …and no word of the name is one of these: a memo, a reference, the payer's own account,
+/// a quoted header or a search is never the recipient ("Note to recipient", "Reference for
+/// account statement", "From account", "Amount to send").
+pub const RECIPIENT_FIELD_NEGATIVES: &[&str] = &[
+    "note",
+    "memo",
+    "message",
+    "reference",
+    "ref",
+    "subject",
+    "description",
+    "comment",
+    "reason",
+    "from",
+    "reply",
+    "cc",
+    "bcc",
+    "search",
+    "filter",
+    "amount",
+];
+
+/// The words of a field name for [`recipient_field_name`]: look-alikes folded, lower case,
+/// a trailing `:`, `*`, `(required)` or `(optional)` dropped, split at anything but
+/// letters, digits, `-` and `'`; a possessive `'s` (`’s`) is its own word.
+fn recipient_name_words(name: &str) -> Vec<String> {
+    let mut folded: String = name
+        .chars()
+        .take(MAX_FIELD_NAME_CHARS * 2)
+        .map(|c| match c {
+            '\u{2019}' | '\u{2018}' | '`' => '\'',
+            c => crate::text::fold_char(c),
+        })
+        .collect::<String>()
+        .to_lowercase();
+    loop {
+        let t = folded.trim_end();
+        let t = t
+            .strip_suffix(':')
+            .or_else(|| t.strip_suffix('*'))
+            .or_else(|| t.strip_suffix("(required)"))
+            .or_else(|| t.strip_suffix("(optional)"));
+        match t {
+            Some(rest) => folded = rest.to_owned(),
+            None => break,
+        }
+    }
+    let mut words = Vec::new();
+    for w in folded.split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '\'')) {
+        let w = w.trim_matches(|c| c == '-' || c == '\'');
+        if w.is_empty() {
+            continue;
+        }
+        match w.strip_suffix("'s") {
+            Some(stem) if !stem.trim_matches('\'').is_empty() => {
+                words.push(stem.trim_matches('\'').to_owned());
+                words.push("'s".to_owned());
+            }
+            _ => words.extend(w.split('\'').filter(|p| !p.is_empty()).map(str::to_owned)),
+        }
+    }
+    words
+}
+
+/// Twelfth review: whether a field named `name` names who is paid or messaged — its name is
+/// head-anchored on [`RECIPIENT_FIELD_HEADS`], the rest only [`RECIPIENT_FIELD_QUALIFIERS`],
+/// and no word is one of [`RECIPIENT_FIELD_NEGATIVES`] ("To", "Pay to", "Recipient's
+/// email", "IBAN"; not "Note to recipient", "From account", "Message to Mallory"). Only
+/// such a field's value is asserted under `To/Account:`.
+pub fn recipient_field_name(name: &str) -> bool {
+    let words = recipient_name_words(name);
+    if words.is_empty()
+        || words
+            .iter()
+            .any(|w| RECIPIENT_FIELD_NEGATIVES.contains(&w.as_str()))
+    {
+        return false;
+    }
+    RECIPIENT_FIELD_HEADS.iter().any(|h| {
+        let head: Vec<&str> = h.split(' ').collect();
+        words.len() >= head.len()
+            && words.iter().zip(&head).all(|(w, h)| w == h)
+            && words.iter().skip(head.len()).all(|w| {
+                RECIPIENT_FIELD_QUALIFIERS.contains(&w.as_str())
+                    || w.chars().all(|c| c.is_ascii_digit())
+            })
+    })
+}
 
 /// Headings that introduce who is paid or messaged, lower case ("Pay to: Mallory's Merch
 /// LLC", "To: Alice", "Account: Checking ••••4521").
@@ -2392,7 +2598,10 @@ fn short_field_head(head: &str) -> String {
     }
     let short = match name.strip_prefix('\'').and_then(|n| n.strip_suffix('\'')) {
         Some(inner) => format!("'{}'", hard_cut(inner, MIN_RECIPIENT_NAME_CHARS - 2)),
-        None => hard_cut(name, MIN_RECIPIENT_NAME_CHARS),
+        None => match name.strip_prefix('"').and_then(|n| n.strip_suffix('"')) {
+            Some(inner) => format!("\"{}\"", hard_cut(inner, MIN_RECIPIENT_NAME_CHARS - 2)),
+            None => hard_cut(name, MIN_RECIPIENT_NAME_CHARS),
+        },
     };
     format!("{short}: \"")
 }
@@ -2436,7 +2645,8 @@ fn recipients_slot(
             return String::new();
         }
         if k == 0 {
-            return format!(". {mark}: {} not shown", items.len());
+            // Twelfth review: what the uncounted lines are.
+            return format!(". {mark}: {} {MARK_MORE_SAYS}", items.len());
         }
         let shown: Vec<String> = items
             .iter()
@@ -2916,11 +3126,11 @@ fn read_cap(s: &str) -> String {
     s.chars().take(MAX_READ_VALUE_CHARS).collect()
 }
 
-/// Whether a field is named like who is paid or messaged ("To", "Pay to", "Recipient",
-/// "Account", "IBAN"; ninth review: by its name only, never by the shape of its value — an
-/// email in a "Contact email" field is no payee).
+/// Whether a field is named like who is paid or messaged (ninth review: by its name only,
+/// never by the shape of its value — an email in a "Contact email" field is no payee;
+/// twelfth review: by the closed rule of [`recipient_field_name`]).
 fn recipient_named(el: &Element) -> bool {
-    has_word(&field_name(el), RECIPIENT_WORDS)
+    recipient_field_name(&field_name(el))
 }
 
 /// Longest field name shown in `Sends:` (ninth review).
@@ -2929,7 +3139,8 @@ const MAX_FIELD_NAME_CHARS: usize = 40;
 /// A field's name as `Sends:` and `To/Account:` show it (ninth review): cleaned like screen
 /// text, `:` and `;` turned into spaces, quotes into `’`, at most
 /// [`MAX_FIELD_NAME_CHARS`] characters, and put in single quotes when it holds anything
-/// but letters, digits and spaces — so a name cannot imitate an entry or Jarvis's wording.
+/// but letters, digits and spaces — so a name cannot imitate an entry or Jarvis's wording;
+/// twelfth review: in double quotes when it reads like a heading ([`heading_like_name`]).
 fn display_name(raw: &str) -> String {
     let c = clean(raw, MAX_FIELD_NAME_CHARS);
     let neutral: String = c
@@ -2944,6 +3155,12 @@ fn display_name(raw: &str) -> String {
     let name = neutral.split_whitespace().collect::<Vec<_>>().join(" ");
     if name.is_empty() {
         return "A field".to_owned();
+    }
+    // Twelfth review (F3): a name that reads like a heading, a marker or the composer's
+    // own wording is always in double quotes ("Screen says": "…"), never followed by a
+    // bare `:` of ours.
+    if heading_like_name(&name) {
+        return format!("\"{name}\"");
     }
     if name.chars().all(|c| c.is_alphanumeric() || c == ' ') {
         name
@@ -3579,11 +3796,11 @@ const SLOT_AMOUNTS: (usize, usize) = (90, 200);
 /// [`MAX_RECIPIENTS_MIN`]: one entry at its minimal cut — for an email `. To/Account (NN
 /// different): ` (29), its field name cut to 12, `: "` (3), 6 characters of its local
 /// part, `…@` (2), a host of 40, `"` (1), ` (2000 not shown)` (17), ` (look-alike
-/// letters)` (21) and ` and NN more` (12), 143 at most — and `. Screen says: N not shown`
-/// (27): 170.
+/// letters)` (21) and ` and NN more` (12), 143 at most — and `. Screen says: NN more lines
+/// naming a recipient` (47, twelfth review): 190.
 const SLOT_RECIPIENTS: (usize, usize) = (72, 240);
 /// The largest minimum the recipients slot reserves (see [`SLOT_RECIPIENTS`]).
-const MAX_RECIPIENTS_MIN: usize = 180;
+const MAX_RECIPIENTS_MIN: usize = 190;
 /// Slot 4, what is sent: the count always fits the minimum; no maximum of its own.
 const SLOT_SENDS: (usize, usize) = (76, usize::MAX);
 /// Slot 5, the other facts: their counts fit the minimum.
@@ -3949,6 +4166,10 @@ fn summarize_with(
     return_only: bool,
     max: usize,
 ) -> String {
+    // Twelfth review: a bare Return (`type` with no text, `submit`) is worded and sent like
+    // Return ("Press Return in …, which sends …"), never `Type "" into …`.
+    let return_only =
+        return_only || matches!(action, Action::Type { text, submit: true, .. } if text.is_empty());
     // Actions in the foreground app state the screen's facts after the action itself.
     let target_index = match action {
         Action::Tap { element } | Action::LongPress { element, .. } | Action::Clear { element } => {
@@ -3987,7 +4208,8 @@ fn summarize_with(
         sent.total = sent.total.saturating_add(form_dropped);
     }
     // A tap presumed to submit what Jarvis typed sends, whatever its category says.
-    sent.sends |= presumed_submit(action, raw, tree, typed);
+    let presumed = presumed_submit(action, raw, tree, typed);
+    sent.sends |= presumed;
     let with_facts = uses_foreground_app(action) && !matches!(action, Action::Look);
     // Eleventh review: posting counts as sending here too.
     let pays = SENDING_CATEGORIES.contains(&category);
@@ -4078,8 +4300,28 @@ fn summarize_with(
         });
     }
     // A sending, posting, paying or purchasing action whose form names no recipient says
-    // so (eleventh review, F3d).
-    let unverified = with_facts && pays && field_entries.is_empty();
+    // so (eleventh review, F3d). Twelfth review: only when the action is such by its own
+    // label or role; a merely presumed submit ("Continue", "Done", Return after typing),
+    // which the gate raises to `SendMessage` (`evaluate_with`), already says what it sends.
+    // So a `SendMessage` question on a presumed submit is classified again without the
+    // presumption (the cost is paid only there).
+    let unverified = with_facts && pays && field_entries.is_empty() && {
+        let own = if !presumed || category != RiskCategory::SendMessage {
+            category
+        } else {
+            match browser_forward(action, raw, tree) {
+                Some(index) => {
+                    let mut nav = raw.clone();
+                    if let Some(e) = nav.elements.iter_mut().find(|e| e.index == index) {
+                        e.label = "Back".to_owned();
+                    }
+                    classify_from(action, &nav, None, source)
+                }
+                None => classify_from(action, raw, None, source),
+            }
+        };
+        SENDING_CATEGORIES.contains(&own)
+    };
     let (next_to, under) = match (action, target) {
         (Action::Tap { .. } | Action::LongPress { .. }, Some(t)) => press_context(t, screen, tree),
         _ => (String::new(), String::new()),
@@ -4290,7 +4532,7 @@ fn action_slot(
         (16, 12, 16),
     ];
     let typed_part = |cap: usize| match action {
-        Action::Type { element, text, .. } if return_only => format!(
+        Action::Type { element, text, .. } if return_only && !text.is_empty() => format!(
             ". Typed: {}",
             typed_words(text, category, type_target(*element, screen), cap)
         ),
@@ -4426,7 +4668,9 @@ fn action_line(
                     };
                     // The colon is ours: a key named like a heading ("Sends") must not
                     // make one (tenth review).
-                    parts.push(defang(&format!("{}: {}", clean(k, 30), clean(&v, 40))));
+                    // Twelfth review: a heading-like key is quoted as well.
+                    let key = quote_heading_like(clean(k, 30));
+                    parts.push(defang(&format!("{key}: {}", clean(&v, 40))));
                 }
             }
             if parts.is_empty() {

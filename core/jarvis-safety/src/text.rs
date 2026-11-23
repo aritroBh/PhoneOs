@@ -267,16 +267,41 @@ pub(crate) fn non_ascii_letter(c: char) -> bool {
     !c.is_ascii() && (c.is_alphabetic() || is_combining(c))
 }
 
-/// Eleventh review: whether a recipient value mixes scripts the owner cannot tell apart —
-/// ASCII letters together with letters that [`fold_char`] reads as ASCII ones (Cyrillic
-/// `а` in `bigbаnk`, a Greek `ο`, an accented `é`), or any non-ASCII letter in an email's
-/// host or an `@handle`. A name written wholly in another script (no ASCII letter) is not
-/// flagged.
+/// Whether `c` is an accented Latin letter a name may hold next to ASCII ones without
+/// being flagged (twelfth review): U+00C0–U+017F (José, Müller, Łukasz), except the bare
+/// look-alikes U+0131 (`ı`), U+0138 (`ĸ`) and U+017F (`ſ`) and the signs U+00D7, U+00F7.
+pub(crate) fn accented_latin(c: char) -> bool {
+    matches!(u32::from(c), 0x00C0..=0x017F)
+        && !matches!(
+            c,
+            '\u{0131}' | '\u{0138}' | '\u{017F}' | '\u{00D7}' | '\u{00F7}'
+        )
+}
+
+/// Eleventh review: whether a recipient value mixes scripts the owner cannot tell apart.
+/// Twelfth review (no dependence on [`fold_char`]'s table): a **word** holding ASCII
+/// letters together with **any** other non-ASCII letter or combining mark (Cherokee `Ꮪ`,
+/// Latin `ǀ` U+01C0, Cyrillic `а`, Greek `ο`, Armenian `հ`, …) is flagged, except accented
+/// Latin letters ([`accented_latin`]: `José Smith`, `Müller` are not); the value as a whole
+/// is also flagged when it holds ASCII letters and a letter [`fold_char`] reads as an ASCII
+/// one (a word wholly of look-alikes beside an ASCII word), accented Latin again excepted;
+/// an email's host or an `@handle` holding any non-ASCII letter is flagged. A name written
+/// wholly in another script (no ASCII letter) is not.
 pub(crate) fn mixed_script(value: &str) -> bool {
+    let odd = |c: char| (non_ascii_letter(c) || is_combining(c)) && !accented_latin(c);
+    let word_mixes = value
+        .split(|c: char| c.is_whitespace())
+        .any(|w| w.chars().any(|c| c.is_ascii_alphabetic()) && w.chars().any(odd));
+    if word_mixes {
+        return true;
+    }
     let ascii = value.chars().any(|c| c.is_ascii_alphabetic());
-    let foldable = value
-        .chars()
-        .any(|c| !c.is_ascii() && c.is_alphabetic() && fold_char(c).is_ascii_alphabetic());
+    let foldable = value.chars().any(|c| {
+        !c.is_ascii()
+            && c.is_alphabetic()
+            && !accented_latin(c)
+            && fold_char(c).is_ascii_alphabetic()
+    });
     if ascii && foldable {
         return true;
     }

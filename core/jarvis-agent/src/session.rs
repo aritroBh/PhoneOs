@@ -95,6 +95,7 @@
 //! listed element, or the keyboard) is always asked, and no launch-by-Return happens while
 //! a denied app is among Spotlight's results (looked at twice, see `on_settle`).
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use jarvis_memory::{LogEntry, LogStep, MemoryStore, Next, RecordedStep, Recorder, Replayer};
@@ -489,13 +490,25 @@ pub struct Session {
     /// of the app, so the text Jarvis typed there was submitted unasked): it lasts for the
     /// task. While it is set, a tap on a control (or Return in a field) whose form holds any
     /// filled text input is presumed to submit it (`jarvis_safety::presumed_submit`).
+    /// Twelfth review: set when a `TypeText` is sent ([`Self::emit`]), before it is checked;
+    /// typing sent without a bundle id is kept under [`UNKNOWN_APP`], which every app reads.
     typed: BTreeMap<String, Vec<TypedText>>,
 }
 
 /// The key of an app in [`Session::typed`].
+/// An observation without a bundle id is keyed [`UNKNOWN_APP`], whose entries every app
+/// reads (twelfth review: fail closed).
 fn app_key(bundle_id: &str) -> String {
-    bundle_id.trim().to_lowercase()
+    let key = bundle_id.trim().to_lowercase();
+    if key.is_empty() {
+        UNKNOWN_APP.to_owned()
+    } else {
+        key
+    }
 }
+
+/// The key of typing sent while the app in front had no bundle id: it applies to every app.
+const UNKNOWN_APP: &str = "\u{0}unknown-app";
 
 impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -656,10 +669,16 @@ impl Session {
 
     /// What the session typed in the app in front (see [`Self::typed`]); non-empty is the
     /// "Jarvis typed here" state the gate reads.
-    fn typed_here(&self) -> &[TypedText] {
-        self.typed
-            .get(&app_key(&self.current.screen.app_bundle_id))
-            .map_or(&[][..], Vec::as_slice)
+    /// Typing recorded under [`UNKNOWN_APP`] counts for every app (twelfth review).
+    fn typed_here(&self) -> Cow<'_, [TypedText]> {
+        let key = app_key(&self.current.screen.app_bundle_id);
+        let here = self.typed.get(&key).map_or(&[][..], Vec::as_slice);
+        match self.typed.get(UNKNOWN_APP).filter(|_| key != UNKNOWN_APP) {
+            Some(unknown) if !unknown.is_empty() => {
+                Cow::Owned(here.iter().chain(unknown).cloned().collect())
+            }
+            _ => Cow::Borrowed(here),
+        }
     }
 
     /// Feeds one event and returns the one thing the shell must do next.
@@ -933,12 +952,13 @@ impl Session {
         if result.ok {
             return match queue.pop_front() {
                 Some(next) => {
+                    let effect = self.emit(next, Some(&pending));
                     self.state = State::AwaitingAct {
                         queue,
                         pending,
                         fresh: false,
                     };
-                    Effect::Act(next)
+                    effect
                 }
                 None => self.observe(ObservePurpose::Verify(pending), false),
             };
@@ -1392,16 +1412,19 @@ impl Session {
             self.state = State::AwaitingRelook {
                 look: Box::new(look),
             };
-            return Effect::Act(RunnerCommand::LaunchApp { bundle_id: asked });
+            return self.emit(RunnerCommand::LaunchApp { bundle_id: asked }, None);
         }
         if !look.settled {
             look.settled = true;
             self.state = State::AwaitingRelook {
                 look: Box::new(look),
             };
-            return Effect::Act(RunnerCommand::Wait {
-                ms: APPROVAL_SETTLE_MS,
-            });
+            return self.emit(
+                RunnerCommand::Wait {
+                    ms: APPROVAL_SETTLE_MS,
+                },
+                None,
+            );
         }
         self.approval_stale(now, &look.pending)
     }
@@ -1505,7 +1528,7 @@ impl Session {
             None,
             self.current.source,
             Some(&self.tree()),
-            self.typed_here(),
+            &self.typed_here(),
         ) {
             Decision::Allow => {
                 if approved.is_some() {
@@ -1673,7 +1696,7 @@ impl Session {
                 category,
                 source,
                 Some(&tree),
-                self.typed_here(),
+                &self.typed_here(),
             ),
             _ => summary_with(
                 gate,
@@ -1681,7 +1704,7 @@ impl Session {
                 category,
                 source,
                 Some(&tree),
-                self.typed_here(),
+                &self.typed_here(),
             ),
         }
     }
@@ -2294,7 +2317,7 @@ impl Session {
             tool,
             self.current.source,
             Some(&self.tree()),
-            self.typed_here(),
+            &self.typed_here(),
         );
         if let Decision::Deny(reason) = &decision {
             return Err(Reject::Failed(format!("not allowed: {reason}")));
@@ -2465,12 +2488,13 @@ impl Session {
                 let mut queue = std::mem::take(queue);
                 match queue.pop_front() {
                     Some(first) => {
+                        let effect = self.emit(first, Some(&pending));
                         self.state = State::AwaitingAct {
                             queue,
                             pending: Box::new(pending),
                             fresh: true,
                         };
-                        Effect::Act(first)
+                        effect
                     }
                     // Nothing to send (cannot happen for validated actions): verify anyway.
                     None => self.observe(ObservePurpose::Verify(Box::new(pending)), false),
@@ -2483,12 +2507,13 @@ impl Session {
     fn continue_act(&mut self, mut queue: VecDeque<RunnerCommand>, pending: Pending) -> Effect {
         match queue.pop_front() {
             Some(first) => {
+                let effect = self.emit(first, Some(&pending));
                 self.state = State::AwaitingAct {
                     queue,
                     pending: Box::new(pending),
                     fresh: false,
                 };
-                Effect::Act(first)
+                effect
             }
             None => self.observe(ObservePurpose::Verify(Box::new(pending)), false),
         }
@@ -2725,7 +2750,7 @@ impl Session {
             None,
             self.current.source,
             Some(&self.tree()),
-            self.typed_here(),
+            &self.typed_here(),
         );
         let home = if is_springboard(&screen.app_bundle_id) {
             home_launch(&gate, screen, &self.apps)
@@ -2793,6 +2818,78 @@ impl Session {
         match risk {
             Some(request) => self.ask_confirm(now, pending, request, None, None),
             None => self.execute(pending),
+        }
+    }
+
+    /// **The one place a runner command leaves the session** (twelfth review): every
+    /// `Effect::Act` is built here (a source-scan test, `only_emit_builds_runner_effects`,
+    /// fails if another appears in this crate). A `TypeText` sets the "typed here" state for
+    /// the app in front **when it is sent**, before anything verifies it: whatever happens
+    /// next — the text checks out, differs (autocorrect, a length limit, reformatting) and
+    /// survives the one retry, Return is held because the screen changed, the runner fails
+    /// or reports a lock, the step is cancelled — the text may be in the app, so the state
+    /// is set. Every `TypeText` reaches the runner through this function: the model's
+    /// `type`, the corrective retry, skill and learned-flow steps (they are planned by
+    /// [`plan`] like the model's actions and sent from the same queue).
+    fn emit(&mut self, cmd: RunnerCommand, pending: Option<&Pending>) -> Effect {
+        if matches!(cmd, RunnerCommand::TypeText { .. }) {
+            self.typed_sent(pending);
+        }
+        Effect::Act(cmd)
+    }
+
+    /// Sets the "typed here" state for a `TypeText` being sent (see [`Self::emit`]): under
+    /// the app of the observation in front (the one the command was planned on) and, if
+    /// different, the app of the screen the step was chosen on; an observation without a
+    /// bundle id records it under [`UNKNOWN_APP`], which every app reads (fail closed). The
+    /// entry names the target field (the check's fingerprint, else the target's or the
+    /// focused input's on the screen the step was chosen on; `0` when none is known) and the
+    /// text as decided (placeholders kept; empty for a secure field). A later verified
+    /// typing replaces it with the field found after typing ([`Self::remember_typed`]).
+    fn typed_sent(&mut self, pending: Option<&Pending>) {
+        let (field, text, before_app) = match pending {
+            Some(p) => {
+                let target = match &p.action {
+                    Action::Type {
+                        element: Some(i), ..
+                    } => p.before.get(*i),
+                    _ => None,
+                }
+                .or_else(|| {
+                    p.before
+                        .elements
+                        .iter()
+                        .find(|e| e.focused && e.role.is_text_input())
+                });
+                let field = p
+                    .check
+                    .as_ref()
+                    .and_then(|c| c.field)
+                    .or_else(|| target.map(|e| e.fingerprint))
+                    .unwrap_or(0);
+                let secure = target.is_some_and(|e| e.secure);
+                let text = match &p.action {
+                    Action::Type { text, .. } if !secure => text.clone(),
+                    _ => String::new(),
+                };
+                (field, text, Some(p.before.app_bundle_id.clone()))
+            }
+            None => (0, String::new(), None),
+        };
+        let mut keys = vec![app_key(&self.current.screen.app_bundle_id)];
+        if let Some(app) = before_app {
+            keys.push(app_key(&app));
+        }
+        keys.sort();
+        keys.dedup();
+        for key in keys {
+            let here = self.typed.entry(key).or_default();
+            if !here.iter().any(|t| t.field == field && t.text == text) {
+                here.push(TypedText {
+                    field,
+                    text: text.clone(),
+                });
+            }
         }
     }
 
