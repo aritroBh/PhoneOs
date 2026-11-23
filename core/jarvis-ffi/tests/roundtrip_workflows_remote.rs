@@ -908,6 +908,7 @@ fn every_local_event_converts_and_progress_text_is_built_from_the_redacted_scree
                 category: f::RiskCategory::Delete,
                 summary: "Delete".into(),
                 app: "a".into(),
+                phone_only: false,
             },
         },
         f::LocalEvent::ConfirmResolved {

@@ -598,6 +598,7 @@ fn all_effects() -> Vec<p::Effect> {
             category: p::RiskCategory::Payment,
             summary: "Pay $12".to_owned(),
             app: "com.example.shop".to_owned(),
+            phone_only: false,
         }),
         p::Effect::AskUser {
             question: "Which one?".to_owned(),
@@ -921,6 +922,14 @@ fn every_effect_outcome_and_confirm_round_trips() {
         category: p::RiskCategory::Delete,
         summary: "Delete 3 photos".to_owned(),
         app: "com.apple.mobileslideshow".to_owned(),
+        phone_only: false,
+    });
+    // Thirteenth review: the phone-only flag crosses the FFI.
+    rt::<_, f::ConfirmRequest>(p::ConfirmRequest {
+        category: p::RiskCategory::SendMessage,
+        summary: "Tap \"Continue\" in Forum. Sends: Note: \"hi\"".to_owned(),
+        app: "com.example.forum".to_owned(),
+        phone_only: true,
     });
 }
 

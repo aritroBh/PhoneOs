@@ -7,7 +7,7 @@
 //! it measures; only the clock varies between runs.
 
 mod budget;
-mod fixtures;
+pub mod fixtures;
 mod gen;
 mod memory;
 mod report;

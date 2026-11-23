@@ -187,7 +187,7 @@ struct ScreenContractTests {
         #expect(wording.homeScreenTarget == #""Weather""#)
         #expect(!wording.title.contains("SpringBoard"))
         // An ordinary first-use request keeps its wording.
-        let ordinary = ConfirmationWording(ConfirmRequest(category: .firstUse, summary: "Let Jarvis act in Mail (x)?", app: "com.apple.mobilemail"), appName: "Mail")
+        let ordinary = ConfirmationWording(ConfirmRequest(category: .firstUse, summary: "Let Jarvis act in Mail (x)?", app: "com.apple.mobilemail", phoneOnly: false), appName: "Mail")
         #expect(ordinary.title == "Let Jarvis act in Mail?")
         #expect(ordinary.chip == riskCategoryTitle(.firstUse))
     }

@@ -62,17 +62,32 @@ fn harmless_actions_are_allowed() {
         Decision::Allow
     );
     assert_eq!(evaluate(&p, &Action::PressHome, &s, None), Decision::Allow);
+    // Thirteenth review (M3): a link is harmless only when the owner gave it; without the
+    // owner's text it asks, phone only.
+    let link = Action::OpenUrl {
+        url: "https://example.com".to_owned(),
+    };
     assert_eq!(
-        evaluate(
+        jarvis_safety::evaluate_owned(
             &p,
-            &Action::OpenUrl {
-                url: "https://example.com".to_owned()
-            },
+            &link,
             &s,
-            None
+            None,
+            jarvis_safety::ScreenSource::Typed,
+            None,
+            &[],
+            &["Open https://example.com please"],
         ),
         Decision::Allow
     );
+    assert!(matches!(
+        evaluate(&p, &link, &s, None),
+        Decision::Confirm(ConfirmRequest {
+            category: RiskCategory::SendMessage,
+            phone_only: true,
+            ..
+        })
+    ));
     let c = compact(&compose_screen());
     let msg = index_of(&c, "Message");
     let draft = Action::Type {
@@ -100,6 +115,7 @@ fn payment_tap_needs_confirmation_with_summary() {
             summary: "Tap \"Pay $42.10\" in Amazon. Amounts on screen: Order total: $42.10. Recipient not verified"
                 .to_owned(),
             app: "com.amazon.Amazon".to_owned(),
+            phone_only: false,
         }
     );
 }

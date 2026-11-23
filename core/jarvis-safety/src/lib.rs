@@ -37,6 +37,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod actuation;
 mod app;
 mod approval;
 mod budget;
@@ -61,11 +62,12 @@ pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;
 pub use confine::check_confinement;
 pub use evaluate::{
-    classify_from, evaluate, evaluate_from, evaluate_with, first_use_app, first_use_request,
-    heading_like_name, presumed_submit, recipient_field_name, return_summary, summarize,
-    summary_for, summary_with, Decision, ScreenSource, ScreenTree, TypedText, QUESTION_HEADINGS,
-    QUESTION_KEYWORDS, QUESTION_MARKERS, RECIPIENT_FIELD_HEADS, RECIPIENT_FIELD_NEGATIVES,
-    RECIPIENT_FIELD_QUALIFIERS, UNVERIFIED_SCREEN_WARNING,
+    classify_from, evaluate, evaluate_from, evaluate_owned, evaluate_with, first_use_app,
+    first_use_request, heading_like_name, owner_gave_url, presumed_submit, recipient_field_name,
+    return_summary, strong_recipient_field_name, summarize, summary_for, summary_with, Decision,
+    ScreenSource, ScreenTree, TypedText, QUESTION_HEADINGS, QUESTION_KEYWORDS, QUESTION_MARKERS,
+    RECIPIENT_FIELD_HEADS, RECIPIENT_FIELD_NEGATIVES, RECIPIENT_FIELD_QUALIFIERS,
+    RECIPIENT_FIELD_STRONG_HEADS, RECIPIENT_FIELD_WEAK_HEADS, UNVERIFIED_SCREEN_WARNING,
 };
 pub use gate::{changes_state, gate, gate_in, gate_on, Gate, TRUSTED_ALLOWED};
 pub use hit::{

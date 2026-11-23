@@ -1121,11 +1121,13 @@ impl From<p::ConfirmRequest> for ConfirmRequest {
             category,
             summary,
             app,
+            phone_only,
         } = v;
         ConfirmRequest {
             category: category.into(),
             summary,
             app,
+            phone_only,
         }
     }
 }
@@ -1136,11 +1138,13 @@ impl From<ConfirmRequest> for p::ConfirmRequest {
             category,
             summary,
             app,
+            phone_only,
         } = v;
         p::ConfirmRequest {
             category: category.into(),
             summary,
             app,
+            phone_only,
         }
     }
 }

@@ -166,7 +166,7 @@ struct BrokerTests {
     func resolve() async throws {
         let seen = Mutex<[HumanPrompt?]>([])
         let broker = HumanPromptBroker { p in seen.withLock { $0.append(p) } }
-        let request = ConfirmRequest(category: .delete, summary: "Delete?", app: "x")
+        let request = ConfirmRequest(category: .delete, summary: "Delete?", app: "x", phoneOnly: false)
         let decision = Task { try await broker.confirm(request) }
         try await waitUntil { broker.pending != nil }
         let prompt = try #require(broker.pending)
@@ -189,7 +189,7 @@ struct BrokerTests {
     @Test("a newer prompt or cancelAll withdraws the pending one")
     func withdraw() async throws {
         let broker = HumanPromptBroker()
-        let first = Task { try await broker.confirm(ConfirmRequest(category: .payment, summary: "Pay", app: "a")) }
+        let first = Task { try await broker.confirm(ConfirmRequest(category: .payment, summary: "Pay", app: "a", phoneOnly: false)) }
         try await waitUntil { broker.pending != nil }
         let second = Task { try await broker.answer("Q?") }
         try await waitUntil { if case .question? = broker.pending { true } else { false } }
@@ -203,7 +203,7 @@ struct BrokerTests {
     @Test("withdraw by id removes only that prompt; a newer prompt is never touched by an older id")
     func withdrawById() async throws {
         let broker = HumanPromptBroker()
-        let request = ConfirmRequest(category: .payment, summary: "Pay", app: "a")
+        let request = ConfirmRequest(category: .payment, summary: "Pay", app: "a", phoneOnly: false)
         let first = Task { try await broker.confirm(request) }
         try await waitUntil { broker.pending != nil }
         let p1 = try #require(broker.pendingConfirmation)
@@ -226,7 +226,7 @@ struct BrokerTests {
     @Test("a cancelled ask withdraws its own prompt at once (the driver abandoning a wait on a lock), and only it")
     func cancelledAskWithdrawsItsPrompt() async throws {
         let broker = HumanPromptBroker()
-        let request = ConfirmRequest(category: .delete, summary: "Delete?", app: "x")
+        let request = ConfirmRequest(category: .delete, summary: "Delete?", app: "x", phoneOnly: false)
         // The driver's lock watch abandons the confirmation through an IORace: the race ends
         // and cancels the task that asks.
         let race = IORace<Bool>()

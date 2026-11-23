@@ -235,10 +235,9 @@ fn typed_text_amounts_and_other_fields() {
         ),
         "{sum}"
     );
-    let swipe = Action::Swipe {
-        direction: jarvis_proto::Direction::Left,
-        element: Some(5),
-    };
+    // Thirteenth review: a swipe on a button actuates it and shows its form like a tap
+    // (deliberate change), so the field rule is checked on clearing it, which sends nothing.
+    let swipe = Action::Clear { element: 5 };
     let sum = summary_for(
         &swipe,
         &amounts,
@@ -289,10 +288,9 @@ fn recipient_facts_never_quote_a_field_value() {
         "{sum}"
     );
     assert!(!sum.contains("To/Account"), "{sum}");
-    let swipe = Action::Swipe {
-        direction: jarvis_proto::Direction::Left,
-        element: Some(3),
-    };
+    // Thirteenth review: a swipe on a button actuates it and shows its form like a tap
+    // (deliberate change), so this is checked on clearing it, which sends nothing.
+    let swipe = Action::Clear { element: 3 };
     let sum = summary_for(&swipe, &s, RiskCategory::Payment, ScreenSource::Typed, None);
     assert!(!sum.contains("mallory"), "{sum}");
     assert!(sum.contains("To (filled)"), "{sum}");

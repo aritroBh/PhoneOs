@@ -524,6 +524,9 @@ struct Running {
 struct Pending {
     id: u64,
     category: RiskCategory,
+    /// Thirteenth review: the request is `phone_only` (a presumed submit, a link the owner
+    /// did not give): no remote may approve it, whatever its category.
+    phone_only: bool,
     summary: String,
     decided: bool,
     /// Devices that were sent this `ConfirmPending` (they may decline it).
@@ -1021,6 +1024,7 @@ impl RemoteHub {
                 self.pending = Some(Pending {
                     id,
                     category: request.category,
+                    phone_only: request.phone_only,
                     summary: request.summary,
                     decided: false,
                     notified: BTreeSet::new(),
@@ -1852,7 +1856,7 @@ impl RemoteHub {
             return self.deny(conn_id, device_id, request, DenyReason::StaleRequest, fx);
         };
         let category = p.category;
-        if approved && !remotely_approvable(category) {
+        if approved && (p.phone_only || !remotely_approvable(category)) {
             return self.deny(
                 conn_id,
                 device_id,
@@ -2307,7 +2311,7 @@ impl RemoteHub {
 
     fn pending_message(&self, perms: RemotePermissions) -> Option<ServerMessage> {
         let p = self.pending.as_ref().filter(|p| !p.decided)?;
-        let can_approve = perms.can_approve(p.category);
+        let can_approve = !p.phone_only && perms.can_approve(p.category);
         let summary = if perms.see_screen_text || can_approve {
             redact_text(&p.summary, MAX_SUMMARY_CHARS)
         } else {
@@ -2322,7 +2326,9 @@ impl RemoteHub {
     }
 
     fn broadcast_pending(&mut self, fx: &mut Vec<HubEffect>) {
-        let Some(category) = self.pending.as_ref().map(|p| p.category) else {
+        let Some((category, phone_only)) =
+            self.pending.as_ref().map(|p| (p.category, p.phone_only))
+        else {
             return;
         };
         for (id, view) in self.views() {
@@ -2332,7 +2338,7 @@ impl RemoteHub {
             let Some(perms) = self.permissions(Some(device_id)) else {
                 continue;
             };
-            if !(view.subscribed || perms.can_approve(category)) {
+            if !(view.subscribed || (!phone_only && perms.can_approve(category))) {
                 continue;
             }
             if let Some(msg) = self.pending_message(perms) {

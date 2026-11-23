@@ -262,7 +262,7 @@ struct ApprovalCaptureTests {
                 "a frame of another observation is never shown")
         #expect(other.frame(in: store) == nil)
         // Only for the confirmation the picture belongs to.
-        let wrong = ConfirmRequest(category: target.request.category, summary: "Something else", app: target.request.app)
+        let wrong = ConfirmRequest(category: target.request.category, summary: "Something else", app: target.request.app, phoneOnly: false)
         #expect(ApprovalPreview.make(prompt: .confirm(id: 7, request: wrong), target: target, frames: store, appActive: true) == nil)
         #expect(ApprovalPreview.make(prompt: .question(id: 7, text: "?"), target: target, frames: store, appActive: true) == nil)
         #expect(real.isLive(pending: prompt) && !real.isLive(pending: .confirm(id: 8, request: target.request)))
@@ -496,7 +496,7 @@ private func shopScreen() -> Screen {
                   orientation: .portrait)
 }
 
-private let payRequest = ConfirmRequest(category: .payment, summary: "Pay $512.40 to Example", app: "com.example.shop")
+private let payRequest = ConfirmRequest(category: .payment, summary: "Pay $512.40 to Example", app: "com.example.shop", phoneOnly: false)
 
 /// A run that observes the shop screen and asks to confirm `action`, fed through the adapter.
 private func asked(_ action: Action, taskId: String = "shop") -> (LiveViewModel, CoreApprovalTarget?) {

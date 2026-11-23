@@ -89,7 +89,7 @@ public struct RemotePairingOffer: Sendable, Equatable, CustomStringConvertible, 
 ///   answer the owner already gave on the phone, a prompt replaced by an equal one after a
 ///   lock or in step-by-step mode) is refused and written to the audit log as stale. The
 ///   category and the request on screen are checked too, and an approval also needs
-///   `remotelyApprovable(category:)`.
+///   `remotelyApprovable(category:)` and a request that is not `phoneOnly` (thirteenth review).
 /// - **Lifecycle.** Off by default; on starts the listener and a tick timer; off stops both
 ///   and drops the hub. A poisoned hub is rebuilt from the secret store.
 /// - **Live view stream.** `feedLiveView(_:_:)` is the phone's one FFI call per driver
@@ -685,7 +685,9 @@ public final class RemoteControlService {
                  device: deviceId, warning: true)
             return
         }
-        if approved, (try? remotelyApprovable(category: category)) != true {
+        // Thirteenth review: a phone-only request (a presumed submit, a link the owner did
+        // not give) is never approved remotely, whatever its category.
+        if approved, pending.request.phoneOnly || (try? remotelyApprovable(category: category)) != true {
             note("Refused an approval from \(who): \(riskCategoryTitle(category)) can only be approved on the phone",
                  device: deviceId, warning: true)
             return

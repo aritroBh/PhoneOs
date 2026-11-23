@@ -512,6 +512,7 @@ fn activity() {
         category: p::RiskCategory::Delete,
         summary: "Delete the account".into(),
         app: "Mail".into(),
+        phone_only: false,
     }));
     assert_eq!(
         t.timeline().activity,

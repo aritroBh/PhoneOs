@@ -20,6 +20,7 @@ fn req() -> p::ConfirmRequest {
         category: p::RiskCategory::Payment,
         summary: "x".to_owned(),
         app: "com.apple.mobilemail".to_owned(),
+        phone_only: false,
     }
 }
 

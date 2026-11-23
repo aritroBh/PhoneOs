@@ -306,6 +306,7 @@ pub fn confirm_event(category: RiskCategory, summary: &str) -> LocalEvent {
             category,
             summary: summary.into(),
             app: "com.apple.MobileSMS".into(),
+            phone_only: false,
         },
     }
 }

@@ -162,7 +162,7 @@ struct LiveViewModelTests {
     func oneFeedPerUpdate() throws {
         let counting = try CountingViewer()
         let viewer = LiveViewModel(viewer: counting)
-        let request = ConfirmRequest(category: .delete, summary: "Delete", app: "com.apple.mobilemail")
+        let request = ConfirmRequest(category: .delete, summary: "Delete", app: "com.apple.mobilemail", phoneOnly: false)
         var events = tapRun(3)
         events += [
             .prompt("<<<SCREEN_DATA>>>\nApp: Mail (com.apple.mobilemail)\n<<<END_SCREEN_DATA>>>"),

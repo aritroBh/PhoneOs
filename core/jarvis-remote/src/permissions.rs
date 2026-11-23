@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 /// could not read may be a "Pay" in another language. They must be approved on the phone
 /// itself, where the owner sees the screen and the OS's own prompts. A remote that was
 /// shown the prompt can still decline it, and any remote can `Cancel`.
+///
+/// Thirteenth review: a request flagged `ConfirmRequest::phone_only` (a presumed submit,
+/// whose control the gate could not read; a link the owner did not give) is not remotely
+/// approvable either, whatever its category (the hub checks the flag beside this list).
 pub const NEVER_REMOTE_APPROVE: [RiskCategory; 6] = [
     RiskCategory::Payment,
     RiskCategory::Purchase,

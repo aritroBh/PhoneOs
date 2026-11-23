@@ -160,6 +160,14 @@ pub struct ConfirmRequest {
     pub summary: String,
     /// Bundle id (or tool app) the action affects.
     pub app: String,
+    /// Thirteenth review: only the owner on the phone may approve it, whatever its
+    /// category: the gate could not read what the control does and presumed it submits a
+    /// form (a neutral "Continue" after text entered a field), or the action opens a link
+    /// the owner did not give. A paired remote device is never allowed to approve it
+    /// (`jarvis_remote`), and the shell does not offer it remotely. Omitted on the wire when
+    /// `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub phone_only: bool,
 }
 
 /// Final status of a task.

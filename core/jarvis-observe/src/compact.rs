@@ -769,6 +769,34 @@ pub struct CompactView {
     /// compose view's `To:` scrolled out of view). Secure fields carry no value. While an
     /// alert or sheet is up, only those inside it.
     pub inputs: Vec<RawInput>,
+    /// Thirteenth review: one mark per text input that holds text (not inside the keyboard
+    /// or the input assistant; behind an alert or sheet too), in node order: a hash of its
+    /// value, or for a secure field a hash of its length only (the secret is never kept).
+    /// The session compares the marks of consecutive observations of an app, as multisets,
+    /// to see text **enter** a field without `TypeText` (paste, AutoFill, dictation, a
+    /// keyboard suggestion, drag and drop), whatever the field's label does meanwhile.
+    pub input_marks: Vec<u64>,
+}
+
+/// The mark of a text input's content in [`CompactView::input_marks`] (`None`: empty).
+fn input_mark(node: &UiNode) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let value = node
+        .value
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())?;
+    if node.placeholder.as_deref().map(str::trim) == Some(value) {
+        return None;
+    }
+    // A fixed-key hasher: the marks of two observations are comparable.
+    let mut h = std::hash::DefaultHasher::new();
+    if is_secure(node) {
+        (0u8, value.chars().count()).hash(&mut h);
+    } else {
+        (1u8, value.split_whitespace().collect::<Vec<_>>()).hash(&mut h);
+    }
+    Some(h.finish())
 }
 
 /// Flattens a screen to its indexed, ordered, deduplicated actionable/informative elements.
@@ -827,10 +855,16 @@ pub fn compact_view(screen: &Screen) -> CompactView {
     let mut bars = Vec::new();
     let mut nodes = Vec::new();
     let mut inputs = Vec::new();
+    let mut input_marks = Vec::new();
     layout.walk(&screen.root, |node, v| {
         let Some(&i) = index.by_addr.get(&addr(node)) else {
             return;
         };
+        // Thirteenth review: what every text input holds, behind an alert too (an alert
+        // coming and going does not make text appear).
+        if v.quiet == Quiet::No && node.role.is_text_input() {
+            input_marks.extend(input_mark(node));
+        }
         // While an alert or sheet is up the fields behind it are not what its buttons send.
         if v.quiet == Quiet::No && v.in_scope && node.role.is_text_input() {
             let placeholder = non_empty(&node.placeholder);
@@ -961,6 +995,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         bars,
         nodes,
         inputs,
+        input_marks,
     }
 }
 /// `(pages, percent)` of an iOS scroll indicator: label `Vertical scroll bar, N pages`

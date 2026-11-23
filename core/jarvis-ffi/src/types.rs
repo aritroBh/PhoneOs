@@ -518,6 +518,9 @@ pub struct ConfirmRequest {
     pub category: RiskCategory,
     pub summary: String,
     pub app: String,
+    /// Only the owner on the phone may approve it, whatever its category (thirteenth
+    /// review: a presumed submit, or a link the owner did not give).
+    pub phone_only: bool,
 }
 
 /// How a session ended.

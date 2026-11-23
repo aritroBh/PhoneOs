@@ -267,15 +267,30 @@ pub(crate) fn non_ascii_letter(c: char) -> bool {
     !c.is_ascii() && (c.is_alphabetic() || is_combining(c))
 }
 
+/// The letters of U+00C0–U+017F that have no canonical decomposition into an ASCII letter
+/// plus diacritics but that real names are written with (thirteenth review): ß, æ/Æ, ø/Ø,
+/// đ/Đ, ł/Ł, þ/Þ, ð/Ð, œ/Œ, ŋ/Ŋ, ħ/Ħ, ŧ/Ŧ.
+const NAME_LETTERS: &[char] = &[
+    'ß', 'æ', 'Æ', 'ø', 'Ø', 'đ', 'Đ', 'ł', 'Ł', 'þ', 'Þ', 'ð', 'Ð', 'œ', 'Œ', 'ŋ', 'Ŋ', 'ħ', 'Ħ',
+    'ŧ', 'Ŧ',
+];
+
+/// The rest of U+00C0–U+017F without a canonical decomposition, which are never exempt
+/// (thirteenth review): the signs × ÷; the ligature and compatibility forms ĳ/Ĳ (reads
+/// "ij"), Ŀ/ŀ (L with middle dot, "l·"), ŉ ("'n"); the dotless, long and kra forms ı, ſ,
+/// ĸ (read as i, f, k).
+const NOT_NAME_LETTERS: &[char] = &['×', '÷', 'ĳ', 'Ĳ', 'Ŀ', 'ŀ', 'ŉ', 'ı', 'ſ', 'ĸ'];
+
 /// Whether `c` is an accented Latin letter a name may hold next to ASCII ones without
-/// being flagged (twelfth review): U+00C0–U+017F (José, Müller, Łukasz), except the bare
-/// look-alikes U+0131 (`ı`), U+0138 (`ĸ`) and U+017F (`ſ`) and the signs U+00D7, U+00F7.
+/// being flagged (twelfth review; thirteenth review: by structure, not by block). Exempt
+/// are, within U+00C0–U+017F, exactly (1) the precomposed letters — an ASCII letter plus
+/// one or more diacritics (José, Müller, Ångström, Čapek, İzmir) — and (2) the stand-alone
+/// letters of [`NAME_LETTERS`] (Łukasz, Søren, Þórr, Œuvre). The block holds nothing else
+/// but [`NOT_NAME_LETTERS`] (ligatures, compatibility, dotless and long forms, two signs),
+/// which are not exempt; an exhaustive test over the block checks the partition.
 pub(crate) fn accented_latin(c: char) -> bool {
     matches!(u32::from(c), 0x00C0..=0x017F)
-        && !matches!(
-            c,
-            '\u{0131}' | '\u{0138}' | '\u{017F}' | '\u{00D7}' | '\u{00F7}'
-        )
+        && (NAME_LETTERS.contains(&c) || !NOT_NAME_LETTERS.contains(&c))
 }
 
 /// Eleventh review: whether a recipient value mixes scripts the owner cannot tell apart.

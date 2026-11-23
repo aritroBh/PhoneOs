@@ -110,13 +110,14 @@ use jarvis_proto::{
 };
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
-    approval_context, check_app, check_app_name, check_confinement, control_at, evaluate_with,
+    approval_context, check_app, check_app_name, check_confinement, control_at, evaluate_owned,
     first_use_app, first_use_request, is_springboard, label_names_denied_app, redact,
     redact_screen, return_summary, sanitize_screen_text, search_names_denied_app, summary_with,
     widget_names_denied_app, Budget, BudgetVerdict, Covered, CoveredBy, Decision, PointError,
     ScreenSource, ScreenTree, TypedText, Verdict,
 };
 
+use crate::act::{Out, TypedState};
 use crate::changes::describe_change;
 use crate::commands::{
     home_launch, is_widget, plan, resolve_app, should_change, AppTarget, HomeLaunch, PlanError,
@@ -481,34 +482,15 @@ pub struct Session {
     stale_approvals: u32,
     /// Where the observation being handled came from (`Observed` or `ObservedRunnerText`).
     incoming_source: ScreenSource,
-    /// What the session typed into which field during the task (placeholders kept), per app
-    /// (lower-cased bundle id): the only field values a confirmation summary may quote
-    /// besides amounts. Tenth review: an app's entry being non-empty is the **"Jarvis typed
-    /// here" state** — set when a `type` is carried out in that app (its text checked, or
-    /// not checkable); never cleared by switching apps. Eleventh review: never cleared by an
-    /// approved submit either (an approved send in one form cleared it for every other form
-    /// of the app, so the text Jarvis typed there was submitted unasked): it lasts for the
-    /// task. While it is set, a tap on a control (or Return in a field) whose form holds any
-    /// filled text input is presumed to submit it (`jarvis_safety::presumed_submit`).
-    /// Twelfth review: set when a `TypeText` is sent ([`Self::emit`]), before it is checked;
-    /// typing sent without a bundle id is kept under [`UNKNOWN_APP`], which every app reads.
-    typed: BTreeMap<String, Vec<TypedText>>,
+    /// The "Jarvis typed here" state, per app, and the one function that sends runner
+    /// commands (`crate::act`). Tenth review: an app's state set means a tap on a control
+    /// (or Return in a field) whose form holds any filled text input is presumed to submit
+    /// it (`jarvis_safety::presumed_submit`). Eleventh review: never cleared during the
+    /// task. Twelfth review: set when a `TypeText` is sent. Thirteenth review: also set when
+    /// an observation after Jarvis acted shows text that entered a field of the app without
+    /// `TypeText` (paste, AutoFill, dictation…), see [`TypedState::observed`].
+    act: TypedState,
 }
-
-/// The key of an app in [`Session::typed`].
-/// An observation without a bundle id is keyed [`UNKNOWN_APP`], whose entries every app
-/// reads (twelfth review: fail closed).
-fn app_key(bundle_id: &str) -> String {
-    let key = bundle_id.trim().to_lowercase();
-    if key.is_empty() {
-        UNKNOWN_APP.to_owned()
-    } else {
-        key
-    }
-}
-
-/// The key of typing sent while the app in front had no bundle id: it applies to every app.
-const UNKNOWN_APP: &str = "\u{0}unknown-app";
 
 impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -663,26 +645,37 @@ impl Session {
             lock_uncertain: false,
             stale_approvals: 0,
             incoming_source: ScreenSource::Typed,
-            typed: BTreeMap::new(),
+            act: TypedState::default(),
         }
     }
 
-    /// What the session typed in the app in front (see [`Self::typed`]); non-empty is the
-    /// "Jarvis typed here" state the gate reads.
-    /// Typing recorded under [`UNKNOWN_APP`] counts for every app (twelfth review).
-    fn typed_here(&self) -> Cow<'_, [TypedText]> {
-        let key = app_key(&self.current.screen.app_bundle_id);
-        let here = self.typed.get(&key).map_or(&[][..], Vec::as_slice);
-        match self.typed.get(UNKNOWN_APP).filter(|_| key != UNKNOWN_APP) {
-            Some(unknown) if !unknown.is_empty() => {
-                Cow::Owned(here.iter().chain(unknown).cloned().collect())
-            }
-            _ => Cow::Borrowed(here),
+    /// What the owner wrote for this task (thirteenth review, M3): the task's text and the
+    /// running skill's own definition (its instructions and the values captured from the
+    /// request). A link `open_url` opens is the owner's only when it appears there
+    /// (`jarvis_safety::owner_gave_url`).
+    fn owner_texts(&self) -> Vec<&str> {
+        let mut out = vec![self.task.text.as_str()];
+        if let Some(skill) = &self.config.skill {
+            out.push(skill.instructions.as_str());
+            out.extend(skill.args.values().map(String::as_str));
         }
+        out
+    }
+
+    /// What the session typed in the app in front (see [`TypedState`]); non-empty is the
+    /// "Jarvis typed here" state the gate reads.
+    fn typed_here(&self) -> Cow<'_, [TypedText]> {
+        self.act.here(&self.current.screen.app_bundle_id)
     }
 
     /// Feeds one event and returns the one thing the shell must do next.
     pub fn step(&mut self, ev: TimedEvent) -> Effect {
+        // Thirteenth review: the only place an `Out` becomes an `Effect` (`crate::act`).
+        self.step_out(ev).into_effect()
+    }
+
+    /// [`Self::step`], as the handlers' [`Out`].
+    fn step_out(&mut self, ev: TimedEvent) -> Out {
         let TimedEvent { now_ms: now, event } = ev;
         // An observation parsed from runner text is handled like any other, but the screen
         // it carries is marked unverified (see `ingest`).
@@ -701,7 +694,7 @@ impl Session {
         let state = match state {
             State::Finished(outcome) => {
                 self.state = State::Finished(outcome.clone());
-                return Effect::Finished(outcome);
+                return Out::finished(outcome);
             }
             other => other,
         };
@@ -761,7 +754,7 @@ impl Session {
             }
             State::Finished(outcome) => {
                 self.state = State::Finished(outcome.clone());
-                Effect::Finished(outcome)
+                Out::finished(outcome)
             }
         }
     }
@@ -799,12 +792,12 @@ impl Session {
     // Per-state handlers.
     // ---------------------------------------------------------------------------------
 
-    fn protocol_error(&mut self, now: u64, event: &Event, state: &str) -> Effect {
+    fn protocol_error(&mut self, now: u64, event: &Event, state: &str) -> Out {
         let summary = format!("protocol error: unexpected {} while {state}", event.name());
         self.finish(now, OutcomeStatus::Failed, &summary)
     }
 
-    fn on_idle(&mut self, now: u64, event: Event, state: &str) -> Effect {
+    fn on_idle(&mut self, now: u64, event: Event, state: &str) -> Out {
         match event {
             Event::Start => {
                 self.started = true;
@@ -826,7 +819,7 @@ impl Session {
         purpose: ObservePurpose,
         event: Event,
         state: &str,
-    ) -> Effect {
+    ) -> Out {
         let obs = match event {
             Event::Observed(obs) => obs,
             Event::ObserveFailed { reason } => return self.observe_failed(now, purpose, &reason),
@@ -857,7 +850,7 @@ impl Session {
     }
 
     /// `ObserveFailed`: observe again until the failure budget is used up.
-    fn observe_failed(&mut self, now: u64, purpose: ObservePurpose, reason: &str) -> Effect {
+    fn observe_failed(&mut self, now: u64, purpose: ObservePurpose, reason: &str) -> Out {
         self.observe_failures = self.observe_failures.saturating_add(1);
         if self.observe_failures >= self.config.policy.max_consecutive_failures.max(1) {
             let summary = format!(
@@ -871,7 +864,7 @@ impl Session {
         self.observe(purpose, screenshot)
     }
 
-    fn on_model(&mut self, now: u64, kind: RequestKind, event: Event, state: &str) -> Effect {
+    fn on_model(&mut self, now: u64, kind: RequestKind, event: Event, state: &str) -> Out {
         match event {
             Event::ModelOutput(out) => match parse_model_output(&out.text) {
                 Ok(parsed) => {
@@ -917,7 +910,7 @@ impl Session {
                     Some(request) => {
                         self.model_calls = self.model_calls.saturating_add(1);
                         self.state = State::AwaitingModel { kind };
-                        Effect::Infer(request)
+                        Out::infer(request)
                     }
                     None => {
                         let summary = format!("Model error: {}", clean(&error, 200));
@@ -937,7 +930,7 @@ impl Session {
         fresh: bool,
         event: Event,
         state: &str,
-    ) -> Effect {
+    ) -> Out {
         let Event::ActResult(result) = event else {
             return self.protocol_error(now, &event, state);
         };
@@ -973,7 +966,7 @@ impl Session {
         self.observe(ObservePurpose::Decide, false)
     }
 
-    fn on_tool(&mut self, now: u64, pending: Box<Pending>, event: Event, state: &str) -> Effect {
+    fn on_tool(&mut self, now: u64, pending: Box<Pending>, event: Event, state: &str) -> Out {
         let Event::ToolResult(result) = event else {
             return self.protocol_error(now, &event, state);
         };
@@ -1012,7 +1005,7 @@ impl Session {
         then: Option<ConfirmRequest>,
         event: Event,
         state: &str,
-    ) -> Effect {
+    ) -> Out {
         match event {
             Event::UserDecision { approved: true } => {
                 if let Some(app) = approves_app {
@@ -1078,7 +1071,7 @@ impl Session {
         }
     }
 
-    fn on_answer(&mut self, now: u64, described: String, event: Event, state: &str) -> Effect {
+    fn on_answer(&mut self, now: u64, described: String, event: Event, state: &str) -> Out {
         let Event::UserAnswer { text } = event else {
             return self.protocol_error(now, &event, state);
         };
@@ -1110,7 +1103,7 @@ impl Session {
     /// The phone locked while `state` was outstanding: set it aside and wait for the
     /// owner. With `unlocked` the unlock is already known (an out-of-turn
     /// `DeviceUnlocked`), so the session observes at once.
-    fn interrupt(&mut self, now: u64, state: State, signal: LockSignal, unlocked: bool) -> Effect {
+    fn interrupt(&mut self, now: u64, state: State, signal: LockSignal, unlocked: bool) -> Out {
         let by_event = signal == LockSignal::Event;
         let (resume, late) = match state {
             State::AwaitingObservation { purpose } => match purpose {
@@ -1192,7 +1185,7 @@ impl Session {
     }
 
     /// Emits `AwaitUnlock`, or finishes `Interrupted` once the wait is too long.
-    fn await_unlock(&mut self, now: u64, resume: Resume, late: Option<Late>) -> Effect {
+    fn await_unlock(&mut self, now: u64, resume: Resume, late: Option<Late>) -> Out {
         let max = self.config.policy.max_locked_wait_ms;
         if self.lock_wait_ms >= max {
             let summary = format!(
@@ -1207,10 +1200,7 @@ impl Session {
             Resume::Decide => UNLOCK_REASON,
         };
         self.state = State::AwaitingUnlock { resume, late };
-        Effect::AwaitUnlock {
-            reason: reason.to_owned(),
-            waited_ms: self.lock_wait_ms,
-        }
+        Out::await_unlock(reason.to_owned(), self.lock_wait_ms)
     }
 
     fn on_locked(
@@ -1220,7 +1210,7 @@ impl Session {
         late: Option<Late>,
         event: Event,
         state: &str,
-    ) -> Effect {
+    ) -> Out {
         match event {
             Event::Tick | Event::DeviceLocked | Event::ObserveFailed { .. } => {
                 self.await_unlock(now, resume, late)
@@ -1308,7 +1298,7 @@ impl Session {
     }
 
     /// After an unlock: observe before anything else.
-    fn resume_observe(&mut self, resume: Resume) -> Effect {
+    fn resume_observe(&mut self, resume: Resume) -> Out {
         match resume {
             Resume::Decide => self.observe(ObservePurpose::Decide, false),
             Resume::Reconsider(pending) => self.observe(ObservePurpose::Reconsider(pending), false),
@@ -1318,7 +1308,7 @@ impl Session {
     /// A confirmation that was pending when the phone locked, on the first screen after the
     /// unlock: asked again (through the full gate) when the screen is unchanged, else
     /// dropped and decided again.
-    fn reconsider(&mut self, now: u64, pending: Pending) -> Effect {
+    fn reconsider(&mut self, now: u64, pending: Pending) -> Out {
         let same = screen_hash(&pending.bound) == self.current.hash;
         if pending.stage == Stage::Return {
             // The text is typed: its Return is gated again on the same screen, else not
@@ -1359,7 +1349,7 @@ impl Session {
     /// long after the question, so nothing planned on the screen it was asked about is sent
     /// blind: tools (which do not use the screen) run now, runner actions look at the screen
     /// once more first ([`Self::act_approved`]).
-    fn after_approval(&mut self, pending: Pending, request: ConfirmRequest) -> Effect {
+    fn after_approval(&mut self, pending: Pending, request: ConfirmRequest) -> Out {
         if matches!(pending.exec, Exec::Tool(_)) {
             return self.execute(pending);
         }
@@ -1388,7 +1378,7 @@ impl Session {
     ///
     /// So at most: look, [activate, look], wait, look. Nothing is acted on unless a look
     /// equals the record.
-    fn act_approved(&mut self, now: u64, mut look: ApprovalLook) -> Effect {
+    fn act_approved(&mut self, now: u64, mut look: ApprovalLook) -> Out {
         if let Some(fresh) = self.recheck_approved(&look.pending, look.approved.as_ref()) {
             return self.execute(fresh);
         }
@@ -1432,13 +1422,7 @@ impl Session {
     /// The runner's reply to the activation or settle wait before a look after an approval:
     /// look (a failed command changes nothing: the look decides). A refusal because the
     /// phone is locked is a lock during that look.
-    fn on_relook(
-        &mut self,
-        now: u64,
-        look: Box<ApprovalLook>,
-        event: Event,
-        state: &str,
-    ) -> Effect {
+    fn on_relook(&mut self, now: u64, look: Box<ApprovalLook>, event: Event, state: &str) -> Out {
         let Event::ActResult(result) = event else {
             return self.protocol_error(now, &event, state);
         };
@@ -1454,7 +1438,7 @@ impl Session {
     /// keeps changing cannot keep the session asking forever; after
     /// [`MAX_STALE_APPROVALS`] the session ends `Failed`. Otherwise decide again (through
     /// the full gate, which asks again if the action is proposed again).
-    fn approval_stale(&mut self, now: u64, pending: &Pending) -> Effect {
+    fn approval_stale(&mut self, now: u64, pending: &Pending) -> Out {
         // What changed, in words (from the prompt-safe screens; cleaned and bounded).
         let change = approval_context(&pending.gate, &pending.bound_safe)
             .change_note(&pending.gate, &self.current.safe)
@@ -1521,7 +1505,7 @@ impl Session {
         };
         // A4 and the gate: nothing new is asked, and an approved risk is the same category
         // with the identical summary, recomputed for this target on this screen.
-        match evaluate_with(
+        match evaluate_owned(
             &self.config.policy,
             &executed,
             screen,
@@ -1529,6 +1513,7 @@ impl Session {
             self.current.source,
             Some(&self.tree()),
             &self.typed_here(),
+            &self.owner_texts(),
         ) {
             Decision::Allow => {
                 if approved.is_some() {
@@ -1617,15 +1602,19 @@ impl Session {
     // The loop: decide → propose → gate → execute → verify.
     // ---------------------------------------------------------------------------------
 
-    fn observe(&mut self, purpose: ObservePurpose, screenshot: bool) -> Effect {
+    fn observe(&mut self, purpose: ObservePurpose, screenshot: bool) -> Out {
         self.state = State::AwaitingObservation { purpose };
-        Effect::Observe { screenshot }
+        Out::observe(screenshot)
     }
 
     fn ingest(&mut self, obs: Observation) {
         // The digest is taken from the raw tree before compaction cuts or drops anything.
         let digest = screen_digest(&obs.screen);
         let view = compact_view(&obs.screen);
+        // Thirteenth review (H1): text that entered a field without `TypeText` sets the
+        // app's "typed here" state (`TypedState::observed`).
+        self.act
+            .observed(&view.screen.app_bundle_id, view.input_marks);
         let screen = view.screen;
         self.current = Current {
             hash: screen_hash(&screen),
@@ -1710,7 +1699,7 @@ impl Session {
     }
 
     /// Finishes when a budget is exhausted.
-    fn budget_stop(&mut self, now: u64) -> Option<Effect> {
+    fn budget_stop(&mut self, now: u64) -> Option<Out> {
         let summary = match self.budget.check(now) {
             BudgetVerdict::Ok => return None,
             BudgetVerdict::StepsExceeded => {
@@ -1726,7 +1715,7 @@ impl Session {
     }
 
     /// Chooses the next action on the current screen: learned flow, vision, or the model.
-    fn decide(&mut self, now: u64) -> Effect {
+    fn decide(&mut self, now: u64) -> Out {
         if let Some(stop) = self.budget_stop(now) {
             return stop;
         }
@@ -1770,7 +1759,7 @@ impl Session {
         }
     }
 
-    fn infer(&mut self, kind: RequestKind) -> Effect {
+    fn infer(&mut self, kind: RequestKind) -> Out {
         let screenshot = match kind {
             RequestKind::Vision => self.current.screenshot.clone(),
             RequestKind::Text => None,
@@ -1781,7 +1770,7 @@ impl Session {
         self.model_calls = self.model_calls.saturating_add(1);
         self.last_request = Some(request.clone());
         self.state = State::AwaitingModel { kind: request.kind };
-        Effect::Infer(request)
+        Out::infer(request)
     }
 
     fn build_request(&self, screenshot: Option<ImageRef>) -> ModelRequest {
@@ -1834,7 +1823,7 @@ impl Session {
 
     /// Takes one decided action (model or flow) through budget, stuck detection, safety and
     /// into execution. Every action counts one step first.
-    fn propose(&mut self, now: u64, action: Action, source: Source) -> Effect {
+    fn propose(&mut self, now: u64, action: Action, source: Source) -> Out {
         self.budget.record_step(now);
         self.last_action = Some(action.clone());
         match &action {
@@ -1931,7 +1920,7 @@ impl Session {
         action: &Action,
         source: Source,
         prepared: Result<Prepared, Reject>,
-    ) -> Effect {
+    ) -> Out {
         match prepared {
             Ok(Prepared::Execute(pending)) => self.execute(pending),
             Ok(Prepared::Confirm(pending, request)) => {
@@ -1960,7 +1949,7 @@ impl Session {
                 described,
             }) => {
                 self.state = State::AwaitingAnswer { described };
-                Effect::AskUser { question }
+                Out::ask_user(question)
             }
             Ok(Prepared::Look) => {
                 let described = describe(action, &self.current.safe);
@@ -2008,7 +1997,7 @@ impl Session {
         request: ConfirmRequest,
         approves_app: Option<String>,
         then: Option<ConfirmRequest>,
-    ) -> Effect {
+    ) -> Out {
         if approves_app.is_none() && self.declined.contains(&request.category) {
             let summary = format!(
                 "Blocked: the owner already declined a {} action.",
@@ -2022,7 +2011,7 @@ impl Session {
             approves_app,
             then,
         };
-        Effect::Confirm(request)
+        Out::confirm(request)
     }
 
     /// Whether the owner approved acting in `app` (in memory or in this session), or it is
@@ -2071,7 +2060,7 @@ impl Session {
 
     /// A refused action: tell the model (`result`, the cleaned result line), count a
     /// failure, decide again on the same screen.
-    fn reject(&mut self, now: u64, action: &Action, source: Source, result: &str) -> Effect {
+    fn reject(&mut self, now: u64, action: &Action, source: Source, result: &str) -> Out {
         let described = describe(action, &self.current.safe);
         let result = result.to_owned();
         self.repeat = None;
@@ -2310,7 +2299,7 @@ impl Session {
         // 3. Safety: validation, deny list, risk classification, confirmation gate. A screen
         //    read from runner text is unverified: every state-changing runner action on it
         //    is at least `Unverified` (asks), with a warning in its summary.
-        let decision = evaluate_with(
+        let decision = evaluate_owned(
             policy,
             &executed,
             screen,
@@ -2318,6 +2307,7 @@ impl Session {
             self.current.source,
             Some(&self.tree()),
             &self.typed_here(),
+            &self.owner_texts(),
         );
         if let Decision::Deny(reason) = &decision {
             return Err(Reject::Failed(format!("not allowed: {reason}")));
@@ -2424,6 +2414,7 @@ impl Session {
                     200,
                 ),
                 app: screen.app_bundle_id.clone(),
+                phone_only: false,
             };
             return Ok(Prepared::FirstUse {
                 pending,
@@ -2475,14 +2466,14 @@ impl Session {
     }
 
     /// Sends the first command (or the tool call) of an approved action.
-    fn execute(&mut self, mut pending: Pending) -> Effect {
+    fn execute(&mut self, mut pending: Pending) -> Out {
         match &mut pending.exec {
             Exec::Tool(call) => {
                 let call = call.clone();
                 self.state = State::AwaitingTool {
                     pending: Box::new(pending),
                 };
-                Effect::CallTool(call)
+                Out::call_tool(call)
             }
             Exec::Runner(queue) => {
                 let mut queue = std::mem::take(queue);
@@ -2504,7 +2495,7 @@ impl Session {
     }
 
     /// Sends the follow-up commands of an action already under way.
-    fn continue_act(&mut self, mut queue: VecDeque<RunnerCommand>, pending: Pending) -> Effect {
+    fn continue_act(&mut self, mut queue: VecDeque<RunnerCommand>, pending: Pending) -> Out {
         match queue.pop_front() {
             Some(first) => {
                 let effect = self.emit(first, Some(&pending));
@@ -2520,7 +2511,7 @@ impl Session {
     }
 
     /// Checks that typed text arrived; corrects once, then tells the model.
-    fn verify_typing(&mut self, now: u64, mut pending: Pending, mut check: TypeCheck) -> Effect {
+    fn verify_typing(&mut self, now: u64, mut pending: Pending, mut check: TypeCheck) -> Out {
         let screen = &self.current.screen;
         let field = check
             .field
@@ -2567,7 +2558,8 @@ impl Session {
                 // Tenth review: a typing that could not be checked was carried out too, so
                 // it sets the app's "typed here" state as well (the text is quoted only
                 // while a field holds exactly it).
-                self.remember_typed(&pending, field_fp);
+                self.act
+                    .remember(&pending, field_fp, &self.current.screen.app_bundle_id);
                 if pending.stage != Stage::Typing {
                     return self.verify(now, pending);
                 }
@@ -2681,7 +2673,7 @@ impl Session {
     /// A held-back Return on the home screen, once the results have settled: pressed
     /// unless a denied app is among them. That is not a deny strike (the result list is
     /// not an attempt to open it): the step fails and the model is told which app.
-    fn press_held_return(&mut self, now: u64, pending: Pending, field: Option<u64>) -> Effect {
+    fn press_held_return(&mut self, now: u64, pending: Pending, field: Option<u64>) -> Out {
         if let Some(name) = self.denied_search_result() {
             let msg = format!(
                 "not done: Return was not pressed: it could open {name}, which is on the deny list and among the results"
@@ -2701,7 +2693,7 @@ impl Session {
     /// not ask, it is pressed at once. A refusal or a decline leaves the text typed and the
     /// model is told ("typed, not submitted"). Neither part adds a step or a history line of
     /// its own: the pair is one model step.
-    fn gate_return(&mut self, now: u64, typing: Pending, field: Option<u64>) -> Effect {
+    fn gate_return(&mut self, now: u64, typing: Pending, field: Option<u64>) -> Out {
         let screen = &self.current.screen;
         let target = field
             .and_then(|fp| screen.find_by_fingerprint(fp))
@@ -2743,7 +2735,7 @@ impl Session {
             }
         };
         let policy = &self.config.policy;
-        let decision = evaluate_with(
+        let decision = evaluate_owned(
             policy,
             &executed,
             screen,
@@ -2751,6 +2743,7 @@ impl Session {
             self.current.source,
             Some(&self.tree()),
             &self.typed_here(),
+            &self.owner_texts(),
         );
         let home = if is_springboard(&screen.app_bundle_id) {
             home_launch(&gate, screen, &self.apps)
@@ -2804,6 +2797,7 @@ impl Session {
                     200,
                 ),
                 app: self.current.screen.app_bundle_id.clone(),
+                phone_only: false,
             };
             let action = pending.action.clone();
             let source = pending.source;
@@ -2821,97 +2815,11 @@ impl Session {
         }
     }
 
-    /// **The one place a runner command leaves the session** (twelfth review): every
-    /// `Effect::Act` is built here (a source-scan test, `only_emit_builds_runner_effects`,
-    /// fails if another appears in this crate). A `TypeText` sets the "typed here" state for
-    /// the app in front **when it is sent**, before anything verifies it: whatever happens
-    /// next — the text checks out, differs (autocorrect, a length limit, reformatting) and
-    /// survives the one retry, Return is held because the screen changed, the runner fails
-    /// or reports a lock, the step is cancelled — the text may be in the app, so the state
-    /// is set. Every `TypeText` reaches the runner through this function: the model's
-    /// `type`, the corrective retry, skill and learned-flow steps (they are planned by
-    /// [`plan`] like the model's actions and sent from the same queue).
-    fn emit(&mut self, cmd: RunnerCommand, pending: Option<&Pending>) -> Effect {
-        if matches!(cmd, RunnerCommand::TypeText { .. }) {
-            self.typed_sent(pending);
-        }
-        Effect::Act(cmd)
-    }
-
-    /// Sets the "typed here" state for a `TypeText` being sent (see [`Self::emit`]): under
-    /// the app of the observation in front (the one the command was planned on) and, if
-    /// different, the app of the screen the step was chosen on; an observation without a
-    /// bundle id records it under [`UNKNOWN_APP`], which every app reads (fail closed). The
-    /// entry names the target field (the check's fingerprint, else the target's or the
-    /// focused input's on the screen the step was chosen on; `0` when none is known) and the
-    /// text as decided (placeholders kept; empty for a secure field). A later verified
-    /// typing replaces it with the field found after typing ([`Self::remember_typed`]).
-    fn typed_sent(&mut self, pending: Option<&Pending>) {
-        let (field, text, before_app) = match pending {
-            Some(p) => {
-                let target = match &p.action {
-                    Action::Type {
-                        element: Some(i), ..
-                    } => p.before.get(*i),
-                    _ => None,
-                }
-                .or_else(|| {
-                    p.before
-                        .elements
-                        .iter()
-                        .find(|e| e.focused && e.role.is_text_input())
-                });
-                let field = p
-                    .check
-                    .as_ref()
-                    .and_then(|c| c.field)
-                    .or_else(|| target.map(|e| e.fingerprint))
-                    .unwrap_or(0);
-                let secure = target.is_some_and(|e| e.secure);
-                let text = match &p.action {
-                    Action::Type { text, .. } if !secure => text.clone(),
-                    _ => String::new(),
-                };
-                (field, text, Some(p.before.app_bundle_id.clone()))
-            }
-            None => (0, String::new(), None),
-        };
-        let mut keys = vec![app_key(&self.current.screen.app_bundle_id)];
-        if let Some(app) = before_app {
-            keys.push(app_key(&app));
-        }
-        keys.sort();
-        keys.dedup();
-        for key in keys {
-            let here = self.typed.entry(key).or_default();
-            if !here.iter().any(|t| t.field == field && t.text == text) {
-                here.push(TypedText {
-                    field,
-                    text: text.clone(),
-                });
-            }
-        }
-    }
-
-    /// Remembers that the session typed `pending`'s text into the field `field` (placeholders
-    /// kept) in the app in front: summaries may then quote that field's value while it is
-    /// exactly that text, and the app's "typed here" state is set (tenth review).
-    fn remember_typed(&mut self, pending: &Pending, field: Option<u64>) {
-        let (Some(field), Action::Type { text, .. }) = (field, &pending.action) else {
-            return;
-        };
-        if text.trim().is_empty() {
-            return;
-        }
-        let here = self
-            .typed
-            .entry(app_key(&self.current.screen.app_bundle_id))
-            .or_default();
-        here.retain(|t| t.field != field);
-        here.push(TypedText {
-            field,
-            text: text.clone(),
-        });
+    /// Sends a runner command through [`TypedState::emit`], the one place one leaves the
+    /// session (twelfth review; thirteenth review: enforced by [`Out`], see `crate::act`).
+    fn emit(&mut self, cmd: RunnerCommand, pending: Option<&Pending>) -> Out {
+        self.act
+            .emit(cmd, pending, &self.current.screen.app_bundle_id)
     }
 
     /// The refusal of an action whose every tap point is covered (sixth and seventh
@@ -2985,7 +2893,7 @@ impl Session {
     /// The look after typing a search on the home screen, before its held-back Return:
     /// results can load after the first look, so the Return waits until two looks in a row
     /// show the same result labels (at most [`MAX_SETTLE_LOOKS`] more looks).
-    fn on_settle(&mut self, now: u64, settle: Settle) -> Effect {
+    fn on_settle(&mut self, now: u64, settle: Settle) -> Out {
         let Settle {
             pending,
             field,
@@ -3018,7 +2926,7 @@ impl Session {
     }
 
     /// Compares the screen after an action with the one before it.
-    fn verify(&mut self, now: u64, mut pending: Pending) -> Effect {
+    fn verify(&mut self, now: u64, mut pending: Pending) -> Out {
         if let Some(check) = pending.check.take() {
             return self.verify_typing(now, pending, check);
         }
@@ -3046,7 +2954,7 @@ impl Session {
 
     /// Ends the session when the model proposes an action it was told, twice, it keeps
     /// repeating; `None` otherwise. Any other action ends the run.
-    fn repeat_check(&mut self, now: u64, action: &Action, source: Source) -> Option<Effect> {
+    fn repeat_check(&mut self, now: u64, action: &Action, source: Source) -> Option<Out> {
         let key = (source == Source::Model)
             .then(|| repeat_key(action, &self.current.screen))
             .flatten();
@@ -3194,7 +3102,7 @@ impl Session {
         redact(&mask(text, &self.memory.profile))
     }
 
-    fn finish(&mut self, now: u64, status: OutcomeStatus, summary: &str) -> Effect {
+    fn finish(&mut self, now: u64, status: OutcomeStatus, summary: &str) -> Out {
         let outcome = Outcome {
             status,
             summary: clean(summary, 300),
@@ -3209,7 +3117,7 @@ impl Session {
             self.update_memory(now, &outcome);
         }
         self.state = State::Finished(outcome.clone());
-        Effect::Finished(outcome)
+        Out::finished(outcome)
     }
 
     /// Stores the learned flow, flow statistics and the log entry.

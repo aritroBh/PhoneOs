@@ -441,6 +441,7 @@ fn the_full_protocol_through_the_ffi_objects() {
                 category: RiskCategory::SendMessage,
                 summary: "Send \"I'm late\" to Sam".into(),
                 app: "com.apple.MobileSMS".into(),
+                phone_only: false,
             },
         },
     ));
@@ -500,6 +501,7 @@ fn the_full_protocol_through_the_ffi_objects() {
                 category: RiskCategory::Payment,
                 summary: "Pay 20 EUR".into(),
                 app: "com.example.bank".into(),
+                phone_only: false,
             },
         },
     ));

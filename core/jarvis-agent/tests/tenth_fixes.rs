@@ -201,6 +201,13 @@ fn an_approved_send_keeps_the_typed_here_state() {
 
 /// The state is per app: typing in one app does not make a tap in another app a presumed
 /// submit.
+///
+/// Thirteenth review (deliberate change): the shop's note was first seen after Jarvis
+/// opened the shop, so it is text that entered a field of the shop after a Jarvis action
+/// (the observation trigger of the "typed here" state: a form Jarvis navigates to that is
+/// already filled is asked about, the accepted over-ask) and "Done" now asks. The per-app
+/// property is kept in the second run: the shop was seen with its note before Jarvis typed
+/// in the chat, so returning to it presumes nothing.
 #[test]
 fn typing_in_one_app_presumes_nothing_in_another() {
     let message = index_of(&compose(""), "Message");
@@ -215,6 +222,29 @@ fn typing_in_one_app_presumes_nothing_in_another() {
             _ => common::Transition::Go(s.clone()),
         }),
         Script::model(&[
+            &format!(r#"{{"action":"type","element":{message},"text":"On my way"}}"#),
+            r#"{"action":"open_app","app":"com.example.shop"}"#,
+            &format!(r#"{{"action":"tap","element":{done}}}"#),
+            r#"{"action":"fail","reason":"x"}"#,
+        ]),
+    );
+    assert_eq!(r.confirms.len(), 1, "{:#?}", r.confirms);
+    assert!(r.confirms[0].phone_only, "{:#?}", r.confirms);
+    // The shop seen first, with its note: typing in the chat presumes nothing there.
+    let r = run(
+        config(),
+        "Note it and finish in the shop",
+        MemoryStore::new(),
+        Phone::new(pinned("com.example.shop"), move |c, s| match c {
+            RunnerCommand::TypeText { .. } => common::Transition::Go(compose("On my way")),
+            RunnerCommand::LaunchApp { bundle_id } if bundle_id == "com.example.shop" => {
+                common::Transition::Go(pinned("com.example.shop"))
+            }
+            RunnerCommand::LaunchApp { .. } => common::Transition::Go(compose("")),
+            _ => common::Transition::Go(s.clone()),
+        }),
+        Script::model(&[
+            r#"{"action":"open_app","app":"com.example.chat"}"#,
             &format!(r#"{{"action":"type","element":{message},"text":"On my way"}}"#),
             r#"{"action":"open_app","app":"com.example.shop"}"#,
             &format!(r#"{{"action":"tap","element":{done}}}"#),

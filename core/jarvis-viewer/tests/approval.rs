@@ -23,6 +23,7 @@ fn request(summary: &str) -> p::ConfirmRequest {
         category: p::RiskCategory::Payment,
         summary: summary.to_owned(),
         app: "com.example.shop".to_owned(),
+        phone_only: false,
     }
 }
 

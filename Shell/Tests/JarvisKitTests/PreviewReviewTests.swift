@@ -125,7 +125,7 @@ struct ReviewProbePreviewTests {
         let screen = DemoPhone.screenSize
         let target = CoreApprovalTarget(
             frameKey: CoreViewerFrameKey(taskId: "t", observation: 3), screenId: 1, screenSize: screen,
-            request: ConfirmRequest(category: .payment, summary: "Pay", app: "com.example.shop"),
+            request: ConfirmRequest(category: .payment, summary: "Pay", app: "com.example.shop", phoneOnly: false),
             mark: .outline(frame: Rect(x: 16, y: 700, width: 361, height: 50),
                            unit: Rect(x: 16 / screen.width, y: 700 / screen.height, width: 361 / screen.width,
                                       height: 50 / screen.height)),

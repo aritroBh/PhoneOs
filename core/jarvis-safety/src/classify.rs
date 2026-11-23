@@ -79,7 +79,8 @@ const MAX_TOOL_STRINGS: usize = 64;
 ///   [`reacts_to_drag`]): a sideways drag across a "Slide to pay" slider on a checkout is
 ///   `Payment`. A plain vertical scroll of a list, or a swipe across empty space or plain
 ///   text, stays `None`.
-/// * `OpenUrl` to `tel:`/`facetime:` is `Call`.
+/// * `OpenUrl` to `tel:`/`facetime:` is `Call` (thirteenth review: the gate raises a link
+///   the owner did not give to at least `SendMessage`, see `evaluate_owned`).
 /// * Everything else is `None`. An element index that does not exist falls back to the
 ///   screen context (and is rejected by `validate_action` anyway).
 pub fn classify(action: &Action, screen: &CompactScreen, tool: Option<&ToolSpec>) -> RiskCategory {
@@ -115,7 +116,7 @@ pub fn classify(action: &Action, screen: &CompactScreen, tool: Option<&ToolSpec>
 }
 
 /// Risk of opening `url`: calls are `Call`, everything else `None` (schemes are policed
-/// by `validate_action`).
+/// by `validate_action`). URLs in tool arguments and typed text, and a link the owner gave.
 pub(crate) fn url_risk(url: &str) -> RiskCategory {
     match url_scheme(url.trim()).as_deref() {
         Some("tel" | "telprompt" | "facetime" | "facetime-audio") => RiskCategory::Call,
@@ -952,6 +953,48 @@ fn gesture_risk(
         }
     }
     risk
+}
+
+/// Thirteenth review: the control a scroll or swipe actuates, if any (see
+/// `crate::actuation`): its element when that element reacts to the drag
+/// ([`reacts_to_drag`]) or is button-like (a button, a link, an adjustable or "slide to"
+/// control); else the first enabled control on the drag's path that reacts to it (the
+/// first review's element-less drag across a pay slider); else the smallest enabled
+/// button-like control under the point where the finger lands. `None`: the drag starts on
+/// page content with no actionable control under it and crosses none — it only moves the
+/// page. The path is the one the runner will make ([`gesture`]); without one (unknown
+/// screen size, an element in the system-gesture margin) only the element counts.
+pub(crate) fn drag_target(
+    kind: GestureKind,
+    direction: Direction,
+    element: Option<u32>,
+    screen: &CompactScreen,
+) -> Option<&Element> {
+    let r = Reader::new(screen);
+    let finger = finger_direction(kind, direction);
+    let target = element.and_then(|i| screen.get(i));
+    let button_like = |el: &Element| {
+        el.enabled
+            && el.role != Role::Key
+            && (matches!(el.role, Role::Button | Role::Link) || is_adjustable(el))
+    };
+    if let Some(el) = target {
+        if button_like(el) || reacts_to_drag(el, finger, &r) {
+            return Some(el);
+        }
+    }
+    let g = gesture(kind, direction, target.map(|e| e.frame), screen.size).ok()?;
+    if let Some(el) = crossed_controls(&r, g.from, g.to, finger)
+        .into_iter()
+        .find(|el| !target.is_some_and(|t| t.index == el.index))
+    {
+        return Some(el);
+    }
+    screen
+        .elements
+        .iter()
+        .filter(|e| e.frame.contains(g.from) && button_like(e))
+        .min_by(|a, b| a.frame.area().total_cmp(&b.frame.area()))
 }
 
 /// Risk of swiping on `el`: read like a tap of it (with context); sideways on a list row

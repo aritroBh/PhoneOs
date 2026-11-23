@@ -224,6 +224,7 @@ pub fn random_update(rng: &mut Rng) -> Update {
             category: p::RiskCategory::Payment,
             summary: String::new(),
             app: String::new(),
+            phone_only: false,
         }),
         6 => Update::QuestionPending,
         7 => Update::AwaitingUnlock,
