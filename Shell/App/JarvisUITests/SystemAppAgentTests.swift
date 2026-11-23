@@ -132,7 +132,10 @@ final class SystemAppAgentTests: QATestCase {
                 .tap("Send form", role: "Button"),
                 .done("Form sent", when: ["Thanks, Ada Lovelace"]),
             ],
-            options: .init(dismiss: Self.firstLaunchDismissals, patience: 8, waitMs: 1_000)
+            // Run 109: Safari's first launch sat on its Start Page for about 8 s and the page's
+            // content appeared after 20 s; with 8 waits the script gave up before the form
+            // existed (nothing was typed, nothing asked).
+            options: .init(dismiss: Self.firstLaunchDismissals, patience: 30, waitMs: 1_000)
         )
         // The owner's rule: first-use confirmations (Safari's, and a first-launch sheet's
         // button) and the one question for the submit, which must name the button and what is

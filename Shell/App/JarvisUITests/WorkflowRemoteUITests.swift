@@ -218,8 +218,7 @@ final class WorkflowRemoteUITests: QATestCase {
     func testRemoteControlPairingShowsCodeAndQR() {
         let app = launch(["-jarvis-playground", "-jarvis-reset"])
         tab("Control", in: app).tap()
-        require(app.buttons["control.remote"], "the Remote control row", in: app)
-        app.buttons["control.remote"].tap()
+        openRemoteControl(in: app)
         let toggle = app.switches["remote.enabled"]
         require(toggle, "the Remote control switch", in: app)
         XCTAssertEqual(toggle.value as? String, "0")
@@ -245,14 +244,27 @@ final class WorkflowRemoteUITests: QATestCase {
         require(pair, "Pair a device again", in: app)
     }
 
+    /// Taps the Remote control row and checks the Remote screen came up. Run 109: the tap was
+    /// synthesized while the Control list was still laying out and did not navigate; the test
+    /// then waited 20 s on the Control screen. One more tap, only while the row is still on
+    /// screen after 5 s.
+    @MainActor
+    private func openRemoteControl(in app: XCUIApplication) {
+        let row = app.buttons["control.remote"]
+        require(row, "the Remote control row", in: app)
+        row.tap()
+        if !row.waitForNonExistence(timeout: 5), row.isHittable {
+            row.tap()
+        }
+    }
+
     /// A device paired in-process (launch argument) is listed with what it may do and the
     /// fixed list of what can never be approved remotely.
     @MainActor
     func testPairedDeviceRowWithPermissions() {
         let app = launch(["-jarvis-playground", "-jarvis-reset", "-jarvis-seed-remote-device"])
         tab("Control", in: app).tap()
-        require(app.buttons["control.remote"], "the Remote control row", in: app)
-        app.buttons["control.remote"].tap()
+        openRemoteControl(in: app)
         let device = app.descendants(matching: .any)["remote.device.0"].firstMatch
         require(device, "the paired device", timeout: 20, in: app)
         XCTAssertTrue(device.label.contains("Test Mac"), "device row: \(device.label)")
@@ -271,8 +283,7 @@ final class WorkflowRemoteUITests: QATestCase {
     func testWatchScreenLayoutPermission() {
         let app = launch(["-jarvis-playground", "-jarvis-reset", "-jarvis-seed-remote-device"])
         tab("Control", in: app).tap()
-        require(app.buttons["control.remote"], "the Remote control row", in: app)
-        app.buttons["control.remote"].tap()
+        openRemoteControl(in: app)
         let device = app.descendants(matching: .any)["remote.device.0"].firstMatch
         require(device, "the paired device", timeout: 20, in: app)
         let watch = app.switches["remote.device.0.watchScreen"]
