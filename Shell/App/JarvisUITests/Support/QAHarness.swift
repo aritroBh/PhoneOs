@@ -332,7 +332,7 @@ class QATestCase: XCTestCase {
         shot.name = "require-failed.screenshot"
         shot.lifetime = .keepAlways
         add(shot)
-        let tree =(try? app.snapshot()).map { UiTreeBuilder.dump(UiTreeBuilder.build(SnapshotCopy.copy($0), screenSize: nil).root) } ?? "(no snapshot)"
+        let tree = (try? app.snapshot()).map { UiTreeBuilder.dump(UiTreeBuilder.build(SnapshotCopy.copy($0), screenSize: nil).root) } ?? "(no snapshot)"
         XCTFail("\(what) did not appear within \(timeout) s. Screen:\n\(tree)", file: file, line: line)
     }
 }
