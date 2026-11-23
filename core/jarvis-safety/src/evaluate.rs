@@ -1026,6 +1026,12 @@ const MAX_MONEY_TEXT_CHARS: usize = 200;
 /// static texts included — is money by shape ([`money_shaped`], [`has_money`]); `Some(true)`
 /// when an element also names a payment context ("Amount", "Network fee", "Total").
 fn screen_shows_money(screen: &CompactScreen) -> Option<bool> {
+    screen_money(screen, true)
+}
+
+/// [`screen_shows_money`] with the payment context read only when `want_context`; without it
+/// the scan stops at the first money found (the answer is then `Some(false)` at least).
+fn screen_money(screen: &CompactScreen, want_context: bool) -> Option<bool> {
     let mut money = false;
     let mut context = false;
     for e in &screen.elements {
@@ -1041,9 +1047,14 @@ fn screen_shows_money(screen: &CompactScreen) -> Option<bool> {
                 continue;
             }
             money |= money_shaped(t) || has_money(t) || crate::shape::symbol_amount(t);
-            context |= crate::text::tokens(t)
-                .iter()
-                .any(|w| PAYMENT_CONTEXT_WORDS.contains(&w.as_str()));
+            if !context && (want_context || !money) {
+                context = crate::text::tokens(t)
+                    .iter()
+                    .any(|w| PAYMENT_CONTEXT_WORDS.contains(&w.as_str()));
+            }
+            if money && (context || !want_context) {
+                return Some(context);
+            }
         }
     }
     money.then_some(context)
@@ -3989,15 +4000,16 @@ fn amount_noted(
         return rows;
     }
     let money_context = match category {
+        // The cheap digit test first: the whole-screen money scan only when no label has one.
         RiskCategory::Payment => {
-            screen_shows_money(screen).is_some()
-                || screen
-                    .elements
-                    .iter()
-                    .any(|e| !is_secure_input(e) && e.label.chars().any(crate::text::is_digit))
+            screen
+                .elements
+                .iter()
+                .any(|e| !is_secure_input(e) && e.label.chars().any(crate::text::is_digit))
+                || screen_money(screen, false).is_some()
         }
         RiskCategory::SendMessage | RiskCategory::PublicPost => {
-            screen_shows_money(screen).is_some()
+            screen_money(screen, false).is_some()
         }
         _ => false,
     };
