@@ -145,7 +145,10 @@ final class SystemAppAgentTests: QATestCase {
                 && request.summary.contains("Ada Lovelace")
                 && request.summary.contains("ada@example.com")
         })
-        let outcome = try await run.run(task: "Fill in the contact form in Safari", model: model, owner: owner, firstUseApproval: true)
+        // The owner names the link in the request: a link the owner did not give is asked
+        // before it is opened (thirteenth review), and this owner would decline it.
+        let outcome = try await run.run(task: "Open \(url) in Safari and fill in the contact form", model: model, owner: owner, firstUseApproval: true)
+        XCTAssertFalse(owner.confirms.contains { $0.summary.contains("Open a link") }, "a link the owner gave was asked: \(owner.confirms)")
         let submitted = await server.waitForSubmission(timeout: .seconds(5))
         let serverLog = server.log.joined(separator: "\n")
         let logAttachment = XCTAttachment(string: "server at \(url)\n" + (serverLog.isEmpty ? "(no request reached the server)" : serverLog))
