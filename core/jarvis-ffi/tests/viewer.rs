@@ -247,6 +247,7 @@ fn feed_reports_changes_and_tolerates_bad_tool_json() {
             fresh_looks: 0,
             stale_plans: 0,
             screen_locked: false,
+            screen_hidden: false,
         },
     })
     .unwrap();

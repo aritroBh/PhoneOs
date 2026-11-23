@@ -685,6 +685,7 @@ impl From<p::ToolSpec> for ToolSpec {
             tier,
             risk,
             app,
+            self_contained,
         } = v;
         ToolSpec {
             name,
@@ -693,6 +694,7 @@ impl From<p::ToolSpec> for ToolSpec {
             tier: tier.into(),
             risk: risk.into(),
             app,
+            self_contained,
         }
     }
 }
@@ -706,6 +708,7 @@ impl From<ToolSpec> for p::ToolSpec {
             tier,
             risk,
             app,
+            self_contained,
         } = v;
         p::ToolSpec {
             name,
@@ -714,6 +717,7 @@ impl From<ToolSpec> for p::ToolSpec {
             tier: tier.into(),
             risk: risk.into(),
             app,
+            self_contained,
         }
     }
 }
@@ -1449,6 +1453,7 @@ impl From<p::Progress> for SessionProgress {
             fresh_looks,
             stale_plans,
             screen_locked,
+            screen_hidden,
         } = v;
         SessionProgress {
             step,
@@ -1463,6 +1468,7 @@ impl From<p::Progress> for SessionProgress {
             fresh_looks,
             stale_plans,
             screen_locked,
+            screen_hidden,
         }
     }
 }
@@ -1484,6 +1490,7 @@ impl TryFrom<SessionProgress> for p::Progress {
             fresh_looks,
             stale_plans,
             screen_locked,
+            screen_hidden,
         } = v;
         Ok(p::Progress {
             step,
@@ -1498,6 +1505,7 @@ impl TryFrom<SessionProgress> for p::Progress {
             fresh_looks,
             stale_plans,
             screen_locked,
+            screen_hidden,
         })
     }
 }
@@ -2785,7 +2793,10 @@ impl TryFrom<LocalEvent> for r::LocalEvent {
                 // screen passed with a progress that says the latest observation was locked
                 // (or the session waits for an unlock) is dropped here, and the hub drops
                 // the text again on the same flags.
-                let locked = progress.screen_locked || progress.waiting_for_unlock;
+                // Seventeenth review: nor Jarvis's own app while the run does not drive it
+                // (the model saw a stub; a remote sees no more).
+                let locked =
+                    progress.screen_locked || progress.waiting_for_unlock || progress.screen_hidden;
                 r::LocalEvent::Progress {
                     progress: progress.try_into()?,
                     screen_text: screen

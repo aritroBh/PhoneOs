@@ -11,15 +11,20 @@ public enum ToolSpecs {
     }
 
     /// A tool spec. `tier` defaults to native; `risk` to `RiskCategory.none` (no
-    /// confirmation); `app` is the bundle id the tool acts on, if any.
+    /// confirmation); `app` is the bundle id the tool acts on, if any. `selfContained`
+    /// (seventeenth review): the tool reaches no place beyond its own arguments and its
+    /// results come from nowhere else (a clock, an echo); default `false` (fail closed: its
+    /// earlier results are a source for its later calls).
     public static func spec(
         name: String,
         description: String,
         params: [ToolParam] = [],
         tier: Tier = .native,
         risk: RiskCategory = RiskCategory.none,
-        app: String? = nil
+        app: String? = nil,
+        selfContained: Bool = false
     ) -> ToolSpec {
-        ToolSpec(name: name, description: description, params: params, tier: tier, risk: risk, app: app)
+        ToolSpec(name: name, description: description, params: params, tier: tier, risk: risk, app: app,
+                 selfContained: selfContained)
     }
 }

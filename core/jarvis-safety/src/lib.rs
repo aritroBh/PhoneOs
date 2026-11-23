@@ -65,19 +65,21 @@ pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;
 pub use confine::check_confinement;
 pub use evaluate::{
-    classify_from, egress_owned, evaluate, evaluate_confined, evaluate_egress, evaluate_from,
-    evaluate_owned, evaluate_with, first_use_app, first_use_request, flow_note, flow_request,
-    heading_like_name, in_alert, not_owner_note, owner_gave_url, paste_note, presumed_submit,
-    presumed_submit_owned, question_noted, question_with, recipient_field_name, return_question,
-    return_question_noted, return_summary, sensitive_note, strong_recipient_field_name, summarize,
-    summary_for, summary_with, verb_of, Decision, ScreenSource, ScreenTree, TypedText,
-    QUESTION_HEADINGS, QUESTION_KEYWORDS, QUESTION_MARKERS, RECIPIENT_FIELD_HEADS,
-    RECIPIENT_FIELD_NEGATIVES, RECIPIENT_FIELD_QUALIFIERS, RECIPIENT_FIELD_STRONG_HEADS,
-    RECIPIENT_FIELD_WEAK_HEADS, UNVERIFIED_SCREEN_WARNING,
+    classify_from, egress_owned, evaluate, evaluate_confined, evaluate_egress, evaluate_flowing,
+    evaluate_from, evaluate_owned, evaluate_with, first_use_app, first_use_request, flow_note,
+    flow_note_fit, flow_request, handoff_note, heading_like_name, in_alert, not_owner_note,
+    owner_gave_url, paste_note, presumed_submit, presumed_submit_owned, question_noted,
+    question_with, recipient_field_name, return_question, return_question_noted, return_summary,
+    sensitive_note, strong_recipient_field_name, summarize, summary_for, summary_with, verb_of,
+    Decision, ScreenSource, ScreenTree, TypedText, FLOW_NAMES_BUDGET, QUESTION_HEADINGS,
+    QUESTION_KEYWORDS, QUESTION_MARKERS, RECIPIENT_FIELD_HEADS, RECIPIENT_FIELD_NEGATIVES,
+    RECIPIENT_FIELD_QUALIFIERS, RECIPIENT_FIELD_STRONG_HEADS, RECIPIENT_FIELD_WEAK_HEADS,
+    UNVERIFIED_SCREEN_WARNING,
 };
 pub use flow::{
-    copy_control, flow_checked, home_view, insert_control, observed_context, Confinement,
-    FlowContext,
+    copy_control, flow_checked, handoff_control, home_view, insert_control, observed_context,
+    observed_places, url_destination, Confinement, FlowContext, ScreenPlaces, LOCAL_MENU_ITEMS,
+    SYSTEM_BROWSER,
 };
 pub use gate::{changes_state, gate, gate_in, gate_on, gate_owned, Gate, TRUSTED_ALLOWED};
 pub use hit::{

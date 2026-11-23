@@ -478,6 +478,7 @@ fn tool_call_round_trip_and_unknown_tool() {
         tier: Tier::Native,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     }];
     let run = run(
         c,
@@ -877,6 +878,7 @@ fn profile_values_in_tool_output_are_masked() {
         tier: Tier::Native,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     }];
     let mut memory = MemoryStore::new();
     memory.profile.set("email", "sam.secret@example.org", false);

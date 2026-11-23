@@ -554,6 +554,9 @@ pub struct RemoteHub {
     requested: Option<Requested>,
     running: Option<Running>,
     pending: Option<Pending>,
+    /// Seventeenth review: the coarse state last sent to devices without the screen-text
+    /// permission (`Some(waiting_for_unlock)`), so they hear only when it changes.
+    coarse_sent: Option<bool>,
     next_request_id: u64,
     next_task_id: u64,
     skills: Vec<CatalogEntry>,
@@ -595,6 +598,7 @@ impl RemoteHub {
             requested: None,
             running: None,
             pending: None,
+            coarse_sent: None,
             next_request_id: 1,
             next_task_id: 1,
             skills: Vec::new(),
@@ -1005,11 +1009,37 @@ impl RemoteHub {
                 // device. The session says when its latest observation was of the lock
                 // screen (or it waits for an unlock); its screen text is dropped here,
                 // whatever the shell passed.
-                let screen_text =
-                    screen_text.filter(|_| !progress.screen_locked && !progress.waiting_for_unlock);
+                // Seventeenth review: nor Jarvis's own app while the run does not drive it
+                // (the model saw a stub of it; a remote device sees no more).
+                let screen_text = screen_text.filter(|_| {
+                    !progress.screen_locked
+                        && !progress.waiting_for_unlock
+                        && !progress.screen_hidden
+                });
+                // Seventeenth review: a device without the screen-text permission gets no
+                // detail the model chooses — no app, no action kind, no step counter, not
+                // one message per step (their count and timing would be a step counter):
+                // only that the task runs or waits for an unlock, when that changes.
+                let waiting = progress.waiting_for_unlock;
+                let coarse_changed = self.coarse_sent != Some(waiting);
+                self.coarse_sent = Some(waiting);
                 self.broadcast(&mut fx, |hub, c| {
                     let p = hub.permissions(c.device_id)?;
                     (c.subscribed && p.see_progress).then_some(())?;
+                    if !p.see_screen_text {
+                        return coarse_changed.then_some(ServerMessage::Progress {
+                            step: 0,
+                            phase: if waiting {
+                                jarvis_proto::Phase::WaitingForUnlock
+                            } else {
+                                jarvis_proto::Phase::Acting
+                            },
+                            app: None,
+                            last_action: None,
+                            screen_text: None,
+                            waiting_for_unlock: waiting,
+                        });
+                    }
                     Some(ServerMessage::Progress {
                         step: progress.step,
                         phase: progress.phase,
@@ -1076,6 +1106,7 @@ impl RemoteHub {
             _ => None,
         };
         self.running = Some(Running { task_id, origin });
+        self.coarse_sent = None;
         self.broadcast(fx, |hub, c| {
             hub.permissions(c.device_id)?;
             (c.subscribed || (origin.is_some() && c.device_id == origin))
@@ -1092,6 +1123,7 @@ impl RemoteHub {
         let origin = if self.running.is_some_and(|r| r.task_id == task_id) {
             let origin = self.running.take().and_then(|r| r.origin);
             self.pending = None;
+            self.coarse_sent = None;
             origin
         } else if let (Some(id), Some(r)) = (task_id, self.requested) {
             if r.task_id != id {

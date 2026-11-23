@@ -776,6 +776,14 @@ pub struct CompactView {
     /// to see text **enter** a field without `TypeText` (paste, AutoFill, dictation, a
     /// keyboard suggestion, drag and drop), whatever the field's label does meanwhile.
     pub input_marks: Vec<u64>,
+    /// Seventeenth review (Rule T): every `WebView` raw node that starts a document (by its
+    /// index, ascending), shown or not: a web view directly holding the same frame as the
+    /// web view it is nested in is the same document (WebKit wraps a page in two or three
+    /// web views of one frame: Safari's real tree) and is left out. A web view nested in
+    /// another, or one beside listed native content in an app whose chrome shows no host,
+    /// is a place of its own (`jarvis_safety::ScreenPlaces`); the place of an action is
+    /// decided by whether its target's raw node lies inside one (`parents`/`ends`).
+    pub webviews: Vec<u32>,
 }
 
 /// The mark of a text input's content in [`CompactView::input_marks`] (`None`: empty).
@@ -856,10 +864,14 @@ pub fn compact_view(screen: &Screen) -> CompactView {
     let mut nodes = Vec::new();
     let mut inputs = Vec::new();
     let mut input_marks = Vec::new();
+    let mut webviews = Vec::new();
     layout.walk(&screen.root, |node, v| {
         let Some(&i) = index.by_addr.get(&addr(node)) else {
             return;
         };
+        if node.role == Role::WebView {
+            webviews.push((i, node.frame));
+        }
         // Thirteenth review: what every text input holds, behind an alert too (an alert
         // coming and going does not make text appear).
         if v.quiet == Quiet::No && node.role.is_text_input() {
@@ -998,6 +1010,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
             nodes: &nodes,
         },
     );
+    let webviews = documents(webviews, &index.ends);
     CompactView {
         screen: screen_out,
         sources,
@@ -1007,8 +1020,42 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         nodes,
         inputs,
         input_marks,
+        webviews,
     }
 }
+/// The web views that start a document (seventeenth review, [`CompactView::webviews`]):
+/// `all` sorted by index, minus each one whose frame is the frame (within a point) of the
+/// innermost document web view holding it.
+fn documents(mut all: Vec<(u32, Rect)>, ends: &[u32]) -> Vec<u32> {
+    all.sort_unstable_by_key(|(i, _)| *i);
+    let end = |w: u32| {
+        usize::try_from(w)
+            .ok()
+            .and_then(|k| ends.get(k))
+            .copied()
+            .unwrap_or(0)
+    };
+    let same = |a: &Rect, b: &Rect| {
+        (a.x - b.x).abs() <= 1.0
+            && (a.y - b.y).abs() <= 1.0
+            && (a.width - b.width).abs() <= 1.0
+            && (a.height - b.height).abs() <= 1.0
+    };
+    let mut open: Vec<(u32, Rect)> = Vec::new();
+    let mut out = Vec::new();
+    for (i, f) in all {
+        while open.last().is_some_and(|&(o, _)| i >= end(o)) {
+            open.pop();
+        }
+        if open.last().is_some_and(|(_, of)| same(of, &f)) {
+            continue;
+        }
+        open.push((i, f));
+        out.push(i);
+    }
+    out
+}
+
 /// `(pages, percent)` of an iOS scroll indicator: label `Vertical scroll bar, N pages`
 /// (`1 page`), value `P%`. `None` for anything else.
 fn vertical_scroll_bar(node: &UiNode) -> Option<(u32, Option<u32>)> {

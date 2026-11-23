@@ -531,6 +531,7 @@ fn session_config_and_progress_round_trip() {
             tier: Tier::Shortcut,
             risk: RiskCategory::SendMessage,
             app: Some("com.apple.MobileSMS".into()),
+            self_contained: false,
         }],
         model: ModelProfile {
             context_tokens: 8192,
@@ -561,6 +562,7 @@ fn session_config_and_progress_round_trip() {
         fresh_looks: 6,
         stale_plans: 2,
         screen_locked: true,
+        screen_hidden: true,
     });
     round_trip(&Progress::default());
     // Progress JSON from before the counters existed still loads.
@@ -570,6 +572,7 @@ fn session_config_and_progress_round_trip() {
     assert_eq!((old.model_calls, old.parse_retries), (0, 0));
     assert!(!old.waiting_for_unlock);
     assert!(!old.screen_locked);
+    assert!(!old.screen_hidden);
     assert_eq!((old.locked_wait_ms, old.locked_total_ms), (0, 0));
 }
 

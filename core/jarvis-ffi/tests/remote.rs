@@ -152,6 +152,7 @@ fn progress() -> SessionProgress {
         fresh_looks: 0,
         stale_plans: 0,
         screen_locked: false,
+        screen_hidden: false,
     }
 }
 
@@ -381,13 +382,15 @@ fn the_full_protocol_through_the_ffi_objects() {
             screen: Some(screen()),
         },
     ));
+    // Seventeenth review: without the screen-text permission only "running" (was: the
+    // step, the app and the action kind).
     assert_eq!(
         p,
         vec![ServerMessage::Progress {
-            step: 3,
+            step: 0,
             phase: Phase::Acting,
-            app: Some("com.apple.MobileSMS".into()),
-            last_action: Some("type".into()),
+            app: None,
+            last_action: None,
             screen_text: None,
             waiting_for_unlock: false,
         }]

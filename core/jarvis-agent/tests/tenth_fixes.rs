@@ -230,10 +230,25 @@ fn typing_in_one_app_presumes_nothing_in_another() {
             r#"{"action":"open_app","app":"com.example.shop"}"#,
             &format!(r#"{{"action":"tap","element":{done}}}"#),
             r#"{"action":"fail","reason":"x"}"#,
-        ]),
+        ])
+        // Seventeenth review: the flow is now asked at the launch (an input into the shop:
+        // Rule T), approved; the tap on "Done" then asks its own presumed-submit question
+        // without the flow note (was: one question at the tap carrying both).
+        .decisions(&[true]),
     );
-    assert_eq!(r.confirms.len(), 1, "{:#?}", r.confirms);
+    assert_eq!(r.confirms.len(), 2, "{:#?}", r.confirms);
     assert!(r.confirms[0].phone_only, "{:#?}", r.confirms);
+    assert!(r.confirms[0]
+        .summary
+        .contains("what it read there could be passed on here"));
+    assert!(
+        r.confirms[1].summary.contains("Sends:")
+            && !r.confirms[1]
+                .summary
+                .contains("what it read there could be passed on here"),
+        "{:#?}",
+        r.confirms
+    );
     // The shop seen first, with its note: typing in the chat presumes nothing there.
     let r = run(
         config(),
@@ -258,7 +273,8 @@ fn typing_in_one_app_presumes_nothing_in_another() {
         ])
         // Sixteenth review (Rule T): the typing into the chat after reading the shop, and the
         // tap in the shop after reading the chat, each ask once whether what was read in the
-        // other app may reach it (approved here). No presumed-submit question.
+        // other app may reach it (approved here). No presumed-submit question. Seventeenth
+        // review: both questions are now asked at the launches (`open_app` is an input).
         .decisions(&[true, true]),
     );
     assert!(

@@ -647,6 +647,7 @@ fn tool_calls_are_read_deeper() {
         tier: Tier::Shortcut,
         risk: NONE,
         app: None,
+        self_contained: false,
     };
     let a = call(
         "run_shortcut",
@@ -665,6 +666,7 @@ fn tool_calls_are_read_deeper() {
         tier: Tier::Native,
         risk: NONE,
         app: None,
+        self_contained: false,
     };
     let a = call(
         "create_note",

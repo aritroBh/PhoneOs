@@ -41,6 +41,7 @@ fn tool(app: Option<&str>) -> ToolSpec {
         tier: Tier::Shortcut,
         risk: RiskCategory::SendMessage,
         app: app.map(str::to_owned),
+        self_contained: false,
     }
 }
 

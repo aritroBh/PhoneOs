@@ -99,8 +99,14 @@ impl Recorder {
         })
     }
 
-    /// Records one successful step.
+    /// Records one successful step (its place not known: see [`Recorder::record_at`]).
     pub fn record(&mut self, step: RecordedStep<'_>) {
+        self.record_at(step, None);
+    }
+
+    /// Seventeenth review: [`Recorder::record`], with the place the step's input went to
+    /// (`FlowStep::place`), so a replay can tell whether it runs in the same place.
+    pub fn record_at(&mut self, step: RecordedStep<'_>, place: Option<String>) {
         if self.non_recordable.is_some() || self.handed_back {
             return;
         }
@@ -201,6 +207,7 @@ impl Recorder {
             app_bundle_id: screen.app_bundle_id.clone(),
             action: flow_action,
             screen_hash_before: screen_signature(screen),
+            place,
         });
     }
 

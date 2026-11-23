@@ -338,6 +338,11 @@ pub struct ToolSpec {
     pub tier: Tier,
     pub risk: RiskCategory,
     pub app: Option<String>,
+    /// Seventeenth review (Rule T): the tool reaches no place beyond its own arguments and
+    /// its results come from nowhere else (a clock, an echo). Off by default (fail closed):
+    /// a tool's earlier results are then a source for its later calls.
+    #[uniffi(default = false)]
+    pub self_contained: bool,
 }
 
 /// A tool call for the shell to perform.
@@ -745,6 +750,10 @@ pub struct SessionProgress {
     /// since). Remote control never sends a screen with it set (the hub drops it).
     #[uniffi(default = false)]
     pub screen_locked: bool,
+    /// Seventeenth review: the latest observation was Jarvis's own app while the run does
+    /// not drive it (a stub for the model). Remote control never sends its screen.
+    #[uniffi(default = false)]
+    pub screen_hidden: bool,
 }
 
 /// The task the owner asked for.

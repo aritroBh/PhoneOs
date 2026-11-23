@@ -205,6 +205,7 @@ mod tests {
             tier,
             risk: RiskCategory::None,
             app: app.map(str::to_owned),
+            self_contained: false,
         }
     }
 

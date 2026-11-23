@@ -205,6 +205,7 @@ fn probe15_link_inside_a_tool_argument_is_not_gated() {
         tier: Tier::Shortcut,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     };
     let s = app_screen(vec![label(1, "Hello")]);
     let owner = ["Run my reading list shortcut"];

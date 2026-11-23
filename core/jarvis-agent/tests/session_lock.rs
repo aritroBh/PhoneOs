@@ -59,6 +59,7 @@ fn note_tool() -> ToolSpec {
         tier: Tier::Native,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     }
 }
 

@@ -370,6 +370,7 @@ fn c2_c8_app_less_tools_need_the_skill_allow_list() {
         tier: Tier::Shortcut,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     };
     let call = r#"{"action":"call_tool","name":"open_link","args":{"url":"https://example.com/"}}"#;
     let mut c = with_skill(config(), settings_skill());
@@ -477,7 +478,9 @@ fn unconfined_skills_only_add_guidance() {
         "Turn off Wi-Fi",
         MemoryStore::new(),
         phone(jarvis_proto::fixtures::settings_screen()),
-        Script::model(&[OPEN_SHOP, DONE]),
+        // Seventeenth review: opening Shop after reading Settings is an input into Shop
+        // (Rule T asks once; approved here). The skill itself refuses nothing.
+        Script::model(&[OPEN_SHOP, DONE]).decisions(&[true]),
     );
     assert_eq!(r.outcome.status, OutcomeStatus::Success);
     assert_eq!(
@@ -502,6 +505,7 @@ fn tools_acting_in_other_apps_and_links_are_refused() {
         tier: Tier::Shortcut,
         risk: RiskCategory::None,
         app: Some(SHOP.into()),
+        self_contained: false,
     }];
     let call = r#"{"action":"call_tool","name":"shop_reorder","args":{}}"#;
     let url = r#"{"action":"open_url","url":"https://example.com"}"#;

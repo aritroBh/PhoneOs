@@ -508,6 +508,7 @@ fn flow(key: &str, app: &str) -> Flow {
             app_bundle_id: app.into(),
             action: FlowAction::Tap,
             screen_hash_before: 0,
+            place: None,
         }],
         successes: 2,
         failures: 0,

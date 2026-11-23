@@ -21,6 +21,18 @@ struct ToolRegistryTests {
         #expect(await r.execute(ToolCall(name: "echo", argsJson: "{}")).output == "v2")
     }
 
+    /// Seventeenth review (Rule T): a tool is not self-contained unless its spec says so
+    /// (fail closed); the two sample tools reach no other place and say so.
+    @Test("self-contained is declared, off by default")
+    func selfContained() {
+        let specs = registry().specs
+        let declared = specs.map { $0.selfContained }
+        #expect(declared == [true, true])
+        let fetch = ToolSpecs.spec(name: "fetch", description: "Fetch a page")
+        let fetchDeclared = fetch.selfContained
+        #expect(fetchDeclared == false)
+    }
+
     @Test("sample tools")
     func samples() async {
         let r = registry()

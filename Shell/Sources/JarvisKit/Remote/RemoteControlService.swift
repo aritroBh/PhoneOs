@@ -721,9 +721,11 @@ public final class RemoteControlService {
                 lastScreen = nil
             case .progress(let progress):
                 // The typed screen: the core builds and redacts any text remotes see.
-                let locked = progress.screenLocked || progress.waitingForUnlock
-                if locked { lastScreen = nil }
-                enqueue(.local(.progress(progress: progress, screen: locked ? nil : lastScreen)))
+                // Seventeenth review: nor Jarvis's own app while the run does not drive it
+                // (the core shows the model a stub of it; a remote sees no more).
+                let withheld = progress.screenLocked || progress.waitingForUnlock || progress.screenHidden
+                if withheld { lastScreen = nil }
+                enqueue(.local(.progress(progress: progress, screen: withheld ? nil : lastScreen)))
             case .confirmationPending(let request):
                 enqueue(.confirmRequested(request))
             case .effectCompleted(.confirm, let decision):

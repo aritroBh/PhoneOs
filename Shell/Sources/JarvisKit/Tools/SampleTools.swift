@@ -12,7 +12,8 @@ public enum SampleTools {
     ) {
         let spec = ToolSpecs.spec(
             name: "clock_now",
-            description: "Current local date and time (ISO 8601) and the time zone."
+            description: "Current local date and time (ISO 8601) and the time zone.",
+            selfContained: true
         )
         registry.register(spec) { _ in
             let formatter = ISO8601DateFormatter()
@@ -27,7 +28,8 @@ public enum SampleTools {
         let spec = ToolSpecs.spec(
             name: "echo",
             description: "Returns the given text unchanged.",
-            params: [ToolSpecs.param("text", .string, "Text to return.")]
+            params: [ToolSpecs.param("text", .string, "Text to return.")],
+            selfContained: true
         )
         registry.register(spec) { arguments in
             guard let text = arguments.string("text") else {

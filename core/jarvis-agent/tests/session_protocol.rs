@@ -33,6 +33,7 @@ fn session() -> Session {
         tier: Tier::Native,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     }];
     Session::new(c, TaskSpec::new("t", "Turn off Wi-Fi"), MemoryStore::new())
 }

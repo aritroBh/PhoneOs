@@ -153,6 +153,9 @@ public final class JarvisCoordinator: Sendable {
     /// Test seam: the runner of a demo run (default `DemoPhone(delay:lockedPolls:)`).
     private let demoRunner: (@Sendable (Duration, Int) -> any PhoneRunner)?
 
+    /// `agentBundleId`: Jarvis's own bundle id. The app passes `Bundle.main.bundleIdentifier`
+    /// (an OS fact; the core also treats ids extending it with a `.` suffix — its extensions
+    /// — as its own); the literal default serves tests only.
     public convenience init(
         paths: JarvisPaths,
         selection: BackendSelection,

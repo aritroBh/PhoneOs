@@ -132,6 +132,7 @@ fn timer_tool() -> ToolSpec {
         tier: Tier::Shortcut,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     }
 }
 

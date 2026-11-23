@@ -41,6 +41,7 @@ fn prompt_fits_a_4096_model_with_a_300_element_screen() {
             tier: Tier::Shortcut,
             risk: RiskCategory::None,
             app: None,
+            self_contained: false,
         })
         .collect();
     let screen = long_list_screen(300);
@@ -83,6 +84,7 @@ fn tiny_context_drops_history_and_tools_before_the_screen_floor() {
         tier: Tier::Native,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     }];
     let outputs: Vec<String> = (1..20)
         .map(|i| format!(r#"{{"action":"wait","ms":{i}}}"#))
@@ -115,6 +117,7 @@ fn snapshot_run() -> Run {
         tier: Tier::Shortcut,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     }];
     let mut memory = MemoryStore::new();
     memory.profile.set("email", "alex@example.com", false);

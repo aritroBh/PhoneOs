@@ -110,6 +110,12 @@ impl Replayer {
         }
     }
 
+    /// The current step, if any (seventeenth review: the session compares the place it was
+    /// recorded in with the place it would run in).
+    pub fn current_step(&self) -> Option<&FlowStep> {
+        self.flow.steps.get(self.pos)
+    }
+
     /// Index of the current step.
     pub fn position(&self) -> usize {
         self.pos

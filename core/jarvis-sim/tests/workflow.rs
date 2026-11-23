@@ -248,7 +248,11 @@ fn three_step_workflow_with_a_confined_skill_runs_end_to_end() {
         // step left in front (the model reads it), so its first input into Settings (the
         // Wi-Fi row) asks first whether that may reach Settings (`SendMessage` for the flow
         // alone; on runner text merged into that tap's own `Unverified` question), then the
-        // first use, as one question each.
+        // first use, as one question each. Seventeenth review: `open_app` is itself an
+        // input into Settings, so the flow is asked at the launch (structured: the same
+        // three questions; runner text: merged into the launch's own `Unverified`
+        // question, then the first use, the Wi-Fi row's `Unverified` and the switch — was
+        // `Unverified, Unverified, FirstUse, SystemSetting` with the flow on the row).
         assert_eq!(
             wifi.confirm_categories(),
             per_mode(
@@ -260,8 +264,8 @@ fn three_step_workflow_with_a_confined_skill_runs_end_to_end() {
                 ],
                 vec![
                     RiskCategory::Unverified,
-                    RiskCategory::Unverified,
                     RiskCategory::FirstUse,
+                    RiskCategory::Unverified,
                     RiskCategory::SystemSetting
                 ]
             )

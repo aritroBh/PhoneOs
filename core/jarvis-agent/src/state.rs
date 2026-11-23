@@ -89,16 +89,23 @@ pub(crate) struct Pending {
     /// in this task that the owner has not allowed into the one the input goes to. Its note
     /// is part of the question (and of the summary an approval is checked against).
     pub flow: Option<FlowAsk>,
+    /// Seventeenth review: the places this action's input goes to (empty for an action that
+    /// is no input: `wait`, `look`, the text of `done`/`fail`/`ask_user`). A recorded step
+    /// stores them (`FlowStep::place`).
+    pub places: Vec<jarvis_safety::FlowContext>,
 }
 
 /// Sixteenth review (Rule T): a flow an action's question asks the owner to allow.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FlowAsk {
-    /// Where the input goes.
-    pub target: jarvis_safety::FlowContext,
+    /// Where the input goes (seventeenth review: every place it may reach — usually one).
+    pub targets: Vec<jarvis_safety::FlowContext>,
     /// The contexts read in this task (or held on the clipboard, for a paste) not yet
-    /// allowed into `target`.
+    /// allowed into `targets` that the question names: exactly what its approval allows.
     pub sources: Vec<jarvis_safety::FlowContext>,
+    /// Seventeenth review: more sources were unallowed than the question could name; after
+    /// its approval the action is decided again (the next question names the rest).
+    pub partial: bool,
     /// The question's note naming them.
     pub note: jarvis_proto::QuestionRow,
     /// The question is asked for the flow alone (the action would otherwise run unasked):

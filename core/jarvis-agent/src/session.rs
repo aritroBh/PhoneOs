@@ -125,12 +125,13 @@ use jarvis_proto::{
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
     approval_context, check_app, check_app_name, check_confinement, control_at, copy_control,
-    egress_owned, evaluate_egress, first_use_app, first_use_request, flow_checked, flow_note,
-    home_view, in_alert, insert_control, is_springboard, label_names_denied_app, not_owner_note,
-    observed_context, paste_note, point_is_clear, question_noted, redact, redact_screen,
-    return_question_noted, sanitize_screen_text, search_names_denied_app, sensitive_note,
-    touches_screen, verb_of, widget_names_denied_app, Budget, BudgetVerdict, Confinement, Covered,
-    CoveredBy, Decision, FlowContext, PointError, ScreenSource, ScreenTree, TypedText, Verdict,
+    egress_owned, evaluate_flowing, first_use_app, first_use_request, flow_checked, flow_note_fit,
+    handoff_control, handoff_note, home_view, in_alert, insert_control, is_springboard,
+    label_names_denied_app, not_owner_note, observed_places, paste_note, point_is_clear,
+    question_noted, redact, redact_screen, return_question_noted, sanitize_screen_text,
+    search_names_denied_app, sensitive_note, touches_screen, url_destination, verb_of,
+    widget_names_denied_app, Budget, BudgetVerdict, Confinement, Covered, CoveredBy, Decision,
+    FlowContext, PointError, ScreenPlaces, ScreenSource, ScreenTree, TypedText, Verdict,
 };
 
 use crate::act::{Out, TypedState};
@@ -544,8 +545,11 @@ pub struct Session {
     /// Contexts whose content (or text derived from it: history lines, notes, a tool's
     /// result) may enter the next model prompt; they are read when it is built.
     exposed: BTreeSet<FlowContext>,
-    /// The context of the current observation (where an input goes).
+    /// The context of the current observation's own content (outside embedded web views).
     here: FlowContext,
+    /// Seventeenth review: every place of the current observation, and the place of an
+    /// action on it ([`ScreenPlaces::destinations`]).
+    places: ScreenPlaces,
     /// Jarvis's own app is in front and this run does not drive it: the model gets a stub
     /// and nothing there can be acted on.
     own_hidden: bool,
@@ -716,6 +720,7 @@ impl Session {
             confine: Confinement::new(),
             exposed: BTreeSet::new(),
             here: FlowContext::App(String::new()),
+            places: ScreenPlaces::default(),
             own_hidden: false,
             screen_locked: false,
             prior_approval: None,
@@ -804,7 +809,7 @@ impl Session {
         decided: &Action,
         tool: Option<&ToolSpec>,
     ) -> Decision {
-        evaluate_egress(
+        evaluate_flowing(
             &self.config.policy,
             executed,
             &self.current.screen,
@@ -814,6 +819,7 @@ impl Session {
             &self.typed_here(),
             &self.owner_texts(),
             !self.sensitive_keys(decided).is_empty(),
+            self.confine.read_set().next().is_some(),
         )
     }
 
@@ -945,6 +951,7 @@ impl Session {
             fresh_looks: self.fresh_looks,
             stale_plans: self.stale_plans,
             screen_locked: self.screen_locked || matches!(self.state, State::AwaitingUnlock { .. }),
+            screen_hidden: self.own_hidden,
         }
     }
 
@@ -1202,7 +1209,17 @@ impl Session {
                     // for the rest of the task.
                     None => {
                         if let Some(f) = &pending.flow {
-                            self.confine.allow(&f.target, &f.sources);
+                            self.confine.allow_into(&f.targets, &f.sources);
+                            // Seventeenth review: the approval allowed only the places it
+                            // named; the action is decided again, and the next question
+                            // names the rest.
+                            if f.partial {
+                                self.prior_approval = None;
+                                let action = pending.action.clone();
+                                let source = pending.source;
+                                let prepared = self.prepare(&action, source);
+                                return self.dispatch(now, &action, source, prepared);
+                            }
                         }
                     }
                 }
@@ -1270,13 +1287,13 @@ impl Session {
             // flow for the task, never a risk category.
             None if flow.is_some_and(|f| f.only) => {
                 if let Some(f) = flow {
-                    self.confine.decline(&f.target, &f.sources);
+                    self.confine.decline_into(&f.targets, &f.sources);
                 }
                 prompt::RESULT_FLOW_DECLINED
             }
             None => {
                 if let Some(f) = flow {
-                    self.confine.decline(&f.target, &f.sources);
+                    self.confine.decline_into(&f.targets, &f.sources);
                 }
                 // A step-by-step confirmation of a harmless-looking action says nothing
                 // about the next one; risky categories are remembered.
@@ -2083,12 +2100,17 @@ impl Session {
         self.screen_locked = false;
         self.own_hidden =
             self.is_agent_app(&obs.screen.app_bundle_id) && !self.config.drive_own_app;
-        let context = observed_context(raw, &view.screen, self.incoming_source);
-        self.here = context
-            .clone()
-            .unwrap_or_else(|| FlowContext::app(&obs.screen.app_bundle_id));
-        if let Some(c) = context.filter(|_| !self.own_hidden) {
-            self.exposed.insert(c);
+        // Seventeenth review: every place on the screen (embedded web content is a place of
+        // its own) is read; an action's input goes to the place of what it targets.
+        self.places = observed_places(
+            raw,
+            &view.screen,
+            self.incoming_source,
+            Some((&view.webviews, &view.ends, &view.sources)),
+        );
+        self.here = self.places.base().clone();
+        if !self.own_hidden {
+            self.exposed.extend(self.places.read_places());
         }
         if self.own_hidden {
             view.screen.elements.clear();
@@ -2160,12 +2182,27 @@ impl Session {
         let tree = self.tree();
         let screen = &self.current.masked;
         let source = self.current.source;
+        // Seventeenth review: `open_app` is named by the app's display name (from the known
+        // apps: the owner's and the OS's), not its bundle id.
+        let named;
+        let gate = match gate {
+            Action::OpenApp { app } => {
+                named = Action::OpenApp {
+                    app: self.app_name_ci(app).unwrap_or_else(|| app.clone()),
+                };
+                &named
+            }
+            other => other,
+        };
         let mut notes = self.egress_notes(gate);
         // Sixteenth review: Rule P's note (what the clipboard may hold), then Rule T's.
         if insert_control(gate, &self.current.screen, Some(&tree)).is_some() {
-            let place = self.flow_name(&self.here);
+            let place = self.target_place_name(gate);
             let copied: Vec<FlowContext> = self.confine.clipboard().cloned().collect();
             notes.push(paste_note(&place, &self.flow_names(&copied)));
+        } else if handoff_control(gate, &self.current.screen, Some(&tree)) {
+            // Seventeenth review: an edit-menu item that may hand the selection on.
+            notes.push(handoff_note(&self.target_place_name(gate)));
         }
         // A question asked for the flow alone states the action as one of no risk.
         let category = match flow {
@@ -2333,7 +2370,13 @@ impl Session {
     fn infer(&mut self, kind: RequestKind) -> Out {
         // Sixteenth review (Rule T): everything this prompt carries — the screen, history
         // lines and notes derived from earlier screens, tool results — is now read.
-        for context in std::mem::take(&mut self.exposed) {
+        // Seventeenth review: the places of the screen in front are read last (a question
+        // names the most recently read place first).
+        let front = self.places.read_places();
+        let exposed = std::mem::take(&mut self.exposed);
+        let (now, earlier): (Vec<FlowContext>, Vec<FlowContext>) =
+            exposed.into_iter().partition(|c| front.contains(c));
+        for context in earlier.into_iter().chain(now) {
             self.confine.read(context);
         }
         let screenshot = match kind {
@@ -2631,10 +2674,14 @@ impl Session {
             || self.is_agent_app(app)
     }
 
-    /// Whether `app` is the agent's own app (`SessionConfig::agent_bundle_id`).
+    /// Whether `app` is the agent's own app (`SessionConfig::agent_bundle_id`, an OS fact the
+    /// shell passes) or one of its extensions (an id that extends it with a `.` suffix).
     fn is_agent_app(&self, app: &str) -> bool {
         self.config.agent_bundle_id.as_deref().is_some_and(|own| {
-            !own.trim().is_empty() && own.trim().eq_ignore_ascii_case(app.trim())
+            let own = own.trim().to_ascii_lowercase();
+            let app = app.trim().to_ascii_lowercase();
+            !own.is_empty()
+                && (app == own || app.strip_prefix(&own).is_some_and(|r| r.starts_with('.')))
         })
     }
 
@@ -2972,16 +3019,25 @@ impl Session {
             check,
             covers_return: None,
             flow: None,
+            places: Vec::new(),
         };
         // Sixteenth review (Rule T): an input into this context while something read
         // elsewhere in this task is not allowed into it asks (merged into the action's own
         // question when it has one). A home-screen tap that launches a known app is an app
         // choice, like `open_app` (not gated). A replayed step's input was fixed before this
         // task read anything (its slots are filled from the task's own words).
-        let launches_known_app = matches!(home, Some(HomeLaunch::App { .. }));
-        if source == Source::Model && !launches_known_app {
-            pending.flow = self.flow_for(&gate, tool, decision == Decision::Allow)?;
-        }
+        // Seventeenth review: every model-chosen input goes through it — `open_app` and a
+        // home-screen launch (into the app), `open_url` (into the link's site), `press_home`
+        // (into the place it leaves) and every tool call included. A replayed step is
+        // exempt only where it runs in the place it was recorded in.
+        pending.places = self.flow_targets(&gate, tool, home.as_ref()).0;
+        pending.flow = self.flow_for(
+            &gate,
+            tool,
+            decision == Decision::Allow,
+            home.as_ref(),
+            source,
+        )?;
         let risk = match decision {
             Decision::Confirm(request) => {
                 // Describe the placeholder, never the substituted personal value, from the
@@ -3092,33 +3148,113 @@ impl Session {
         gate: &Action,
         tool: Option<&ToolSpec>,
         only: bool,
+        home: Option<&HomeLaunch>,
+        source: Source,
     ) -> Result<Option<FlowAsk>, Reject> {
         if !flow_checked(gate) {
             return Ok(None);
         }
-        let target = match (gate, tool) {
-            (Action::CallTool { name, .. }, _) => FlowContext::Tool(name.clone()),
-            _ => self.here.clone(),
-        };
+        let (targets, self_source) = self.flow_targets(gate, tool, home);
+        if self.replay_exempt(source, &targets) {
+            return Ok(None);
+        }
         let pasting = insert_control(gate, &self.current.screen, Some(&self.tree())).is_some();
-        let sources = self.confine.unallowed(&target, pasting);
+        let mut sources = self.confine.unallowed_into(&targets, pasting, self_source);
+        // A launch from the home screen (an icon, a search result, a search's top hit): the
+        // home screen's own content (icons, the search field and its results) is not
+        // counted as a source for the app it opens; a banner or an alert read there is, at
+        // the first input into that app (asked there). Every other place read is.
+        if home.is_some() {
+            sources.retain(|c| *c != self.here);
+        }
         if sources.is_empty() {
             return Ok(None);
         }
-        if self.confine.is_declined(&target, &sources) {
+        if self.confine.is_declined_into(&targets, &sources) {
+            let target = targets
+                .first()
+                .map_or_else(|| "here".to_owned(), |t| self.flow_name(t));
             return Err(Reject::Blocked(format!(
-                "the owner did not allow what Jarvis read in {} to reach {}",
+                "the owner did not allow what Jarvis read in {} to reach {target}",
                 self.flow_names(&sources).join(", "),
-                self.flow_name(&target)
             )));
         }
-        let note = flow_note(&self.flow_names(&sources));
+        // Seventeenth review: the question names every place its approval allows, most
+        // recently read first; what does not fit is asked next.
+        let (note, named) = flow_note_fit(&self.flow_names(&sources));
+        let partial = named < sources.len();
+        sources.truncate(named);
         Ok(Some(FlowAsk {
-            target,
+            targets,
             sources,
+            partial,
             note,
             only,
         }))
+    }
+
+    /// Seventeenth review: where `gate`'s input goes, and whether the destination's own
+    /// earlier content is a source too (a tool that is not self-contained). A tool call goes
+    /// to the tool; `open_app` and a home-screen launch of a known app to that app (an app
+    /// the home screen cannot name, or a search, to [`FlowContext::Unknown`]); `open_url` to
+    /// the site of the link's host ([`url_destination`]); `press_home` to the place it leaves
+    /// (the app in front observes when it is left; the Home Screen is the OS's); every input
+    /// on the screen to the place of what it targets ([`ScreenPlaces::destinations`]).
+    fn flow_targets(
+        &self,
+        gate: &Action,
+        tool: Option<&ToolSpec>,
+        home: Option<&HomeLaunch>,
+    ) -> (Vec<FlowContext>, bool) {
+        if !flow_checked(gate) {
+            return (Vec::new(), false);
+        }
+        match gate {
+            Action::CallTool { name, .. } => (
+                vec![FlowContext::Tool(name.clone())],
+                !tool.is_some_and(|t| t.self_contained),
+            ),
+            Action::OpenApp { app } => (vec![FlowContext::app(app)], false),
+            Action::OpenUrl { url } => (vec![url_destination(url)], false),
+            Action::PressHome => (vec![self.here.clone()], false),
+            _ => match home {
+                Some(HomeLaunch::App { bundle_id, .. }) => {
+                    (vec![FlowContext::app(bundle_id)], false)
+                }
+                Some(
+                    HomeLaunch::Unknown { .. }
+                    | HomeLaunch::Search { .. }
+                    | HomeLaunch::Unresolved { .. },
+                ) => (vec![FlowContext::Unknown], false),
+                None => (
+                    self.places
+                        .destinations(gate, &self.current.screen, Some(&self.tree())),
+                    false,
+                ),
+            },
+        }
+    }
+
+    /// Seventeenth review: a replayed learned-flow step is exempt from Rule T only when the
+    /// place it runs in equals the place it was recorded in (app and site); a step recorded
+    /// without its place (before it was stored) is not.
+    fn replay_exempt(&self, source: Source, targets: &[FlowContext]) -> bool {
+        source == Source::Replay
+            && self
+                .replay
+                .as_ref()
+                .and_then(|r| r.current_step())
+                .and_then(|s| s.place.as_deref())
+                .is_some_and(|recorded| recorded == place_key(targets))
+    }
+
+    /// The display name of the place `gate`'s input goes to (the screen's own place when it
+    /// has none of its own).
+    fn target_place_name(&self, gate: &Action) -> String {
+        let places = self
+            .places
+            .destinations(gate, &self.current.screen, Some(&self.tree()));
+        self.flow_name(places.first().unwrap_or(&self.here))
     }
 
     /// How a question names `context` (an app by its display name).
@@ -3518,8 +3654,14 @@ impl Session {
         // typing did not (a replayed typing whose Return the model chose cannot happen: the
         // pair is one step of one source).
         pending.flow = None;
-        if pending.source == Source::Model && !matches!(decision, Decision::Deny(_)) {
-            match self.flow_for(&gate, None, decision == Decision::Allow) {
+        if !matches!(decision, Decision::Deny(_)) {
+            match self.flow_for(
+                &gate,
+                None,
+                decision == Decision::Allow,
+                home.as_ref(),
+                pending.source,
+            ) {
                 Ok(flow) => pending.flow = flow,
                 Err(_) => {
                     self.record_failure(&pending, prompt::RESULT_FLOW_DECLINED);
@@ -3826,11 +3968,15 @@ impl Session {
         self.budget.record_success();
         self.log_step(&pending.action, true);
         let element = pending.action.element().and_then(|i| pending.before.get(i));
-        self.recorder.record(RecordedStep {
-            action: pending.action.clone(),
-            element,
-            screen: &pending.before,
-        });
+        let place = (!pending.places.is_empty()).then(|| place_key(&pending.places));
+        self.recorder.record_at(
+            RecordedStep {
+                action: pending.action.clone(),
+                element,
+                screen: &pending.before,
+            },
+            place,
+        );
         if pending.source == Source::Replay {
             if let Some(r) = &mut self.replay {
                 r.advance();
@@ -4211,4 +4357,12 @@ fn typing_part(action: &Action, stage: Stage) -> Action {
         },
         other => other.clone(),
     }
+}
+
+/// Seventeenth review: the key of the places an input goes to (`FlowContext::key`, sorted,
+/// joined with `|`): what a recorded step stores and a replay compares.
+fn place_key(places: &[FlowContext]) -> String {
+    let mut keys: Vec<String> = places.iter().map(FlowContext::key).collect();
+    keys.sort();
+    keys.join("|")
 }

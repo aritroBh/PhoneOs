@@ -9,6 +9,12 @@
 //! R1's one-question typing. `probe16_page_keypad_spells_a_code_unasked` is the review's
 //! probe, its setup changed as the plan says: the task reads Messages (with the code)
 //! before the page's keypad, and Rule T — not keypad recognition — asks.
+//!
+//! Seventeenth review: `open_url` and `open_app` are inputs too (into the link's site, into
+//! the app). Tests about the first input *on a page* after reading elsewhere now bring the
+//! page to front while Jarvis waits (`WAIT`; the phone switches, as when the owner opens
+//! it) instead of opening it with `open_url`, which would itself ask; tests that open apps
+//! or links count those questions.
 
 mod common;
 
@@ -151,6 +157,10 @@ fn open(app: &str) -> String {
 
 const DONE: &str = r#"{"action":"done","summary":"ok"}"#;
 
+/// A wait: no input anywhere (seventeenth review: the one model action besides `look` and
+/// the final text that Rule T never asks). The phones below bring a page to front on it.
+const WAIT: &str = r#"{"action":"wait","ms":500}"#;
+
 fn flows(r: &Run) -> Vec<&jarvis_proto::ConfirmRequest> {
     r.confirms
         .iter()
@@ -206,7 +216,9 @@ fn keypad_run(start: Screen, decisions: &[bool]) -> (Run, String) {
     let from_messages = start.app_bundle_id == MESSAGES;
     let mut replies = Vec::new();
     if from_messages {
-        replies.push(r#"{"action":"open_url","url":"https://pin.example/"}"#.to_owned());
+        // Seventeenth review: the page comes to front while Jarvis waits (an `open_url`
+        // would itself be an input into pin.example and ask before the keypad).
+        replies.push(WAIT.to_owned());
     }
     for d in ["4", "8", "2", "9", "1", "3"] {
         replies.push(tap(index_of(&s0, d)));
@@ -218,7 +230,10 @@ fn keypad_run(start: Screen, decisions: &[bool]) -> (Run, String) {
         cfg(),
         "Read my bank code in Messages and then open https://pin.example/",
         MemoryStore::new(),
-        phone(start, vec![(SAFARI, s0)], move |c, _| {
+        phone(start, vec![(SAFARI, s0.clone())], move |c, _| {
+            if matches!(c, RunnerCommand::Wait { .. }) {
+                return Transition::Go(s0.clone());
+            }
             for d in ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"] {
                 if taps(c, &snapshot, d) {
                     e2.borrow_mut().push_str(d);
@@ -338,17 +353,24 @@ fn three_contexts_and_a_new_source_after_approval() {
             &tap(next),
             DONE,
         ])
-        .decisions(&[true]),
+        .decisions(&[true, true]),
     );
+    // Seventeenth review: opening Notes is an input into Notes (asked, naming Messages);
+    // opening the link one into news.example (asked, naming both); the tap asks nothing.
     let fq = flows(&r);
-    assert_eq!(fq.len(), 1, "{:?}", r.confirms);
+    assert_eq!(fq.len(), 2, "{:?}", r.confirms);
     assert!(
-        // The places in their order (bundle ids sorted: mobilenotes before mobilesms).
-        fq[0]
+        fq[0].summary.contains("read Messages in"),
+        "{}",
+        fq[0].summary
+    );
+    assert!(
+        // Most recently read first (seventeenth review; was: bundle ids sorted).
+        fq[1]
             .summary
             .contains("Jarvis has read Notes and Messages in this task"),
         "{}",
-        fq[0].summary
+        fq[1].summary
     );
     // Approve Messages → page, then read Notes: the next input asks for Notes alone.
     let r = run(
@@ -366,17 +388,19 @@ fn three_contexts_and_a_new_source_after_approval() {
             &tap(next),
             DONE,
         ])
-        .decisions(&[true, true]),
+        .decisions(&[true, true, true]),
     );
+    // Seventeenth review: opening Notes after reading the page and Messages asks too (the
+    // middle question); the last names Notes alone.
     let fq = flows(&r);
-    assert_eq!(fq.len(), 2, "{:?}", r.confirms);
+    assert_eq!(fq.len(), 3, "{:?}", r.confirms);
     assert!(
         fq[0].summary.contains("read Messages in"),
         "{}",
         fq[0].summary
     );
-    assert!(fq[1].summary.contains("read Notes in"), "{}", fq[1].summary);
-    assert!(!fq[1].summary.contains("Messages"), "{}", fq[1].summary);
+    assert!(fq[2].summary.contains("read Notes in"), "{}", fq[2].summary);
+    assert!(!fq[2].summary.contains("Messages"), "{}", fq[2].summary);
 }
 
 /// SpringBoard with icons only is not a read; with a banner (or widget) it is.
@@ -578,16 +602,15 @@ fn sites_are_told_apart_by_the_chrome_not_by_the_page() {
         cfg(),
         "Open https://a.example/ then https://b.example/ and tap next",
         MemoryStore::new(),
+        // Seventeenth review: page b comes to front while Jarvis waits (an `open_url` is
+        // itself an input into b.example and would ask before the page is seen).
         Phone::new(a, move |c, _| match c {
-            RunnerCommand::OpenUrl { .. } => Transition::Go(b2.clone()),
+            RunnerCommand::OpenUrl { .. } | RunnerCommand::Wait { .. } => {
+                Transition::Go(b2.clone())
+            }
             _ => Transition::Stay,
         }),
-        Script::model(&[
-            r#"{"action":"open_url","url":"https://b.example/"}"#,
-            &tap(next),
-            DONE,
-        ])
-        .decisions(&[false]),
+        Script::model(&[WAIT, &tap(next), DONE]).decisions(&[false]),
     );
     let fq = flows(&r);
     assert_eq!(fq.len(), 1, "{:?}", r.confirms);
@@ -618,11 +641,14 @@ fn an_unreadable_host_is_named_as_such() {
             &tap(next),
             DONE,
         ])
-        .decisions(&[true]),
+        .decisions(&[true, true]),
     );
+    // Seventeenth review: the link asks (into x.example); the page it opened shows no host,
+    // so it cannot be told to be x.example and the tap asks again (fail closed).
     let fq = flows(&r);
-    assert_eq!(fq.len(), 1);
-    assert_eq!(fq[0].app, SAFARI);
+    assert_eq!(fq.len(), 2, "{:?}", r.confirms);
+    assert_eq!(fq[1].app, SAFARI);
+    assert!(fq[1].summary.contains("Messages"), "{}", fq[1].summary);
     // Reading a readable page and then the unreadable one names it.
     let a = article("a.example");
     let p2 = page(
@@ -643,9 +669,10 @@ fn an_unreadable_host_is_named_as_such() {
             &tap(next),
             DONE,
         ])
-        .decisions(&[true]),
+        .decisions(&[true, true]),
     );
-    assert_eq!(flows(&r).len(), 1, "{:?}", r.confirms);
+    // Seventeenth review: the link's question, then the unreadable page's (as above).
+    assert_eq!(flows(&r).len(), 2, "{:?}", r.confirms);
     let r2 = run(
         cfg(),
         "Open https://x.example/ then https://a.example/ and tap next",
@@ -690,6 +717,7 @@ fn lookup_tool() -> ToolSpec {
         tier: Tier::Native,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     }
 }
 
@@ -737,7 +765,8 @@ fn a_tool_call_while_tainted_asks() {
         "{}",
         fq[1].summary
     );
-    // A call with no argument puts nothing model-chosen anywhere: not asked.
+    // Seventeenth review: a call with no argument is still an input into the tool (which
+    // tool, and when): asked once after reading Messages (was: not asked).
     c.tools.push(ToolSpec {
         name: "now".into(),
         description: "The time".into(),
@@ -745,15 +774,18 @@ fn a_tool_call_while_tainted_asks() {
         tier: Tier::Native,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     });
     let r = run(
         c,
         "What time is it",
         MemoryStore::new(),
         Phone::still(messages()),
-        Script::model(&[r#"{"action":"call_tool","name":"now","args":{}}"#, DONE]),
+        Script::model(&[r#"{"action":"call_tool","name":"now","args":{}}"#, DONE])
+            .decisions(&[true]),
     );
-    assert!(r.confirms.is_empty(), "{:?}", r.confirms);
+    assert_eq!(flows(&r).len(), 1, "{:?}", r.confirms);
+    assert!(flows(&r)[0].summary.contains("Messages"));
     assert_eq!(r.tool_calls.len(), 1);
 }
 
@@ -836,13 +868,12 @@ fn flow_is_asked_on_the_guards_fresh_look() {
         c,
         "Look at Messages, then open https://news.example/",
         MemoryStore::new(),
-        phone(messages(), vec![(SAFARI, a)], |_, _| Transition::Stay),
-        Script::model(&[
-            r#"{"action":"open_url","url":"https://news.example/"}"#,
-            &tap(next),
-            DONE,
-        ])
-        .decisions(&[false]),
+        // Seventeenth review: the page comes to front while Jarvis waits.
+        phone(messages(), vec![(SAFARI, a.clone())], move |c, _| match c {
+            RunnerCommand::Wait { .. } => Transition::Go(a.clone()),
+            _ => Transition::Stay,
+        }),
+        Script::model(&[WAIT, &tap(next), DONE]).decisions(&[false]),
     );
     assert_eq!(flows(&r).len(), 1, "{:?}", r.confirms);
     assert!(first_touch(&r).is_none(), "{:?}", r.acts);
@@ -868,12 +899,18 @@ fn one_question_for_typing_its_return_and_the_flow() {
         cfg(),
         "Look at Messages, then open https://news.example/",
         MemoryStore::new(),
-        phone(messages(), vec![(SAFARI, s0)], move |c, _| match c {
-            RunnerCommand::TypeText { text, .. } => Transition::Go(form(Some(text))),
-            _ => Transition::Stay,
-        }),
+        // Seventeenth review: the page comes to front while Jarvis waits.
+        phone(
+            messages(),
+            vec![(SAFARI, s0.clone())],
+            move |c, _| match c {
+                RunnerCommand::TypeText { text, .. } => Transition::Go(form(Some(text))),
+                RunnerCommand::Wait { .. } => Transition::Go(s0.clone()),
+                _ => Transition::Stay,
+            },
+        ),
         Script::model(&[
-            r#"{"action":"open_url","url":"https://news.example/"}"#,
+            WAIT,
             &format!(r#"{{"action":"type","element":{field},"text":"Ada","submit":true}}"#),
             DONE,
         ])
@@ -916,17 +953,18 @@ fn a_declined_flow_does_not_poison_categories() {
         cfg(),
         "Look at Messages, then open https://news.example/",
         MemoryStore::new(),
-        phone(messages(), vec![(SAFARI, a), (MESSAGES, m)], |_, _| {
-            Transition::Stay
-        }),
-        Script::model(&[
-            r#"{"action":"open_url","url":"https://news.example/"}"#,
-            &tap(next),
-            &open("Messages"),
-            &tap(info),
-            DONE,
-        ])
-        .decisions(&[false, true]),
+        // Seventeenth review: the page comes to front while Jarvis waits; going back to
+        // Messages is then an input into it (asked, naming the page).
+        phone(
+            messages(),
+            vec![(SAFARI, a.clone()), (MESSAGES, m)],
+            move |c, _| match c {
+                RunnerCommand::Wait { .. } => Transition::Go(a.clone()),
+                _ => Transition::Stay,
+            },
+        ),
+        Script::model(&[WAIT, &tap(next), &open("Messages"), &tap(info), DONE])
+            .decisions(&[false, true]),
     );
     let fq = flows(&r);
     assert_eq!(fq.len(), 2, "{:?}\n{}", r.confirms, r.outcome.summary);
@@ -963,14 +1001,12 @@ fn paste_after_copy_names_the_source() {
         cfg(),
         "Open https://news.example/",
         MemoryStore::new(),
-        phone(m, vec![(SAFARI, p)], |_, _| Transition::Stay),
-        Script::model(&[
-            &tap(copy),
-            r#"{"action":"open_url","url":"https://news.example/"}"#,
-            &tap(paste),
-            DONE,
-        ])
-        .decisions(&[false]),
+        // Seventeenth review: the page comes to front while Jarvis waits.
+        phone(m, vec![(SAFARI, p.clone())], move |c, _| match c {
+            RunnerCommand::Wait { .. } => Transition::Go(p.clone()),
+            _ => Transition::Stay,
+        }),
+        Script::model(&[&tap(copy), WAIT, &tap(paste), DONE]).decisions(&[false]),
     );
     assert_eq!(r.confirms.len(), 1, "{:?}", r.confirms);
     let q = &r.confirms[0];

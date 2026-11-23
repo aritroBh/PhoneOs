@@ -84,13 +84,15 @@ fn pair_connect_start_progress_confirm_finish() {
         Some("Messages\nSam: are you coming?"),
     ));
     let msgs = deliver(&mut link, &fx);
+    // Seventeenth review: a device without the screen-text permission learns only that the
+    // task runs (was: the step, the app and the action kind).
     assert_eq!(
         msgs,
         vec![ServerMessage::Progress {
-            step: 2,
+            step: 0,
             phase: jarvis_proto::Phase::Acting,
-            app: Some("com.apple.MobileSMS".into()),
-            last_action: Some("type".into()),
+            app: None,
+            last_action: None,
             screen_text: None,
             waiting_for_unlock: false,
         }]

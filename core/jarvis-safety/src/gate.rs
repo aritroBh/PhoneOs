@@ -92,9 +92,15 @@ pub fn gate_on(
 /// hold an amount or names no verified recipient, a link the owner did not give) is
 /// confirmed whatever the trust level or the categories the owner relaxed — a guess is not
 /// relaxable. Only a denial (a deny-listed app, a denied category) takes precedence, and
-/// an owner who confirms nothing at all (`policy.confirm` empty) keeps that meaning (no
-/// request asks except by the screen-source rule). The one decision point the session's
-/// gate (`evaluate_owned`) uses.
+/// an owner who confirms nothing at all (`policy.confirm` empty) keeps that meaning for
+/// what is merely unclear (no such request asks except by the screen-source rule).
+///
+/// Seventeenth review: `forced` — the request carries content to another place that Rule T
+/// leaves to this rule (a link the owner did not give after something was read; an insert
+/// or hand-on control of an edit menu): it is confirmed whatever the policy relaxes, an
+/// empty `confirm` list included. Only a denial refuses first. The one decision point the
+/// session's gate (`evaluate_owned`) uses.
+#[allow(clippy::too_many_arguments)]
 pub fn gate_owned(
     policy: &Policy,
     category: RiskCategory,
@@ -103,8 +109,10 @@ pub fn gate_owned(
     screen: &CompactScreen,
     runner_text: bool,
     unclear: bool,
+    forced: bool,
 ) -> Gate {
     match gate_on(policy, category, level, action, screen, runner_text) {
+        Gate::Allow if forced => Gate::Confirm,
         Gate::Allow if unclear && category != RiskCategory::None && !policy.confirm.is_empty() => {
             Gate::Confirm
         }

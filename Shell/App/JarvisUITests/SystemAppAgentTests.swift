@@ -6,6 +6,10 @@ import JarvisKit
 /// iOS versions; the artifacts of these runs are how real trees are learned. First-launch
 /// prompts are handled by the agent (dismiss rules) and logged by the interruption monitor.
 /// A failure names what was on screen (see `QAOutcome.explanation` and the artifacts).
+///
+/// Seventeenth review: these runs drive system apps, not Jarvis's own app, so they run with
+/// `driveOwnApp: false` (Jarvis in front is a stub for the model and never a read), and each
+/// starts only once the home screen is really in front (`startOnHomeScreen`).
 final class SystemAppAgentTests: QATestCase {
     /// First-launch surfaces the agent may dismiss. Each rule needs the surface's own text
     /// to be listed and fires at most once, so a toolbar "Close" (run 13: Safari's
@@ -27,18 +31,49 @@ final class SystemAppAgentTests: QATestCase {
         request.summary.contains("what it read there could be passed on here")
     }
 
+    /// Seventeenth review: a flow question whose sources are only Safari's own pages read
+    /// before the link's page loaded — Safari's start page while the address is not yet a
+    /// host ("Safari" with "web content in Safari", or "Safari (site not readable)").
+    static func isSafariLoadingFlow(_ request: ConfirmRequest) -> Bool {
+        guard isFlowQuestion(request), let start = request.summary.range(of: "Jarvis has read "),
+              let end = request.summary.range(of: " in this task;", range: start.upperBound..<request.summary.endIndex)
+        else { return false }
+        let list = request.summary[start.upperBound..<end.lowerBound]
+        let names = list.replacingOccurrences(of: " and ", with: ", ").components(separatedBy: ", ")
+        let own: Set<String> = ["Safari", "web content in Safari", "Safari (site not readable)"]
+        return !names.isEmpty && names.allSatisfy { own.contains($0) }
+    }
+
     private let settingsId = "com.apple.Preferences"
     private let safariId = "com.apple.mobilesafari"
 
+    /// Starts a run on the home screen: Safari and Settings (whatever an earlier test left
+    /// in front) and the apps named are terminated, Home is pressed, and this waits until
+    /// the home screen is really in front — the app under test (Jarvis, the test host) and
+    /// none of the terminated apps `.runningForeground`, the same state check
+    /// `XCUITestPhoneRunner.foregroundBundleId` decides the front app by — then settles for
+    /// about a second. Nothing is launched. (Run 45141298374: the first observation was
+    /// taken while Jarvis was still in front, and the Settings test started on the Safari
+    /// the Safari test had left in front.)
     @MainActor
-    private func startOnHomeScreen(terminating ids: [String]) {
-        for id in ids { XCUIApplication(bundleIdentifier: id).terminate() }
+    private func startOnHomeScreen(terminating ids: [String]) async {
+        let all = Array(Set(ids + [settingsId, safariId])).sorted()
+        for id in all { XCUIApplication(bundleIdentifier: id).terminate() }
         XCUIDevice.shared.press(.home)
+        let own = XCUIApplication()
+        let deadline = Date().addingTimeInterval(8)
+        while Date() < deadline {
+            let ownInFront = own.state == .runningForeground
+            let otherInFront = all.contains { XCUIApplication(bundleIdentifier: $0).state == .runningForeground }
+            if !ownInFront && !otherInFront { break }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        try? await Task.sleep(for: .seconds(1))
     }
 
     @MainActor
     func testSettingsGeneralAbout() async throws {
-        startOnHomeScreen(terminating: [settingsId])
+        await startOnHomeScreen(terminating: [settingsId])
         let run = makeRun("system-settings-about")
         let model = ScriptedModel(
             steps: [
@@ -52,7 +87,7 @@ final class SystemAppAgentTests: QATestCase {
             options: .init(dismiss: Self.firstLaunchDismissals)
         )
         let owner = QAOwner(transcript: run.transcript)
-        let outcome = try await run.run(task: "Open About in Settings", model: model, owner: owner, firstUseApproval: true)
+        let outcome = try await run.run(task: "Open About in Settings", model: model, owner: owner, firstUseApproval: true, driveOwnApp: false)
 
         XCTAssertEqual(outcome.result.outcome.status, .success, outcome.explanation)
         XCTAssertEqual(XCUIApplication(bundleIdentifier: settingsId).state, .runningForeground, outcome.explanation)
@@ -70,7 +105,7 @@ final class SystemAppAgentTests: QATestCase {
     /// instead of being approved silently.
     @MainActor
     func testSpringboardOpensAnApp() async throws {
-        startOnHomeScreen(terminating: [settingsId])
+        await startOnHomeScreen(terminating: [settingsId])
         let run = makeRun("system-springboard-open")
         let model = ScriptedModel(
             steps: [
@@ -81,7 +116,7 @@ final class SystemAppAgentTests: QATestCase {
             options: .init(dismiss: Self.firstLaunchDismissals)
         )
         let owner = QAOwner(transcript: run.transcript, decide: { _ in false })
-        let outcome = try await run.run(task: "Open the Settings app from the home screen", model: model, owner: owner, firstUseApproval: true)
+        let outcome = try await run.run(task: "Open the Settings app from the home screen", model: model, owner: owner, firstUseApproval: true, driveOwnApp: false)
 
         XCTAssertEqual(outcome.result.outcome.status, .success, outcome.explanation)
         XCTAssertEqual(XCUIApplication(bundleIdentifier: settingsId).state, .runningForeground, outcome.explanation)
@@ -96,7 +131,7 @@ final class SystemAppAgentTests: QATestCase {
     /// was asked and how the sheet words it.
     @MainActor
     func testSpringboardUnknownIconAsksOnce() async throws {
-        startOnHomeScreen(terminating: [settingsId])
+        await startOnHomeScreen(terminating: [settingsId])
         let run = makeRun("system-springboard-unknown-icon")
         let model = ScriptedModel(
             steps: [
@@ -116,7 +151,7 @@ final class SystemAppAgentTests: QATestCase {
         let unknownToCore = KnownApps.common.filter { $0.name != "Settings" }
         let outcome = try await run.run(
             task: "Open the Settings app from the home screen", model: model, owner: owner,
-            firstUseApproval: true, knownApps: unknownToCore
+            firstUseApproval: true, knownApps: unknownToCore, driveOwnApp: false
         )
 
         // Home screen rule (sixteenth review): the widgets' contents never reach the model,
@@ -135,7 +170,7 @@ final class SystemAppAgentTests: QATestCase {
     func testSafariFillsAndSubmitsAForm() async throws {
         let server = try FormCaptureServer()
         defer { server.stop() }
-        startOnHomeScreen(terminating: [safariId])
+        await startOnHomeScreen(terminating: [safariId])
         let run = makeRun("system-safari-form")
         let url = server.baseURL.absoluteString + "/"
         let model = ScriptedModel(
@@ -158,8 +193,13 @@ final class SystemAppAgentTests: QATestCase {
         let owner = QAOwner(transcript: run.transcript, decide: { request in
             if request.category == .firstUse { return true }
             // Home screen rule (sixteenth review): the run starts on the home screen, but its
-            // widgets are not shown to the model, so it is not a read and no flow question
-            // (Rule T) is asked at the first input into Safari; one would be declined here.
+            // widgets are not shown to the model, so it is not a read, and `open_url` (an
+            // input into the link's site since the seventeenth review) asks nothing. If the
+            // model was shown Safari before the page loaded (the start page, whose address is
+            // not yet the host), that is another place in Safari: the first typing into the
+            // page asks one flow question naming only Safari's own page, approved here. Any
+            // other flow question is declined.
+            if SystemAppAgentTests.isSafariLoadingFlow(request) { return request.app == safari }
             return request.app == safari
                 && request.summary.contains("Send form")
                 && request.summary.contains("Ada Lovelace")
@@ -170,8 +210,11 @@ final class SystemAppAgentTests: QATestCase {
         // also says what to fill in: text not from the request is asked before it is typed
         // (fifteenth review, R1), and this owner would decline that too.
         let task = "Open \(url) in Safari and fill in the contact form with the name Ada Lovelace and the email ada@example.com"
-        let outcome = try await run.run(task: task, model: model, owner: owner, firstUseApproval: true)
-        XCTAssertFalse(owner.confirms.contains(where: SystemAppAgentTests.isFlowQuestion), "a flow question was asked after the home screen: \(owner.confirms)")
+        let outcome = try await run.run(task: task, model: model, owner: owner, firstUseApproval: true, driveOwnApp: false)
+        // At most one flow question, and only about Safari's own page read while loading.
+        let flowQuestions = owner.confirms.filter(SystemAppAgentTests.isFlowQuestion)
+        XCTAssertTrue(flowQuestions.allSatisfy(SystemAppAgentTests.isSafariLoadingFlow), "a flow question named another place: \(owner.confirms)")
+        XCTAssertLessThanOrEqual(flowQuestions.count, 1, "\(owner.confirms)")
         XCTAssertFalse(owner.confirms.contains { $0.summary.contains("This text is not from your request") }, "the owner's own words were asked: \(owner.confirms)")
         XCTAssertFalse(owner.confirms.contains { $0.summary.contains("Open a link") }, "a link the owner gave was asked: \(owner.confirms)")
         let submitted = await server.waitForSubmission(timeout: .seconds(5))

@@ -52,6 +52,7 @@ fn tool(name: &str, app: Option<&str>, risk: RiskCategory) -> ToolSpec {
         tier: Tier::Native,
         risk,
         app: app.map(str::to_owned),
+        self_contained: false,
     }
 }
 

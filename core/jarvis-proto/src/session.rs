@@ -557,4 +557,9 @@ pub struct Progress {
     /// whatever the shell passes (`jarvis_remote`).
     #[serde(default)]
     pub screen_locked: bool,
+    /// Seventeenth review: the latest observation was of Jarvis's own app while the run
+    /// does not drive it (the model got a stub for it). No screen text of such an
+    /// observation may go to a remote device: the hub drops it whatever the shell passes.
+    #[serde(default)]
+    pub screen_hidden: bool,
 }

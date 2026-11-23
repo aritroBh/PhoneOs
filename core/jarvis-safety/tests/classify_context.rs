@@ -355,6 +355,7 @@ fn tools_use_declared_risk_raised_by_name() {
         tier: Tier::Native,
         risk,
         app: None,
+        self_contained: false,
     };
     let call = |name: &str| Action::CallTool {
         name: name.to_owned(),

@@ -201,6 +201,7 @@ fn a_declined_app_cannot_be_reached_by_open_app_or_a_tool() {
         tier: Tier::Shortcut,
         risk: RiskCategory::None,
         app: Some(SHOP.into()),
+        self_contained: false,
     }];
     // press_home leaves the app (allowed), then open_app goes back: Blocked.
     let r = run(
@@ -262,6 +263,7 @@ fn tools_acting_in_an_app_need_its_first_use_approval() {
         tier: Tier::Shortcut,
         risk: RiskCategory::None,
         app: Some(SHOP.into()),
+        self_contained: false,
     }];
     let r = run(
         c,
@@ -477,6 +479,7 @@ fn tool_url_arguments_are_scheme_validated_before_the_call() {
         tier: Tier::Native,
         risk: RiskCategory::None,
         app: None,
+        self_contained: false,
     }];
     let r = run(
         c,

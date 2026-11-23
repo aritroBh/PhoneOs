@@ -226,6 +226,8 @@ final class AppModel: ObservableObject {
         // continue" card is on screen long enough to be checked.
         self.coordinator = JarvisCoordinator(
             paths: paths, selection: launch.playground ? .demo : .live,
+            // Seventeenth review: Jarvis's own bundle id is an OS fact, never a literal.
+            agentBundleId: Bundle.main.bundleIdentifier ?? "dev.jarvis.app",
             configuration: launch.playground
                 ? DriverConfiguration(humanTimeout: .seconds(30), unlockPollInterval: .milliseconds(500), lockWatchInterval: .seconds(1))
                 : DriverConfiguration(),

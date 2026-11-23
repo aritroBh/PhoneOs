@@ -241,13 +241,28 @@ fn insert_controls_by_structure_and_label() {
             other => panic!("{l}: {other:?}"),
         }
     }
-    for l in ["Copy", "Select All", "Look Up"] {
+    for l in ["Copy", "Select All"] {
         let s = mk(Role::Other("MenuItem".into()), l);
         assert_eq!(
             decide(&Action::Tap { element: 4 }, &s, OWNER),
             Decision::Allow,
             "{l}"
         );
+    }
+    // Seventeenth review: an edit-menu item that is not a local action may hand the
+    // selection to another app or service ("Look Up" was allowed): asked, phone only.
+    let s = mk(Role::Other("MenuItem".into()), "Look Up");
+    match decide(&Action::Tap { element: 4 }, &s, OWNER) {
+        Decision::Confirm(r) => {
+            assert!(r.phone_only);
+            assert!(
+                r.summary
+                    .contains("may send the selected content to another app or service"),
+                "{}",
+                r.summary
+            );
+        }
+        other => panic!("Look Up: {other:?}"),
     }
     // "Contact" outside a menu is an ordinary button.
     let s = mk(Role::Button, "Contact");
@@ -305,7 +320,8 @@ fn flow_note_merges_into_a_risk_question() {
     assert_eq!(r.summary.matches("Type ").count(), 1, "{}", r.summary);
 }
 
-/// The note names at most 4 places, then counts.
+/// Seventeenth review: the note names every place (was: at most 4, then "and 2 more"; an
+/// approval allows exactly the places named).
 #[test]
 fn flow_note_names_four_places() {
     let names: Vec<String> = [
@@ -322,7 +338,7 @@ fn flow_note_names_four_places() {
     let n = flow_note(&names);
     assert_eq!(
         n.text,
-        ". Jarvis has read Messages, Mail, a.example, b.example and 2 more in this task; what it read there could be passed on here"
+        ". Jarvis has read Messages, Mail, a.example, b.example, Notes and Photos in this task; what it read there could be passed on here"
     );
     assert_eq!(
         flow_note(&names[..2]).text,
@@ -403,6 +419,9 @@ fn a_fake_address_bar_inside_the_page_is_not_trusted() {
 
 #[test]
 fn an_unreadable_host_is_the_app_with_its_site_not_readable() {
+    // Seventeenth review: a browser screen with no readable host whose chrome lists
+    // content (here the address field) is the app; its web view is "web content in
+    // Safari", a place of its own (was: the whole screen "Safari (site not readable)").
     for v in ["", "Search or enter website name", "Apple – Official site"] {
         let s = app(
             "com.apple.mobilesafari",
@@ -411,11 +430,22 @@ fn an_unreadable_host_is_the_app_with_its_site_not_readable() {
         );
         assert_eq!(
             ctx(&s),
-            Some(FlowContext::SiteUnreadable("com.apple.mobilesafari".into())),
+            Some(FlowContext::App("com.apple.mobilesafari".into())),
             "{v:?}"
         );
     }
-    // Two different hosts in the chrome: not readable.
+    // Nothing listed outside the web view: the app with its site not readable.
+    let s = app(
+        "com.apple.mobilesafari",
+        "Safari",
+        vec![webview(Vec::new())],
+    );
+    assert_eq!(
+        ctx(&s),
+        Some(FlowContext::SiteUnreadable("com.apple.mobilesafari".into()))
+    );
+    // Two different hosts in the chrome: not readable (seventeenth review: the chrome lists
+    // content, so the screen is the app and its web view a place of its own).
     let s = app(
         "com.apple.mobilesafari",
         "Safari",
@@ -425,7 +455,7 @@ fn an_unreadable_host_is_the_app_with_its_site_not_readable() {
             address("b.example"),
         ],
     );
-    assert!(matches!(ctx(&s), Some(FlowContext::SiteUnreadable(_))));
+    assert!(matches!(ctx(&s), Some(FlowContext::App(_))));
     // Runner text: never read from its forgeable structure.
     let s = app(
         "com.apple.mobilesafari",

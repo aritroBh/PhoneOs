@@ -162,6 +162,12 @@ pub struct FlowStep {
     /// Diagnostic [`screen_signature`] of the screen before the step.
     #[serde(default)]
     pub screen_hash_before: u64,
+    /// Seventeenth review: the place the step's input went to when it was recorded (the
+    /// app and the site, as `jarvis_safety::FlowContext::key` writes it; several joined
+    /// with `|`). `None` for steps recorded before it was stored: such a step is replayed
+    /// as an input into a place it may not have been recorded in (Rule T applies).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
 }
 
 /// A learned flow: the UI steps that completed a task once.

@@ -490,6 +490,7 @@ fn all_tools() -> Vec<p::ToolSpec> {
             tier: tiers[i % tiers.len()],
             risk: *risk,
             app: (i % 2 == 0).then(|| "com.apple.MobileSMS".to_owned()),
+            self_contained: false,
         })
         .collect()
 }
@@ -1062,6 +1063,7 @@ fn every_phase_and_progress_round_trips() {
             fresh_looks: 4,
             stale_plans: 1,
             screen_locked: phase == p::Phase::WaitingForUnlock,
+            screen_hidden: phase == p::Phase::Acting,
         });
     }
     rt_try::<_, f::SessionProgress>(p::Progress::default());

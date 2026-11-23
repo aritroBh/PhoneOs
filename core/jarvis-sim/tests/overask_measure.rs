@@ -193,6 +193,8 @@ fn flow_contexts_on_real_trees() {
     let fixtures = load_all(&default_dir()).unwrap();
     let mut inserts_total = 0usize;
     let mut inputs_total = 0usize;
+    let mut embedded_total = 0usize;
+    let mut hands_on_total = 0usize;
     for f in &fixtures {
         // Home screen rule: the model is shown a SpringBoard screen without its widgets.
         let shown = jarvis_safety::home_view(&f.screen);
@@ -211,24 +213,53 @@ fn flow_contexts_on_real_trees() {
             // Was a read (its Maps and Calendar widgets); now it shows icons only.
             assert!(ctx.is_none(), "{ctx:?}");
         }
+        // Seventeenth review: every place on the screen, and how many controls send their
+        // input into embedded web content (asked once per task after the app's own content
+        // was read) rather than into the screen's own place.
+        let places = jarvis_safety::observed_places(
+            raw,
+            &v.screen,
+            ScreenSource::Typed,
+            Some((&v.webviews, &v.ends, &v.sources)),
+        );
         let mut inserts = 0usize;
         let mut inputs = 0usize;
+        let mut embedded = 0usize;
+        let mut hands_on = 0usize;
         for e in v.screen.elements.iter().filter(|e| e.enabled) {
             let a = Action::Tap { element: e.index };
             if jarvis_safety::flow_checked(&a) {
                 inputs += 1;
             }
+            if places
+                .destinations(&a, &v.screen, Some(&tree))
+                .iter()
+                .any(|d| Some(d) == places.embedded())
+            {
+                embedded += 1;
+            }
             if jarvis_safety::insert_control(&a, &v.screen, Some(&tree)).is_some() {
                 inserts += 1;
                 println!("  {}: insert control {:?} {:?}", f.name, e.role, e.label);
             }
+            if jarvis_safety::handoff_control(&a, &v.screen, Some(&tree)) {
+                hands_on += 1;
+                println!("  {}: hand-on control {:?} {:?}", f.name, e.role, e.label);
+            }
         }
         inserts_total += inserts;
         inputs_total += inputs;
+        embedded_total += embedded;
+        hands_on_total += hands_on;
         println!(
-            "{}: context {:?}; enabled controls {inputs}; Rule P controls {inserts}",
-            f.name, ctx
+            "{}: context {:?}; places read {:?}; web views {}; enabled controls {inputs}; into embedded content {embedded}; Rule P controls {inserts}; hand-on controls {hands_on}",
+            f.name,
+            ctx,
+            places.read_places(),
+            v.webviews.len()
         );
     }
-    println!("TOTAL enabled controls {inputs_total}; Rule P controls {inserts_total}");
+    println!(
+        "TOTAL enabled controls {inputs_total}; into embedded content {embedded_total}; Rule P controls {inserts_total}; hand-on controls {hands_on_total}"
+    );
 }

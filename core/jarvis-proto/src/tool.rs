@@ -68,6 +68,13 @@ pub struct ToolSpec {
     /// Bundle id of the app the tool acts on, if any.
     #[serde(default)]
     pub app: Option<String>,
+    /// Seventeenth review (Rule T): the tool reaches no place beyond what its own
+    /// arguments name and its results come from nowhere else (a clock, an echo). A tool
+    /// that is not self-contained (the default: fail closed) reaches many places — a
+    /// generic fetch, a shortcut — so its own earlier results are a source for its later
+    /// calls (`jarvis_safety::Confinement::unallowed`).
+    #[serde(default)]
+    pub self_contained: bool,
 }
 
 /// A request for the shell to run a tool.

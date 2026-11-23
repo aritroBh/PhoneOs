@@ -320,20 +320,58 @@ pub fn not_owner_note() -> QuestionRow {
 
 /// Sixteenth review (Rule T): the note of a question about an input into a place while
 /// `places` (display names of the contexts read in this task and not yet allowed into it,
-/// in order) could flow there: `. Jarvis has read Messages, example.com and 2 more in this
-/// task; what it read there could be passed on here`. At most 4 places are named.
+/// most recently read first) could flow there: `. Jarvis has read Messages, example.com and
+/// Notes in this task; what it read there could be passed on here`. Seventeenth review:
+/// every place the approval allows is named ([`flow_note_fit`]).
 pub fn flow_note(places: &[String]) -> QuestionRow {
-    let names: Vec<String> = places.iter().take(4).map(|p| clean(p, 40)).collect();
-    let more = places.len().saturating_sub(names.len());
-    let list = match (names.split_last(), more) {
-        (None, _) => "other places".to_owned(),
-        (Some((last, [])), 0) => last.clone(),
-        (Some((last, rest)), 0) => format!("{} and {last}", rest.join(", ")),
-        (Some(_), n) => format!("{} and {n} more", names.join(", ")),
+    flow_note_fit(places).0
+}
+
+/// Seventeenth review: most characters the names of a flow note take (each name at most 40).
+pub const FLOW_NAMES_BUDGET: usize = 200;
+
+/// [`flow_note`], naming as many of `places` (in order) as fit [`FLOW_NAMES_BUDGET`] (at
+/// least one), and how many it named: an approval of the question allows exactly the
+/// places named. When some do not fit, the note says so (`(it read 2 more places in this
+/// task; Jarvis asks about them next)`): they stay unallowed, and the next question names
+/// them. Nothing is summed up as "and N more".
+pub fn flow_note_fit(places: &[String]) -> (QuestionRow, usize) {
+    let mut names: Vec<String> = Vec::new();
+    let mut used = 0usize;
+    for p in places {
+        // A long name keeps its start and its end (two long names stay told apart).
+        let name = clean_label(p, 40);
+        let add = name.chars().count() + 2;
+        if !names.is_empty() && used + add > FLOW_NAMES_BUDGET {
+            break;
+        }
+        used += add;
+        names.push(name);
+    }
+    let named = names.len();
+    let list = match names.split_last() {
+        None => "other places".to_owned(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
     };
+    let mut text = format!(". Jarvis has read {list} in this task; {MARK_FLOW}");
+    let rest = places.len().saturating_sub(named);
+    if rest > 0 {
+        let what = if rest == 1 { "place" } else { "places" };
+        text.push_str(&format!(
+            " (it read {rest} more {what} in this task; Jarvis asks about them next)"
+        ));
+    }
+    (row(QuestionRowKind::Flow, &text), named)
+}
+
+/// Seventeenth review: the note of a question about an edit-menu item that may hand the
+/// selection on ([`crate::handoff_control`]): `. This may send the selected content to
+/// another app or service; it was read in Notes`.
+pub fn handoff_note(place: &str) -> QuestionRow {
     row(
-        QuestionRowKind::Flow,
-        &format!(". Jarvis has read {list} in this task; {MARK_FLOW}"),
+        QuestionRowKind::Insert,
+        &format!(". This {MARK_HANDOFF}; it was read in {}", clean(place, 40)),
     )
 }
 
@@ -400,6 +438,29 @@ pub fn evaluate_egress(
     typed: &[TypedText],
     owner: &[&str],
     sensitive: bool,
+) -> Decision {
+    evaluate_flowing(
+        policy, action, screen, tool, source, tree, typed, owner, sensitive, false,
+    )
+}
+
+/// [`evaluate_egress`], knowing whether something was read in this task (`tainted`: the
+/// session's read set is not empty). Seventeenth review: an egress Rule T leaves to another
+/// rule — a link the owner did not give (Rule A) — is then asked whatever the policy
+/// relaxes, `policy.confirm: []` included ([`gate_owned`]'s `forced`); so is an edit-menu
+/// item that may hand the selection on ([`crate::handoff_control`]), always, like Rule P.
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_flowing(
+    policy: &Policy,
+    action: &Action,
+    screen: &CompactScreen,
+    tool: Option<&ToolSpec>,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+    owner: &[&str],
+    sensitive: bool,
+    tainted: bool,
 ) -> Decision {
     if let Err(e) = validate_action(action, screen) {
         return Decision::Deny(clean(&e.to_string(), MAX_SUMMARY_CHARS));
@@ -502,6 +563,7 @@ pub fn evaluate_egress(
     // Fourteenth review (Rule A): every way the model's own text becomes a navigation —
     // `open_url`, Return (or the keyboard's Go key) in any field holding a link, a link in a
     // tool's arguments — passes the owner-gave-the-link gate (thirteenth review, M3).
+    let mut forced = false;
     for url in navigated_links(action, screen) {
         if !owner_gave_url(&url, owner) {
             // A call link stays `Call` (it asks as one); any other link sends.
@@ -509,6 +571,9 @@ pub fn evaluate_egress(
                 category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
             }
             unclear = true;
+            // Seventeenth review: after something was read, not even an empty confirm
+            // list lets a model-written link through unasked.
+            forced |= tainted;
         }
     }
     // Fifteenth review (R3): a send by its own words on a screen that shows money (any
@@ -540,6 +605,14 @@ pub fn evaluate_egress(
         category = crate::phrases::max_risk(category, floor);
         unclear = true;
     }
+    // Seventeenth review: an edit-menu item that is not a local action may hand the
+    // selection to another app or service: always asks, phone only.
+    let hands_on = inserts.is_none() && crate::flow::handoff_control(action, screen, tree);
+    if hands_on {
+        category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
+        unclear = true;
+    }
+    forced |= inserts.is_some() || hands_on;
     // Fifteenth review (R1): model text that is not the owner's asks before it reaches the
     // phone (Rule A's links are part of it: `owner_words` checks every link in the text).
     let not_owner =
@@ -550,7 +623,8 @@ pub fn evaluate_egress(
     }
     let runner_text =
         source == ScreenSource::RunnerText && !matches!(action, Action::CallTool { .. });
-    let gate = match gate_owned(
+    // Rule P (and the hand-on items) ask whatever the owner relaxed (only a denial refuses).
+    let gate = gate_owned(
         policy,
         category,
         level,
@@ -558,11 +632,8 @@ pub fn evaluate_egress(
         screen,
         runner_text,
         unclear,
-    ) {
-        // Rule P asks whatever the owner relaxed (only a denial refuses).
-        Gate::Allow if inserts.is_some() => Gate::Confirm,
-        other => other,
-    };
+        forced,
+    );
     match gate {
         Gate::Allow => Decision::Allow,
         Gate::Deny => Decision::Deny(format!("{category:?} actions are not allowed")),
@@ -574,6 +645,9 @@ pub fn evaluate_egress(
             };
             if inserts.is_some() {
                 notes.push(paste_note(&place_name(screen), &[]));
+            }
+            if hands_on {
+                notes.push(handoff_note(&place_name(screen)));
             }
             let mut request = ConfirmRequest::from_rows(
                 category,
@@ -645,8 +719,17 @@ pub fn evaluate_confined(
     owner: &[&str],
     places: &[String],
 ) -> Decision {
-    let decision = evaluate_egress(
-        policy, action, screen, tool, source, tree, typed, owner, false,
+    let decision = evaluate_flowing(
+        policy,
+        action,
+        screen,
+        tool,
+        source,
+        tree,
+        typed,
+        owner,
+        false,
+        !places.is_empty(),
     );
     if places.is_empty() || !crate::flow::flow_checked(action) {
         return decision;
@@ -669,6 +752,8 @@ pub fn evaluate_confined(
             }
             if crate::flow::insert_control(action, screen, tree).is_some() {
                 notes.push(paste_note(&place_name(screen), &[]));
+            } else if crate::flow::handoff_control(action, screen, tree) {
+                notes.push(handoff_note(&place_name(screen)));
             }
             notes.push(flow_note(places));
             r.rows = question_noted(action, screen, r.category, source, tree, typed, &notes);
@@ -1397,6 +1482,8 @@ const MARK_PERMISSION: &str = "This answers a system alert and may grant a permi
 const MARK_FLOW: &str = "what it read there could be passed on here";
 /// Sixteenth review (Rule P): a control that inserts content the question cannot show.
 const MARK_PASTE: &str = "content Jarvis cannot show";
+/// Seventeenth review: an edit-menu item that may hand the selection to another place.
+const MARK_HANDOFF: &str = "may send the selected content to another app or service";
 
 /// Every heading the question writes, each followed by a colon (or ` (N …):`) in a
 /// question (eleventh review: the single source the composer, [`defang`] and the property
@@ -1427,6 +1514,7 @@ pub const QUESTION_MARKERS: &[&str] = &[
     MARK_PERMISSION,
     MARK_FLOW,
     MARK_PASTE,
+    MARK_HANDOFF,
 ];
 
 /// Twelfth review: the other words the composer writes at the start of the question or of
@@ -1527,6 +1615,7 @@ const PHRASE_MARKERS: &[&str] = &[
     MARK_PERMISSION,
     MARK_FLOW,
     MARK_PASTE,
+    MARK_HANDOFF,
 ];
 
 /// Whether `c` reads as a colon ([`crate::text::colon_shaped`]; eleventh review: every
