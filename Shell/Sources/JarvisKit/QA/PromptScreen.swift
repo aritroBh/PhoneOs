@@ -168,6 +168,15 @@ public struct PromptScreen: Sendable, Equatable {
         history.last.flatMap(Self.result(ofHistoryLine:))
     }
 
+    /// The step number of the last "Steps so far" line (`7. tap …` is 7), 0 without history.
+    /// The prompt shows only the most recent steps, so the line count stops growing; the
+    /// number does not. Falls back to the line count for lines without a number.
+    public var historyNumber: Int {
+        guard let line = history.last else { return 0 }
+        let digits = line.prefix { $0.isNumber }
+        return Int(digits) ?? history.count
+    }
+
     /// The outcome of the last history line.
     public var lastOutcome: StepOutcome? {
         lastResult.map(StepOutcome.init(result:))

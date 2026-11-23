@@ -250,8 +250,25 @@ public final class ScriptedModel: ModelProvider {
         var retries: [Int: Int] = [:]
         /// The tap/type reply whose result the next prompt reports.
         var pending: (step: Int, query: ElementQuery)?
+        /// Extra scrolls made because the core said a target was covered, per step index.
+        var coverScrolls: [Int: Int] = [:]
+        /// Consecutive replies found never to have run (the prompt's history did not grow).
+        var dropStreak = 0
+        /// The reply issued last: the step number the prompt had when it was chosen, and the
+        /// state before it (decisions left out), to rewind to if the core dropped it.
+        var lastIssued: [Issued] = []   // zero or one (an array, as State holds a State)
         var decisions: [Decision] = []
     }
+
+    private struct Issued {
+        var historyNumber: Int
+        var before: State
+    }
+
+    /// Most extra scrolls per step when the core says the target is covered.
+    static let maxCoverScrolls = 3
+    /// Most times one reply is issued again after the core dropped it.
+    static let maxReissues = 3
 
     public let capabilities: ModelCapabilities
     /// The script.
@@ -281,10 +298,61 @@ public final class ScriptedModel: ModelProvider {
         let screen = PromptScreen(prompt: request.user)
         return state.withLock { s in
             let call = s.decisions.count + 1
+            let number = screen.historyNumber
+            var note = ""
+            // Every reply the core executes (or refuses, or sets aside) adds a "Steps so far"
+            // line. When none was added the reply never ran: the phone locked while the model
+            // was answering and the core dropped the late reply, to ask again on the fresh
+            // screen (Locked run: the Switch tap was dropped, the script had already moved on
+            // and went on to `done`). Rewind to the state before that reply and decide again.
+            // A prompt without any "Steps so far" says nothing (nothing ran yet, or the history
+            // is not shown): never judged.
+            if let issued = s.lastIssued.first, number > 0, number <= issued.historyNumber {
+                let streak = s.dropStreak + 1
+                guard streak <= Self.maxReissues else {
+                    let at = issued.before.cursor < steps.count ? "step \(issued.before.cursor + 1)/\(steps.count) (\(steps[issued.before.cursor]))" : "the script"
+                    let reply = failJSON("\(at): the reply was issued \(Self.maxReissues) times and never ran (the prompt's steps did not grow past \(number))", screen)
+                    s.lastIssued = []
+                    s.decisions.append(Decision(call: call, step: nil, reply: reply, reason: "\(at): giving up after \(Self.maxReissues) re-issues"))
+                    return reply
+                }
+                let kept = s.decisions
+                s = issued.before
+                s.decisions = kept
+                s.dropStreak = streak
+                note = "re-issued (\(streak)/\(Self.maxReissues)): the previous reply never ran; "
+            } else {
+                s.dropStreak = 0
+            }
+            var before = s
+            before.decisions = []
+            before.lastIssued = []
             let (step, reply, reason) = decide(screen, &s)
-            s.decisions.append(Decision(call: call, step: step, reply: reply, reason: reason))
+            s.lastIssued = [Issued(historyNumber: number, before: before)]
+            s.decisions.append(Decision(call: call, step: step, reply: reply, reason: note + reason))
             return reply
         }
+    }
+
+    /// Whether `result` is the core's refusal of an action whose target is under another
+    /// control, a bar or the keyboard. The core's wording (`covered_message` in
+    /// `core/jarvis-agent/src/session.rs`): `not done: element 26 (Item 60) is covered by the
+    /// tab bar: a tap there could land on it instead, so nothing was sent; choose another
+    /// control or scroll first`.
+    static func isCoveredRefusal(_ result: String) -> Bool {
+        let r = result.lowercased()
+        return StepOutcome(result: result) == .notDone && r.contains("is covered by") && r.contains("scroll first")
+    }
+
+    /// The direction to scroll for a covered target of step `index`: that of the nearest
+    /// `scroll(to:)` step before it, else down.
+    private func coverScrollDirection(for index: Int) -> String {
+        var i = min(index, steps.count) - 1
+        while i >= 0 {
+            if case .scrollTo(_, let direction, _) = steps[i] { return direction }
+            i -= 1
+        }
+        return "down"
     }
 
     // MARK: - Deciding
@@ -302,6 +370,23 @@ public final class ScriptedModel: ModelProvider {
 
         var current = s.cursor < steps.count ? steps[s.cursor] : nil
         var currentTargetListed = current.map(Self.queries)?.contains { $0.find(in: screen) != nil } ?? false
+
+        // The core refused the tap/type because its target sits under a bar (it was listed
+        // at the very edge of the screen): scroll once more, then tap again.
+        if let pending, Self.isCoveredRefusal(last) {
+            let label = "step \(pending.step + 1)/\(steps.count) (\(steps[pending.step]))"
+            let extra = s.coverScrolls[pending.step, default: 0]
+            guard extra < Self.maxCoverScrolls else {
+                return (pending.step, failJSON("\(label): still covered after \(extra) extra scrolls (last result: \(last))", screen),
+                        "\(label): giving up after \(extra) extra scrolls")
+            }
+            s.coverScrolls[pending.step] = extra + 1
+            s.cursor = pending.step
+            s.waits = 0
+            let direction = coverScrollDirection(for: pending.step)
+            return (pending.step, Self.json(["action": "scroll", "direction": .string(direction)], thought: "uncover the target"),
+                    "\(label): the target is covered; extra scroll \(extra + 1)/\(Self.maxCoverScrolls) \(direction), then tap again")
+        }
 
         // Did the last tap/type take effect? Only the prompt says.
         if let pending, Self.needsRetry(result: last, query: pending.query, on: screen, nextTargetListed: currentTargetListed) {
@@ -352,7 +437,9 @@ public final class ScriptedModel: ModelProvider {
             let label = "step \(index + 1)/\(steps.count) (\(step))"
             switch step {
             case .scrollTo(let query, let direction, let maxScrolls):
-                if query.find(in: screen) != nil {
+                // Listed is not enough while the core says the last target was covered.
+                let covered = Self.isCoveredRefusal(last)
+                if query.find(in: screen) != nil, !(covered && s.scrolls < maxScrolls) {
                     s.cursor += 1
                     s.scrolls = 0
                     continue

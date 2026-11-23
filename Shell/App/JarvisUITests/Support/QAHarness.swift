@@ -313,8 +313,26 @@ class QATestCase: XCTestCase {
     @MainActor
     func require(_ element: XCUIElement, _ what: String, timeout: TimeInterval = 10, in app: XCUIApplication,
                  file: StaticString = #filePath, line: UInt = #line) {
-        if element.waitForExistence(timeout: timeout) { return }
-        let tree = (try? app.snapshot()).map { UiTreeBuilder.dump(UiTreeBuilder.build(SnapshotCopy.copy($0), screenSize: nil).root) } ?? "(no snapshot)"
+        let started = Date()
+        if element.waitForExistence(timeout: timeout) {
+            // How long the check took (a stalled one shows in the test log: XCUITest waits
+            // for the app to idle before each query).
+            let took = Date().timeIntervalSince(started)
+            if took > 2 { print("require(\(what)): found after \(String(format: "%.1f", took)) s") }
+            return
+        }
+        let waited = Date().timeIntervalSince(started)
+        // Evidence at the moment of failure: the accessibility hierarchy as XCUITest sees
+        // it and a screenshot (was the sheet there? how large is the tree?).
+        let hierarchy = XCTAttachment(string: "waited \(String(format: "%.1f", waited)) s for \(what) (timeout \(timeout) s)\n\n" + app.debugDescription)
+        hierarchy.name = "require-failed.hierarchy.txt"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "require-failed.screenshot"
+        shot.lifetime = .keepAlways
+        add(shot)
+        let tree =(try? app.snapshot()).map { UiTreeBuilder.dump(UiTreeBuilder.build(SnapshotCopy.copy($0), screenSize: nil).root) } ?? "(no snapshot)"
         XCTFail("\(what) did not appear within \(timeout) s. Screen:\n\(tree)", file: file, line: line)
     }
 }

@@ -19,6 +19,12 @@ struct LiveScreenView: View {
     var viewer: LiveViewModel
     var timeline: CoreViewerTimeline
     var frames: ViewerFrameStore
+    /// The owner is being asked something (a sheet is up over this view): nothing here may keep
+    /// the display busy. The idle cursor pulses for as long as a run goes, which is as long as
+    /// the question stays unanswered; UI tests (and VoiceOver) wait for the app to idle before
+    /// each query, so the endless pulse under the sheet starved them. Treated like Reduce
+    /// Motion (no pulse; a glide that is still under way finishes) until the question is gone.
+    var holdStill: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -51,7 +57,7 @@ struct LiveScreenView: View {
                 // A paused schedule may hand an old date: draw the present.
                 let now = paused ? Self.now() : context.date.timeIntervalSinceReferenceDate
                 // The one FFI call of this frame (the wireframe comes from the cache).
-                let scene = viewer.scene(CoreSceneQuery(nowMs: now * 1_000, reduceMotion: reduceMotion,
+                let scene = viewer.scene(CoreSceneQuery(nowMs: now * 1_000, reduceMotion: reduceMotion || holdStill,
                                                        viewWidth: Double(screenArea.width), viewHeight: Double(screenArea.height)))
                 let screen = viewer.screen(id: scene?.screenId)
                 PhoneScreen(
@@ -62,7 +68,7 @@ struct LiveScreenView: View {
                     // Never the real screen while the app is not active (app switcher).
                     image: scenePhase == .active ? images.image(for: viewer.frameKey(for: screen?.info), in: frames) : nil,
                     now: now,
-                    reduceMotion: reduceMotion,
+                    reduceMotion: reduceMotion || holdStill,
                     area: $screenArea
                 )
                 .onChange(of: scene?.needsFrames ?? false) { _, needs in
@@ -104,7 +110,7 @@ struct LiveScreenView: View {
     /// `tick` only makes `body` depend on `settleTick`.
     private func isPaused(_ tick: Int) -> Bool {
         guard scenePhase == .active else { return true }
-        return !viewer.needsFrames(nowMs: Self.nowMs(), reduceMotion: reduceMotion)
+        return !viewer.needsFrames(nowMs: Self.nowMs(), reduceMotion: reduceMotion || holdStill)
     }
 
     /// Tells the frame store whether this Live view is on screen (a run that ends unwatched

@@ -54,7 +54,8 @@ struct RunView: View {
                     SightSwitch(mode: $sightMode)
                     switch sightMode {
                     case .screen:
-                        LiveScreenView(viewer: model.viewer, timeline: model.viewerTimeline, frames: model.viewerFrames)
+                        LiveScreenView(viewer: model.viewer, timeline: model.viewerTimeline, frames: model.viewerFrames,
+                                       holdStill: model.prompt != nil)
                     case .elements:
                         SightCard(live: live)
                     }
