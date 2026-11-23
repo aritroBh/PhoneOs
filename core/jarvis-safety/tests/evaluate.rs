@@ -15,7 +15,9 @@ use jarvis_proto::{
     Action, ConfirmRequest, Policy, RiskCategory, Role, Tier, ToolSpec, PASSWORDS_BUNDLE_ID,
     WALLET_BUNDLE_ID,
 };
-use jarvis_safety::{check_app, evaluate, gate, summarize, Decision, Gate, Verdict};
+use jarvis_safety::{
+    check_app, evaluate, evaluate_owned, gate, summarize, Decision, Gate, ScreenSource, Verdict,
+};
 
 fn tool(name: &str, risk: RiskCategory, app: Option<&str>) -> ToolSpec {
     ToolSpec {
@@ -95,7 +97,29 @@ fn harmless_actions_are_allowed() {
         text: "See you at 7".to_owned(),
         submit: false,
     };
-    assert_eq!(evaluate(&p, &draft, &c, None), Decision::Allow);
+    // Fifteenth review (R1): typing the owner's own words is harmless; typing words that are
+    // not from the request asks first (here no request is known).
+    assert_eq!(
+        evaluate_owned(
+            &p,
+            &draft,
+            &c,
+            None,
+            ScreenSource::Typed,
+            None,
+            &[],
+            &["Tell Alex: See you at 7"]
+        ),
+        Decision::Allow
+    );
+    assert!(matches!(
+        evaluate(&p, &draft, &c, None),
+        Decision::Confirm(ConfirmRequest {
+            category: RiskCategory::SendMessage,
+            phone_only: true,
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -173,7 +197,9 @@ fn send_in_messages_needs_confirmation() {
     assert_eq!(
         req.summary,
         // Eleventh review (F3d): a paying or sending action whose form names no recipient says `Recipient not verified`.
-        "Type \"See you at 7\" into \"Message\" and press Return in Messages. Recipient not verified"
+        // Fifteenth review (R1): text that is not from the request asks before it is typed, one
+        // question for the typing and its Return, with what Return sends.
+        "Type \"See you at 7\" into \"Message\" and press Return in Messages, which sends the field's whole content: \"See you at 7\". This text is not from your request. Recipient not verified"
     );
 }
 
@@ -345,15 +371,33 @@ fn tools() {
         ),
         Decision::Deny(_)
     ));
+    // Fifteenth review (R1): a tool's string arguments are model text; the owner's words
+    // pass, other words ask.
     assert_eq!(
+        evaluate_owned(
+            &p,
+            &call("create_reminder", serde_json::json!({"title": "Milk"})),
+            &s,
+            Some(&t),
+            ScreenSource::Typed,
+            None,
+            &[],
+            &["Remind me to buy milk"]
+        ),
+        Decision::Allow
+    );
+    assert!(matches!(
         evaluate(
             &p,
             &call("create_reminder", serde_json::json!({"title": "Milk"})),
             &s,
             Some(&t)
         ),
-        Decision::Allow
-    );
+        Decision::Confirm(ConfirmRequest {
+            phone_only: true,
+            ..
+        })
+    ));
     let t = tool(
         "send_imessage",
         RiskCategory::SendMessage,
@@ -372,7 +416,8 @@ fn tools() {
     assert_eq!(req.app, "com.apple.MobileSMS");
     assert_eq!(
         req.summary,
-        "Run send_imessage (body: code (redacted number) ‹|im_end|›, to: Alex)"
+        // Fifteenth review (R1): the arguments are not from the request.
+        "Run send_imessage (body: code (redacted number) ‹|im_end|›, to: Alex). This text is not from your request"
     );
 }
 
@@ -406,7 +451,8 @@ fn summaries_are_sanitised_and_hide_secrets() {
     assert_eq!(req.category, RiskCategory::Credential);
     assert_eq!(
         req.summary,
-        "Type a secret (19 characters) into \"Card number\" in Example"
+        // Fifteenth review (R1): the typed text is not from the request.
+        "Type a secret (19 characters) into \"Card number\" in Example. This text is not from your request"
     );
     // Long labels are capped.
     let long = format!("Delete {}", "x".repeat(500));

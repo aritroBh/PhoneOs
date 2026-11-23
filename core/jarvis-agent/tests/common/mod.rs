@@ -164,10 +164,21 @@ pub fn run(
     config: SessionConfig,
     task: &str,
     memory: MemoryStore,
+    phone: Phone,
+    script: Script,
+) -> Run {
+    run_spec(config, TaskSpec::new("t1", task), memory, phone, script)
+}
+
+/// [`run`] for a whole task spec (fifteenth review: its origin).
+pub fn run_spec(
+    config: SessionConfig,
+    task: TaskSpec,
+    memory: MemoryStore,
     mut phone: Phone,
     mut script: Script,
 ) -> Run {
-    let mut session = Session::new(config, TaskSpec::new("t1", task), memory);
+    let mut session = Session::new(config, task, memory);
     let mut now = 1_000u64;
     let mut event = Event::Start;
     let mut out = Run {

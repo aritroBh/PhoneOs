@@ -922,7 +922,9 @@ fn a_declined_return_tells_the_model_the_text_is_still_in_the_field() {
     });
     let r = run(
         config(),
-        "Tell Alice",
+        // Fifteenth review (R1): the request states the words typed (the owner's words are
+        // typed unasked; this test is about what follows the typing).
+        "Tell Alice: On my way",
         MemoryStore::new(),
         phone,
         Script::model(&[

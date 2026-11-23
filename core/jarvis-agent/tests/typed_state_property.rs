@@ -141,16 +141,13 @@ struct Drive {
 /// the shared driver does not model): the phone returns a reply per command; a lock is
 /// followed by an unlock at the next wait.
 fn drive(
+    task: &str,
     start: Screen,
     mut phone: impl FnMut(&RunnerCommand) -> Reply,
     model: &[String],
     decisions: &[bool],
 ) -> Drive {
-    let mut session = Session::new(
-        config(),
-        TaskSpec::new("t1", "Fill in the forms"),
-        MemoryStore::new(),
-    );
+    let mut session = Session::new(config(), TaskSpec::new("t1", task), MemoryStore::new());
     let mut screen = start;
     let mut model: std::collections::VecDeque<String> = model.iter().cloned().collect();
     let mut decisions: std::collections::VecDeque<bool> = decisions.iter().copied().collect();
@@ -355,7 +352,11 @@ fn session(seed: u64) -> (usize, usize) {
             _ => Reply::Ok(s),
         }
     };
-    let run = drive(start, phone, &model, &decisions);
+    // Fifteenth review (R1): the request states the notes typed (the owner's words are typed
+    // unasked; this property is about the "typed here" state, not the typing gate).
+    let steps: Vec<String> = (0..11).map(|k| k.to_string()).collect();
+    let task = format!("Fill in the forms: note {seed} {}", steps.join(" "));
+    let run = drive(&task, start, phone, &model, &decisions);
     // Walk the effects: every submit-like command the runner got was asked when the state
     // was set and its form held text.
     let mut asked = false;

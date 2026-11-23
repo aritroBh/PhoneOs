@@ -64,9 +64,10 @@ pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;
 pub use confine::check_confinement;
 pub use evaluate::{
-    classify_from, evaluate, evaluate_from, evaluate_owned, evaluate_with, first_use_app,
-    first_use_request, heading_like_name, owner_gave_url, presumed_submit, presumed_submit_owned,
-    question_with, recipient_field_name, return_question, return_summary,
+    classify_from, egress_owned, evaluate, evaluate_egress, evaluate_from, evaluate_owned,
+    evaluate_with, first_use_app, first_use_request, heading_like_name, in_alert, not_owner_note,
+    owner_gave_url, presumed_submit, presumed_submit_owned, question_noted, question_with,
+    recipient_field_name, return_question, return_question_noted, return_summary, sensitive_note,
     strong_recipient_field_name, summarize, summary_for, summary_with, verb_of, Decision,
     ScreenSource, ScreenTree, TypedText, QUESTION_HEADINGS, QUESTION_KEYWORDS, QUESTION_MARKERS,
     RECIPIENT_FIELD_HEADS, RECIPIENT_FIELD_NEGATIVES, RECIPIENT_FIELD_QUALIFIERS,
@@ -87,7 +88,7 @@ pub mod reference {
     pub use crate::hit::reference::tap_spot_under;
 }
 pub use phrases::{
-    label_risk, AppRule, Phrase, RuleTarget, ACTION_PHRASES, APP_PHRASES, APP_RULES,
+    label_risk, max_risk, AppRule, Phrase, RuleTarget, ACTION_PHRASES, APP_PHRASES, APP_RULES,
     APP_STORE_BUNDLE_ID, COMPOSE_FIELD_PHRASES, CONTEXT_PHRASES, CREDENTIAL_FIELD_PHRASES,
     HIDDEN_FIELD_PHRASES, NAVIGATION_PHRASES, PRICE_VERB_PHRASES, SETTINGS_ACTION_PHRASES,
     SETTINGS_BUNDLE_ID, SETTINGS_CONTEXT_PHRASES, SF_SYMBOLS, SHARE_SAFE_PHRASES,

@@ -1146,9 +1146,12 @@ fn spotlight_rules_leave_unrelated_apps_alone() {
     for (deny, text) in [("ExampleBank", "weather"), ("Example Bank", "Example Mail")] {
         let mut c = config();
         deny_bank(&mut c, deny);
+        let task = format!("Search for {text}");
         let r = run(
             c,
-            "Search",
+            // Fifteenth review (R1): the request states the words typed (the owner's words are
+            // typed unasked; this test is about what follows the typing).
+            &task,
             MemoryStore::new(),
             Phone::still(spotlight(None, &[])),
             Script::model(&[
@@ -1469,9 +1472,12 @@ fn ordinary_searches_under_the_default_deny_list_still_work() {
             RunnerCommand::TypeText { .. } => Transition::Go(after.clone()),
             _ => Transition::Stay,
         });
+        let task = format!("Search for {text}");
         let r = run(
             c,
-            "Search",
+            // Fifteenth review (R1): the request states the words typed (the owner's words are
+            // typed unasked; this test is about what follows the typing).
+            &task,
             MemoryStore::new(),
             phone,
             Script::model(&[
@@ -1504,9 +1510,12 @@ fn spotlight_prefix_searches_are_typed_but_return_waits_for_the_results() {
             _ => Transition::Stay,
         });
         let typing = format!(r#"{{"action":"type","text":"{text}","submit":true}}"#);
+        let task = format!("Check my bank: {text}");
         let r = run(
             c,
-            "Check my bank",
+            // Fifteenth review (R1): the request states the words typed (the owner's words are
+            // typed unasked; this test is about what follows the typing).
+            &task,
             MemoryStore::new(),
             phone,
             Script::model(&[&typing, &typing, r#"{"action":"fail","reason":"x"}"#]),

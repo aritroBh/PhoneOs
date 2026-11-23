@@ -726,7 +726,9 @@ fn probe11_control_neutral_button_asks_after_typing() {
     let cont = index_of(&two_forms(Some("x"), None, false), "Looks good");
     let r = run(
         config(),
-        "Leave feedback",
+        // Fifteenth review (R1): the request states the words typed (the owner's words are
+        // typed unasked; this test is about what follows the typing).
+        "Leave feedback: My home address is 1 Elm St",
         MemoryStore::new(),
         Phone::new(s0, move |c, _| match c {
             RunnerCommand::TypeText { .. } => {

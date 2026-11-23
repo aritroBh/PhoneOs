@@ -113,6 +113,32 @@ pub(crate) fn sanitize_keys(profile: &Profile) -> Vec<String> {
         .collect()
 }
 
+/// Fifteenth review (R1): the profile values the owner did not mark sensitive. The owner
+/// stored them to be typed (and can mark any of them sensitive), so they count as the
+/// owner's words for the typing gate.
+pub(crate) fn owner_values(profile: &Profile) -> impl Iterator<Item = &str> {
+    profile
+        .fields
+        .values()
+        .filter(|f| !f.sensitive)
+        .map(|f| f.value.as_str())
+        .filter(|v| !v.trim().is_empty())
+}
+
+/// Fifteenth review (F2): the keys, as written, of the placeholders in `text` whose stored
+/// value the owner marked sensitive (typing one always asks, phone only, naming the key).
+pub(crate) fn sensitive_keys_in(text: &str, profile: &Profile) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut pos = 0usize;
+    while let Some((_, end, key)) = find_next(text, pos) {
+        if profile.lookup(&key).is_some_and(|f| f.sensitive) && !out.contains(&key) {
+            out.push(key);
+        }
+        pos = end;
+    }
+    out
+}
+
 /// Texts the recorder must treat as sensitive: the values of sensitive fields. Placeholders
 /// need no registration: the recorder stores a typed `{{profile.KEY}}` as a profile slot.
 pub(crate) fn sensitive_texts(profile: &Profile) -> Vec<String> {

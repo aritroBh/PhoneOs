@@ -102,19 +102,88 @@ fn word_tokens(text: &str) -> impl Iterator<Item = String> + '_ {
         .map(str::to_lowercase)
 }
 
-/// Rule B: whether every token of `text` that counts — a maximal alphanumeric run,
-/// case-folded, of 3 or more characters, or made of digits only (any length) — occurs as a
-/// token of the owner's text (`owner`: the task's text, the running skill's instructions
-/// and captured arguments). Empty `text` is the owner's (it sends nothing).
+/// Most tokens of 1–2 letters (no digit) a text may hold unchecked ([`owner_words`]).
+pub(crate) const MAX_SHORT_TOKENS: usize = 3;
+
+/// Fifteenth review (R1, the typing gate): whether model-written `text` is the owner's own
+/// words — the one test every egress of model text passes (typing, Return, a search, a
+/// link, a tool's string arguments). Every token of `text` (a maximal alphanumeric run,
+/// case-folded) occurs as a token of the owner's text (`owner`: the task's text typed or
+/// spoken on the phone, the running skill's instructions and the arguments captured on the
+/// phone, the profile values the owner did not mark sensitive), except tokens of 1–2
+/// letters without a digit, of which at most [`MAX_SHORT_TOKENS`] are let through; a
+/// token holding a digit is always compared, whatever its length (F7: `a4 b5` spells
+/// digits). Every link in `text` ([`links_in`]) must also be one the owner gave
+/// ([`crate::owner_gave_url`]). Empty `text` is the owner's (it sends nothing).
 pub(crate) fn owner_words(text: &str, owner: &[&str]) -> bool {
-    let mut counted = word_tokens(text)
-        .filter(|w| w.chars().count() >= 3 || w.chars().all(|c| c.is_ascii_digit()))
-        .peekable();
-    if counted.peek().is_none() {
-        return true;
+    let mut own: Option<HashSet<String>> = None;
+    let mut short = 0usize;
+    for w in word_tokens(text) {
+        let digit = w.chars().any(|c| c.is_numeric());
+        if !digit && w.chars().count() <= 2 {
+            short += 1;
+            if short > MAX_SHORT_TOKENS {
+                return false;
+            }
+            continue;
+        }
+        let own = own.get_or_insert_with(|| owner.iter().flat_map(|o| word_tokens(o)).collect());
+        if !own.contains(&w) {
+            return false;
+        }
     }
-    let own: HashSet<String> = owner.iter().flat_map(|o| word_tokens(o)).collect();
-    counted.all(|w| own.contains(&w))
+    links_in(text)
+        .iter()
+        .all(|l| crate::evaluate::owner_gave_url(l, owner))
+}
+
+/// Fifteenth review (F6): the links inside `text` — the whole text when it is one
+/// ([`link_shaped`]), and every piece of it split on whitespace and brackets and quotes,
+/// with sentence punctuation at its end dropped, that is a link, or whose part after a
+/// leading `label:` is (`URL:https://…`).
+pub(crate) fn links_in(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let t = text.trim();
+    if link_shaped(t) {
+        out.push(t.to_owned());
+    }
+    let pieces = t.split(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '(' | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '<'
+                    | '>'
+                    | '"'
+                    | '\''
+                    | '`'
+                    | '\u{201C}'
+                    | '\u{201D}'
+                    | '\u{2018}'
+                    | '\u{2019}'
+                    | '\u{00AB}'
+                    | '\u{00BB}'
+            )
+    });
+    for p in pieces {
+        let p = p.trim_end_matches(['.', ',', ';', '!', '?', ':']);
+        if p.is_empty() || out.iter().any(|l| l == p) {
+            continue;
+        }
+        if link_shaped(p) {
+            out.push(p.to_owned());
+        } else if let Some((_, after)) = p.split_once(':') {
+            let after = after.trim_start_matches(':');
+            if link_shaped(after) {
+                out.push(after.to_owned());
+            }
+        }
+    }
+    out
 }
 
 /// English number words (Rule D; other languages are a known gap).
@@ -545,5 +614,29 @@ mod tests {
         assert!(owner_words("Paris in", &o));
         assert!(!owner_words("Paris weather today", &o));
         assert!(!owner_words("paris 4521", &o));
+        // Fifteenth review (F7): a token with a digit is compared whatever its length; at
+        // most three 1–2 letter tokens go unchecked.
+        assert!(!owner_words("a4 b5", &o));
+        assert!(!owner_words("4a", &o));
+        assert!(owner_words("Paris is ok", &o));
+        assert!(!owner_words("Paris is ok in my st", &o));
+        // A link must be one the owner gave, wherever it is in the text.
+        let l = ["Open https://a.example/x and read it"];
+        assert!(owner_words("https://a.example/x", &l));
+        assert!(!owner_words("read https://a.example/x/", &l));
+    }
+
+    #[test]
+    fn links_inside_text() {
+        let has = |t: &str, l: &str| links_in(t).iter().any(|x| x == l);
+        assert!(has(
+            "read later collector.example/c?d=1",
+            "collector.example/c?d=1"
+        ));
+        assert!(has("<https://c.example/a>", "https://c.example/a"));
+        assert!(has("URL:https://c.example/a", "https://c.example/a"));
+        assert!(has("(https://c.example/a).", "https://c.example/a"));
+        assert!(links_in("write to ada@example.com please").is_empty());
+        assert!(links_in("Dinner at 8").is_empty());
     }
 }

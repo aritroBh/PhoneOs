@@ -739,6 +739,10 @@ pub struct SessionProgress {
 pub struct TaskSpec {
     pub id: String,
     pub text: String,
+    /// Fifteenth review (R2): the task was started by a paired remote device, not on the
+    /// phone; its text is then not the owner's words for the typing gate.
+    #[uniffi(default = false)]
+    pub remote: bool,
 }
 
 /// An installed app the agent may open by name.

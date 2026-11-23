@@ -806,7 +806,7 @@ pub(crate) fn severity(c: RiskCategory) -> u8 {
 }
 
 /// The riskier of two categories.
-pub(crate) fn max_risk(a: RiskCategory, b: RiskCategory) -> RiskCategory {
+pub fn max_risk(a: RiskCategory, b: RiskCategory) -> RiskCategory {
     if severity(b) > severity(a) {
         b
     } else {

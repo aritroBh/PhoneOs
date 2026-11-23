@@ -89,7 +89,10 @@
 //! field on the screen as it is *then*, through the full gate as its own action (classified,
 //! asked with a summary of that screen, bound to it and looked at again after an approval;
 //! pressed at once when nothing asks), see `Session::gate_return`. A decline leaves the
-//! text typed ("typed, not submitted"). `type` without an element needs a listed focused
+//! text typed ("typed, not submitted"). Fifteenth review (R1): text that is not the owner's
+//! is asked before it is typed, in one question that also says what Return does; that
+//! approval covers the Return unless the screen after the typing asks for more
+//! (`Pending::covers_return`). `type` without an element needs a listed focused
 //! field. Every tap lands on the control it names (`jarvis_safety::tap_spot`: geometry
 //! decides, any drawn node may cover a point; full-width navigation and tab bars of a typed
 //! tree are drawn over the content under them); a covered control is refused ("not done: …
@@ -115,17 +118,17 @@ use jarvis_proto::{
     render_rows, Action, AppInfo, BarNode, CompactScreen, ConfirmRequest, ConfirmStage,
     ConfirmTarget, Effect, Element, Event, ImageRef, Key, ModelRequest, Observation, Outcome,
     OutcomeStatus, Point, Progress, QuestionRow, QuestionRowKind, RawInput, RawNode, RequestKind,
-    RiskCategory, RunnerCommand, SessionConfig, Size, TaskSpec, TimedEvent, ToolCall, ToolResult,
-    ToolSpec,
+    RiskCategory, RunnerCommand, SessionConfig, Size, TaskOrigin, TaskSpec, TimedEvent, ToolCall,
+    ToolResult, ToolSpec,
 };
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
-    approval_context, check_app, check_app_name, check_confinement, control_at, evaluate_owned,
-    first_use_app, first_use_request, is_springboard, label_names_denied_app, point_is_clear,
-    question_with, redact, redact_screen, return_question, sanitize_screen_text,
-    search_names_denied_app, touches_screen, verb_of, widget_names_denied_app, Budget,
-    BudgetVerdict, Covered, CoveredBy, Decision, PointError, ScreenSource, ScreenTree, TypedText,
-    Verdict,
+    approval_context, check_app, check_app_name, check_confinement, control_at, egress_owned,
+    evaluate_egress, first_use_app, first_use_request, in_alert, is_springboard,
+    label_names_denied_app, not_owner_note, point_is_clear, question_noted, redact, redact_screen,
+    return_question_noted, sanitize_screen_text, search_names_denied_app, sensitive_note,
+    touches_screen, verb_of, widget_names_denied_app, Budget, BudgetVerdict, Covered, CoveredBy,
+    Decision, PointError, ScreenSource, ScreenTree, TypedText, Verdict,
 };
 
 use crate::act::{Out, TypedState};
@@ -136,7 +139,9 @@ use crate::commands::{
 };
 use crate::history::{clean, describe, History, MAX_SHOWN};
 use crate::parser::{parse_model_output, ParseError};
-use crate::profile::{mask, sanitize_keys, sensitive_texts, substitute};
+use crate::profile::{
+    mask, owner_values, sanitize_keys, sensitive_keys_in, sensitive_texts, substitute,
+};
 use crate::prompt::{self, PromptParts, ACTION_MAX_TOKENS};
 use crate::schema::{action_gbnf, action_json_schema};
 use crate::state::{
@@ -692,13 +697,95 @@ impl Session {
     /// running skill's own definition (its instructions and the values captured from the
     /// request). A link `open_url` opens is the owner's only when it appears there
     /// (`jarvis_safety::owner_gave_url`).
+    ///
+    /// Fifteenth review: the text every egress of model text is held to (R1,
+    /// `jarvis_safety::egress_owned`). A task started by a paired remote device (R2) adds
+    /// neither its text nor the skill arguments it supplied: only the skill's instructions
+    /// stored on the phone count. The profile values the owner did not mark sensitive count
+    /// (the owner stored them to be typed; an exemption resting on the owner's own flag).
     fn owner_texts(&self) -> Vec<&str> {
-        let mut out = vec![self.task.text.as_str()];
+        let phone = self.task.origin == TaskOrigin::Phone;
+        let mut out = Vec::new();
+        if phone {
+            out.push(self.task.text.as_str());
+        }
         if let Some(skill) = &self.config.skill {
             out.push(skill.instructions.as_str());
-            out.extend(skill.args.values().map(String::as_str));
+            if phone {
+                out.extend(skill.args.values().map(String::as_str));
+            }
         }
+        out.extend(owner_values(&self.memory.profile));
         out
+    }
+
+    /// The sensitive profile keys the text of `decided` (placeholders kept) types (F2).
+    fn sensitive_keys(&self, decided: &Action) -> Vec<String> {
+        match decided {
+            Action::Type { text, .. } => sensitive_keys_in(text, &self.memory.profile),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether the model text of `decided` (placeholders kept) is the owner's (R1): no
+    /// sensitive profile value, and the text as typed is the owner's words.
+    fn egress_is_owners(&self, decided: &Action) -> bool {
+        if !self.sensitive_keys(decided).is_empty() {
+            return false;
+        }
+        let executed = match decided {
+            Action::Type {
+                element,
+                text,
+                submit,
+            } => match substitute(text, &self.memory.profile) {
+                Ok(text) => Action::Type {
+                    element: *element,
+                    text,
+                    submit: *submit,
+                },
+                Err(_) => return false,
+            },
+            other => other.clone(),
+        };
+        egress_owned(&executed, &self.owner_texts())
+    }
+
+    /// The notes a question about `decided` carries (R1): which sensitive profile values it
+    /// types (by key), else that its text is not from the request.
+    fn egress_notes(&self, decided: &Action) -> Vec<QuestionRow> {
+        let keys = self.sensitive_keys(decided);
+        if !keys.is_empty() {
+            let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+            return vec![sensitive_note(&keys)];
+        }
+        if self.egress_is_owners(decided) {
+            Vec::new()
+        } else {
+            vec![not_owner_note()]
+        }
+    }
+
+    /// The gate's decision on `executed` (profile values substituted) for `decided`
+    /// (placeholders kept) on the current screen: `evaluate_egress` with the owner's texts
+    /// and whether `decided` types a sensitive profile value.
+    fn gate_decision(
+        &self,
+        executed: &Action,
+        decided: &Action,
+        tool: Option<&ToolSpec>,
+    ) -> Decision {
+        evaluate_egress(
+            &self.config.policy,
+            executed,
+            &self.current.screen,
+            tool,
+            self.current.source,
+            Some(&self.tree()),
+            &self.typed_here(),
+            &self.owner_texts(),
+            !self.sensitive_keys(decided).is_empty(),
+        )
     }
 
     /// What the session typed in the app in front (see [`TypedState`]); non-empty is the
@@ -1568,16 +1655,7 @@ impl Session {
         };
         // A4 and the gate: nothing new is asked, and an approved risk is the same category
         // with the identical summary, recomputed for this target on this screen.
-        match evaluate_owned(
-            &self.config.policy,
-            &executed,
-            screen,
-            None,
-            self.current.source,
-            Some(&self.tree()),
-            &self.typed_here(),
-            &self.owner_texts(),
-        ) {
+        match self.gate_decision(&executed, &gate, None) {
             Decision::Allow => {
                 if approved.is_some() {
                     return None;
@@ -1607,7 +1685,7 @@ impl Session {
             // The tap point is derived again on this screen by the same procedure, and must
             // lie in the target's fresh frame.
             let tree = self.tree();
-            let queue = plan(&executed, screen, Some(&tree)).ok()?;
+            let queue = plan(&typing_part(&executed, pending.stage), screen, Some(&tree)).ok()?;
             let exec = Exec::Runner(queue);
             if let (Some(target), Some(p)) = (action_target(&gate, screen), planned_point(&exec)) {
                 if !target.frame.contains(p) {
@@ -1930,6 +2008,7 @@ impl Session {
         let tree = self.tree();
         let screen = &self.current.masked;
         let source = self.current.source;
+        let notes = self.egress_notes(gate);
         match (stage, gate) {
             (
                 Stage::Return,
@@ -1938,7 +2017,7 @@ impl Session {
                     text,
                     ..
                 },
-            ) => return_question(
+            ) => return_question_noted(
                 *field,
                 text,
                 screen,
@@ -1946,14 +2025,16 @@ impl Session {
                 source,
                 Some(&tree),
                 &self.typed_here(),
+                &notes,
             ),
-            _ => question_with(
+            _ => question_noted(
                 gate,
                 screen,
                 category,
                 source,
                 Some(&tree),
                 &self.typed_here(),
+                &notes,
             ),
         }
     }
@@ -2494,7 +2575,10 @@ impl Session {
         };
         // A `type … submit` is two gated parts (sixth review): the typing, gated here as a
         // plain `type`, and Return, gated after the typed text checks out on the screen as
-        // it is then (`gate_return`).
+        // it is then (`gate_return`). Fifteenth review (R1): text that is not the owner's
+        // asks before it is typed, in one question that also says what Return does (the
+        // gate keeps `submit`; only the typing is planned), and its approval covers that
+        // Return.
         let (gate, stage) = match &normalized {
             Action::Type {
                 element,
@@ -2504,7 +2588,7 @@ impl Session {
                 Action::Type {
                     element: *element,
                     text: text.clone(),
-                    submit: false,
+                    submit: !self.egress_is_owners(&normalized),
                 },
                 Stage::Typing,
             ),
@@ -2512,7 +2596,11 @@ impl Session {
         };
         // 1a. A tap on the home screen launches what it hits: the icon gets the checks
         //     `open_app` gets, before the tap is sent (see `home_launch`).
-        let home = if is_springboard(&screen.app_bundle_id) {
+        // Fifteenth review (R4b): a control inside an alert, a SpringBoard sheet or a
+        // notification banner is never a home-screen launch: the gate asks it as what it is.
+        let home = if is_springboard(&screen.app_bundle_id)
+            && !in_alert(&gate, screen, Some(&self.tree()))
+        {
             home_launch(&gate, screen, &self.apps)
         } else {
             None
@@ -2620,16 +2708,7 @@ impl Session {
         // 3. Safety: validation, deny list, risk classification, confirmation gate. A screen
         //    read from runner text is unverified: every state-changing runner action on it
         //    is at least `Unverified` (asks), with a warning in its summary.
-        let decision = evaluate_owned(
-            policy,
-            &executed,
-            screen,
-            tool,
-            self.current.source,
-            Some(&self.tree()),
-            &self.typed_here(),
-            &self.owner_texts(),
-        );
+        let decision = self.gate_decision(&executed, &gate, tool);
         if let Decision::Deny(reason) = &decision {
             return Err(Reject::Failed(format!("not allowed: {reason}")));
         }
@@ -2649,7 +2728,8 @@ impl Session {
             }),
             ui => {
                 let tree = self.tree();
-                Exec::Runner(plan(ui, screen, Some(&tree)).map_err(|e| match e {
+                let ui = typing_part(ui, stage);
+                Exec::Runner(plan(&ui, screen, Some(&tree)).map_err(|e| match e {
                     PlanError::Covered(c) => Reject::NotDone(self.covered_message(c)),
                     PlanError::Point(e) => Reject::NotDone(self.point_message(action, e)),
                     other => Reject::Failed(other.to_string()),
@@ -2663,7 +2743,7 @@ impl Session {
             }
             tool => (tool, None),
         };
-        let pending = Pending {
+        let mut pending = Pending {
             expect_change: should_change(&normalized, screen),
             action: normalized.clone(),
             before_target_source: self.target_source(&gate),
@@ -2678,6 +2758,7 @@ impl Session {
             described,
             exec,
             check,
+            covers_return: None,
         };
         let risk = match decision {
             Decision::Confirm(request) => {
@@ -2688,6 +2769,10 @@ impl Session {
             }
             Decision::Allow | Decision::Deny(_) => None,
         };
+        // Fifteenth review (R1): the one question about a typing and its Return.
+        if let (Some(r), Action::Type { submit: true, .. }, Stage::Typing) = (&risk, &gate, stage) {
+            pending.covers_return = Some((r.category, r.phone_only, r.summary.clone()));
+        }
         // 5. First-use approval of the app the action acts in (asked before the risk). A
         //    home-screen tap that may launch an app Jarvis cannot name asks a one-off
         //    approval naming what was tapped, never silently.
@@ -3067,16 +3152,22 @@ impl Session {
             }
         };
         let policy = &self.config.policy;
-        let decision = evaluate_owned(
-            policy,
-            &executed,
-            screen,
-            None,
-            self.current.source,
-            Some(&self.tree()),
-            &self.typed_here(),
-            &self.owner_texts(),
-        );
+        let decision = self.gate_decision(&executed, &gate, None);
+        // Fifteenth review (R1): the approved one question about the typing and its Return
+        // covers this Return, unless the screen after the typing asks for more: a riskier
+        // category, phone only where the approval was not, or a question that reads
+        // differently on this screen (another recipient, another amount).
+        let covered =
+            typing
+                .covers_return
+                .as_ref()
+                .is_some_and(|(category, phone_only, summary)| {
+                    matches!(&decision, Decision::Confirm(r)
+                if jarvis_safety::max_risk(r.category, *category) == *category
+                    && (*phone_only || !r.phone_only))
+                        && self.risk_summary(&typing.gate, Stage::Typing, *category) == *summary
+                });
+        let decision = if covered { Decision::Allow } else { decision };
         let home = if is_springboard(&screen.app_bundle_id) {
             home_launch(&gate, screen, &self.apps)
         } else {
@@ -3094,6 +3185,7 @@ impl Session {
             expect: None,
         }]));
         pending.check = None;
+        pending.covers_return = None;
         let risk = match decision {
             Decision::Deny(reason) => {
                 let msg = format!(
@@ -3754,5 +3846,23 @@ fn denied_launch_message(label: &str) -> String {
         format!("{name} is on the deny list")
     } else {
         format!("\"{shown}\" would open {name}, which is on the deny list")
+    }
+}
+
+/// The part of `action` that is planned and typed now: for the typing part of a `type …
+/// submit` (`Stage::Typing`), the `type` without its Return, which is pressed after the
+/// typed text checks out (`Session::gate_return`).
+fn typing_part(action: &Action, stage: Stage) -> Action {
+    match action {
+        Action::Type {
+            element,
+            text,
+            submit: true,
+        } if stage == Stage::Typing => Action::Type {
+            element: *element,
+            text: text.clone(),
+            submit: false,
+        },
+        other => other.clone(),
     }
 }

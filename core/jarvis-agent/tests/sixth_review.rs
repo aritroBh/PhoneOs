@@ -48,12 +48,16 @@ impl D {
         Self::with(config())
     }
     fn with(config: SessionConfig) -> Self {
+        Self::asked(config, "Pay my bill")
+    }
+    /// Fifteenth review (R1): a driver whose request states the words the test types (the
+    /// owner's words are typed unasked; the test is about what follows the typing).
+    fn owned(task: &str) -> Self {
+        Self::asked(config(), task)
+    }
+    fn asked(config: SessionConfig, task: &str) -> Self {
         D {
-            s: Session::new(
-                config,
-                TaskSpec::new("t", "Pay my bill"),
-                MemoryStore::new(),
-            ),
+            s: Session::new(config, TaskSpec::new("t", task), MemoryStore::new()),
             now: 1_000,
         }
     }
@@ -492,7 +496,7 @@ fn a_risky_send_asks_once_after_typing() {
 /// The screen changes between the Return question and the look: Return is not pressed.
 #[test]
 fn a_screen_change_between_the_return_question_and_the_look_voids_it() {
-    let mut d = D::new();
+    let mut d = D::owned("Pay my bill and tell Alice I'm on my way");
     let e = d.start(&chat("To: alice@example.com", None), SEND);
     assert!(
         matches!(e, Effect::Act(RunnerCommand::TypeText { .. })),
@@ -516,7 +520,7 @@ fn a_screen_change_between_the_return_question_and_the_look_voids_it() {
         req.user
     );
     // The same screen: pressed.
-    let mut d = D::new();
+    let mut d = D::owned("Pay my bill and tell Alice I'm on my way");
     d.start(&chat("To: alice@example.com", None), SEND);
     d.ok();
     assert!(matches!(d.observed(&typed), Effect::Confirm(_)));
@@ -665,7 +669,7 @@ fn a_lock_or_cancel_between_typing_and_the_return_question() {
         assert!(matches!(d.observed(&typed), Effect::Confirm(_)));
     };
     // Same screen after the unlock: asked again, then pressed.
-    let mut d = D::new();
+    let mut d = D::owned("Pay my bill and tell Alice I'm on my way");
     to_question(&mut d);
     assert!(matches!(
         d.step(Event::DeviceLocked),
@@ -687,7 +691,7 @@ fn a_lock_or_cancel_between_typing_and_the_return_question() {
         })
     );
     // Changed screen after the unlock: no Return, the model is told.
-    let mut d = D::new();
+    let mut d = D::owned("Pay my bill and tell Alice I'm on my way");
     to_question(&mut d);
     d.step(Event::DeviceLocked);
     d.step(Event::DeviceUnlocked);
@@ -701,7 +705,7 @@ fn a_lock_or_cancel_between_typing_and_the_return_question() {
         req.user
     );
     // Cancel.
-    let mut d = D::new();
+    let mut d = D::owned("Pay my bill and tell Alice I'm on my way");
     to_question(&mut d);
     assert!(matches!(
         d.step(Event::Cancel),
@@ -771,7 +775,7 @@ fn an_accessory_bar_is_hashed_and_listed() {
 /// the accessory's amount changing between that question and the look voids it.
 #[test]
 fn an_accessory_amount_change_voids_the_return() {
-    let mut d = D::new();
+    let mut d = D::owned("Pay my rent and add thanks to the note");
     let e = d.start(
         &transfer("Send $40.00 to Alice", "rent"),
         r#"{"action":"type","element":2,"text":" thanks","submit":true}"#,
@@ -870,7 +874,9 @@ fn a_typed_message_is_shown_before_send_and_a_prefilled_one_is_not() {
     };
     let typed = run(
         config(),
-        "Tell Alice",
+        // Fifteenth review (R1): the request states the words typed (the owner's words are
+        // typed unasked; this test is about what follows the typing).
+        "Tell Alice: On my way",
         MemoryStore::new(),
         phone(),
         Script::model(&[
@@ -993,7 +999,9 @@ fn type_without_an_element_needs_a_listed_focused_field() {
     let focused = chat("To: alice@example.com", None);
     let r = run(
         config(),
-        "Write",
+        // Fifteenth review (R1): the request states the words typed (the owner's words are
+        // typed unasked; this test is about what follows the typing).
+        "Write hello",
         MemoryStore::new(),
         Phone::still(focused),
         Script::model(&[

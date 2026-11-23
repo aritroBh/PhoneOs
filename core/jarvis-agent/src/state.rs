@@ -78,6 +78,12 @@ pub(crate) struct Pending {
     pub exec: Exec,
     /// For `type`: the check that the text arrived, run on the next observation.
     pub check: Option<TypeCheck>,
+    /// Fifteenth review (R1): the typing part of a `type … submit` was asked as one question
+    /// that also said what its Return does — that question's category and whether it was
+    /// phone only. Its approval covers the Return of the same plan, unless the Return asks
+    /// for more on the screen after the typing (a riskier category, or phone only when the
+    /// typing was not).
+    pub covers_return: Option<(jarvis_proto::RiskCategory, bool, String)>,
 }
 
 /// What a `type` action must leave in its field, checked after the text was typed.

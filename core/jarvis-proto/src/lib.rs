@@ -48,6 +48,6 @@ pub use session::{
     OutcomeStatus, Phase, Progress, QuestionRow, QuestionRowKind, TimedEvent,
 };
 pub use skill::SkillContext;
-pub use task::{AppInfo, SessionConfig, TaskSpec};
+pub use task::{AppInfo, SessionConfig, TaskOrigin, TaskSpec};
 pub use tool::{ParamKind, Tier, ToolCall, ToolParam, ToolResult, ToolSpec};
 pub use ui::{ImageRef, Observation, Orientation, Role, Screen, UiNode};

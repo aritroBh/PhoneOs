@@ -283,6 +283,79 @@ pub fn evaluate_owned(
     typed: &[TypedText],
     owner: &[&str],
 ) -> Decision {
+    evaluate_egress(
+        policy, action, screen, tool, source, tree, typed, owner, false,
+    )
+}
+
+/// Fifteenth review (R1, the typing gate): whether every piece of model-written text
+/// `action` sends out — the text a `type` types (with or without Return), every string
+/// argument of a tool call — is the owner's own words ([`owner_words`], links included).
+/// `open_url` passes the link gate of Rule A instead; other actions send no text.
+pub fn egress_owned(action: &Action, owner: &[&str]) -> bool {
+    match action {
+        Action::Type { text, .. } => owner_words(text, owner),
+        Action::CallTool { args, .. } => {
+            let mut strings = Vec::new();
+            crate::classify::tool_strings(args, &mut strings);
+            strings.iter().all(|s| owner_words(s, owner))
+        }
+        _ => true,
+    }
+}
+
+/// The note a question about model text that is not the owner's carries (R1):
+/// `. This text is not from your request.`
+pub fn not_owner_note() -> QuestionRow {
+    row(QuestionRowKind::Note, &format!(". {MARK_NOT_OWNER}"))
+}
+
+/// The note of a typing that holds profile values the owner marked sensitive (R1, F2):
+/// names the keys, never the values. `keys` are the owner's own key names.
+pub fn sensitive_note(keys: &[&str]) -> QuestionRow {
+    let names: Vec<String> = keys
+        .iter()
+        .take(4)
+        .map(|k| format!("\"{}\"", clean(k, 30)))
+        .collect();
+    let more = keys.len().saturating_sub(names.len());
+    let more = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    row(
+        QuestionRowKind::Note,
+        &format!(
+            ". {MARK_NOT_OWNER}: it types your saved {}{more}, which you marked sensitive",
+            names.join(", ")
+        ),
+    )
+}
+
+/// [`evaluate_owned`], with `sensitive`: the text a `type` types holds a profile value the
+/// owner marked sensitive (the session knows; the gate does not), which always asks, phone
+/// only (fifteenth review, F2).
+///
+/// Fifteenth review: R1 — model text that is not the owner's ([`egress_owned`]) is asked
+/// before it reaches the phone, at least `SendMessage`, unclear (asked whatever the owner
+/// relaxed, phone only), with [`not_owner_note`]; a `type … submit` so asked is one
+/// question that also says what its Return does. R3 — a control that sends by its own
+/// words on a screen showing money is unclear (`Payment` with a payment context on
+/// screen). R4 — a tap on a control inside an alert that is not a plain dismiss is unclear
+/// (`SystemSetting` when the alert reads as a permission prompt), its title quoted.
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_egress(
+    policy: &Policy,
+    action: &Action,
+    screen: &CompactScreen,
+    tool: Option<&ToolSpec>,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+    owner: &[&str],
+    sensitive: bool,
+) -> Decision {
     if let Err(e) = validate_action(action, screen) {
         return Decision::Deny(clean(&e.to_string(), MAX_SUMMARY_CHARS));
     }
@@ -393,6 +466,36 @@ pub fn evaluate_owned(
             unclear = true;
         }
     }
+    // Fifteenth review (R3): a send by its own words on a screen that shows money (any
+    // element's text or value money-shaped or an amount) is a guess; with a payment
+    // context on the screen it is a payment.
+    if !unclear && matches!(read, RiskCategory::SendMessage | RiskCategory::PublicPost) {
+        if let Some(payment) = screen_shows_money(screen) {
+            unclear = true;
+            if payment {
+                category = crate::phrases::max_risk(category, RiskCategory::Payment);
+            }
+        }
+    }
+    // Fifteenth review (R4): a tap on a control inside an alert that is not a plain dismiss
+    // asks, phone only; a permission prompt's is `SystemSetting`.
+    if let Some(alert) = alert_of(action, screen, tree).filter(|a| !a.dismiss) {
+        let floor = if alert.permission {
+            RiskCategory::SystemSetting
+        } else {
+            RiskCategory::Unverified
+        };
+        category = crate::phrases::max_risk(category, floor);
+        unclear = true;
+    }
+    // Fifteenth review (R1): model text that is not the owner's asks before it reaches the
+    // phone (Rule A's links are part of it: `owner_words` checks every link in the text).
+    let not_owner =
+        (sensitive && matches!(action, Action::Type { .. })) || !egress_owned(action, owner);
+    if not_owner {
+        category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
+        unclear = true;
+    }
     let runner_text =
         source == ScreenSource::RunnerText && !matches!(action, Action::CallTool { .. });
     match gate_owned(
@@ -407,9 +510,14 @@ pub fn evaluate_owned(
         Gate::Allow => Decision::Allow,
         Gate::Deny => Decision::Deny(format!("{category:?} actions are not allowed")),
         Gate::Confirm => {
+            let notes = if not_owner {
+                vec![not_owner_note()]
+            } else {
+                Vec::new()
+            };
             let mut request = ConfirmRequest::from_rows(
                 category,
-                question_with(action, screen, category, source, tree, typed),
+                question_noted(action, screen, category, source, tree, typed, &notes),
                 affected_app,
             );
             request.verb = verb_of(action);
@@ -633,11 +741,17 @@ fn navigated_links(action: &Action, screen: &CompactScreen) -> Vec<String> {
         Action::CallTool { args, .. } => {
             let mut strings = Vec::new();
             crate::classify::tool_strings(args, &mut strings);
-            strings
-                .into_iter()
-                .filter(|s| looks_like_url(s) || link_shaped(s))
-                .map(|s| s.trim().to_owned())
-                .collect()
+            let mut links: Vec<String> = Vec::new();
+            for s in strings {
+                if looks_like_url(&s) || link_shaped(&s) {
+                    links.push(s.trim().to_owned());
+                } else {
+                    // Fifteenth review (F6): a link inside a sentence, in brackets or after
+                    // a label is a link too.
+                    links.extend(crate::shape::links_in(&s));
+                }
+            }
+            links
         }
         // Return (`actuation`'s `Return`; matched on the action so other actions pay nothing).
         Action::Type {
@@ -686,7 +800,29 @@ fn submitted_link(field: Option<&Element>, text: &str) -> Option<String> {
         return Some(text.trim().to_owned());
     }
     let f = field.filter(|f| !is_secure_input(f))?;
+    // Fifteenth review: what the field holds once `text` is typed after what it holds (a
+    // link typed in two steps is one link).
+    let all = after_text(Some(f), text);
+    if link_shaped(&all) {
+        return Some(all.trim().to_owned());
+    }
     field_value(f).filter(|v| link_shaped(v)).map(str::to_owned)
+}
+
+/// What field `field` holds after `text` is typed into it (fifteenth review): its value
+/// and then `text`, or its value alone when it already ends with `text` (read on the screen
+/// after the typing). A secure field's or no field's: `text`.
+fn after_text(field: Option<&Element>, text: &str) -> String {
+    let prior = field
+        .filter(|f| !is_secure_input(f) && !f.secure)
+        .and_then(field_value)
+        .unwrap_or_default();
+    let t = text.trim();
+    if !t.is_empty() && prior.ends_with(t) {
+        prior.to_owned()
+    } else {
+        format!("{prior}{text}")
+    }
 }
 
 /// Fewest digits of a plain digit run read as a phone or account number rather than an
@@ -723,6 +859,246 @@ fn own_category(action: &Action, screen: &CompactScreen) -> RiskCategory {
             .map_or(RiskCategory::None, own),
         Actuation::PressUnknown | Actuation::Navigation | Actuation::NoEffect => RiskCategory::None,
     }
+}
+
+/// Words of an element's text that make a screen showing money a payment context (R3).
+const PAYMENT_CONTEXT_WORDS: &[&str] = &[
+    "amount", "total", "fee", "fees", "price", "pay", "payment", "transfer", "balance", "due",
+    "charge", "wallet", "gas",
+];
+
+/// Most characters of an element's text R3 reads.
+const MAX_MONEY_TEXT_CHARS: usize = 200;
+
+/// Fifteenth review (R3): whether anything on `screen` — every element's label and value,
+/// static texts included — is money by shape ([`money_shaped`], [`has_money`]); `Some(true)`
+/// when an element also names a payment context ("Amount", "Network fee", "Total").
+fn screen_shows_money(screen: &CompactScreen) -> Option<bool> {
+    let mut money = false;
+    let mut context = false;
+    for e in &screen.elements {
+        if is_secure_input(e) {
+            continue;
+        }
+        for t in [Some(e.label.as_str()), e.value.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(|t| t.get(..t.len().min(MAX_MONEY_TEXT_CHARS)).unwrap_or(t))
+        {
+            if t.is_empty() {
+                continue;
+            }
+            money |= money_shaped(t) || has_money(t);
+            context |= crate::text::tokens(t)
+                .iter()
+                .any(|w| PAYMENT_CONTEXT_WORDS.contains(&w.as_str()));
+        }
+    }
+    money.then_some(context)
+}
+
+/// A control inside an alert, a system sheet or a notification banner (R4).
+struct AlertTap {
+    /// The alert's title (its label, else its first text), as the screen shows it.
+    title: String,
+    /// It reads as a permission or trust prompt.
+    permission: bool,
+    /// The control's whole label is a plain dismiss ("Cancel", "Don't Allow", …).
+    dismiss: bool,
+}
+
+/// Whole labels of an alert's buttons that only dismiss it (R4: compared whole, folded).
+const ALERT_DISMISS_LABELS: &[&str] = &[
+    "cancel",
+    "don't allow",
+    "dont allow",
+    "do not allow",
+    "not now",
+    "close",
+    "dismiss",
+    "later",
+];
+
+/// Phrases of an alert's texts that make it a permission or trust prompt (R4).
+const PERMISSION_SHAPES: &[&str] = &[
+    "would like to",
+    "wants to",
+    "trust this computer",
+    "track your activity",
+    "paste from",
+    "local network",
+    "bluetooth",
+    "notifications",
+    "your location",
+    "use location",
+    "contacts",
+    "photos",
+    "camera",
+    "microphone",
+    "face id",
+    "allow ",
+];
+
+/// Whether role `role` is an alert container (R4): an alert anywhere; a sheet or a
+/// notification banner on SpringBoard, which owns them.
+fn alert_role(role: &Role, springboard: bool) -> bool {
+    match role {
+        Role::Alert => true,
+        Role::Sheet => springboard,
+        Role::Other(name) => {
+            let n = name.to_lowercase();
+            springboard && (n.contains("banner") || n.contains("notification"))
+        }
+        _ => false,
+    }
+}
+
+/// Fifteenth review (R4): the alert (or SpringBoard sheet or banner) the control `action`
+/// presses sits in — by the raw tree's ancestors' roles (facts from the OS), else a listed
+/// alert whose frame holds the control.
+fn alert_of(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> Option<AlertTap> {
+    let target = match action {
+        Action::Tap { element } | Action::LongPress { element, .. } => screen.get(*element)?,
+        Action::TapPoint { x, y } => crate::classify::tap_point(*x, *y, screen).1?,
+        _ => return None,
+    };
+    if target.role.is_text_input() || target.role == Role::Key || is_alert_like(target, screen) {
+        return None;
+    }
+    let springboard = crate::app::is_springboard(&screen.app_bundle_id);
+    let mut texts: Vec<String> = Vec::new();
+    let mut found = false;
+    if let Some(t) = tree.filter(|t| !t.nodes.is_empty()) {
+        if let Some(container) = t
+            .ancestors(target)
+            .into_iter()
+            .find(|a| crate::hit::raw_node(t, *a).is_some_and(|n| alert_role(&n.role, springboard)))
+        {
+            found = true;
+            let end = usize::try_from(container)
+                .ok()
+                .and_then(|i| t.ends.get(i))
+                .copied()
+                .unwrap_or(container);
+            if let Some(l) = crate::hit::raw_node(t, container).and_then(|n| n.label.clone()) {
+                texts.push(l);
+            }
+            for n in t
+                .nodes
+                .iter()
+                .filter(|n| n.node > container && n.node < end && n.role == Role::StaticText)
+                .take(8)
+            {
+                if let Some(l) = &n.label {
+                    texts.push(l.clone());
+                }
+            }
+            // Listed texts inside it (a raw node's label may be withheld).
+            for e in screen
+                .elements
+                .iter()
+                .filter(|e| e.role == Role::StaticText && t.inside(e, container))
+                .take(8)
+            {
+                texts.push(e.label.clone());
+            }
+        }
+    }
+    if !found {
+        // Without the raw tree (or when the tree places no alert above it): a listed alert
+        // whose frame holds the control, else any listed alert (an alert is modal: what can
+        // be tapped while one is up is the alert's).
+        let c = target.frame.center();
+        let alerts = || {
+            screen
+                .elements
+                .iter()
+                .filter(|e| alert_role(&e.role, springboard))
+        };
+        if tree.is_some_and(|t| !t.nodes.is_empty()) && alerts().all(|a| !a.frame.contains(c)) {
+            return None;
+        }
+        let alert = alerts()
+            .filter(|e| e.frame.contains(c))
+            .min_by(|a, b| a.frame.area().total_cmp(&b.frame.area()))
+            .or_else(|| alerts().next())?;
+        texts.push(alert.label.clone());
+        let inside: Vec<&Element> = screen
+            .elements
+            .iter()
+            .filter(|e| e.role == Role::StaticText && alert.frame.contains(e.frame.center()))
+            .take(8)
+            .collect();
+        let shown: Vec<&Element> = if inside.is_empty() {
+            screen
+                .elements
+                .iter()
+                .filter(|e| e.role == Role::StaticText)
+                .take(3)
+                .collect()
+        } else {
+            inside
+        };
+        texts.extend(shown.into_iter().map(|e| e.label.clone()));
+    }
+    texts.retain(|t| !t.trim().is_empty());
+    texts.dedup();
+    let all = texts.join(" ").to_lowercase().replace('\u{2019}', "'");
+    let permission = PERMISSION_SHAPES.iter().any(|p| all.contains(p));
+    let label: String = crate::text::tokens(&target.label.replace('\u{2019}', "'")).join(" ");
+    let whole = target
+        .label
+        .trim()
+        .trim_matches(|c: char| c.is_ascii_punctuation() && c != '\'')
+        .to_lowercase()
+        .replace('\u{2019}', "'");
+    let dismiss = ALERT_DISMISS_LABELS.contains(&whole.as_str())
+        || ALERT_DISMISS_LABELS.contains(&label.as_str());
+    Some(AlertTap {
+        title: texts.into_iter().next().unwrap_or_default(),
+        permission,
+        dismiss,
+    })
+}
+
+/// Fifteenth review (R4b): whether the control `action` presses is inside an alert, a
+/// SpringBoard sheet or a notification banner (never a home-screen launch).
+pub fn in_alert(action: &Action, screen: &CompactScreen, tree: Option<&ScreenTree<'_>>) -> bool {
+    alert_of(action, screen, tree).is_some()
+}
+
+/// Whether `e` is itself an alert container (a tap on the alert, not on a control in it).
+fn is_alert_like(e: &Element, screen: &CompactScreen) -> bool {
+    alert_role(&e.role, crate::app::is_springboard(&screen.app_bundle_id))
+}
+
+/// The rows a question about a tap inside an alert carries (R4): what it answers, and the
+/// alert's title under `Screen says:` (page provenance: the title is on-screen text).
+fn alert_rows(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> Vec<QuestionRow> {
+    let Some(a) = alert_of(action, screen, tree).filter(|a| !a.dismiss) else {
+        return Vec::new();
+    };
+    let what = if a.permission {
+        MARK_PERMISSION
+    } else {
+        MARK_ALERT
+    };
+    let mut rows = vec![row(QuestionRowKind::Note, &format!(". {what}"))];
+    if !a.title.trim().is_empty() {
+        rows.push(row(
+            QuestionRowKind::ScreenSays,
+            &format!(". {MARK_SCREEN_SAYS}: \"{}\"", clean(&a.title, 80)),
+        ));
+    }
+    rows
 }
 
 /// The control a tap or long press names (a `tap_point`'s is resolved by the classifier and
@@ -848,6 +1224,11 @@ const MARK_TITLE: &str = "screen \"";
 const MARK_SITE: &str = "site \"";
 /// Twelfth review: `. Screen says: N more lines naming a recipient` (was `N not shown`).
 const MARK_MORE_SAYS: &str = "more lines naming a recipient";
+/// Fifteenth review (R1): model text that is not the owner's.
+const MARK_NOT_OWNER: &str = "This text is not from your request";
+/// Fifteenth review (R4): a tap inside an alert.
+const MARK_ALERT: &str = "This answers an alert";
+const MARK_PERMISSION: &str = "This answers a system alert and may grant a permission";
 
 /// Every heading the question writes, each followed by a colon (or ` (N …):`) in a
 /// question (eleventh review: the single source the composer, [`defang`] and the property
@@ -873,6 +1254,9 @@ pub const QUESTION_MARKERS: &[&str] = &[
     MARK_TITLE,
     MARK_SITE,
     MARK_MORE_SAYS,
+    MARK_NOT_OWNER,
+    MARK_ALERT,
+    MARK_PERMISSION,
 ];
 
 /// Twelfth review: the other words the composer writes at the start of the question or of
@@ -968,6 +1352,9 @@ const PHRASE_MARKERS: &[&str] = &[
     MARK_USER_INFO,
     MARK_NEAREST,
     MARK_MORE_SAYS,
+    MARK_NOT_OWNER,
+    MARK_ALERT,
+    MARK_PERMISSION,
 ];
 
 /// Whether `c` reads as a colon ([`crate::text::colon_shaped`]; eleventh review: every
@@ -3365,9 +3752,57 @@ pub fn question_with(
     tree: Option<&ScreenTree<'_>>,
     typed: &[TypedText],
 ) -> Vec<QuestionRow> {
+    question_noted(action, screen, category, source, tree, typed, &[])
+}
+
+/// [`question_with`] with `notes` (fifteenth review: [`not_owner_note`],
+/// [`sensitive_note`]) after the action line, room kept for them within the bound. A tap
+/// inside an alert (R4) states it after the action line too, with the alert's title under
+/// `Screen says:`.
+pub fn question_noted(
+    action: &Action,
+    screen: &CompactScreen,
+    category: RiskCategory,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+    notes: &[QuestionRow],
+) -> Vec<QuestionRow> {
+    let mut notes = notes.to_vec();
+    notes.extend(alert_rows(action, screen, tree));
     with_source(source, |max| {
-        summarize_with(action, screen, category, source, tree, typed, false, max)
+        noted(max, &notes, |room| {
+            summarize_with(
+                action, screen, category, source, tree, typed, false, false, room,
+            )
+        })
     })
+}
+
+/// The rows `build(room)` composes within `max` less the notes, with the notes after the
+/// action line.
+fn noted(
+    max: usize,
+    notes: &[QuestionRow],
+    build: impl Fn(usize) -> Vec<QuestionRow>,
+) -> Vec<QuestionRow> {
+    if notes.is_empty() {
+        return build(max);
+    }
+    let need: usize = notes.iter().map(|r| n_chars(&r.text)).sum();
+    let mut rows = build(max.saturating_sub(need).max(120));
+    // After the action line and what continues its sentence (`, which sends …`).
+    let mut at = rows
+        .iter()
+        .position(|r| r.kind == QuestionRowKind::Action)
+        .map_or(0, |k| k + 1);
+    while rows.get(at).is_some_and(|r| r.text.starts_with(", ")) {
+        at += 1;
+    }
+    for (k, n) in notes.iter().enumerate() {
+        rows.insert(at + k, n.clone());
+    }
+    rows
 }
 
 /// The summary of pressing Return in field `field` after the session typed `text` there (the
@@ -3400,13 +3835,32 @@ pub fn return_question(
     tree: Option<&ScreenTree<'_>>,
     typed: &[TypedText],
 ) -> Vec<QuestionRow> {
+    return_question_noted(field, text, screen, category, source, tree, typed, &[])
+}
+
+/// [`return_question`] with `notes` after the action line (see [`question_noted`]).
+#[allow(clippy::too_many_arguments)]
+pub fn return_question_noted(
+    field: u32,
+    text: &str,
+    screen: &CompactScreen,
+    category: RiskCategory,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+    notes: &[QuestionRow],
+) -> Vec<QuestionRow> {
     let action = Action::Type {
         element: Some(field),
         text: text.to_owned(),
         submit: true,
     };
     with_source(source, |max| {
-        summarize_with(&action, screen, category, source, tree, typed, true, max)
+        noted(max, notes, |room| {
+            summarize_with(
+                &action, screen, category, source, tree, typed, true, false, room,
+            )
+        })
     })
 }
 
@@ -4970,12 +5424,51 @@ fn summarize_with(
     tree: Option<&ScreenTree<'_>>,
     typed: &[TypedText],
     return_only: bool,
+    type_return: bool,
     max: usize,
 ) -> Vec<QuestionRow> {
+    // Fifteenth review (R1): a `type … submit` is asked as one question — the typing and
+    // the Return it presses — with Return's facts read on the screen as it will be after the
+    // typing (the field holding what it holds now and the typed text after it).
+    if !return_only && !type_return {
+        if let Action::Type {
+            element,
+            text,
+            submit: true,
+        } = action
+        {
+            if let Some(t) = type_target(*element, raw)
+                .filter(|t| !text.is_empty() && !is_secure_input(t) && !t.secure)
+            {
+                let value = after_text(Some(t), text);
+                let mut after = raw.clone();
+                if let Some(e) = after.elements.iter_mut().find(|e| e.index == t.index) {
+                    e.value = Some(value.clone());
+                }
+                let mut typed_after = typed.to_vec();
+                typed_after.push(TypedText {
+                    field: t.fingerprint,
+                    text: value,
+                });
+                return summarize_with(
+                    action,
+                    &after,
+                    category,
+                    source,
+                    tree,
+                    &typed_after,
+                    false,
+                    true,
+                    max,
+                );
+            }
+        }
+    }
     // Twelfth review: a bare Return (`type` with no text, `submit`) is worded and sent like
     // Return ("Press Return in …, which sends …"), never `Type "" into …`.
-    let return_only =
-        return_only || matches!(action, Action::Type { text, submit: true, .. } if text.is_empty());
+    let return_only = return_only
+        || type_return
+        || matches!(action, Action::Type { text, submit: true, .. } if text.is_empty());
     // Actions in the foreground app state the screen's facts after the action itself.
     let target_index = match action {
         Action::Tap { element } | Action::LongPress { element, .. } | Action::Clear { element } => {
@@ -5240,8 +5733,15 @@ fn summarize_with(
     let mut room = max;
     // (1) The action.
     let a1 = slots.allot(0, room);
-    let (head, tail, typed_part) =
-        action_slot(action, screen, category, return_only, &title_part, a1);
+    let (head, tail, typed_part) = action_slot(
+        action,
+        screen,
+        category,
+        return_only,
+        type_return,
+        &title_part,
+        a1,
+    );
     room = room.saturating_sub(n_chars(&head) + n_chars(&tail) + n_chars(&typed_part));
     // (2) The amounts.
     let a2 = slots.allot(1, room);
@@ -5417,7 +5917,13 @@ fn debug_rows_hold_their_lines(rows: &[QuestionRow]) {
     if !cfg!(debug_assertions) {
         return;
     }
-    const MARKERS: [(&str, QuestionRowKind); 12] = [
+    const MARKERS: [(&str, QuestionRowKind); 15] = [
+        (
+            ". This text is not from your request",
+            QuestionRowKind::Note,
+        ),
+        (". This answers an alert", QuestionRowKind::Note),
+        (". This answers a system alert", QuestionRowKind::Note),
         (". Amounts on screen", QuestionRowKind::Amount),
         (". To/Account", QuestionRowKind::Recipient),
         (". Screen says", QuestionRowKind::ScreenSays),
@@ -5479,6 +5985,7 @@ fn action_slot(
     screen: &CompactScreen,
     category: RiskCategory,
     return_only: bool,
+    type_return: bool,
     title: &str,
     budget: usize,
 ) -> (String, String, String) {
@@ -5490,15 +5997,25 @@ fn action_slot(
         (16, 12, 16),
     ];
     let typed_part = |cap: usize| match action {
-        Action::Type { element, text, .. } if return_only && !text.is_empty() => format!(
-            ". Typed: {}",
-            typed_words(text, category, type_target(*element, screen), cap)
-        ),
+        Action::Type { element, text, .. } if return_only && !type_return && !text.is_empty() => {
+            format!(
+                ". Typed: {}",
+                typed_words(text, category, type_target(*element, screen), cap)
+            )
+        }
         _ => String::new(),
     };
     let mut last = (String::new(), String::new(), String::new());
     for (label, app, typed) in LEVELS {
-        let (h, mut t) = action_line(action, screen, category, label, app, return_only);
+        let (h, mut t) = action_line(
+            action,
+            screen,
+            category,
+            label,
+            app,
+            return_only,
+            type_return,
+        );
         // The screen's title follows the app's name (eleventh review): `in Messages,
         // screen "Mallory"`.
         if !t.is_empty() {
@@ -5692,6 +6209,7 @@ fn action_line(
     label: usize,
     app: usize,
     return_only: bool,
+    type_return: bool,
 ) -> (String, String) {
     let app_name = screen
         .app_name
@@ -5738,6 +6256,13 @@ fn action_line(
                     .filter(|k| !k.is_empty())
                     .map(|k| format!(" (\"{k}\")"))
                     .unwrap_or_default();
+                if type_return {
+                    // Fifteenth review (R1): the typing and its Return, one question.
+                    return (
+                        format!("Type {what} into {into} and press Return{key}{link}"),
+                        in_app,
+                    );
+                }
                 // What it sends (the field's whole content) and what was typed follow.
                 return (format!("Press Return{key} in {into}{link}"), in_app);
             }

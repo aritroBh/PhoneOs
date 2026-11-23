@@ -332,6 +332,7 @@ mod tests {
         let task = TaskSpec {
             id: "t".to_owned(),
             text: "Turn off Wi-Fi".to_owned(),
+            remote: false,
         };
         JarvisSession::new(config, task, String::new()).unwrap()
     }

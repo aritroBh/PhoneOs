@@ -66,7 +66,9 @@ fn continue_after_typing_into_a_field_whose_placeholder_hid_asks() {
     let cont = index_of(&after, "Continue");
     let r = run(
         config(),
-        "Report the broken item",
+        // Fifteenth review (R1): the request states the words typed (the owner's words are
+        // typed unasked; this test is about what follows the typing).
+        "Report the broken item: Item arrived broken",
         MemoryStore::new(),
         Phone::new(before, move |c, s| {
             if matches!(c, RunnerCommand::TypeText { .. }) {
@@ -214,7 +216,9 @@ fn typing_in_one_app_presumes_nothing_in_another() {
     let done = index_of(&pinned("com.example.shop"), "Done");
     let r = run(
         config(),
-        "Note it and finish in the shop",
+        // Fifteenth review (R1): the request states the words typed (the owner's words are
+        // typed unasked; this test is about what follows the typing).
+        "Note it (On my way) and finish in the shop",
         MemoryStore::new(),
         Phone::new(compose(""), move |c, s| match c {
             RunnerCommand::TypeText { .. } => common::Transition::Go(compose("On my way")),
@@ -233,7 +237,9 @@ fn typing_in_one_app_presumes_nothing_in_another() {
     // The shop seen first, with its note: typing in the chat presumes nothing there.
     let r = run(
         config(),
-        "Note it and finish in the shop",
+        // Fifteenth review (R1): the request states the words typed (the owner's words are
+        // typed unasked; this test is about what follows the typing).
+        "Note it (On my way) and finish in the shop",
         MemoryStore::new(),
         Phone::new(pinned("com.example.shop"), move |c, s| match c {
             RunnerCommand::TypeText { .. } => common::Transition::Go(compose("On my way")),

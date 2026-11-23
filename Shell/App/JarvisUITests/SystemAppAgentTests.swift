@@ -146,8 +146,12 @@ final class SystemAppAgentTests: QATestCase {
                 && request.summary.contains("ada@example.com")
         })
         // The owner names the link in the request: a link the owner did not give is asked
-        // before it is opened (thirteenth review), and this owner would decline it.
-        let outcome = try await run.run(task: "Open \(url) in Safari and fill in the contact form", model: model, owner: owner, firstUseApproval: true)
+        // before it is opened (thirteenth review), and this owner would decline it. The owner
+        // also says what to fill in: text not from the request is asked before it is typed
+        // (fifteenth review, R1), and this owner would decline that too.
+        let task = "Open \(url) in Safari and fill in the contact form with the name Ada Lovelace and the email ada@example.com"
+        let outcome = try await run.run(task: task, model: model, owner: owner, firstUseApproval: true)
+        XCTAssertFalse(owner.confirms.contains { $0.summary.contains("This text is not from your request") }, "the owner's own words were asked: \(owner.confirms)")
         XCTAssertFalse(owner.confirms.contains { $0.summary.contains("Open a link") }, "a link the owner gave was asked: \(owner.confirms)")
         let submitted = await server.waitForSubmission(timeout: .seconds(5))
         let serverLog = server.log.joined(separator: "\n")

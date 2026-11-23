@@ -8,6 +8,14 @@
 //! are pinned by `jarvis-safety/tests/thirteenth_questions.rs`, whose snapshot was written
 //! at c4c1bda.
 //!
+//! Fifteenth review: every text the scenarios type is in their task's words (R1 adds no
+//! question); R4 (a tap inside an alert that is not a plain dismiss asks, phone only, its
+//! title quoted) changes four lines: `login_wrong_password`'s "OK" on the "Incorrect
+//! password" alert is a new question in the structured mode and gains `This answers an
+//! alert. Screen says: "Incorrect password"` in the runner-text mode; `notes_delete`'s
+//! "Delete" on the "Delete Note?" alert gains `This answers an alert. Screen says: "Delete
+//! Note?"` in both modes. 162 questions, now 163.
+//!
 //! `JARVIS_BLESS_QUESTIONS=1` rewrites the snapshot; never do that to make this pass: a
 //! changed question is a behaviour change to review.
 

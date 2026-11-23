@@ -1498,15 +1498,27 @@ impl TryFrom<SessionProgress> for p::Progress {
 
 impl From<p::TaskSpec> for TaskSpec {
     fn from(v: p::TaskSpec) -> Self {
-        let p::TaskSpec { id, text } = v;
-        TaskSpec { id, text }
+        let p::TaskSpec { id, text, origin } = v;
+        TaskSpec {
+            id,
+            text,
+            remote: origin == p::TaskOrigin::Remote,
+        }
     }
 }
 
 impl From<TaskSpec> for p::TaskSpec {
     fn from(v: TaskSpec) -> Self {
-        let TaskSpec { id, text } = v;
-        p::TaskSpec { id, text }
+        let TaskSpec { id, text, remote } = v;
+        p::TaskSpec {
+            id,
+            text,
+            origin: if remote {
+                p::TaskOrigin::Remote
+            } else {
+                p::TaskOrigin::Phone
+            },
+        }
     }
 }
 

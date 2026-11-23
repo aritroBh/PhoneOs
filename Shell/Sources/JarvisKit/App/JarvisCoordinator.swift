@@ -251,7 +251,9 @@ public final class JarvisCoordinator: Sendable {
         attention: any OwnerAttention = NoOwnerAttention(),
         onEvent: @escaping @Sendable (RunEvent) -> Void
     ) async -> TaskRunOutcome {
-        let task = TaskSpec(id: UUID().uuidString, text: text)
+        // Fifteenth review (R2): a task a paired device asked for is not the owner's words for
+        // the typing gate (text Jarvis types for it asks on the phone).
+        let task = TaskSpec(id: UUID().uuidString, text: text, remote: origin.remoteTaskId != nil)
         let screenshots = ScreenshotStore()
         let runner: any PhoneRunner
         let baseModel: any ModelProvider

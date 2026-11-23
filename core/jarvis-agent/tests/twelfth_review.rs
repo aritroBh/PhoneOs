@@ -107,7 +107,9 @@ fn probe12_typing_that_fails_its_check_does_not_set_typed_state() {
     let cont = index_of(&s0, "Continue");
     let r = run(
         config(),
-        "Leave a review",
+        // Fifteenth review (R1): the request states the words typed (the owner's words are
+        // typed unasked; this test is about what follows the typing).
+        "Leave a review: My home adress is 1 Elm St",
         MemoryStore::new(),
         Phone::new(s0, move |c, s| match c {
             // Autocorrect: "adress" -> "address" on every attempt.
@@ -145,7 +147,9 @@ fn probe12_held_return_does_not_set_typed_state() {
     let cont = index_of(&s0, "Continue");
     let r = run(
         config(),
-        "Leave a review",
+        // Fifteenth review (R1): the request states the words typed (the owner's words are
+        // typed unasked; this test is about what follows the typing).
+        "Leave a review: My home address is 1 Elm St",
         MemoryStore::new(),
         Phone::new(s0, move |c, _| match c {
             RunnerCommand::TypeText { .. } => Transition::Go(comment_form(

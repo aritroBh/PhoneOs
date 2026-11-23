@@ -10,6 +10,10 @@
 //! the counts (`cargo test -p jarvis-sim --test overask_measure -- --nocapture`); asserts
 //! only that the trees load. The numbers before and after a rule change are in
 //! `docs/ARCHITECTURE.md` (Known gaps).
+//!
+//! Fifteenth review: also taps on controls inside an alert (by the raw tree's roles), and a
+//! plain `type` (no Return) of the owner's words and of other words into every text input
+//! (R1: other words ask before they are typed).
 
 use jarvis_observe::compact_view;
 use jarvis_proto::{Action, Direction, Policy, Role};
@@ -30,6 +34,9 @@ fn over_asking_on_real_trees() {
     }];
     let policy = Policy::default();
     let mut totals = [0usize; 7];
+    // Fifteenth review: alert controls, alert taps that ask; inputs, owner's words typed that
+    // ask, other words typed that ask.
+    let mut fifteen = [0usize; 5];
     for f in &fixtures {
         let v = compact_view(&f.screen);
         let tree = ScreenTree {
@@ -71,6 +78,20 @@ fn over_asking_on_real_trees() {
                 &owner,
             )
         };
+        let in_alert = |e: &jarvis_proto::Element| {
+            let mut at = v
+                .sources
+                .get(e.index as usize - 1)
+                .and_then(|s| v.parents.get(*s as usize))
+                .copied();
+            while let Some(n) = at.filter(|n| *n != u32::MAX) {
+                if v.nodes.iter().any(|r| r.node == n && r.role == Role::Alert) {
+                    return true;
+                }
+                at = v.parents.get(n as usize).copied();
+            }
+            false
+        };
         let mut extra = [0usize; 5];
         let mut row = [0usize; 7];
         for e in v.screen.elements.iter().filter(|e| {
@@ -78,6 +99,10 @@ fn over_asking_on_real_trees() {
         }) {
             row[0] += 1;
             let tap = Action::Tap { element: e.index };
+            if in_alert(e) {
+                fifteen[0] += 1;
+                fifteen[1] += usize::from(asks(&owned(&policy, &tap, &state)));
+            }
             row[1] += usize::from(asks(&gate(&tap, &[])));
             row[2] += usize::from(asks(&gate(&tap, &state)));
             extra[0] += usize::from(
@@ -108,6 +133,15 @@ fn over_asking_on_real_trees() {
             returns.1 += usize::from(asks(&gate(&ret, &[])));
         }
         for e in v.screen.elements.iter().filter(|e| e.role.is_text_input()) {
+            fifteen[2] += 1;
+            for (k, text) in [(3, "weather Paris"), (4, "cheap flights")] {
+                let typing = Action::Type {
+                    element: Some(e.index),
+                    text: text.to_owned(),
+                    submit: false,
+                };
+                fifteen[k] += usize::from(asks(&owned(&policy, &typing, &[])));
+            }
             extra[2] += 1;
             for (k, text) in [(3, "weather Paris"), (4, "cheap flights")] {
                 let ret = Action::Type {
@@ -143,5 +177,9 @@ fn over_asking_on_real_trees() {
     println!(
         "TOTAL controls {} | tap asks {} / {} with state | swipe right {} / {} | swipe up {} / {}",
         totals[0], totals[1], totals[2], totals[3], totals[4], totals[5], totals[6]
+    );
+    println!(
+        "TOTAL alert controls {} (taps that ask {}) | text inputs {}: type owner's words asks {}, other words asks {}",
+        fifteen[0], fifteen[1], fifteen[2], fifteen[3], fifteen[4]
     );
 }

@@ -105,6 +105,7 @@ fn drive(
         TaskSpec {
             id: "probe".to_owned(),
             text: "probe".to_owned(),
+            remote: false,
         },
         String::new(),
     )

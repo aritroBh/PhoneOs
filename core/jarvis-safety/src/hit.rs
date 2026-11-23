@@ -385,7 +385,7 @@ pub(crate) fn in_bar_with_back(
 }
 
 /// The drawn raw node with index `i`, if it is drawn (nodes are in node order).
-fn raw_node<'t>(tree: &ScreenTree<'t>, i: u32) -> Option<&'t RawNode> {
+pub(crate) fn raw_node<'t>(tree: &ScreenTree<'t>, i: u32) -> Option<&'t RawNode> {
     tree.nodes
         .binary_search_by(|n| n.node.cmp(&i))
         .ok()

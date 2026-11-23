@@ -7,6 +7,18 @@ use crate::policy::Policy;
 use crate::skill::SkillContext;
 use crate::tool::ToolSpec;
 
+/// Where a task's request came from (fifteenth review, R2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskOrigin {
+    /// Typed or spoken on the phone itself: the owner's own words.
+    #[default]
+    Phone,
+    /// Sent by a paired remote device: not the owner's words for the typing gate (text the
+    /// model types for it asks on the phone).
+    Remote,
+}
+
 /// What the user asked for.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct TaskSpec {
@@ -14,15 +26,27 @@ pub struct TaskSpec {
     pub id: String,
     /// The request in the user's words.
     pub text: String,
+    /// Where the request came from (absent from JSON written before the fifteenth review:
+    /// the phone).
+    #[serde(default)]
+    pub origin: TaskOrigin,
 }
 
 impl TaskSpec {
-    /// Creates a task.
+    /// Creates a task started on the phone.
     pub fn new(id: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             text: text.into(),
+            origin: TaskOrigin::Phone,
         }
+    }
+
+    /// This task, started from `origin`.
+    #[must_use]
+    pub fn from_origin(mut self, origin: TaskOrigin) -> Self {
+        self.origin = origin;
+        self
     }
 }
 

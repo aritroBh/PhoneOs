@@ -69,7 +69,7 @@ pub fn system_prompt() -> String {
          - If a listed tool can do the task, call_tool is better than tapping.\n\
          - type taps the field first. submit:true presses Return; in a message field Return \
          does not send: tap the Send button.\n\
-         - To search, type the owner's own words from the task; other words need the owner's approval.\n\
+         - Text you type that is not taken from the owner's request is shown to the owner before it is typed, so prefer the owner's own words.\n\
          - Each step says what changed on screen. Do not redo a step that worked.\n\
          - \"… more below\" means the list continues: scroll before deciding something is missing.\n\
          - A line ending \"(under the tab bar: scroll)\" or \"(covered)\" is hidden under a bar, the keyboard or another element: scroll to bring it clear before tapping it, or the tap is refused.\n\
