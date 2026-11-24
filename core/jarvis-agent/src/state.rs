@@ -100,6 +100,12 @@ pub(crate) struct Pending {
 pub(crate) struct FlowAsk {
     /// Where the input goes (seventeenth review: every place it may reach — usually one).
     pub targets: Vec<jarvis_safety::FlowContext>,
+    /// Twentieth review (R20-A): the destinations the question names (with more than one
+    /// destination it names them instead of "here"; as many as fit): an approval allows the
+    /// named sources into these only.
+    pub dests: Vec<jarvis_safety::FlowContext>,
+    /// Twentieth review (R20-A): what an approval keeps.
+    pub keep: Keep,
     /// The contexts read in this task (or held on the clipboard, for a paste) not yet
     /// allowed into `targets` that the question names: exactly what its approval allows.
     pub sources: Vec<jarvis_safety::FlowContext>,
@@ -111,6 +117,22 @@ pub(crate) struct FlowAsk {
     /// The question is asked for the flow alone (the action would otherwise run unasked):
     /// its decline blocks this flow only, never a risk category.
     pub only: bool,
+}
+
+/// Twentieth review (R20-A): what approving a flow question keeps. A kept approval never
+/// covers a stronger kind of input than the one the owner was shown, and only the places the
+/// question named.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Keep {
+    /// Shown for a scroll: a scroll-only grant for each named pair, for the task.
+    Scroll,
+    /// Shown for a full input with exactly one decidable destination: a full grant, for the
+    /// task.
+    Full,
+    /// A swipe, `press_home`, an undecidable destination, or any other input with more than
+    /// one destination: the named pairs for this action only (a typing and its Return are
+    /// one action).
+    Action,
 }
 
 /// What a `type` action must leave in its field, checked after the text was typed.

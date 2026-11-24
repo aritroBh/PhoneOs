@@ -336,6 +336,52 @@ pub const FLOW_NAMES_BUDGET: usize = 200;
 /// task; Jarvis asks about them next)`): they stay unallowed, and the next question names
 /// them. Nothing is summed up as "and N more".
 pub fn flow_note_fit(places: &[String]) -> (QuestionRow, usize) {
+    let (row, named, _) = flow_note_into(places, &[]);
+    (row, named)
+}
+
+/// Twentieth review (R20-A, rule 5): [`flow_note_fit`] for an input with more than one
+/// destination (`dests`, display names; with fewer than two the note says "here" as
+/// before): the note names them too instead of "here" — `. Jarvis has read Messages in this
+/// task; what it read there could be passed on here, into Mail and all web content in Mail
+/// (Jarvis cannot tell its parts apart)` — as many as fit [`FLOW_NAMES_BUDGET`] (at least
+/// one; Jarvis's own words never shortened), and says how many more it reaches when some
+/// do not fit (`(it reaches 1 more place; Jarvis asks about it next if needed)`). Returns
+/// the row, how many sources and how many destinations it named: an approval allows exactly
+/// the named sources into the named destinations.
+pub fn flow_note_into(places: &[String], dests: &[String]) -> (QuestionRow, usize, usize) {
+    let (list, named) = fit_names(places);
+    let mut text = format!(". Jarvis has read {list} in this task; {MARK_FLOW}");
+    let mut named_dests = dests.len().min(1);
+    if dests.len() > 1 {
+        let (into, n) = fit_names(dests);
+        named_dests = n;
+        text.push_str(&format!(", into {into}"));
+    }
+    let rest = places.len().saturating_sub(named);
+    if rest > 0 {
+        let what = if rest == 1 { "place" } else { "places" };
+        text.push_str(&format!(
+            " (it read {rest} more {what} in this task; Jarvis asks about them next)"
+        ));
+    }
+    let more = dests.len().saturating_sub(named_dests);
+    if more > 0 {
+        let (what, it) = if more == 1 {
+            ("place", "it")
+        } else {
+            ("places", "them")
+        };
+        text.push_str(&format!(
+            " (it reaches {more} more {what}; Jarvis asks about {it} next if needed)"
+        ));
+    }
+    (row(QuestionRowKind::Flow, &text), named, named_dests)
+}
+
+/// The names of a flow note: as many of `places` (in order) as fit [`FLOW_NAMES_BUDGET`]
+/// (at least one), joined `A, B and C`, and how many.
+fn fit_names(places: &[String]) -> (String, usize) {
     let mut names: Vec<String> = Vec::new();
     let mut used = 0usize;
     for p in places {
@@ -365,15 +411,7 @@ pub fn flow_note_fit(places: &[String]) -> (QuestionRow, usize) {
         Some((last, [])) => last.clone(),
         Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
     };
-    let mut text = format!(". Jarvis has read {list} in this task; {MARK_FLOW}");
-    let rest = places.len().saturating_sub(named);
-    if rest > 0 {
-        let what = if rest == 1 { "place" } else { "places" };
-        text.push_str(&format!(
-            " (it read {rest} more {what} in this task; Jarvis asks about them next)"
-        ));
-    }
-    (row(QuestionRowKind::Flow, &text), named)
+    (list, named)
 }
 
 /// Seventeenth review: the note of a question about an edit-menu item that may hand the
@@ -472,6 +510,29 @@ pub fn evaluate_flowing(
     owner: &[&str],
     sensitive: bool,
     tainted: bool,
+) -> Decision {
+    evaluate_sheeted(
+        policy, action, screen, tool, source, tree, typed, owner, sensitive, tainted, None,
+    )
+}
+
+/// [`evaluate_flowing`], knowing from the raw tree whether a share sheet is up
+/// (`share_sheet`, twentieth review R20-B: [`crate::ScreenPlaces::share_sheet`], kept sticky
+/// by the session; `None` without a raw tree: the listed elements decide,
+/// [`crate::share_sheet_control`]).
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_sheeted(
+    policy: &Policy,
+    action: &Action,
+    screen: &CompactScreen,
+    tool: Option<&ToolSpec>,
+    source: ScreenSource,
+    tree: Option<&ScreenTree<'_>>,
+    typed: &[TypedText],
+    owner: &[&str],
+    sensitive: bool,
+    tainted: bool,
+    share_sheet: Option<bool>,
 ) -> Decision {
     if let Err(e) = validate_action(action, screen) {
         return Decision::Deny(clean(&e.to_string(), MAX_SUMMARY_CHARS));
@@ -622,7 +683,7 @@ pub fn evaluate_flowing(
     // party's extension, titled as it likes).
     let hands_on = inserts.is_none()
         && (crate::flow::handoff_control(action, screen, tree)
-            || crate::flow::share_sheet_control(action, screen, tree));
+            || crate::flow::share_sheet_control(action, screen, tree, share_sheet));
     if hands_on {
         category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
         unclear = true;

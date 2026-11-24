@@ -292,6 +292,18 @@ struct Chrome {
     outside: bool,
     /// [`Chrome::outside`] not counting the address-like nodes.
     outside_not_address: bool,
+    /// Twentieth review (R20-B): a raw `Sheet` outside every web view, shown or not.
+    sheet: bool,
+    /// Twentieth review (R20-B): a raw `Sheet` outside every web view whose subtree holds the
+    /// OS's "AirDrop" node — shown, hidden, scrolled away or wholly off the screen.
+    share_sheet: bool,
+}
+
+/// Twentieth review (R20-B): whether a raw node is the share sheet's "AirDrop" row (whole
+/// label, trimmed, ASCII case ignored; "Air Drop" too).
+fn airdrop_label(l: &str) -> bool {
+    let l = l.trim();
+    l.eq_ignore_ascii_case("airdrop") || l.eq_ignore_ascii_case("air drop")
 }
 
 /// The labels a browser gives its address field (lower-cased, whole label).
@@ -346,13 +358,16 @@ fn off_screen(n: &UiNode, bounds: &jarvis_proto::Rect) -> bool {
 }
 
 /// The host an address bar's value shows (`‎example.com`, `https://a.b/c`), lower-cased;
-/// `None` when the value is not a host (a title, a search, empty).
+/// `None` when the value is not a host (a title, a search, empty). Twentieth review: only
+/// whitespace and invisible characters at either end are dropped (Safari's leading
+/// left-to-right mark); a value with one inside (`bank.example login`) is not read as a
+/// host (fail closed: was stripped to `bank.examplelogin`).
 pub(crate) fn host_of(value: &str) -> Option<String> {
-    let v: String = value
-        .chars()
-        .filter(|c| !c.is_whitespace() && !crate::text::is_invisible(*c))
-        .collect();
-    let v = v.trim();
+    let edge = |c: char| c.is_whitespace() || crate::text::is_invisible(c);
+    let v = value.trim_matches(edge);
+    if v.chars().any(edge) {
+        return None;
+    }
     let v = v.split_once("://").map_or(v, |(_, rest)| rest);
     let v = v.split(['/', '?', '#']).next().unwrap_or_default();
     let v = v.rsplit_once('@').map_or(v, |(_, h)| h);
@@ -400,12 +415,20 @@ fn alert_like_role(role: &Role) -> bool {
 /// wholly off `bounds` are not shown to the model and are not counted.
 fn scan_chrome(root: &UiNode, bounds: &jarvis_proto::Rect) -> Chrome {
     let mut out = Chrome::default();
-    // Each node with whether no ancestor (nor itself) is hidden.
-    let mut stack: Vec<(&UiNode, bool)> = vec![(root, true)];
-    while let Some((n, shown)) = stack.pop() {
+    // Each node with whether no ancestor (nor itself) is hidden, and whether a `Sheet` holds
+    // it (itself included).
+    let mut stack: Vec<(&UiNode, bool, bool)> = vec![(root, true, false)];
+    while let Some((n, shown, in_sheet)) = stack.pop() {
         if n.role == Role::WebView {
             out.webview = true;
             continue;
+        }
+        // Twentieth review (R20-B): the share sheet is decided from the raw tree whether or
+        // not its "AirDrop" row is on screen, hidden or scrolled away.
+        let in_sheet = in_sheet || n.role == Role::Sheet;
+        out.sheet |= in_sheet;
+        if in_sheet && n.label.as_deref().is_some_and(airdrop_label) {
+            out.share_sheet = true;
         }
         // An alert, sheet or banner anywhere makes a home screen a read (unchanged, fail
         // closed whether or not it is shown).
@@ -413,7 +436,7 @@ fn scan_chrome(root: &UiNode, bounds: &jarvis_proto::Rect) -> Chrome {
             out.alert_like = true;
         }
         let shown = shown && !pruned(n);
-        stack.extend(n.children.iter().map(|c| (c, shown)));
+        stack.extend(n.children.iter().map(|c| (c, shown, in_sheet)));
         if !shown || off_screen(n, bounds) {
             continue;
         }
@@ -649,6 +672,11 @@ pub struct ScreenPlaces {
     webviews: Vec<u32>,
     /// The screen is something Jarvis read (not an icons-only home screen).
     read: bool,
+    /// Twentieth review (R20-B): the raw tree holds a `Sheet` outside every web view.
+    sheet: bool,
+    /// Twentieth review (R20-B): the raw tree holds a `Sheet` outside every web view whose
+    /// subtree holds the OS's "AirDrop" node, on screen or not.
+    share_sheet: bool,
 }
 
 impl Default for ScreenPlaces {
@@ -662,11 +690,26 @@ impl Default for ScreenPlaces {
             ambiguous: Vec::new(),
             webviews: Vec::new(),
             read: false,
+            sheet: false,
+            share_sheet: false,
         }
     }
 }
 
 impl ScreenPlaces {
+    /// Twentieth review (R20-B): the raw tree holds a `Sheet` (outside every web view).
+    pub fn shows_sheet(&self) -> bool {
+        self.sheet
+    }
+
+    /// Twentieth review (R20-B): the raw tree holds a share sheet — a `Sheet` (outside every
+    /// web view) whose subtree holds the OS's "AirDrop" node, whether that node is on
+    /// screen, hidden or scrolled away. The session keeps it sticky
+    /// ([`share_sheet_control`]).
+    pub fn share_sheet(&self) -> bool {
+        self.share_sheet
+    }
+
     /// The place of everything outside every web view (also for an icons-only home screen,
     /// which is not a read): the app, in a listed browser its chrome.
     pub fn base(&self) -> &FlowContext {
@@ -873,8 +916,22 @@ pub fn observed_places(
     source: ScreenSource,
     view: Option<(&[u32], &[u32], &[u32])>,
 ) -> ScreenPlaces {
-    let app = raw.app_bundle_id.trim().to_lowercase();
     let chrome = scan_chrome(&raw.root, &raw.bounds());
+    let mut places = places_of(raw, compact, source, view, &chrome);
+    places.sheet = chrome.sheet;
+    places.share_sheet = chrome.share_sheet;
+    places
+}
+
+/// [`observed_places`] from the chrome walk.
+fn places_of(
+    raw: &Screen,
+    compact: &CompactScreen,
+    source: ScreenSource,
+    view: Option<(&[u32], &[u32], &[u32])>,
+    chrome: &Chrome,
+) -> ScreenPlaces {
+    let app = raw.app_bundle_id.trim().to_lowercase();
     if is_springboard(&app) && !chrome.alert_like && home_icons_only(compact) {
         return ScreenPlaces {
             base: FlowContext::App(app),
@@ -985,6 +1042,8 @@ pub fn observed_places(
         ambiguous,
         webviews: webviews.to_vec(),
         read: true,
+        sheet: false,
+        share_sheet: false,
     }
 }
 
@@ -1025,8 +1084,33 @@ pub struct Confinement {
     seq: u64,
     clipboard: BTreeSet<FlowContext>,
     allowed: BTreeMap<FlowContext, BTreeSet<FlowContext>>,
+    /// Twentieth review (R20-A): flows allowed for scrolls only (a question shown for a
+    /// scroll was approved): a later scroll does not ask, any other input does.
+    scroll_allowed: BTreeMap<FlowContext, BTreeSet<FlowContext>>,
     declined: BTreeMap<FlowContext, BTreeSet<FlowContext>>,
     ambiguous: BTreeSet<FlowContext>,
+}
+
+/// Twentieth review (R20-A): the kind of input a flow question is shown for, weakest first.
+/// An approval kept for a kind never covers a stronger one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InputKind {
+    /// `Action::Scroll`: a direction only.
+    Scroll,
+    /// Everything else: a tap, long press, typing, clear, Return, a tool call, `open_app`,
+    /// `open_url`, a home-screen launch, a swipe, `press_home`.
+    Full,
+}
+
+impl InputKind {
+    /// The kind of `action`.
+    pub fn of(action: &Action) -> InputKind {
+        if matches!(action, Action::Scroll { .. }) {
+            InputKind::Scroll
+        } else {
+            InputKind::Full
+        }
+    }
 }
 
 impl Confinement {
@@ -1050,7 +1134,12 @@ impl Confinement {
             return;
         }
         self.allowed.remove(&context);
-        for sources in self.allowed.values_mut() {
+        self.scroll_allowed.remove(&context);
+        for sources in self
+            .allowed
+            .values_mut()
+            .chain(self.scroll_allowed.values_mut())
+        {
             sources.remove(&context);
         }
     }
@@ -1095,6 +1184,23 @@ impl Confinement {
         self.allowed.get(target).is_some_and(|a| a.contains(source))
     }
 
+    /// Whether `source` may reach `target` with an input of `kind`: a full grant covers
+    /// every kind, a scroll grant scrolls only (twentieth review, R20-A).
+    fn allowed_kind(&self, target: &FlowContext, source: &FlowContext, kind: InputKind) -> bool {
+        self.allowed_into(target, source)
+            || (kind == InputKind::Scroll
+                && self
+                    .scroll_allowed
+                    .get(target)
+                    .is_some_and(|a| a.contains(source)))
+    }
+
+    /// The order a source was last read in (0: never read, e.g. only on the clipboard);
+    /// higher is more recent.
+    pub fn recency(&self, context: &FlowContext) -> u64 {
+        self.read.get(context).copied().unwrap_or(0)
+    }
+
     /// The contexts whose content may flow into `target` and that the owner has not allowed
     /// into it in this task: what was read (and, with `pasting`, what the clipboard may
     /// hold), but `target` itself unless it covers all of itself ([`Self::is_ambiguous`]).
@@ -1114,12 +1220,24 @@ impl Confinement {
         pasting: bool,
         self_source: bool,
     ) -> Vec<FlowContext> {
+        self.unallowed_kind(targets, pasting, self_source, InputKind::Full)
+    }
+
+    /// [`Self::unallowed_into`] for an input of `kind` (twentieth review: a scroll is allowed
+    /// by a scroll grant too).
+    pub fn unallowed_kind(
+        &self,
+        targets: &[FlowContext],
+        pasting: bool,
+        self_source: bool,
+        kind: InputKind,
+    ) -> Vec<FlowContext> {
         let clip = self.clipboard.iter().filter(|_| pasting);
         let mut out: Vec<FlowContext> = Vec::new();
         for target in targets {
             for c in self.read.keys().chain(clip.clone()) {
                 if (c == target && !self_source && !self.is_ambiguous(c))
-                    || self.allowed_into(target, c)
+                    || self.allowed_kind(target, c, kind)
                     || out.contains(c)
                 {
                     continue;
@@ -1142,6 +1260,18 @@ impl Confinement {
     pub fn allow_into(&mut self, targets: &[FlowContext], sources: &[FlowContext]) {
         for t in targets.iter().filter(|t| **t != FlowContext::Unknown) {
             self.allowed
+                .entry(t.clone())
+                .or_default()
+                .extend(sources.iter().cloned());
+        }
+    }
+
+    /// Twentieth review (R20-A): the owner approved a question shown for a scroll: `sources`
+    /// may reach each of `targets` by later scrolls for the rest of the task, not by any
+    /// other input. Nothing is kept for [`FlowContext::Unknown`].
+    pub fn allow_scroll_into(&mut self, targets: &[FlowContext], sources: &[FlowContext]) {
+        for t in targets.iter().filter(|t| **t != FlowContext::Unknown) {
+            self.scroll_allowed
                 .entry(t.clone())
                 .or_default()
                 .extend(sources.iter().cloned());
@@ -1299,16 +1429,23 @@ pub fn handoff_control(
 /// whose title the extension chooses ("Copy", "Close") — so a press there always asks,
 /// phone only, whatever its label (the hand-on items' rule, [`handoff_control`]).
 ///
-/// What a share sheet is rests on the roles the code knows, nothing else: a raw ancestor
-/// of the pressed control with role `Sheet` whose subtree lists an element whose whole
-/// label is "AirDrop" (the OS's row; the repository holds no real share-sheet tree, so this
-/// is an open device spike). Without the raw tree, any press on a screen that lists an
-/// "AirDrop" element asks, and so does a `tap_point` that resolves to nothing listed while
-/// one is listed (fail closed).
+/// What a share sheet is rests on the roles the code knows, nothing else: a raw `Sheet`
+/// whose subtree holds a node whose whole label is "AirDrop" (the OS's row; the repository
+/// holds no real share-sheet tree, so this is an open device spike).
+///
+/// Twentieth review (R20-B): `share` is that fact decided from the raw tree by whoever holds
+/// it ([`ScreenPlaces::share_sheet`]: the AirDrop node counts whether it is on screen,
+/// hidden or scrolled away; the session keeps it sticky while a `Sheet` stays up in the same
+/// app, for cell reuse that drops the row from the tree). With `Some(true)`, every press
+/// asks (on the sheet, or beside it, which the sheet covers or which dismisses it: an
+/// over-ask, never an under-ask); with `Some(false)`, no press is a share-sheet press. With
+/// `None` (no raw tree), the listed elements decide: a press on a screen that lists an
+/// "AirDrop" element asks, under a `Sheet` when the tree's shape is known.
 pub fn share_sheet_control(
     action: &Action,
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
+    share: Option<bool>,
 ) -> bool {
     // Only a press can be one (typing, Return, drags: nothing to scan).
     let el = match actuation(action, screen) {
@@ -1316,15 +1453,17 @@ pub fn share_sheet_control(
         Actuation::PressUnknown => None,
         _ => return false,
     };
-    // The OS's whole label "AirDrop" (or "Air Drop"), compared without allocating: one pass
-    // over the listed elements.
+    // From the raw tree: while a share sheet is up, every press asks (on the sheet or
+    // beside it: what lies beside it is covered or dismisses it; never fewer questions).
+    if let Some(share) = share {
+        return share;
+    }
+    // Without the raw tree: the OS's whole label "AirDrop" (or "Air Drop") among the listed
+    // elements, one pass.
     let airdrop: Vec<&Element> = screen
         .elements
         .iter()
-        .filter(|e| {
-            let l = e.label.trim();
-            l.eq_ignore_ascii_case("airdrop") || l.eq_ignore_ascii_case("air drop")
-        })
+        .filter(|e| airdrop_label(&e.label))
         .collect();
     if airdrop.is_empty() {
         return false;
@@ -1368,6 +1507,13 @@ mod tests {
         assert_eq!(host_of("Search or enter website name"), None);
         assert_eq!(host_of(""), None);
         assert_eq!(host_of("Apple"), None);
+        // Twentieth review: whitespace or an invisible character inside fails closed.
+        assert_eq!(host_of("bank.example login"), None);
+        assert_eq!(host_of("bank.\u{200B}example"), None);
+        assert_eq!(
+            host_of(" \u{200E}bank.example ").as_deref(),
+            Some("bank.example")
+        );
     }
 
     #[test]

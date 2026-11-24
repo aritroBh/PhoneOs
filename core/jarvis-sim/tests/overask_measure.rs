@@ -267,7 +267,12 @@ fn flow_contexts_on_real_trees() {
             if !confine.unallowed_into(&dests, false, false).is_empty() {
                 first_tap_asks += 1;
             }
-            if jarvis_safety::share_sheet_control(&a, &v.screen, Some(&tree)) {
+            if jarvis_safety::share_sheet_control(
+                &a,
+                &v.screen,
+                Some(&tree),
+                Some(places.share_sheet()),
+            ) {
                 share_sheet += 1;
             }
             if places

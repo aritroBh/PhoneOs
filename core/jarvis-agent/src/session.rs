@@ -125,13 +125,14 @@ use jarvis_proto::{
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
     approval_context, check_app, check_app_name, check_confinement, control_at, copy_control,
-    egress_owned, evaluate_flowing, first_use_app, first_use_request, flow_checked, flow_note_fit,
+    egress_owned, evaluate_sheeted, first_use_app, first_use_request, flow_checked, flow_note_into,
     handoff_control, handoff_note, home_view, in_alert, insert_control, is_springboard,
     label_names_denied_app, not_owner_note, observed_places, paste_note, point_is_clear,
     question_noted, redact, redact_screen, return_question_noted, sanitize_screen_text,
     search_names_denied_app, sensitive_note, touches_screen, url_destination, verb_of,
     widget_names_denied_app, Budget, BudgetVerdict, Confinement, Covered, CoveredBy, Decision,
-    FlowContext, PointError, ScreenPlaces, ScreenSource, ScreenTree, TypedText, Verdict,
+    FlowContext, InputKind, PointError, ScreenPlaces, ScreenSource, ScreenTree, TypedText, Verdict,
+    COVERS_ALL, COVERS_ALL_PREFIX, SCREEN_PICTURE,
 };
 
 use crate::act::{Out, TypedState};
@@ -148,8 +149,8 @@ use crate::profile::{
 use crate::prompt::{self, PromptParts, ACTION_MAX_TOKENS};
 use crate::schema::{action_gbnf, action_json_schema};
 use crate::state::{
-    ApprovalLook, Exec, FlowAsk, FocusCheck, Late, ObservePurpose, Pending, PlanBasis, Resume,
-    Settle, Source, Stage, State, TypeCheck,
+    ApprovalLook, Exec, FlowAsk, FocusCheck, Keep, Late, ObservePurpose, Pending, PlanBasis,
+    Resume, Settle, Source, Stage, State, TypeCheck,
 };
 use crate::tools::{check_call, relevant, signature, MAX_TOOLS};
 use crate::typing::{check_typed, correction_deletes, TypedVerdict};
@@ -570,7 +571,16 @@ pub struct Session {
     /// it is decided again after a partial approval (so the next question names the rest,
     /// and does not repeat the first), and for the Return of the `type … submit` whose
     /// typing was approved. Cleared when the next action is proposed.
-    action_allowed: Vec<FlowContext>,
+    /// Twentieth review (R20-A): (destination, source) pairs, for every approval that keeps
+    /// nothing for the task ([`Keep::Action`]: a swipe, `press_home`, an input with more
+    /// than one destination, an undecidable one).
+    action_allowed: Vec<(FlowContext, FlowContext)>,
+    /// Twentieth review (R20-B): the app (lower-cased bundle id) whose look last showed a
+    /// share sheet in the raw tree; cleared by a look that shows no `Sheet` at all.
+    share_sticky: Option<String>,
+    /// Twentieth review (R20-B): the current look is a share sheet — its raw tree holds one,
+    /// or it still shows a `Sheet` in the app of [`Self::share_sticky`].
+    share_here: bool,
 }
 
 impl std::fmt::Debug for Session {
@@ -738,6 +748,8 @@ impl Session {
             screen_locked: false,
             prior_approval: None,
             action_allowed: Vec::new(),
+            share_sticky: None,
+            share_here: false,
         }
     }
 
@@ -823,7 +835,7 @@ impl Session {
         decided: &Action,
         tool: Option<&ToolSpec>,
     ) -> Decision {
-        evaluate_flowing(
+        evaluate_sheeted(
             &self.config.policy,
             executed,
             &self.current.screen,
@@ -834,6 +846,7 @@ impl Session {
             &self.owner_texts(),
             !self.sensitive_keys(decided).is_empty(),
             self.confine.read_set().next().is_some(),
+            Some(self.share_here),
         )
     }
 
@@ -1226,12 +1239,25 @@ impl Session {
                     // for the rest of the task.
                     None => {
                         if let Some(f) = &pending.flow {
-                            self.confine.allow_into(&f.targets, &f.sources);
-                            // Eighteenth review: into an undecidable destination nothing is
-                            // kept for the task; the approval covers this action only (a
-                            // typing and its Return are one action).
-                            if f.targets.contains(&FlowContext::Unknown) {
-                                self.action_allowed.extend(f.sources.iter().cloned());
+                            // Twentieth review (R20-A): a kept approval never covers a
+                            // stronger kind of input than the one shown, and only the places
+                            // the question named. Eighteenth review: into an undecidable
+                            // destination nothing is kept for the task; the approval covers
+                            // this action only (a typing and its Return are one action) —
+                            // since the twentieth, so does one for a swipe, `press_home` or
+                            // any other input with more than one destination.
+                            match f.keep {
+                                Keep::Scroll => {
+                                    self.confine.allow_scroll_into(&f.dests, &f.sources)
+                                }
+                                Keep::Full => self.confine.allow_into(&f.dests, &f.sources),
+                                Keep::Action => {
+                                    for d in &f.dests {
+                                        for s in &f.sources {
+                                            self.action_allowed.push((d.clone(), s.clone()));
+                                        }
+                                    }
+                                }
                             }
                             // Seventeenth review: the approval allowed only the places it
                             // named; the action is decided again, and the next question
@@ -2152,6 +2178,17 @@ impl Session {
             Some((&view.webviews, &view.ends, &view.sources)),
         );
         self.here = self.places.base().clone();
+        // Twentieth review (R20-B): a share sheet is decided from the raw tree, and stays one
+        // while a `Sheet` is up in the same app (cell reuse can drop its AirDrop row from the
+        // tree), until a look shows no `Sheet` at all.
+        let front = obs.screen.app_bundle_id.trim().to_lowercase();
+        if self.places.share_sheet() {
+            self.share_sticky = Some(front.clone());
+        } else if !self.places.shows_sheet() {
+            self.share_sticky = None;
+        }
+        self.share_here = self.places.share_sheet()
+            || (self.places.shows_sheet() && self.share_sticky.as_deref() == Some(&front));
         if !self.own_hidden {
             self.exposed.extend(self.places.read_places());
             // Eighteenth review (E5b): an embedded class that holds more than one document
@@ -3219,24 +3256,63 @@ impl Session {
             return Ok(None);
         }
         let pasting = insert_control(gate, &self.current.screen, Some(&self.tree())).is_some();
-        let mut sources = self.confine.unallowed_into(&targets, pasting, self_source);
+        // Twentieth review (R20-A): a scroll is allowed by a scroll grant too; any other
+        // input only by a full one.
+        let kind = InputKind::of(gate);
         // A launch from the home screen of a known installed app (an icon or an app result
         // the core resolves to a known app): the home screen's own content is not counted as
         // a source for the app it opens; a banner or an alert read there is, at the first
         // input into that app (asked there). Eighteenth review (E6): only then — a row that
         // is a website or a search, a search's top hit, an icon Jarvis cannot name or a tap
         // it cannot resolve keeps every place read, the home screen included.
-        if matches!(home, Some(HomeLaunch::App { .. })) {
-            sources.retain(|c| *c != self.here);
-        }
-        // Sources the owner allowed into an undecidable destination for this action (no
-        // approval is kept for one beyond it).
-        if targets.contains(&FlowContext::Unknown) {
-            sources.retain(|c| !self.action_allowed.contains(c));
-        }
+        let launch = matches!(home, Some(HomeLaunch::App { .. }));
+        // Per destination, the sources not yet allowed into it — less the pairs the owner
+        // allowed for this action only (no approval is kept for them beyond it).
+        let per: Vec<(FlowContext, Vec<FlowContext>)> = targets
+            .iter()
+            .map(|t| {
+                let mut s = self.confine.unallowed_kind(
+                    std::slice::from_ref(t),
+                    pasting,
+                    self_source,
+                    kind,
+                );
+                if launch {
+                    s.retain(|c| *c != self.here);
+                }
+                s.retain(|c| !self.action_allowed.iter().any(|(d, a)| d == t && a == c));
+                (t.clone(), s)
+            })
+            .collect();
+        let recent = |v: &mut Vec<FlowContext>| {
+            v.sort_by(|a, b| {
+                self.confine
+                    .recency(b)
+                    .cmp(&self.confine.recency(a))
+                    .then(a.cmp(b))
+            });
+        };
+        let union = |per: &[&(FlowContext, Vec<FlowContext>)]| {
+            let mut out: Vec<FlowContext> = Vec::new();
+            for (_, s) in per {
+                for c in s {
+                    if !out.contains(c) {
+                        out.push(c.clone());
+                    }
+                }
+            }
+            out
+        };
+        // The destinations that receive an unallowed source first (named first when not all
+        // fit), then the rest.
+        let mut order: Vec<&(FlowContext, Vec<FlowContext>)> =
+            per.iter().filter(|(_, s)| !s.is_empty()).collect();
+        order.extend(per.iter().filter(|(_, s)| s.is_empty()));
+        let mut sources = union(&order);
         if sources.is_empty() {
             return Ok(None);
         }
+        recent(&mut sources);
         if self.confine.is_declined_into(&targets, &sources) {
             let target = targets
                 .first()
@@ -3246,13 +3322,42 @@ impl Session {
                 self.flow_names(&sources).join(", "),
             )));
         }
+        // Twentieth review (R20-A): what an approval keeps — a scroll keeps scroll-only
+        // grants; a full input with one decidable destination a full grant; a swipe,
+        // `press_home`, an undecidable destination or any other input with more than one
+        // destination this action only.
+        let keep = match gate {
+            _ if targets.contains(&FlowContext::Unknown) => Keep::Action,
+            Action::Scroll { .. } => Keep::Scroll,
+            Action::Swipe { .. } | Action::PressHome => Keep::Action,
+            _ if targets.len() > 1 => Keep::Action,
+            _ => Keep::Full,
+        };
         // Seventeenth review: the question names every place its approval allows, most
-        // recently read first; what does not fit is asked next.
-        let (note, named) = flow_note_fit(&self.flow_names(&sources));
-        let partial = named < sources.len();
+        // recently read first; what does not fit is asked next. Twentieth review (R20-A,
+        // rule 5): with more than one destination it names them too, instead of "here", as
+        // many as fit; the sources it names are those not allowed into a named destination
+        // (so every approval allows a pair that was not allowed: no question repeats).
+        let (dests, note, named) = if targets.len() > 1 {
+            let dest_names: Vec<String> = order.iter().map(|(t, _)| self.flow_name(t)).collect();
+            let (_, _, fit) = flow_note_into(&[], &dest_names);
+            let named_dests: Vec<&(FlowContext, Vec<FlowContext>)> =
+                order.iter().take(fit.max(1)).copied().collect();
+            sources = union(&named_dests);
+            recent(&mut sources);
+            let (note, named, _) = flow_note_into(&self.flow_names(&sources), &dest_names);
+            let dests: Vec<FlowContext> = named_dests.iter().map(|(t, _)| t.clone()).collect();
+            (dests, note, named)
+        } else {
+            let (note, named, _) = flow_note_into(&self.flow_names(&sources), &[]);
+            (targets.clone(), note, named)
+        };
+        let partial = named < sources.len() || dests.len() < targets.len();
         sources.truncate(named);
         Ok(Some(FlowAsk {
             targets,
+            dests,
+            keep,
             sources,
             partial,
             note,
@@ -3330,10 +3435,19 @@ impl Session {
     /// ambiguous embedded class by a name that covers all of it).
     fn flow_name(&self, context: &FlowContext) -> String {
         if self.confine.is_ambiguous(context) {
-            context.display_covering(|b| self.app_name_ci(b))
+            context.display_covering(|b| self.place_app_name(b))
         } else {
-            context.display(|b| self.app_name_ci(b))
+            context.display(|b| self.place_app_name(b))
         }
+    }
+
+    /// Twentieth review (R20-C): an app's display name as a flow question shows it — its
+    /// bundle id (an OS fact) instead when the name could read as a list of places or as
+    /// Jarvis's own words: it holds `, `, ` and `, `;`, starts with the covering prefix, or
+    /// holds the covering suffix's or the screen picture's words.
+    fn place_app_name(&self, bundle_id: &str) -> Option<String> {
+        self.app_name_ci(bundle_id)
+            .filter(|n| !name_reads_as_list(n))
     }
 
     /// [`Self::flow_name`] of each of `contexts`.
@@ -4483,6 +4597,26 @@ fn typing_part(action: &Action, stage: Stage) -> Action {
 
 /// Seventeenth review: the key of the places an input goes to (`FlowContext::key`, sorted,
 /// joined with `|`): what a recorded step stores and a replay compares.
+/// Twentieth review (R20-C): whether an app's display name could read, in a flow question,
+/// as a list of places or as Jarvis's own words (compared ignoring case): it holds `, `,
+/// ` and ` or `;`, starts with [`COVERS_ALL_PREFIX`], or holds the words of [`COVERS_ALL`]
+/// or of [`SCREEN_PICTURE`]. Hosts cannot hold any of these (`host_of` takes no space).
+fn name_reads_as_list(name: &str) -> bool {
+    let n = name.trim().to_lowercase();
+    let words = |s: &str| {
+        s.trim()
+            .trim_matches(|c| c == '(' || c == ')')
+            .trim()
+            .to_lowercase()
+    };
+    n.contains(", ")
+        || n.contains(" and ")
+        || n.contains(';')
+        || n.starts_with(COVERS_ALL_PREFIX)
+        || n.contains(&words(COVERS_ALL))
+        || n.contains(&words(SCREEN_PICTURE.split('(').next().unwrap_or_default()))
+}
+
 fn place_key(places: &[FlowContext]) -> String {
     let mut keys: Vec<String> = places.iter().map(FlowContext::key).collect();
     keys.sort();

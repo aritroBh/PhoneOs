@@ -30,6 +30,13 @@
 //! Spotlight screen also lists a website row titled like a known app (`<app>, Website,
 //! help.example`: not that app, an undecidable launch).
 //!
+//! Twentieth review (R20-A): the oracle knows the kinds of input. A question shown for a
+//! scroll keeps, when approved, a scroll-only grant for each pair it named (a later scroll
+//! does not ask, any other input does); a full input with one decidable destination keeps a
+//! full grant; `press_home`, an undecidable destination and any other input with more than
+//! one destination keep nothing beyond the action. A question for an input with more than
+//! one destination names every destination (`, into A and B`).
+//!
 //! Invariant, checked on every effect:
 //! - no runner command and no tool call reaches a destination place while the read set holds
 //!   a source for it the owner has not allowed into it in this task (sources: every place
@@ -503,8 +510,10 @@ fn named(summary: &str) -> Vec<String> {
 struct Oracle {
     read: BTreeSet<Ctx>,
     allowed: BTreeMap<Ctx, BTreeSet<Ctx>>,
-    /// Allowed into an undecidable destination for the action being carried out.
-    for_action: BTreeSet<Ctx>,
+    /// Twentieth review: allowed for scrolls only.
+    scroll_allowed: BTreeMap<Ctx, BTreeSet<Ctx>>,
+    /// (destination, source) pairs allowed for the action being carried out only.
+    for_action: BTreeSet<(Ctx, Ctx)>,
     /// Embedded classes that held more than one document.
     ambiguous: BTreeSet<Ctx>,
 }
@@ -513,13 +522,21 @@ impl Oracle {
     /// The sources that may not reach `dest` (section 1: a place is not a source for itself,
     /// except a tool that is not self-contained and a covering embedded class; nineteenth
     /// review: no one-way relation, every other place read is a source).
-    fn unallowed(&self, dest: &Ctx) -> BTreeSet<Ctx> {
+    fn unallowed(&self, dest: &Ctx, scroll: bool) -> BTreeSet<Ctx> {
         self.read
             .iter()
             .filter(|r| {
                 let itself = *r == dest && !dest.self_source(&self.ambiguous);
-                let for_action = *dest == Ctx::Unknown && self.for_action.contains(*r);
-                !itself && !for_action && !self.allowed.get(dest).is_some_and(|a| a.contains(*r))
+                let for_action = self.for_action.contains(&(dest.clone(), (*r).clone()));
+                let by_scroll = scroll
+                    && self
+                        .scroll_allowed
+                        .get(dest)
+                        .is_some_and(|a| a.contains(*r));
+                !itself
+                    && !for_action
+                    && !by_scroll
+                    && !self.allowed.get(dest).is_some_and(|a| a.contains(*r))
             })
             .cloned()
             .collect()
@@ -694,8 +711,10 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                         "seed {seed}: {cmd:?} sent after a declined flow question"
                     );
                 }
+                // A scroll is the only action the generator sends as a drag.
+                let scroll = matches!(cmd, RunnerCommand::Swipe { .. });
                 for dest in dests {
-                    let bad = oracle.unallowed(&dest);
+                    let bad = oracle.unallowed(&dest, scroll);
                     assert!(
                         bad.is_empty(),
                         "seed {seed} (confirm empty: {confirm_nothing}): {cmd:?} into {dest:?} while {bad:?} not allowed (read {:?}, allowed {:?})",
@@ -726,7 +745,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                     !declined_since_infer,
                     "seed {seed}: tool call after a decline"
                 );
-                let bad = oracle.unallowed(&dest);
+                let bad = oracle.unallowed(&dest, false);
                 assert!(
                     bad.is_empty(),
                     "seed {seed}: tool call {} while {bad:?} not allowed",
@@ -748,8 +767,32 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                         !dests.is_empty(),
                         "seed {seed}: a flow question for {last_action}"
                     );
-                    let bad: BTreeSet<Ctx> =
-                        dests.iter().flat_map(|d| oracle.unallowed(d)).collect();
+                    let v: serde_json::Value = serde_json::from_str(&last_action).unwrap();
+                    let kind = v["action"].as_str().unwrap_or_default().to_owned();
+                    let scroll = kind == "scroll";
+                    let bad: BTreeSet<Ctx> = dests
+                        .iter()
+                        .flat_map(|d| oracle.unallowed(d, scroll))
+                        .collect();
+                    // Twentieth review (R20-A, rule 5): more than one destination: every
+                    // one is named instead of "here".
+                    if dests.len() > 1 {
+                        let tail = &req.summary[req.summary.find(FLOW).unwrap() + FLOW.len()..];
+                        assert!(tail.starts_with(", into "), "seed {seed}: {}", req.summary);
+                        for d in &dests {
+                            assert!(
+                                tail.contains(&d.name(&oracle.ambiguous)),
+                                "seed {seed}: {d:?} not named: {}",
+                                req.summary
+                            );
+                        }
+                    } else {
+                        assert!(
+                            !req.summary.contains(&format!("{FLOW}, into ")),
+                            "seed {seed}: {}",
+                            req.summary
+                        );
+                    }
                     let dest = &dests;
                     // Asked only when a source may not reach it; every one named, no "more".
                     assert!(
@@ -789,10 +832,22 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                             .into_iter()
                             .filter(|c| names.contains(&c.name(&oracle.ambiguous)))
                             .collect();
+                        // Twentieth review (R20-A): what the approval keeps.
+                        let action_only = dests.contains(&Ctx::Unknown)
+                            || kind == "press_home"
+                            || (!scroll && dests.len() > 1);
                         for d in dests.iter().cloned() {
-                            if d == Ctx::Unknown {
+                            if action_only {
                                 // Nothing kept beyond this action.
-                                oracle.for_action.extend(srcs.iter().cloned());
+                                for c in &srcs {
+                                    oracle.for_action.insert((d.clone(), c.clone()));
+                                }
+                            } else if scroll {
+                                oracle
+                                    .scroll_allowed
+                                    .entry(d)
+                                    .or_default()
+                                    .extend(srcs.iter().cloned());
                             } else {
                                 oracle
                                     .allowed
