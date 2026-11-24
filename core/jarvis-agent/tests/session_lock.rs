@@ -993,7 +993,11 @@ fn dropped_characters_are_deleted_and_typed_once_more_before_submitting() {
                 text: "milk".into(),
                 expect: None
             },
-            // "ml" arrived: two characters deleted, typed again.
+            // "ml" arrived: one settle wait and a second look (still "ml", so the value
+            // is stable), then two characters deleted, typed again.
+            RunnerCommand::Wait {
+                ms: jarvis_agent::TYPING_LOOK_MS
+            },
             del.clone(),
             del,
             RunnerCommand::TypeText {

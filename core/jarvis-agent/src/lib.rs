@@ -43,5 +43,6 @@ pub use prompt::{system_prompt, ACTION_MAX_TOKENS};
 pub use schema::{action_examples, action_gbnf, action_json_schema, action_names};
 pub use session::{
     Session, APPROVAL_SETTLE_MS, MAX_MODEL_RETRIES, MAX_REPLANS, MAX_STALE_APPROVALS,
+    MAX_TYPING_LOOKS, TYPING_LOOK_MS,
 };
 pub use typing::{check_typed, correction_deletes, MismatchKind, TypedVerdict};

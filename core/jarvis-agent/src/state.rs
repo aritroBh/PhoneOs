@@ -127,6 +127,12 @@ pub(crate) struct TypeCheck {
     pub placeholder: Option<String>,
     /// Whether the one corrective attempt (delete, type again) has been made.
     pub retried: bool,
+    /// The field's value at the previous mismatching reading of this verification (`None`
+    /// before the first): a correction is sent only when two readings in a row are equal.
+    pub last: Option<String>,
+    /// Extra looks taken so far for this verification (at most
+    /// [`crate::session::MAX_TYPING_LOOKS`]); they are not steps.
+    pub looks: u32,
 }
 
 impl std::fmt::Debug for Pending {
@@ -153,6 +159,7 @@ impl std::fmt::Debug for TypeCheck {
             .field("typed_chars", &self.typed.chars().count())
             .field("field", &self.field)
             .field("retried", &self.retried)
+            .field("looks", &self.looks)
             .finish_non_exhaustive()
     }
 }
@@ -332,6 +339,12 @@ pub(crate) enum State {
         /// The look it prepares.
         look: Box<ApprovalLook>,
     },
+    /// `Effect::Act` is outstanding for the settle wait before another look at a typed field
+    /// that did not match yet (see `Session::verify_typing`). A `Verify` observation follows.
+    AwaitingTypeWait {
+        /// The typing under verification (its check holds the readings so far).
+        pending: Box<Pending>,
+    },
     /// `Effect::CallTool` is outstanding.
     AwaitingTool {
         /// The call being executed.
@@ -375,7 +388,9 @@ impl State {
             State::Idle => "not started",
             State::AwaitingObservation { .. } => "waiting for an observation",
             State::AwaitingModel { .. } => "waiting for the model",
-            State::AwaitingAct { .. } | State::AwaitingRelook { .. } => "waiting for the runner",
+            State::AwaitingAct { .. }
+            | State::AwaitingRelook { .. }
+            | State::AwaitingTypeWait { .. } => "waiting for the runner",
             State::AwaitingTool { .. } => "waiting for a tool result",
             State::AwaitingConfirm { .. } => "waiting for a confirmation",
             State::AwaitingAnswer { .. } => "waiting for an answer",
@@ -391,6 +406,7 @@ impl State {
             State::AwaitingObservation {
                 purpose: ObservePurpose::Verify(_),
             } => Phase::Verifying,
+            State::AwaitingTypeWait { .. } => Phase::Verifying,
             State::AwaitingObservation { .. } | State::AwaitingRelook { .. } => Phase::Observing,
             State::AwaitingModel { .. } => Phase::Thinking,
             State::AwaitingAct { .. } => Phase::Acting,

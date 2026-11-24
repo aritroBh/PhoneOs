@@ -192,6 +192,12 @@ pub const APPROVAL_SETTLE_MS: u64 = 500;
 /// Most looks at the home screen's search results before a held-back Return: it is pressed
 /// once two looks in a row show the same results, and not at all if they keep changing.
 pub const MAX_SETTLE_LOOKS: u32 = 3;
+/// Most extra looks at a typed field that does not match yet (each after
+/// [`TYPING_LOOK_MS`]): a correction needs two equal mismatching readings in a row, and a
+/// field still changing after these looks is reported, not corrected.
+pub const MAX_TYPING_LOOKS: u32 = 3;
+/// The settle wait before each extra look at a typed field.
+pub const TYPING_LOOK_MS: u64 = 400;
 /// Characters of tool output or answers kept in the history.
 const MAX_RESULT_CHARS: usize = 300;
 /// Known app names listed when `open_app` names an unknown app.
@@ -908,6 +914,9 @@ impl Session {
                 fresh,
             } => self.on_act(now, queue, pending, fresh, event, state_name),
             State::AwaitingRelook { look } => self.on_relook(now, look, event, state_name),
+            State::AwaitingTypeWait { pending } => {
+                self.on_type_wait(now, pending, event, state_name)
+            }
             State::AwaitingTool { pending } => self.on_tool(now, pending, event, state_name),
             State::AwaitingConfirm {
                 pending,
@@ -1424,6 +1433,12 @@ impl Session {
                 self.approval_interrupted(look.pending),
                 by_event.then_some(Late::Act),
             ),
+            // The wait before another look at the typed field: as a lock during that look
+            // (the text was typed; what the field holds is unknown).
+            State::AwaitingTypeWait { pending } => {
+                self.unknown_result(&pending, prompt::RESULT_LOCK_UNVERIFIED);
+                (Resume::Decide, by_event.then_some(Late::Act))
+            }
             State::AwaitingTool { pending } => (Resume::Decide, Some(Late::Tool(pending))),
             State::AwaitingConfirm {
                 pending,
@@ -3505,12 +3520,29 @@ impl Session {
             }
             TypedVerdict::Mismatch { kind, found } => (kind, found),
         };
+        // Never correct (or report) from a single reading: the accessibility value can lag
+        // the keystrokes (a simulator run showed "A" for "Ada", which a correction turned
+        // into "AdAda"). Look again after a settle wait until two readings in a row are
+        // equal; a value still changing after MAX_TYPING_LOOKS looks is reported as it
+        // stands, never corrected. The extra looks are not steps and cost one `Wait` and
+        // one observation each, only on a mismatch.
+        let stable = check
+            .last
+            .as_deref()
+            .is_some_and(|l| Some(l) == after.as_deref());
+        if !stable && check.looks < MAX_TYPING_LOOKS {
+            check.last = after.clone();
+            check.looks = check.looks.saturating_add(1);
+            pending.check = Some(check);
+            return self.type_look(pending);
+        }
         // Fifteenth review (F5): the correction's Deletes and retype go to the focused field,
         // so only while no other text input has focus.
         let focused_here = check
             .field
             .is_none_or(|fp| focus_is(&self.current.screen, fp));
-        if !check.retried && focused_here {
+        if stable && !check.retried && focused_here {
+            // Computed from the stable reading: exactly what was appended to the prior value.
             let deletes = after.as_deref().and_then(|a| {
                 correction_deletes(
                     check.prior.as_deref(),
@@ -3531,6 +3563,9 @@ impl Session {
                     expect: None,
                 });
                 check.retried = true;
+                // The verification after the correction starts its readings afresh.
+                check.last = None;
+                check.looks = 0;
                 pending.check = Some(check);
                 return self.continue_act(queue, pending);
             }
@@ -3561,6 +3596,28 @@ impl Session {
         );
         self.record_failure(&pending, &msg);
         self.decide(now)
+    }
+
+    /// The settle wait before another look at a typed field (see `verify_typing`).
+    fn type_look(&mut self, pending: Pending) -> Out {
+        self.state = State::AwaitingTypeWait {
+            pending: Box::new(pending),
+        };
+        self.emit(RunnerCommand::Wait { ms: TYPING_LOOK_MS }, None)
+    }
+
+    /// The runner's reply to the wait before another look at a typed field: look (a failed
+    /// wait changes nothing). A refusal because the phone is locked is a lock during that
+    /// look.
+    fn on_type_wait(&mut self, now: u64, pending: Box<Pending>, event: Event, state: &str) -> Out {
+        let Event::ActResult(result) = event else {
+            return self.protocol_error(now, &event, state);
+        };
+        if result.is_device_locked() {
+            let state = State::AwaitingTypeWait { pending };
+            return self.interrupt(now, state, LockSignal::Reply, false);
+        }
+        self.observe(ObservePurpose::Verify(pending), false)
     }
 
     /// Whether the home-screen label `label` is a denied app's app result or icon (see
@@ -4375,6 +4432,8 @@ fn type_check(
         prior: target.and_then(|e| e.value.clone()),
         placeholder: target.and_then(|e| e.placeholder.clone()),
         retried: false,
+        last: None,
+        looks: 0,
     };
     (queue, Some(check))
 }
