@@ -87,6 +87,14 @@ struct AppsView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("apps.endpointsToggle")
             if showEndpoints {
+                // Text runner: every action on its screens asks first. Jarvis runner: the
+                // typed tree from Jarvis's own runner (docs/JARVIS-RUNNER.md).
+                Picker("Runner", selection: $model.settings.runnerKind) {
+                    Text("Text runner").tag(RunnerKind.textRunner)
+                    Text("Jarvis runner").tag(RunnerKind.jarvis)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("apps.runnerKind")
                 LabeledField(label: "Runner URL", text: $model.settings.runnerBaseURL, identifier: "apps.runnerURL")
                 LabeledField(label: "Model base URL", text: $model.settings.modelBaseURL, identifier: "apps.modelURL")
                 LabeledField(label: "Model name", text: $model.settings.modelName, identifier: "apps.modelName")

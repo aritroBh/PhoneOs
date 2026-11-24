@@ -18,8 +18,9 @@ struct RunnerObservationRecord {
     var snapshotMs: Int
 }
 
-/// `PhoneRunner` over public XCUITest API, running inside the UI-test process (the
-/// simulator QA harness; on a device the LoopCtrl runner plays this part).
+/// `PhoneRunner` over public XCUITest API, running inside a UI-test process: the
+/// simulator QA harness (JarvisUITests), and the JarvisRunner bundle that serves it to the
+/// app over the authenticated loopback protocol (docs/JARVIS-RUNNER.md).
 ///
 /// ## Threading
 /// XCUITest calls are synchronous and must run on the main thread: they block while

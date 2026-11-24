@@ -30,6 +30,11 @@
 //!   stream), `replay(action:nowMs:reduceMotion:)`, `replayStatus()`, `generation()`;
 //!   `viewerWireVersion()` ([`JarvisViewer`]; the logic is the `jarvis-viewer` crate,
 //!   records carry a `Core` prefix so they never collide with the shell's `Viewer*` types).
+//! - `JarvisRunnerClientChannel(key:entropy:)` (the app) and
+//!   `JarvisRunnerServerChannel(key:entropy:)` (Jarvis's own runner process): the
+//!   authenticated loopback runner protocol (`start`, `receive`, `request`, `reply`,
+//!   `isOpen`), plus `runnerProtocolVersion()` ([`JarvisRunnerClientChannel`]; the logic is
+//!   the `jarvis-runner` crate, shell duties in `runner_channel.rs`).
 //! - Free functions: `actionJsonSchema()`, `actionGbnf()`, `systemPrompt()`,
 //!   `coreVersion()`, `parseRunnerTextToScreen(snapshot:)`, `defaultPolicy()`,
 //!   `defaultModelProfile()`, `defaultSessionConfig()`, and for the Live view
@@ -66,6 +71,7 @@ mod guard;
 mod live_remote;
 mod remote;
 mod runner;
+mod runner_channel;
 mod session;
 mod skills;
 pub mod types;
@@ -77,6 +83,12 @@ pub use live_remote::{CoreDeltaApplied, CoreResyncReason, CoreViewerFed};
 pub use remote::{
     never_remote_approve, new_device_remote_permissions, remote_min_entropy_len,
     remote_protocol_version, remotely_approvable, JarvisRemoteClient, JarvisRemoteHub,
+};
+pub use runner_channel::{
+    runner_protocol_version, JarvisRunnerClientChannel, JarvisRunnerServerChannel,
+    RunnerChannelProblem, RunnerClientEvent, RunnerOutgoingRequest, RunnerServerEvent,
+    RunnerWireLockState, RunnerWireReply, RunnerWireRequest, RunnerWireScreenshot,
+    RunnerWireSnapshot,
 };
 pub use session::JarvisSession;
 pub use skills::JarvisSkills;

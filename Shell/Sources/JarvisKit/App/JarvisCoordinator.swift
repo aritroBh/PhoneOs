@@ -152,6 +152,15 @@ public final class JarvisCoordinator: Sendable {
     public let approvalFrames: ApprovalFrameStore
     /// Test seam: the runner of a demo run (default `DemoPhone(delay:lockedPolls:)`).
     private let demoRunner: (@Sendable (Duration, Int) -> any PhoneRunner)?
+    /// Jarvis's own runner for a live run with `JarvisSettings.runnerKind == .jarvis`: the
+    /// app passes a factory building `JarvisRunnerClient` over its loopback connector;
+    /// `nil` from it (or no factory) means no runner key is set up, and the run does not
+    /// start. Never replaced by the text runner.
+    private let jarvisRunner: (@Sendable () -> (any PhoneRunner)?)?
+
+    /// Why a run with Jarvis's own runner did not start: no key on this phone.
+    public static let jarvisRunnerMissing =
+        "Jarvis's own runner is chosen, but it is not set up on this phone (no runner key). Start the Jarvis runner once, or choose the text runner in Apps."
 
     /// `agentBundleId`: Jarvis's own bundle id. The app passes `Bundle.main.bundleIdentifier`
     /// (an OS fact; the core also treats ids extending it with a `.` suffix — its extensions
@@ -166,12 +175,13 @@ public final class JarvisCoordinator: Sendable {
         demoLockedPolls: Int = 0,
         maxLockedWaitOverrideMs: UInt64? = nil,
         viewerFrames: ViewerFrameStore = ViewerFrameStore(),
-        approvalFrames: ApprovalFrameStore = ApprovalFrameStore()
+        approvalFrames: ApprovalFrameStore = ApprovalFrameStore(),
+        jarvisRunner: (@Sendable () -> (any PhoneRunner)?)? = nil
     ) {
         self.init(
             paths: paths, selection: selection, agentBundleId: agentBundleId, tools: tools, configuration: configuration,
             demoDelay: demoDelay, demoLockedPolls: demoLockedPolls, maxLockedWaitOverrideMs: maxLockedWaitOverrideMs,
-            viewerFrames: viewerFrames, approvalFrames: approvalFrames, demoRunner: nil
+            viewerFrames: viewerFrames, approvalFrames: approvalFrames, demoRunner: nil, jarvisRunner: jarvisRunner
         )
     }
 
@@ -187,11 +197,13 @@ public final class JarvisCoordinator: Sendable {
         maxLockedWaitOverrideMs: UInt64?,
         viewerFrames: ViewerFrameStore,
         approvalFrames: ApprovalFrameStore,
-        demoRunner: (@Sendable (Duration, Int) -> any PhoneRunner)?
+        demoRunner: (@Sendable (Duration, Int) -> any PhoneRunner)?,
+        jarvisRunner: (@Sendable () -> (any PhoneRunner)?)? = nil
     ) {
         self.paths = paths
         self.approvalFrames = approvalFrames
         self.demoRunner = demoRunner
+        self.jarvisRunner = jarvisRunner
         self.viewerFrames = viewerFrames
         self.selection = selection
         self.agentBundleId = agentBundleId
@@ -271,10 +283,17 @@ public final class JarvisCoordinator: Sendable {
                 baseModel = try ModelBackendFactory.make(settings: settings, screenshots: screenshots)
                 // Best effort, never awaited: the server evaluates the fixed prompt prefix meanwhile.
                 if let system = try? systemPrompt() { startPromptWarmUp(for: baseModel, system: system) }
-                let runnerURL = try ModelBackendFactory.validURL(settings.runnerBaseURL)
-                // LoopCtrl can say whether the screen is locked (`device_info`): check it after
-                // every command, so a tap that landed on the lock screen is not trusted.
-                runner = LockCheckingRunner(LoopCtrlRunner(configuration: LoopCtrlRunner.Configuration(baseURL: runnerURL)))
+                switch settings.runnerKind {
+                case .textRunner:
+                    let runnerURL = try ModelBackendFactory.validURL(settings.runnerBaseURL)
+                    // LoopCtrl can say whether the screen is locked (`device_info`): check it after
+                    // every command, so a tap that landed on the lock screen is not trusted.
+                    runner = LockCheckingRunner(LoopCtrlRunner(configuration: LoopCtrlRunner.Configuration(baseURL: runnerURL)))
+                case .jarvis:
+                    // Jarvis's runner checks the lock before and after every command itself.
+                    guard let own = jarvisRunner?() else { return .notStarted(Self.jarvisRunnerMissing) }
+                    runner = own
+                }
             } catch {
                 return .notStarted(String(describing: error))
             }

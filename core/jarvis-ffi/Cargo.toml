@@ -45,6 +45,7 @@ jarvis-agent.workspace = true
 jarvis-memory.workspace = true
 jarvis-skills.workspace = true
 jarvis-remote.workspace = true
+jarvis-runner.workspace = true
 jarvis-safety.workspace = true
 jarvis-viewer.workspace = true
 serde_json.workspace = true

@@ -5,6 +5,13 @@
 # Fixed names (CI depends on them): project Jarvis, app target Jarvis (dev.jarvis.app),
 # UI-test target JarvisUITests (dev.jarvis.app.uitests), shared scheme Jarvis.
 #
+# Jarvis's own runner (docs/JARVIS-RUNNER.md): the UI-test target JarvisRunner
+# (dev.jarvis.app.runner) serves the typed tree to the app over authenticated loopback.
+# It shares App/RunnerXCUITest (the XCUITest runner) with JarvisUITests and
+# App/RunnerNetwork (loopback TCP) with both test bundles and the app. The Jarvis scheme
+# builds it for testing but never runs it; its own scheme JarvisRunner runs it with
+# JARVIS_RUNNER_SERVE=1.
+#
 # The local package is this directory (Package.swift): products JarvisKit and JarvisCore.
 # Its JarvisCoreFFI.xcframework must exist first (scripts/bootstrap.sh on a Mac).
 #
@@ -46,6 +53,7 @@ targets:
     platform: iOS
     sources:
       - path: App/Jarvis
+      - path: App/RunnerNetwork
     info:
       path: App/Generated/Jarvis-Info.plist
       properties:
@@ -88,9 +96,30 @@ targets:
     platform: iOS
     sources:
       - path: App/JarvisUITests
+      - path: App/RunnerXCUITest
+      - path: App/RunnerNetwork
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.jarvis.app.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Jarvis
+    dependencies:
+      - target: Jarvis
+      - package: JarvisKit
+        product: JarvisKit
+      - package: JarvisKit
+        product: JarvisCore
+
+  JarvisRunner:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: App/JarvisRunner
+      - path: App/RunnerXCUITest
+      - path: App/RunnerNetwork
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.jarvis.app.runner
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: Jarvis
     dependencies:
@@ -106,6 +135,9 @@ schemes:
       targets:
         Jarvis: all
         JarvisUITests: [test]
+        # Compiled with the tests so CI catches its errors; not in the test action, so
+        # never run here.
+        JarvisRunner: [test]
     run:
       config: Debug
     test:
@@ -115,3 +147,17 @@ schemes:
         - name: JarvisUITests
     archive:
       config: Release
+
+  # Starts Jarvis's own runner: one long-running UI test that serves until stopped.
+  JarvisRunner:
+    build:
+      targets:
+        Jarvis: all
+        JarvisRunner: [test]
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - name: JarvisRunner
+      environmentVariables:
+        JARVIS_RUNNER_SERVE: "1"

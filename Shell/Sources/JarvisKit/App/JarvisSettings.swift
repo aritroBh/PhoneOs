@@ -147,6 +147,16 @@ public enum ModelBackendKind: String, Codable, CaseIterable, Sendable {
     case openAICompatible = "openai_compatible"
 }
 
+/// Which runner drives the phone.
+public enum RunnerKind: String, Codable, CaseIterable, Sendable {
+    /// The third-party runner's JSON-RPC surface and text tree (`LoopCtrlRunner`). Every
+    /// state-changing action on a text screen asks first.
+    case textRunner = "text_runner"
+    /// Jarvis's own XCUITest runner over the authenticated loopback protocol
+    /// (`JarvisRunnerClient`, typed trees; docs/JARVIS-RUNNER.md).
+    case jarvis
+}
+
 /// One app's trust level, as the owner set it.
 public struct AppTrust: Codable, Sendable, Equatable, Identifiable {
     /// Bundle id or prefix (matched at `.` boundaries by the core).
@@ -196,6 +206,8 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     public var modelPromptCaching: PromptCaching
     /// The LoopCtrl runner.
     public var runnerBaseURL: String
+    /// Which runner drives the phone (default: the text runner, as before).
+    public var runnerKind: RunnerKind
     /// Per-app trust, feeding `Policy.appRules`.
     public var appTrust: [AppTrust]
     /// The owner accepted what Away mode costs (shown once, before first use).
@@ -237,6 +249,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         modelContextTokens: Int = 8_192,
         modelPromptCaching: PromptCaching = .automatic,
         runnerBaseURL: String = "http://127.0.0.1:8300",
+        runnerKind: RunnerKind = .textRunner,
         appTrust: [AppTrust] = JarvisSettings.defaultAppTrust,
         awayAcknowledged: Bool = false,
         awayProximity: Bool = false,
@@ -257,6 +270,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         self.modelContextTokens = modelContextTokens
         self.modelPromptCaching = modelPromptCaching
         self.runnerBaseURL = runnerBaseURL
+        self.runnerKind = runnerKind
         self.appTrust = appTrust
         self.awayAcknowledged = awayAcknowledged
         self.awayProximity = awayProximity
@@ -279,6 +293,7 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         case modelContextTokens = "model_context_tokens"
         case modelPromptCaching = "model_prompt_caching"
         case runnerBaseURL = "runner_base_url"
+        case runnerKind = "runner_kind"
         case appTrust = "app_trust"
         case awayAcknowledged = "away_acknowledged"
         case awayProximity = "away_proximity"
@@ -314,6 +329,8 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         modelContextTokens = (try? c.decodeIfPresent(Int.self, forKey: .modelContextTokens)) ?? d.modelContextTokens
         modelPromptCaching = (try? c.decodeIfPresent(PromptCaching.self, forKey: .modelPromptCaching)) ?? d.modelPromptCaching
         runnerBaseURL = (try? c.decodeIfPresent(String.self, forKey: .runnerBaseURL)) ?? d.runnerBaseURL
+        // A value this build cannot use reads as the text runner, whose screens always ask.
+        runnerKind = (try? c.decodeIfPresent(RunnerKind.self, forKey: .runnerKind)) ?? d.runnerKind
         appTrust = try Self.strict(c, .appTrust, d.appTrust)
         awayAcknowledged = (try? c.decodeIfPresent(Bool.self, forKey: .awayAcknowledged)) ?? d.awayAcknowledged
         awayProximity = (try? c.decodeIfPresent(Bool.self, forKey: .awayProximity)) ?? d.awayProximity

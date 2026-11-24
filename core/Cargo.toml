@@ -8,6 +8,7 @@ members = [
     "jarvis-agent",
     "jarvis-skills",
     "jarvis-remote",
+    "jarvis-runner",
     "jarvis-viewer",
     "jarvis-sim",
     "jarvis-ffi",
@@ -43,6 +44,7 @@ jarvis-memory = { path = "jarvis-memory" }
 jarvis-agent = { path = "jarvis-agent" }
 jarvis-skills = { path = "jarvis-skills" }
 jarvis-remote = { path = "jarvis-remote" }
+jarvis-runner = { path = "jarvis-runner" }
 jarvis-viewer = { path = "jarvis-viewer" }
 
 # Tuned for the iOS static library (jarvis-ffi). `panic = "unwind"` is load-bearing: the

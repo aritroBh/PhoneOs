@@ -1,5 +1,6 @@
 //! The one error type Swift sees (`JarvisError`, thrown).
 
+use crate::runner_channel::RunnerChannelProblem;
 use crate::types::EntropyProblem;
 
 /// Every error a Jarvis FFI call can throw.
@@ -124,6 +125,16 @@ pub enum JarvisError {
     #[error("remote message error: {message}")]
     RemoteMessage {
         /// What `jarvis-remote` reported.
+        message: String,
+    },
+    /// A runner channel call failed (`JarvisRunnerClientChannel`,
+    /// `JarvisRunnerServerChannel`). `authentication`: the peer could not prove the key;
+    /// the app treats the runner as absent.
+    #[error("runner channel: {message}")]
+    RunnerChannel {
+        /// The kind of failure.
+        problem: RunnerChannelProblem,
+        /// A fixed text of `jarvis-runner` (never input or key bytes).
         message: String,
     },
 }

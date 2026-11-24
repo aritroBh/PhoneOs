@@ -148,6 +148,9 @@ final class AppModel: ObservableObject {
     private let coreDeniedApps: [String]
     /// The in-memory transport of playground mode (the seeded device connects through it).
     private let memoryTransport = InMemoryRemoteTransport()
+    /// Jarvis's own runner (docs/JARVIS-RUNNER.md), used when `settings.runnerKind` is
+    /// `.jarvis`: one client (it reconnects by itself), its key in the Keychain.
+    private let ownRunner: JarvisRunnerClient
     private var seededRemote: InProcessRemote?
     private var schedulerLoop: Task<Void, Never>?
 
@@ -218,6 +221,20 @@ final class AppModel: ObservableObject {
         Self.seedSkills(launch, at: paths.skills)
         let settingsGate = SettingsGate(store: SettingsStore(fileURL: paths.settings))
         self.settingsGate = settingsGate
+        // Jarvis's own runner hands its key over in the launch environment when it starts
+        // (candidate R2, docs/JARVIS-RUNNER.md); kept in the Keychain, never logged.
+        let ownRunnerKeys = ProvisionedRunnerKeySource(store: KeychainSecretStore(service: "dev.jarvis.app.runner"))
+        var runnerKeyProblem: String?
+        if !launch.playground {
+            do {
+                try ownRunnerKeys.adopt(environment: ProcessInfo.processInfo.environment)
+            } catch {
+                // The value is never repeated; the stored key (if any) stays.
+                runnerKeyProblem = "Jarvis's runner passed a key this build cannot use (\(error))."
+            }
+        }
+        let ownRunner = JarvisRunnerClient(connector: NWRunnerConnector(), keySource: ownRunnerKeys, random: SecureRandomSource())
+        self.ownRunner = ownRunner
         self.historyStore = TaskHistoryStore(fileURL: paths.history)
         self.settings = settingsGate.settings
         // Playground mode backs the UI tests: lock polls and the lock watch run every
@@ -236,7 +253,12 @@ final class AppModel: ObservableObject {
                 ? DriverConfiguration(humanTimeout: .seconds(120), unlockPollInterval: .milliseconds(500), lockWatchInterval: .seconds(1))
                 : DriverConfiguration(),
             demoLockedPolls: launch.playground && launch.demoLocked ? 12 : 0,
-            maxLockedWaitOverrideMs: launch.playground ? 20_000 : nil
+            maxLockedWaitOverrideMs: launch.playground ? 20_000 : nil,
+            // No key on this phone: the run does not start (never the text runner instead).
+            jarvisRunner: { () -> (any PhoneRunner)? in
+                guard (try? ownRunnerKeys.runnerKey()) != nil else { return nil }
+                return ownRunner
+            }
         )
         let skills = SkillLibrary(fileURL: paths.skills)
         self.skills = skills
@@ -276,6 +298,7 @@ final class AppModel: ObservableObject {
             settings.remoteControlEnabled = true
         }
         if settings.remoteControlEnabled { remote.setEnabled(true) }
+        if let runnerKeyProblem { setupError = runnerKeyProblem }
         if launch.playground && launch.seedRemoteDevice { seedRemoteDevice() }
         refreshNotificationAccess()
     }
@@ -996,6 +1019,18 @@ final class AppModel: ObservableObject {
             return
         }
         let probe = ConnectionProbe()
+        if settings.runnerKind == .jarvis {
+            async let model = probe.model(settings.modelBaseURL)
+            do {
+                // One cheap authenticated request: the runner proved the key and answered.
+                _ = try await ownRunner.frontBundleId()
+                runnerStatus = .reachable("Jarvis runner answered and proved its key")
+            } catch {
+                runnerStatus = .unreachable(String(describing: error))
+            }
+            modelStatus = await model
+            return
+        }
         async let runner = probe.runner(settings.runnerBaseURL)
         async let model = probe.model(settings.modelBaseURL)
         runnerStatus = await runner

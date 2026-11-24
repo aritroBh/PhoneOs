@@ -566,6 +566,7 @@ dependencies = [
  "jarvis-observe",
  "jarvis-proto",
  "jarvis-remote",
+ "jarvis-runner",
  "jarvis-safety",
  "jarvis-skills",
  "jarvis-viewer",
@@ -622,6 +623,19 @@ dependencies = [
  "subtle",
  "thiserror",
  "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
+name = "jarvis-runner"
+version = "0.1.0"
+dependencies = [
+ "chacha20poly1305",
+ "hkdf",
+ "hmac",
+ "jarvis-proto",
+ "sha2",
+ "thiserror",
  "zeroize",
 ]
 

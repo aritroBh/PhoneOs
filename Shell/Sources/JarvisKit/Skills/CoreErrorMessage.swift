@@ -54,6 +54,7 @@ public struct CoreErrorMessage: Sendable, Equatable, CustomStringConvertible {
         case .RemoteAuthFailed: self.init(kind: "RemoteAuthFailed", message: "the connection failed authentication")
         case .RemoteNotConnected: self.init(kind: "RemoteNotConnected", message: "not connected")
         case .RemoteMessage(let m): self.init(kind: "RemoteMessage", message: m)
+        case .RunnerChannel(_, let m): self.init(kind: "RunnerChannel", message: m)
         }
     }
 
