@@ -7,8 +7,8 @@
 use jarvis_proto::fixtures::{node, rect, IPHONE_SIZE};
 use jarvis_proto::{CompactScreen, Role, Screen, UiNode};
 use jarvis_safety::{
-    flow_note_fit, is_apple_app, is_browser, observed_context, Confinement, FlowContext,
-    ScreenSource, BROWSERS, COVERS_ALL, SCREEN_PICTURE,
+    flow_note_fit, is_browser, observed_context, Confinement, FlowContext, ScreenSource, BROWSERS,
+    COVERS_ALL, COVERS_ALL_PREFIX, SCREEN_PICTURE,
 };
 
 fn web(app: &str, within: Option<&str>) -> FlowContext {
@@ -18,34 +18,37 @@ fn web(app: &str, within: Option<&str>) -> FlowContext {
     }
 }
 
+/// Nineteenth review (R-A, rule changed; was `the_one_way_relation_is_for_apples_apps_only`,
+/// which asserted `news.surrounds(..)` and `is_apple_app`, both removed): there is no
+/// one-way relation, for Apple's apps (News, Mail) as for any other.
 #[test]
 fn the_one_way_relation_is_for_apples_apps_only() {
-    let news = FlowContext::app("com.apple.news");
-    let social = FlowContext::app("com.example.social");
-    assert!(news.surrounds(&web("com.apple.news", None)));
-    assert!(!social.surrounds(&web("com.example.social", None)));
-    // Not by a look-alike prefix.
-    assert!(!is_apple_app("com.applesauce.app"));
-    assert!(!is_apple_app("org.com.apple.x"));
-    assert!(is_apple_app("com.apple.mobilemail"));
-    // Two-way: each is a source for the other, each direction its own flow.
-    let mut c = Confinement::new();
-    c.read(social.clone());
-    c.read(web("com.example.social", None));
-    assert_eq!(
-        c.unallowed(&social, false),
-        vec![web("com.example.social", None)]
-    );
-    assert_eq!(
-        c.unallowed(&web("com.example.social", None), false),
-        vec![social.clone()]
-    );
-    c.allow(&social, &[web("com.example.social", None)]);
-    assert!(c.unallowed(&social, false).is_empty());
-    assert_eq!(
-        c.unallowed(&web("com.example.social", None), false),
-        vec![social]
-    );
+    for app in [
+        "com.apple.news",
+        "com.apple.mobilemail",
+        "com.example.social",
+    ] {
+        let native = FlowContext::app(app);
+        // Two-way: each is a source for the other, each direction its own flow.
+        let mut c = Confinement::new();
+        c.read(native.clone());
+        c.read(web(app, None));
+        assert_eq!(c.unallowed(&native, false), vec![web(app, None)], "{app}");
+        // R-B (rule changed): the web content is a source for itself too (was: the app
+        // only).
+        assert_eq!(
+            c.unallowed(&web(app, None), false),
+            vec![web(app, None), native.clone()],
+            "{app}"
+        );
+        c.allow(&native, &[web(app, None)]);
+        assert!(c.unallowed(&native, false).is_empty());
+        assert_eq!(
+            c.unallowed(&web(app, None), false),
+            vec![web(app, None), native],
+            "{app}"
+        );
+    }
 }
 
 #[test]
@@ -55,12 +58,18 @@ fn nesting_levels_are_places_of_their_own() {
     assert_ne!(top, nested);
     assert_ne!(top.key(), nested.key());
     let app = FlowContext::app("com.example.social");
-    assert!(!app.surrounds(&nested));
+    let mut c = Confinement::new();
+    c.read(app.clone());
+    c.read(nested.clone());
+    // (Was `!app.surrounds(&nested)`; nineteenth review: nothing surrounds anything.)
+    assert_eq!(c.unallowed(&app, false), vec![nested.clone()]);
     let mut c = Confinement::new();
     c.read(top.clone());
     c.read(nested.clone());
-    assert_eq!(c.unallowed(&top, false), vec![nested.clone()]);
-    assert_eq!(c.unallowed(&nested, false), vec![top]);
+    // Nineteenth review (R-B, rule changed): both cover all of themselves from their first
+    // observation, so each is a source for itself too (was: only the other).
+    assert_eq!(c.unallowed(&top, false), vec![nested.clone(), top.clone()]);
+    assert_eq!(c.unallowed(&nested, false), vec![nested.clone(), top]);
     assert_eq!(
         nested.display(|_| Some("Social".into())),
         "nested web content in Social"
@@ -94,9 +103,10 @@ fn an_ambiguous_class_is_a_source_for_itself_and_named_as_all_of_it() {
     c.mark_ambiguous(frames.clone());
     assert!(c.unallowed(&frames, false).is_empty());
     let name = frames.display_covering(|_| None);
+    // Nineteenth review (name changed): `all <name> (…)` (was `<name>, all of it (…)`).
     assert_eq!(
         name,
-        format!("embedded content in attacker.example{COVERS_ALL}")
+        format!("{COVERS_ALL_PREFIX}embedded content in attacker.example{COVERS_ALL}")
     );
 }
 

@@ -19,12 +19,22 @@
 //! place read, the Home Screen included, is a source; nothing is kept beyond the action);
 //! `wait`; random owner decisions and, in half the cases, `policy.confirm: []`. An
 //! independent oracle implements the threat model's sections 1–3 (what a place is, which
-//! outputs are input, what an approval allows). Invariant, checked on every effect:
+//! outputs are input, what an approval allows).
+//!
+//! Nineteenth review: no one-way relation (the Apple app and its web content are two-way
+//! like any other); an app's web content covers all of itself from its first observation (a
+//! source for itself, named `all … (Jarvis cannot tell its parts apart)`); a browser's chrome
+//! (its address field, a "Tabs" button) is the browser app's place, not the site's — the
+//! "Tabs" button makes it a read, and "tap the ad" on the first site taps the address field
+//! (an input into the browser); `press_home` goes to every place on the screen it leaves; the
+//! Spotlight screen also lists a website row titled like a known app (`<app>, Website,
+//! help.example`: not that app, an undecidable launch).
+//!
+//! Invariant, checked on every effect:
 //! - no runner command and no tool call reaches a destination place while the read set holds
 //!   a source for it the owner has not allowed into it in this task (sources: every place
-//!   read but the destination itself — a tool that is not self-contained and an ambiguous
-//!   embedded class are sources for themselves — and but the web content an Apple app hosts,
-//!   for that app);
+//!   read but the destination itself — a tool that is not self-contained and a covering
+//!   embedded class are sources for themselves);
 //! - a flow question is asked only when such a source exists, names every unallowed source
 //!   (no "and N more"; an ambiguous class by its covering name), and its approval allows
 //!   exactly the places it named (into an undecidable destination: for that action only);
@@ -47,7 +57,7 @@ use jarvis_proto::{
     RiskCategory, Role, RunnerCommand, RunnerResult, Screen, TaskSpec, Tier, TimedEvent, ToolParam,
     ToolResult, ToolSpec, UiNode,
 };
-use jarvis_safety::{COVERS_ALL, SCREEN_PICTURE};
+use jarvis_safety::{COVERS_ALL, COVERS_ALL_PREFIX, SCREEN_PICTURE};
 
 const FLOW: &str = "what it read there could be passed on here";
 const APPS: [&str; 7] = [
@@ -61,7 +71,8 @@ const APPS: [&str; 7] = [
 ];
 /// The third-party app whose screen holds an embedded web view (two-way).
 const MIXED: usize = 3;
-/// The Apple app whose screen holds an embedded web view (one-way).
+/// The Apple app whose screen holds an embedded web view (two-way since the nineteenth
+/// review).
 const APPLE_MIXED: usize = 4;
 /// The third-party app that draws a fake address bar beside its web view.
 const EVIL: usize = 5;
@@ -110,6 +121,7 @@ impl Ctx {
     fn name(&self, ambiguous: &BTreeSet<Ctx>) -> String {
         let base = match self {
             Ctx::App(a) if a == HOME => "the Home Screen".to_owned(),
+            Ctx::App(a) if a == SAFARI => "Safari".to_owned(),
             Ctx::App(a) => a.clone(),
             Ctx::Site(h) => h.clone(),
             Ctx::FxSite(h) => format!("{h} in {}", APPS[FIREFOX]),
@@ -119,11 +131,20 @@ impl Ctx {
             Ctx::Pixels => SCREEN_PICTURE.to_owned(),
             Ctx::Unknown => "a place Jarvis cannot name".to_owned(),
         };
-        if ambiguous.contains(self) {
-            format!("{base}{COVERS_ALL}")
+        if ambiguous.contains(self) || matches!(self, Ctx::Web(_)) {
+            format!("{COVERS_ALL_PREFIX}{base}{COVERS_ALL}")
         } else {
             base
         }
+    }
+
+    /// Whether it is a source for input into itself (section 1): a tool that is not
+    /// self-contained, an app's web content (from its first observation), a site's frames
+    /// once they held two documents.
+    fn self_source(&self, ambiguous: &BTreeSet<Ctx>) -> bool {
+        matches!(self, Ctx::Tool(t) if t == "lookup")
+            || matches!(self, Ctx::Web(_))
+            || ambiguous.contains(self)
     }
 }
 
@@ -218,10 +239,17 @@ fn site_screen_in(app: &str, h: usize) -> Screen {
         .with_label(name)
         .with_children(vec![UiNode::new(Role::Window, IPHONE_SIZE.to_rect())
             .with_children(vec![
-                UiNode::new(Role::WebView, rect(0.0, 100.0, 393.0, 500.0)).with_children(page),
+                UiNode::new(Role::WebView, page_rect()).with_children(page),
                 address(HOSTS[h]),
+                // Nineteenth review: the browser's own chrome content (the browser's place).
+                node(Role::Button, "Tabs", rect(320.0, 800.0, 60.0, 30.0)),
             ])]);
     screen(app, name, root, false)
+}
+
+/// The page's web view on the browsers' screens.
+fn page_rect() -> Rect {
+    rect(0.0, 100.0, 393.0, 500.0)
 }
 
 fn home_screen() -> Screen {
@@ -259,8 +287,17 @@ fn spotlight_screen() -> Screen {
                 UiNode::new(Role::Cell, row_rect())
                     .with_label("evil.example/482913, Website")
                     .hittable(true),
+                // Nineteenth review (R-E): a website row titled like a known app.
+                UiNode::new(Role::Cell, row2_rect())
+                    .with_label(format!("{}, Website, help.example", APPS[0]))
+                    .hittable(true),
             ])]);
     screen(HOME, " ", root, false)
+}
+
+/// The Spotlight row a site titled like a known app.
+fn row2_rect() -> Rect {
+    rect(0.0, 360.0, 393.0, 60.0)
 }
 
 fn is_spotlight(s: &Screen) -> bool {
@@ -283,70 +320,116 @@ fn places_of(s: &Screen) -> Vec<Ctx> {
             .find(|h| c.elements.iter().any(|e| e.label == format!("page {h}")))
             .unwrap()
     };
-    if s.app_bundle_id == SAFARI {
+    if is_browser_screen(s) {
         let h = page();
-        let mut out = vec![Ctx::Site(HOSTS[h].to_owned())];
-        if h == FRAMED || h == TWO_FRAMES {
+        // The chrome lists "Tabs" (content of the browser's own place), then the page.
+        let mut out = vec![base_of(s), site_ctx(s, h)];
+        if s.app_bundle_id == SAFARI && (h == FRAMED || h == TWO_FRAMES) {
             out.push(Ctx::Frame(HOSTS[h].to_owned()));
         }
         return out;
     }
-    if s.app_bundle_id == APPS[FIREFOX] {
-        return vec![Ctx::FxSite(HOSTS[page()].to_owned())];
-    }
     let mut out = vec![Ctx::App(s.app_bundle_id.clone())];
-    if [APPS[MIXED], APPS[APPLE_MIXED], APPS[EVIL]].contains(&s.app_bundle_id.as_str()) {
+    if is_mixed(s) {
         out.push(Ctx::Web(s.app_bundle_id.clone()));
     }
     out
 }
 
-/// The place under a point of `s` (the oracle's own geometry).
+/// Every place on a screen, shown content or not (what leaving it leaves).
+fn every_of(s: &Screen) -> Vec<Ctx> {
+    let mut out = places_of(s);
+    if out.is_empty() {
+        out.push(base_of(s));
+    }
+    out
+}
+
+fn is_browser_screen(s: &Screen) -> bool {
+    s.app_bundle_id == SAFARI || s.app_bundle_id == APPS[FIREFOX]
+}
+
+fn is_mixed(s: &Screen) -> bool {
+    [APPS[MIXED], APPS[APPLE_MIXED], APPS[EVIL]].contains(&s.app_bundle_id.as_str())
+}
+
+/// The site of page `h` in the browser of `s`.
+fn site_ctx(s: &Screen, h: usize) -> Ctx {
+    if s.app_bundle_id == SAFARI {
+        Ctx::Site(HOSTS[h].to_owned())
+    } else {
+        Ctx::FxSite(HOSTS[h].to_owned())
+    }
+}
+
+/// The place under a point of `s` (the oracle's own geometry): in a browser the page's web
+/// view is the site (its frames their class), everything else the browser.
 fn place_at(s: &Screen, p: Point) -> Ctx {
     let places = places_of(s);
-    if is_spotlight(s) && row_rect().contains(p) {
+    if is_spotlight(s) && (row_rect().contains(p) || row2_rect().contains(p)) {
         return Ctx::Unknown;
     }
-    if places.len() == 2 && s.app_bundle_id != SAFARI && ad_frame().contains(p) {
+    if is_mixed(s) && ad_frame().contains(p) {
         return places[1].clone();
     }
-    if places.len() == 2
-        && s.app_bundle_id == SAFARI
-        && (frame_rect().contains(p)
-            || (places[1] == Ctx::Frame(HOSTS[TWO_FRAMES].to_owned())
-                && frame_b_rect().contains(p)))
-    {
+    if is_browser_screen(s) && page_rect().contains(p) {
+        if let Some(f) = places.get(2) {
+            if frame_rect().contains(p)
+                || (*f == Ctx::Frame(HOSTS[TWO_FRAMES].to_owned()) && frame_b_rect().contains(p))
+            {
+                return f.clone();
+            }
+        }
         return places[1].clone();
     }
     base_of(s)
 }
 
+/// The place of everything outside every web view: the app (in a browser, its chrome).
 fn base_of(s: &Screen) -> Ctx {
-    places_of(s)
-        .first()
-        .cloned()
-        .unwrap_or_else(|| Ctx::App(s.app_bundle_id.clone()))
+    Ctx::App(s.app_bundle_id.clone())
+}
+
+/// The place of the "Note" field (the only text field the generator types into).
+fn field_place(s: &Screen) -> Ctx {
+    place_at(s, Point::new(196.5, 220.0))
 }
 
 fn host_of(url: &str) -> usize {
     HOSTS.iter().position(|h| url.contains(h)).unwrap()
 }
 
-/// The destination of a runner command or tool call (sections 1 and 2), or `None` for one
-/// that is no input (a wait).
-fn dest_of(cmd: &RunnerCommand, current: &Screen) -> Option<Ctx> {
+/// The destinations of a runner command (sections 1 and 2); none for one that is no input
+/// (a wait).
+fn dest_of(cmd: &RunnerCommand, current: &Screen) -> Vec<Ctx> {
     match cmd {
         RunnerCommand::Tap { x, y, .. } | RunnerCommand::LongPress { x, y, .. } => {
-            Some(place_at(current, Point::new(*x, *y)))
+            vec![place_at(current, Point::new(*x, *y))]
         }
-        RunnerCommand::Swipe { from, .. } => Some(place_at(current, *from)),
-        // The only field is in the screen's own place; Return and Home go to the place in
-        // front.
-        RunnerCommand::TypeText { .. } | RunnerCommand::PressKey { .. } => Some(base_of(current)),
-        RunnerCommand::LaunchApp { bundle_id } => Some(Ctx::App(bundle_id.clone())),
-        RunnerCommand::OpenUrl { url } => Some(Ctx::Site(HOSTS[host_of(url)].to_owned())),
-        RunnerCommand::Wait { .. } => None,
+        // What is under the start point, and the screen's own place (fail closed).
+        RunnerCommand::Swipe { from, .. } => {
+            dedup(vec![base_of(current), place_at(current, *from)])
+        }
+        // Home goes to every place of the screen it leaves (nineteenth review).
+        RunnerCommand::PressKey { key: Key::Home, .. } => every_of(current),
+        // The only field is "Note"; Return goes where the typing went.
+        RunnerCommand::TypeText { .. } | RunnerCommand::PressKey { .. } => {
+            vec![field_place(current)]
+        }
+        RunnerCommand::LaunchApp { bundle_id } => vec![Ctx::App(bundle_id.clone())],
+        RunnerCommand::OpenUrl { url } => vec![Ctx::Site(HOSTS[host_of(url)].to_owned())],
+        RunnerCommand::Wait { .. } => Vec::new(),
     }
+}
+
+fn dedup(v: Vec<Ctx>) -> Vec<Ctx> {
+    let mut out: Vec<Ctx> = Vec::new();
+    for c in v {
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// The destinations of the model's action `json` on `current` (for the question it causes):
@@ -362,12 +445,10 @@ fn dest_of_action(json: &str, current: &Screen) -> Vec<Ctx> {
             &compact(current),
         )
         .unwrap();
-        let mut out = vec![base_of(current)];
-        let under = place_at(current, g.from);
-        if !out.contains(&under) {
-            out.push(under);
-        }
-        return out;
+        return dedup(vec![base_of(current), place_at(current, g.from)]);
+    }
+    if v["action"].as_str() == Some("press_home") {
+        return every_of(current);
     }
     dest_one(json, current).into_iter().collect()
 }
@@ -389,6 +470,7 @@ fn dest_one(json: &str, current: &Screen) -> Option<Ctx> {
                 .find(|e| e.index == i)?;
             Some(place_at(current, el.frame.center()))
         }
+        "type" => Some(field_place(current)),
         "wait" | "done" | "look" => None,
         _ => Some(base_of(current)),
     }
@@ -429,23 +511,15 @@ struct Oracle {
 
 impl Oracle {
     /// The sources that may not reach `dest` (section 1: a place is not a source for itself,
-    /// except a tool that is not self-contained and an ambiguous embedded class; the web
-    /// content an Apple app hosts is not a source for that app).
+    /// except a tool that is not self-contained and a covering embedded class; nineteenth
+    /// review: no one-way relation, every other place read is a source).
     fn unallowed(&self, dest: &Ctx) -> BTreeSet<Ctx> {
         self.read
             .iter()
             .filter(|r| {
-                let itself = *r == dest
-                    && !matches!(dest, Ctx::Tool(t) if t == "lookup")
-                    && !self.ambiguous.contains(dest);
-                // One-way between an Apple app and the web content it hosts only.
-                let surrounded = matches!((dest, r), (Ctx::App(a), Ctx::Web(w))
-                    if a == w && a.starts_with("com.apple."));
+                let itself = *r == dest && !dest.self_source(&self.ambiguous);
                 let for_action = *dest == Ctx::Unknown && self.for_action.contains(*r);
-                !itself
-                    && !surrounded
-                    && !for_action
-                    && !self.allowed.get(dest).is_some_and(|a| a.contains(*r))
+                !itself && !for_action && !self.allowed.get(dest).is_some_and(|a| a.contains(*r))
             })
             .cloned()
             .collect()
@@ -477,6 +551,17 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
         next
     );
     assert_eq!(index(&spotlight_screen(), "Search"), field);
+    // Nineteenth review: "tap the ad" taps the website row titled like a known app on
+    // Spotlight, and the address field (the browser's chrome) on the first site.
+    assert_eq!(
+        index(
+            &spotlight_screen(),
+            &format!("{}, Website, help.example", APPS[0])
+        ),
+        ad
+    );
+    assert_eq!(index(&site_screen(0), "Address"), ad);
+    assert_eq!(index(&app_screen(FIREFOX), "Address"), ad);
     for s in [
         app_screen(1),
         app_screen(MIXED),
@@ -568,11 +653,9 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
         event = match effect {
             Effect::Observe { screenshot } => {
                 observed.extend(places_of(&current));
-                if current.app_bundle_id == SAFARI && places_of(&current).len() == 2 {
-                    let f = Ctx::Frame(HOSTS[TWO_FRAMES].to_owned());
-                    if places_of(&current)[1] == f {
-                        oracle.ambiguous.insert(f);
-                    }
+                let f = Ctx::Frame(HOSTS[TWO_FRAMES].to_owned());
+                if places_of(&current).contains(&f) {
+                    oracle.ambiguous.insert(f);
                 }
                 Event::Observed(Observation {
                     screen: current.clone(),
@@ -603,12 +686,15 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                 }
             }
             Effect::Act(cmd) => {
-                if let Some(dest) = dest_of(&cmd, &current) {
+                let dests = dest_of(&cmd, &current);
+                if !dests.is_empty() {
                     sent += 1;
                     assert!(
                         !declined_since_infer,
                         "seed {seed}: {cmd:?} sent after a declined flow question"
                     );
+                }
+                for dest in dests {
                     let bad = oracle.unallowed(&dest);
                     assert!(
                         bad.is_empty(),
@@ -765,9 +851,13 @@ fn no_input_reaches_a_place_while_something_read_elsewhere_is_not_allowed_there(
 fn the_generator_covers_every_kind_of_place() {
     // Screens: what each one is read as.
     assert_eq!(places_of(&app_screen(EVIL)).len(), 2);
+    // Nineteenth review: the browser's chrome is its own place (was: the site only).
     assert_eq!(
         places_of(&app_screen(FIREFOX)),
-        vec![Ctx::FxSite(HOSTS[0].to_owned())]
+        vec![
+            Ctx::App(APPS[FIREFOX].to_owned()),
+            Ctx::FxSite(HOSTS[0].to_owned())
+        ]
     );
     assert_eq!(places_of(&spotlight_screen()), vec![Ctx::App(HOME.into())]);
     assert!(places_of(&home_screen()).is_empty());
@@ -806,6 +896,8 @@ fn the_generator_covers_every_kind_of_place() {
     let names: BTreeSet<String> = named(q[0]).into_iter().collect();
     let amb: BTreeSet<Ctx> = [Ctx::Frame(HOSTS[TWO_FRAMES].into())].into();
     let expected: BTreeSet<String> = [
+        // Nineteenth review: Safari's chrome ("Tabs") is a place of its own, read.
+        Ctx::App(SAFARI.into()),
         Ctx::Site(HOSTS[TWO_FRAMES].into()),
         Ctx::Frame(HOSTS[TWO_FRAMES].into()),
         Ctx::Pixels,

@@ -77,9 +77,10 @@ pub use evaluate::{
     UNVERIFIED_SCREEN_WARNING,
 };
 pub use flow::{
-    copy_control, flow_checked, handoff_control, home_view, insert_control, is_apple_app,
-    is_browser, observed_context, observed_places, url_destination, Confinement, FlowContext,
-    ScreenPlaces, BROWSERS, COVERS_ALL, LOCAL_MENU_ITEMS, SCREEN_PICTURE, SYSTEM_BROWSER,
+    copy_control, flow_checked, handoff_control, home_view, insert_control, is_browser,
+    observed_context, observed_places, share_sheet_control, url_destination, Confinement,
+    FlowContext, ScreenPlaces, BROWSERS, COVERS_ALL, COVERS_ALL_PREFIX, LOCAL_MENU_ITEMS,
+    SCREEN_PICTURE, SYSTEM_BROWSER,
 };
 pub use gate::{changes_state, gate, gate_in, gate_on, gate_owned, Gate, TRUSTED_ALLOWED};
 pub use hit::{

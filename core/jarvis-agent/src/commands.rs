@@ -348,17 +348,43 @@ fn opens_springboard_ui(label: &str) -> bool {
     matches!(l.as_str(), "search" | "spotlight search") || l.ends_with(" folder")
 }
 
-/// The known app a home-screen label names: the whole label, else its first
-/// comma-separated part ("Messages, 2 unread"), by display name (case-insensitive).
+/// Nineteenth review (R-E): whether the part of a home-screen label after the app's name
+/// and a comma is one of the OS's own words for an app (a closed list, compared whole,
+/// trimmed, case-insensitive): Spotlight's app result `<Name>, App` (as in the repository's
+/// tests of the denied-app check) and an icon's badge `<n> unread`, `<n> notification(s)`
+/// (as in the tests of the badge rule). Anything else — `Website, <host>`, a URL, any other
+/// part — is not an app.
+fn app_suffix(rest: &str) -> bool {
+    let r = rest.trim().to_lowercase();
+    let words: Vec<&str> = r.split_whitespace().collect();
+    match words.as_slice() {
+        ["app"] => true,
+        [n, "unread" | "notification" | "notifications"] => {
+            !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())
+        }
+        _ => false,
+    }
+}
+
+/// The known app a home-screen label names, by display name (case-insensitive, trimmed):
+/// the whole label, or the name followed by `, ` and one of the OS's words for an app
+/// ([`app_suffix`]: "Passwords, App", "Messages, 2 unread"). Nineteenth review (R-E): the
+/// first comma-separated part alone no longer names an app ("Settings, Website,
+/// settings-help.example" is a website row a site titled "Settings").
 fn known_app_named<'a>(label: &str, known_apps: &'a [AppInfo]) -> Option<&'a AppInfo> {
-    let first = label.split(',').next().unwrap_or("");
-    [label, first].into_iter().find_map(|want| {
+    let named = |want: &str| {
         let want = want.trim();
-        (!want.is_empty()).then(|| {
-            known_apps
-                .iter()
-                .find(|a| a.name.trim().eq_ignore_ascii_case(want))
-        })?
+        (!want.is_empty())
+            .then(|| {
+                known_apps
+                    .iter()
+                    .find(|a| a.name.trim().eq_ignore_ascii_case(want))
+            })
+            .flatten()
+    };
+    named(label).or_else(|| {
+        let (name, rest) = label.split_once(',')?;
+        app_suffix(rest).then(|| named(name)).flatten()
     })
 }
 
@@ -376,8 +402,8 @@ fn element_at(x: f64, y: f64, screen: &CompactScreen) -> Option<&jarvis_proto::E
 /// checks `open_app` gets before anything is sent.
 ///
 /// A tap, long press (its menu offers the app's quick actions) or tap_point on an element
-/// is resolved by label: a known app's display name (the label, or its first
-/// comma-separated part) is [`HomeLaunch::App`]; the search pill and folders open
+/// is resolved by label: a known app's display name (the whole label, or the name and one of
+/// the OS's words for an app, `known_app_named`) is [`HomeLaunch::App`]; the search pill and folders open
 /// SpringBoard's own UI and launch nothing (`None`); anything else, unlabeled included, is
 /// [`HomeLaunch::Unknown`]. A tap_point on no listed element, or in the keyboard's area
 /// while a keyboard is up, is [`HomeLaunch::Unresolved`]. Return in a search field (`type`

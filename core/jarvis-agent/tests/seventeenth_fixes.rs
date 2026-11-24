@@ -162,7 +162,15 @@ fn embedded_web_content_is_one_way() {
     );
     let fq = flows(&r);
     assert_eq!(fq.len(), 1, "{:?}", r.confirms);
-    assert!(fq[0].summary.contains("read Acme in"), "{}", fq[0].summary);
+    // Nineteenth review (R-B, rule changed): the web content covers all of itself from its
+    // first observation, so it is named too (was: "read Acme in").
+    assert!(
+        fq[0].summary.contains(
+            "read Acme and all web content in Acme (Jarvis cannot tell its parts apart) in"
+        ),
+        "{}",
+        fq[0].summary
+    );
     assert!(fq[0].phone_only);
     assert!(!touched(&r), "{:?}", r.acts);
     // The other way: the app's own control, after reading the ad too. Eighteenth review
@@ -178,13 +186,19 @@ fn embedded_web_content_is_one_way() {
     );
     let fq = flows(&r);
     assert_eq!(fq.len(), 1, "{:?}", r.confirms);
+    // Nineteenth review (name changed): the covering name (was "read web content in Acme
+    // in").
     assert!(
-        fq[0].summary.contains("read web content in Acme in"),
+        fq[0]
+            .summary
+            .contains("read all web content in Acme (Jarvis cannot tell its parts apart) in"),
         "{}",
         fq[0].summary
     );
     assert!(touched(&r));
-    // An Apple app keeps the one-way relation: not asked.
+    // Nineteenth review (R-A, rule changed): an Apple app is two-way too — a native control
+    // can open another party's document, which observes the open — so the tap asks once,
+    // naming the web content (was: not asked).
     let mut apple = s;
     apple.app_bundle_id = "com.apple.news".into();
     let mut c = cfg();
@@ -194,9 +208,18 @@ fn embedded_web_content_is_one_way() {
         "Open News and read the story",
         MemoryStore::new(),
         Phone::still(apple),
-        Script::model(&[&tap(native), DONE]),
+        Script::model(&[&tap(native), DONE]).decisions(&[true]),
     );
-    assert!(flows(&r).is_empty(), "{:?}", r.confirms);
+    let fq = flows(&r);
+    assert_eq!(fq.len(), 1, "{:?}", r.confirms);
+    assert!(
+        fq[0]
+            .summary
+            // (the screen still calls itself "Acme")
+            .contains("read all web content in Acme (Jarvis cannot tell its parts apart) in"),
+        "{}",
+        fq[0].summary
+    );
     assert!(touched(&r));
 }
 

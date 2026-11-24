@@ -16,6 +16,15 @@
 //! "Delete" on the "Delete Note?" alert gains `This answers an alert. Screen says: "Delete
 //! Note?"` in both modes. 162 questions, now 163.
 //!
+//! Nineteenth review: 164 questions, still 164; two changed (re-blessed after review, each a
+//! rule change): `news_dense_page` structured — the story tap's flow note now names `News and
+//! all web content in News (Jarvis cannot tell its parts apart)` (an app's web content covers
+//! all of itself from its first look, so it is a source for itself); runner-text — the same
+//! tap's `Unverified` question now carries a flow note naming `all pages in News with no
+//! readable address (Jarvis cannot tell its parts apart)` (a runner-text screen holding a web
+//! view is one covering class, a source for itself) and is asked before the first-use
+//! question, as the structured mode's flow question already was.
+//!
 //! `JARVIS_BLESS_QUESTIONS=1` rewrites the snapshot; never do that to make this pass: a
 //! changed question is a behaviour change to review.
 

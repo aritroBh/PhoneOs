@@ -195,6 +195,8 @@ fn flow_contexts_on_real_trees() {
     let mut inputs_total = 0usize;
     let mut embedded_total = 0usize;
     let mut hands_on_total = 0usize;
+    let mut first_tap_total = 0usize;
+    let mut share_sheet_total = 0usize;
     for f in &fixtures {
         // Home screen rule: the model is shown a SpringBoard screen without its widgets.
         let shown = jarvis_safety::home_view(&f.screen);
@@ -226,10 +228,47 @@ fn flow_contexts_on_real_trees() {
         let mut inputs = 0usize;
         let mut embedded = 0usize;
         let mut hands_on = 0usize;
+        // Nineteenth review: a task that has read only this screen — how many enabled
+        // controls' first tap asks a flow question (a place on the screen not yet allowed
+        // into the place the tap goes to: the chrome and the page of a browser are two
+        // places, a covering class is a source for itself), and how many are on a share
+        // sheet (always asked).
+        let mut confine = jarvis_safety::Confinement::new();
+        for c in places.read_places() {
+            confine.read(c);
+        }
+        if f.name == "safari_start_page" {
+            // Nineteenth review (R-C, R-D): the host from the address field
+            // (`TextField "Address"`, the only address node on screen), the start page's
+            // lists and the bar's buttons are Safari's own place.
+            assert_eq!(
+                places.read_places(),
+                vec![
+                    jarvis_safety::FlowContext::app("com.apple.mobilesafari"),
+                    jarvis_safety::FlowContext::Site {
+                        app: "com.apple.mobilesafari".into(),
+                        host: "127.0.0.1".into()
+                    }
+                ]
+            );
+        }
+        let mut first_tap_asks = 0usize;
+        let mut share_sheet = 0usize;
+        let mut per_place: std::collections::BTreeMap<String, usize> = Default::default();
         for e in v.screen.elements.iter().filter(|e| e.enabled) {
             let a = Action::Tap { element: e.index };
             if jarvis_safety::flow_checked(&a) {
                 inputs += 1;
+            }
+            let dests = places.destinations(&a, &v.screen, Some(&tree));
+            for d in &dests {
+                *per_place.entry(d.key()).or_default() += 1;
+            }
+            if !confine.unallowed_into(&dests, false, false).is_empty() {
+                first_tap_asks += 1;
+            }
+            if jarvis_safety::share_sheet_control(&a, &v.screen, Some(&tree)) {
+                share_sheet += 1;
             }
             if places
                 .destinations(&a, &v.screen, Some(&tree))
@@ -251,8 +290,10 @@ fn flow_contexts_on_real_trees() {
         inputs_total += inputs;
         embedded_total += embedded;
         hands_on_total += hands_on;
+        first_tap_total += first_tap_asks;
+        share_sheet_total += share_sheet;
         println!(
-            "{}: context {:?}; places read {:?}; web views {}; enabled controls {inputs}; into embedded content {embedded}; Rule P controls {inserts}; hand-on controls {hands_on}",
+            "{}: context {:?}; places read {:?}; web views {}; enabled controls {inputs}; into embedded content {embedded}; Rule P controls {inserts}; hand-on controls {hands_on}; taps per place {per_place:?}; first tap asks (only this screen read) {first_tap_asks}; share-sheet controls {share_sheet}",
             f.name,
             ctx,
             places.read_places(),
@@ -260,6 +301,6 @@ fn flow_contexts_on_real_trees() {
         );
     }
     println!(
-        "TOTAL enabled controls {inputs_total}; into embedded content {embedded_total}; Rule P controls {inserts_total}; hand-on controls {hands_on_total}"
+        "TOTAL enabled controls {inputs_total}; into embedded content {embedded_total}; Rule P controls {inserts_total}; hand-on controls {hands_on_total}; first tap asks {first_tap_total}; share-sheet controls {share_sheet_total}"
     );
 }

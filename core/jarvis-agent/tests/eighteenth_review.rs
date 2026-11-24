@@ -300,10 +300,13 @@ fn probe18_sibling_frames_question_does_not_name_the_other_frame() {
     let fq = flows(&r);
     assert!(!fq.is_empty(), "{:?}", r.confirms);
     assert!(
+        // Nineteenth review (name changed): the covering name now starts with "all " (`and
+        // all embedded content in attacker.example (Jarvis cannot tell its parts apart)`).
         fq.iter().any(|c| c
             .summary
             .contains("embedded content in attacker.example and")
-            || c.summary.contains("and embedded content")),
+            || c.summary.contains("and embedded content")
+            || c.summary.contains("and all embedded content")),
         "the sign-in frame's content reached the attacker's frame; the approval named only: {:?}",
         fq.iter().map(|c| &c.summary).collect::<Vec<_>>()
     );

@@ -284,7 +284,11 @@ fn keypad_taps_after_reading_only_the_page_are_not_asked() {
 
 // ---- Rule T, sessions ----------------------------------------------------------------------
 
-/// Two apps: one question at the first input into the second, then none.
+/// Two apps: one question at the first input into the second, then none. Nineteenth review
+/// (R-C, rule changed): Safari's chrome is Safari's place, not the site's, and a scroll on
+/// the page may reach the chrome under its start point (fail closed; Safari observes a
+/// scroll), so the scroll asks once more, naming the site and Messages (was: one question,
+/// the scroll unasked).
 #[test]
 fn a_two_app_task_asks_once() {
     let a = article("news.example");
@@ -302,10 +306,18 @@ fn a_two_app_task_asks_once() {
             &tap(more),
             DONE,
         ])
-        .decisions(&[true]),
+        .decisions(&[true, true]),
     );
     let fq = flows(&r);
-    assert_eq!(fq.len(), 1, "{:?}", r.confirms);
+    assert_eq!(fq.len(), 2, "{:?}", r.confirms);
+    assert!(
+        fq[1].summary.starts_with("Scroll")
+            && fq[1]
+                .summary
+                .contains("Jarvis has read news.example and Messages in this task"),
+        "{}",
+        fq[1].summary
+    );
     assert!(
         fq[0]
             .summary
@@ -698,7 +710,11 @@ fn an_unreadable_host_is_named_as_such() {
     let fq = flows(&r2);
     assert_eq!(fq.len(), 1, "{:?}", r2.confirms);
     assert!(
-        fq[0].summary.contains("Safari (site not readable)"),
+        // Nineteenth review (R-B, name changed; was "Safari (site not readable)"): the class
+        // covers all of itself from its first observation.
+        fq[0].summary.contains(
+            "all pages in Safari with no readable address (Jarvis cannot tell its parts apart)"
+        ),
         "{}",
         fq[0].summary
     );

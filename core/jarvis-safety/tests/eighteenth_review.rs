@@ -83,11 +83,14 @@ fn probe18_app_approval_does_not_cover_sites() {
         c.unallowed(&site(SYSTEM_BROWSER, "evil.example"), false),
         vec![msgs.clone()]
     );
-    // But it does cover the app's unreadable pages (stated).
-    assert!(c
-        .unallowed(
+    // Nineteenth review (rule changed; was: "But it does cover the app's unreadable pages
+    // (stated)", an empty list): an approval into the browser (its chrome) covers no page,
+    // its pages with no readable address included.
+    assert_eq!(
+        c.unallowed(
             &FlowContext::SiteUnreadable(SYSTEM_BROWSER.to_owned()),
             false
-        )
-        .is_empty());
+        ),
+        vec![msgs.clone()]
+    );
 }

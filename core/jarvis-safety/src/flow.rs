@@ -17,21 +17,29 @@
 //! told apart they are not silently merged — the question says so and its approval covers
 //! all of them.
 //!
-//! - an **app** (its bundle id, an OS fact);
-//! - a **site**: in a listed browser ([`BROWSERS`], by bundle id) whose own chrome shows
-//!   the host (a node outside every `WebView` subtree, never page content;
-//!   [`observed_context`]), the top-level host — the browser's chrome belongs to the site's
-//!   place. Any other app has no site;
-//! - **embedded web content** (seventeenth and eighteenth reviews), by nesting level: the
-//!   top-level web views of an app with no readable host whose screen also lists content
-//!   outside them (`web content in <App>`), and web views nested in another web view
-//!   (`embedded content in <site>`, or `nested web content in <App>`), each a place of its
-//!   own ([`ScreenPlaces`]); a same-frame web view is part of the one holding it only when it
-//!   is a structural wrapper (`jarvis_observe::CompactView::webviews`). Between one of
-//!   Apple's apps and its top-level web content the relation is one-way
-//!   ([`FlowContext::surrounds`]); everywhere else two-way. An embedded class that held more
-//!   than one document in an observation is ambiguous ([`Confinement::mark_ambiguous`]): a
-//!   source for itself, named as covering all of it;
+//! Nineteenth review: the conveniences kept in earlier rounds are removed — there is no
+//! one-way relation anywhere, every embedded class Jarvis cannot name by an OS fact covers
+//! all of itself from its first observation, and a browser's chrome is the browser, not the
+//! site.
+//!
+//! - an **app** (its bundle id, an OS fact): its own content outside every web view. In a
+//!   listed browser ([`BROWSERS`]) that is the browser's chrome (the address bar, tab
+//!   cards, history and suggestion lists, the start page), whatever site is shown;
+//! - a **site**: in a listed browser, the content inside the page's top-level web views,
+//!   when the browser's one address field on screen shows a host ([`observed_places`]). Any
+//!   other app has no site;
+//! - **embedded web content** with no OS-given name (seventeenth to nineteenth reviews) —
+//!   the web views of any app that is not a listed browser (`web content in <App>`), what
+//!   is nested in them or in a page whose host is not readable (`nested web content in
+//!   <App>`), a listed browser's page whose host is not readable (`pages in <App> with no
+//!   readable address`), a runner-text screen with a web view — is **covering** from its
+//!   first observation ([`FlowContext::always_covering`]): a source for input into itself,
+//!   named `all … (Jarvis cannot tell its parts apart)`. Frames nested in a site's page
+//!   (`embedded content in <site>`) are one class per site that becomes covering once it
+//!   held two documents ([`Confinement::mark_ambiguous`]). A same-frame web view is part of
+//!   the one holding it only when it is a structural wrapper
+//!   (`jarvis_observe::CompactView::webviews`). Every two places are **two-way**: each is a
+//!   source for input into the other;
 //! - the **screen picture** ([`FlowContext::ScreenPicture`]): every screenshot given to the
 //!   model, a source for every place;
 //! - a **tool** (`tool:<name>`): a tool that is not self-contained (the default) is a
@@ -95,44 +103,50 @@ pub fn is_browser(bundle_id: &str) -> bool {
     BROWSERS.contains(&b.as_str())
 }
 
-/// Eighteenth review (E2): whether `bundle_id` is one of Apple's own apps (`com.apple.`
-/// prefix: an OS fact, no third party can ship an app under it).
-pub fn is_apple_app(bundle_id: &str) -> bool {
-    bundle_id.trim().to_lowercase().starts_with("com.apple.")
-}
-
-/// Eighteenth review (E1): how a question names [`FlowContext::ScreenPicture`].
+/// Eighteenth review (E1): how a question names [`FlowContext::ScreenPicture`]. Nineteenth
+/// review: one place for every picture of the task, so the name says that an approval
+/// covers the later pictures too.
 pub const SCREEN_PICTURE: &str =
-    "the screen picture (it can show notifications and other apps' banners)";
+    "screen pictures (they can show notifications and other apps' banners)";
 
-/// Eighteenth review (E5): what the name of an ambiguous embedded class
-/// ([`Confinement::mark_ambiguous`]) ends with: its approval covers every part of it.
-pub const COVERS_ALL: &str = ", all of it (Jarvis cannot tell its parts apart)";
+/// Nineteenth review: what the name of a covering embedded class
+/// ([`Confinement::is_ambiguous`]) starts with (`all web content in Mail (…)`).
+pub const COVERS_ALL_PREFIX: &str = "all ";
+
+/// Eighteenth review (E5): what the name of a covering embedded class
+/// ([`Confinement::is_ambiguous`]) ends with: its approval covers every part of it.
+/// Nineteenth review: the whole name is `all <name> (Jarvis cannot tell its parts apart)`
+/// ([`COVERS_ALL_PREFIX`]); neither part holds `, ` or ` and ` (a list of names stays
+/// readable).
+pub const COVERS_ALL: &str = " (Jarvis cannot tell its parts apart)";
 
 /// Where content comes from and goes to (Rule T).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FlowContext {
-    /// An app (lower-cased bundle id): its own content, outside web views that are places
-    /// of their own.
+    /// An app (lower-cased bundle id): its own content, outside every web view. In a listed
+    /// browser, its chrome (nineteenth review: never the site's).
     App(String),
-    /// A site shown in an app: the app (lower-cased bundle id) and the top-level host read
-    /// from the app's own chrome, outside every web view. The chrome is the site's.
+    /// A site shown in a listed browser: the browser (lower-cased bundle id) and the host
+    /// read from its one address field on screen. The content inside the page's top-level
+    /// web views only.
     Site {
         /// The app (lower-cased bundle id).
         app: String,
         /// The host (lower-cased).
         host: String,
     },
-    /// A screen of an app that is web content with nothing listed outside it and whose host
-    /// could not be read: one context per app ("site not readable").
+    /// The top-level web content of a listed browser whose host could not be read (no
+    /// address field, two, one being edited, a value that is not an ASCII host), or a
+    /// runner-text screen holding a web view (any app: its structure is forgeable, so the
+    /// whole screen is this one place). One class per app, covering from its first
+    /// observation ([`FlowContext::always_covering`]).
     SiteUnreadable(String),
     /// Seventeenth review: embedded web content — with `within: Some(host)`, a web view
-    /// nested (at any depth) inside a site's page; with `within: None`, a top-level web view
-    /// beside listed content in an app whose chrome shows no host (eighteenth review: what is
-    /// nested inside that is [`FlowContext::NestedWeb`]). One class per app and level (and
-    /// per site); a class that held more than one document is ambiguous
-    /// ([`Confinement::mark_ambiguous`]). Frames the accessibility tree does not mark as a
-    /// web view are part of their page.
+    /// nested (at any depth) inside a site's page (one class per site, covering once it held
+    /// two documents, [`Confinement::mark_ambiguous`]); with `within: None`, the top-level
+    /// web views of an app that is not a listed browser (covering from its first
+    /// observation; what is nested inside is [`FlowContext::NestedWeb`]). Frames the
+    /// accessibility tree does not mark as a web view are part of their page.
     Embedded {
         /// The app (lower-cased bundle id).
         app: String,
@@ -147,10 +161,11 @@ pub enum FlowContext {
     /// an app the home screen cannot name. Every place read is a source for it, and no
     /// approval is kept for it (the next such input asks again).
     Unknown,
-    /// Eighteenth review (E5a): content nested inside the web content of an app whose host
-    /// is not readable (a frame in an in-app browser's page; every deeper level too). The
-    /// top level of that web content is [`FlowContext::Embedded`] with `within: None` (or
-    /// the app's "site not readable" page): the two are different places, two-way.
+    /// Eighteenth review (E5a): content nested inside the web content of an app with no
+    /// readable host (a frame in an in-app browser's page; every deeper level too). The top
+    /// level of that web content is [`FlowContext::Embedded`] with `within: None` (or a
+    /// browser's [`FlowContext::SiteUnreadable`]): two places, two-way. Covering from its
+    /// first observation.
     NestedWeb(String),
     /// Eighteenth review (E1): the screen picture given to the model — the whole display,
     /// notification banners, the Dynamic Island and Live Activities drawn over the app
@@ -179,33 +194,27 @@ impl FlowContext {
         }
     }
 
-    /// Seventeenth review (the one-way relation): whether `inner` is web content that the
-    /// native app `self` hosts — a top-level web view beside the app's own listed content,
-    /// in an app whose chrome shows no host. What was read in `inner` is not a source for
-    /// input into `self`; what was read in `self` is a source for input into `inner`.
+    /// Nineteenth review (R-B): whether this place is an embedded class Jarvis cannot tell
+    /// apart into its documents across looks from its first observation — every embedded
+    /// class with no OS-given name: an app's web content ([`FlowContext::Embedded`] with
+    /// `within: None`), nested web content ([`FlowContext::NestedWeb`]), a browser page whose
+    /// host is not readable or a runner-text screen with a web view
+    /// ([`FlowContext::SiteUnreadable`]). Such a class is a source for input into itself and
+    /// is named as covering all of it ([`FlowContext::display_covering`]). A site's frames
+    /// ([`FlowContext::Embedded`] within a host) become covering only once they held two
+    /// documents ([`Confinement::mark_ambiguous`]).
     ///
-    /// Eighteenth review (E2): only for Apple's own apps ([`is_apple_app`], an OS fact).
-    /// The exemption rests on the host app not being the adversary and being able to read
-    /// what its web view shows (Mail showing a message body, News an article; a send still
-    /// asks under Invariant 2). For any other app it does not hold: an in-app browser sheet
-    /// or a sign-in sheet (`SFSafariViewController`, `ASWebAuthenticationSession`) shows
-    /// another party's page (a bank, an identity provider) that the host app cannot read,
-    /// and the host app may be the adversary. A third-party app and its web content are
-    /// **two-way**: each is a source for input into the other, each direction its own flow.
-    ///
-    /// A frame in a page (a web view nested in a web view, under a site or under a page
-    /// whose host is not readable) is two-way too.
-    pub fn surrounds(&self, inner: &FlowContext) -> bool {
-        match (self, inner) {
-            (
-                FlowContext::App(app),
-                FlowContext::Embedded {
-                    app: a,
-                    within: None,
-                },
-            ) => app == a && is_apple_app(app),
-            _ => false,
-        }
+    /// (The seventeenth review's one-way relation between an app and its web content, kept
+    /// for Apple's apps in the eighteenth, is gone: a native control can open another
+    /// party's document — an inbox row, a history entry — and that party observes the open,
+    /// so what was read in web content is a source for the app's own controls too.)
+    pub fn always_covering(&self) -> bool {
+        matches!(
+            self,
+            FlowContext::Embedded { within: None, .. }
+                | FlowContext::NestedWeb(_)
+                | FlowContext::SiteUnreadable(_)
+        )
     }
 
     /// A stable key of this place: what a learned flow's step records as the place it ran
@@ -243,7 +252,9 @@ impl FlowContext {
             FlowContext::App(b) => app(b),
             FlowContext::Site { app: b, host } if b == SYSTEM_BROWSER => host.clone(),
             FlowContext::Site { app: b, host } => format!("{host} in {}", app(b)),
-            FlowContext::SiteUnreadable(b) => format!("{} (site not readable)", app(b)),
+            FlowContext::SiteUnreadable(b) => {
+                format!("pages in {} with no readable address", app(b))
+            }
             FlowContext::Embedded {
                 within: Some(h), ..
             } => format!("embedded content in {h}"),
@@ -260,11 +271,11 @@ impl FlowContext {
     }
 
     /// Eighteenth review (E5b): how a flow note names an ambiguous embedded class
-    /// ([`Confinement::is_ambiguous`]): its [`Self::display`] followed by [`COVERS_ALL`]
-    /// (`embedded content in attacker.example, all of it (Jarvis cannot tell its parts
-    /// apart)`), so an approval states that it covers every embedded part.
+    /// ([`Confinement::is_ambiguous`]): [`COVERS_ALL_PREFIX`], its [`Self::display`] and
+    /// [`COVERS_ALL`] (`all web content in Mail (Jarvis cannot tell its parts apart)`), so
+    /// an approval states that it covers every part.
     pub fn display_covering(&self, app_name: impl Fn(&str) -> Option<String>) -> String {
-        format!("{}{COVERS_ALL}", self.display(app_name))
+        format!("{COVERS_ALL_PREFIX}{}{COVERS_ALL}", self.display(app_name))
     }
 }
 
@@ -273,29 +284,65 @@ impl FlowContext {
 struct Chrome {
     webview: bool,
     alert_like: bool,
-    hosts: BTreeSet<String>,
-    unreadable_address: bool,
+    /// Every address-like node on screen ([`address_like`]): the host its value shows when
+    /// it is the address field ([`address_field`]) and that value is a host, else `None`.
+    addresses: Vec<Option<String>>,
     /// Content outside every web view: a node other than the application and its windows
     /// with a label or a value (the screen lists something besides its web content).
     outside: bool,
+    /// [`Chrome::outside`] not counting the address-like nodes.
+    outside_not_address: bool,
 }
 
-/// Whether a raw node is an address bar of the app's chrome: a node labelled "Address" or
-/// "URL" (Safari, in-app browsers) or with one of the identifiers browsers give it.
-fn address_node(n: &UiNode) -> bool {
+/// The labels a browser gives its address field (lower-cased, whole label).
+const ADDRESS_LABELS: &[&str] = &["address", "url", "address bar", "website address"];
+
+/// Whether a raw node may be an address bar of the app's chrome, by its label or by one of
+/// the identifiers browsers give it — broad on purpose: only to count them (two on screen
+/// make the host unreadable, fail closed).
+fn address_like(n: &UiNode) -> bool {
     let label = n
         .label
         .as_deref()
         .map(|l| l.trim().to_lowercase())
         .unwrap_or_default();
     let id = n.identifier.as_deref().unwrap_or_default().trim();
-    matches!(
-        label.as_str(),
-        "address" | "url" | "address bar" | "website address"
-    ) || matches!(
-        id,
-        "URL" | "url" | "TabBarItemTitle" | "Address" | "AddressBar"
-    )
+    ADDRESS_LABELS.contains(&label.as_str())
+        || matches!(
+            id,
+            "URL" | "url" | "TabBarItemTitle" | "Address" | "AddressBar"
+        )
+}
+
+/// Nineteenth review (R-D): whether a raw node is the browser's address **field**, the only
+/// node a host is read from: the browser's own control labelled as the address — a text
+/// field (iOS 26: the real `safari_start_page` tree's `TextField "Address"
+/// value="‎127.0.0.1"`) or a button (the unfocused address control of older Safari) — not
+/// being edited (a focused field shows what is typed, not the page's host). The label is
+/// what decides: an identifier alone (`TabBarItemTitle`, on some layouts a tab's title,
+/// page-controlled text) or a static text (Safari's address before the page loads:
+/// `StaticText "127.0.0.1"` with no label) is not one.
+fn address_field(n: &UiNode) -> bool {
+    let label = n
+        .label
+        .as_deref()
+        .map(|l| l.trim().to_lowercase())
+        .unwrap_or_default();
+    matches!(n.role, Role::TextField | Role::Button)
+        && !n.focused
+        && ADDRESS_LABELS.contains(&label.as_str())
+}
+
+/// Whether a raw node is positively hidden (flagged invisible with a real frame):
+/// compaction prunes it with its whole subtree (`jarvis_observe::compact`).
+fn pruned(n: &UiNode) -> bool {
+    !n.visible && !n.frame.is_empty()
+}
+
+/// Whether a raw node's own frame lies wholly off `bounds` (compaction never lists it, so
+/// the model never reads it; its children are still looked at, fail closed).
+fn off_screen(n: &UiNode, bounds: &jarvis_proto::Rect) -> bool {
+    !n.frame.is_empty() && !bounds.is_empty() && !n.frame.intersects(bounds)
 }
 
 /// The host an address bar's value shows (`‎example.com`, `https://a.b/c`), lower-cased;
@@ -349,35 +396,55 @@ fn alert_like_role(role: &Role) -> bool {
 }
 
 /// One walk over the raw tree that never descends into a web view (page content is never
-/// read for the context; its cost is the app's chrome only).
-fn scan_chrome(root: &UiNode) -> Chrome {
+/// read for the context; its cost is the app's chrome only). Hidden subtrees and nodes
+/// wholly off `bounds` are not shown to the model and are not counted.
+fn scan_chrome(root: &UiNode, bounds: &jarvis_proto::Rect) -> Chrome {
     let mut out = Chrome::default();
-    let mut stack: Vec<&UiNode> = vec![root];
-    while let Some(n) = stack.pop() {
+    // Each node with whether no ancestor (nor itself) is hidden.
+    let mut stack: Vec<(&UiNode, bool)> = vec![(root, true)];
+    while let Some((n, shown)) = stack.pop() {
         if n.role == Role::WebView {
             out.webview = true;
             continue;
         }
+        // An alert, sheet or banner anywhere makes a home screen a read (unchanged, fail
+        // closed whether or not it is shown).
         if alert_like_role(&n.role) {
             out.alert_like = true;
         }
+        let shown = shown && !pruned(n);
+        stack.extend(n.children.iter().map(|c| (c, shown)));
+        if !shown || off_screen(n, bounds) {
+            continue;
+        }
+        let address = address_like(n);
         if !matches!(n.role, Role::Application | Role::Window)
             && (n.label.as_deref().is_some_and(|l| !l.trim().is_empty())
                 || n.value.as_deref().is_some_and(|v| !v.trim().is_empty()))
         {
             out.outside = true;
+            out.outside_not_address |= !address;
         }
-        if address_node(n) {
-            match n.value.as_deref().and_then(host_of) {
-                Some(h) => {
-                    out.hosts.insert(h);
-                }
-                None => out.unreadable_address = true,
-            }
+        if address {
+            out.addresses.push(
+                address_field(n)
+                    .then(|| n.value.as_deref().and_then(host_of))
+                    .flatten(),
+            );
         }
-        stack.extend(n.children.iter());
     }
     out
+}
+
+impl Chrome {
+    /// Nineteenth review (R-D): the host of the page in front — only when exactly one
+    /// address-like node is on screen and it is the address field showing a host.
+    fn host(&self) -> Option<&str> {
+        match self.addresses.as_slice() {
+            [Some(h)] => Some(h),
+            _ => None,
+        }
+    }
 }
 
 /// Whether a SpringBoard screen lists only app icons, folders, the dock, the page dots and
@@ -526,26 +593,30 @@ fn home_node(n: &UiNode) -> UiNode {
     out
 }
 
-/// Rule T: the place of an observation's own content (outside the web views that are
-/// places of their own, [`ScreenPlaces`]), or `None` when it is not something Jarvis read
-/// (a SpringBoard screen of icons only, see [`home_icons_only`]). The session leaves out
-/// Jarvis's own app when the run does not drive it (the model gets a stub for it).
+/// Rule T: the main place of an observation, or `None` when it is not something Jarvis
+/// read (a SpringBoard screen of icons only, see [`home_icons_only`]). The session leaves
+/// out Jarvis's own app when the run does not drive it (the model gets a stub for it).
 ///
-/// A screen holding a web view whose host the app's own chrome shows (a node outside every
-/// web view subtree: Safari's address field; never page content), in a listed browser
-/// ([`BROWSERS`]; eighteenth review), is that site. With no
-/// single host — none, a value that is not a host, two different hosts — the screen is the
-/// app when it lists content outside its web views (the web views are then "web content in
-/// <App>", [`ScreenPlaces`]), else the app with its site not readable. A tree from runner
-/// text (whose structure on-screen text can forge) is one place: the app, or with a web view
-/// the app with its site not readable.
+/// The main place is the page's in a listed browser ([`BROWSERS`]): the site when its one
+/// address field on screen shows a host, else its pages with no readable address; in any
+/// other app it is the app, or its web content when the screen lists nothing outside its
+/// web views. A tree from runner text (whose structure on-screen text can forge) is one
+/// place: the app, or with a web view [`FlowContext::SiteUnreadable`]. Every place of the
+/// observation is [`observed_places`].
 pub fn observed_context(
     raw: &Screen,
     compact: &CompactScreen,
     source: ScreenSource,
 ) -> Option<FlowContext> {
     let places = observed_places(raw, compact, source, None);
-    places.read.then_some(places.base)
+    if !places.read {
+        return None;
+    }
+    let main = match &places.top {
+        Some(t) if places.browser || !places.base_read => t.clone(),
+        _ => places.base,
+    };
+    Some(main)
 }
 
 /// Seventeenth review: the places one observation shows, decided once per observation
@@ -553,19 +624,26 @@ pub fn observed_context(
 /// on it in O(depth) ([`ScreenPlaces::destinations`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreenPlaces {
-    /// The place of the screen's own content: the app, the site (its chrome included) or
-    /// the app with its site not readable.
+    /// The place of everything outside every web view (the destination of an input there):
+    /// the app — in a listed browser, its chrome (nineteenth review) — or, for runner text
+    /// with a web view, [`FlowContext::SiteUnreadable`].
     base: FlowContext,
-    /// Eighteenth review (E5a, nesting level 1): the place of a top-level web view's
-    /// content when it is not the screen's own place — an app without a readable host whose
-    /// screen lists content outside its web views ([`FlowContext::Embedded`], `within:
-    /// None`).
+    /// Whether the screen shows content of `base` (a screen with no web view always does;
+    /// with web views, a listed element outside them — in a listed browser, other than its
+    /// one address field showing the host).
+    base_read: bool,
+    /// The screen is a listed browser's.
+    browser: bool,
+    /// Nesting level 1: the place of a top-level web view's content — a listed browser's
+    /// site or its pages with no readable address, any other app's web content
+    /// ([`FlowContext::Embedded`], `within: None`).
     top: Option<FlowContext>,
     /// Nesting level 2 and deeper: the place of a web view nested in another web view
     /// ([`FlowContext::Embedded`] within the site, or [`FlowContext::NestedWeb`]).
     nested: Option<FlowContext>,
-    /// Eighteenth review (E5b): the embedded classes that hold more than one document on
-    /// this screen (two top-level web views beside an app's content, two nested ones).
+    /// The embedded classes on this screen that cover all of themselves: those that do from
+    /// their first observation ([`FlowContext::always_covering`]) and a site's frames when
+    /// this screen holds two of them.
     ambiguous: Vec<FlowContext>,
     /// Every document web view's raw index, ascending (`jarvis_observe::CompactView::webviews`).
     webviews: Vec<u32>,
@@ -577,6 +655,8 @@ impl Default for ScreenPlaces {
     fn default() -> Self {
         ScreenPlaces {
             base: FlowContext::App(String::new()),
+            base_read: true,
+            browser: false,
             top: None,
             nested: None,
             ambiguous: Vec::new(),
@@ -587,8 +667,8 @@ impl Default for ScreenPlaces {
 }
 
 impl ScreenPlaces {
-    /// The place of the screen's own content (also for an icons-only home screen, which is
-    /// not a read).
+    /// The place of everything outside every web view (also for an icons-only home screen,
+    /// which is not a read): the app, in a listed browser its chrome.
     pub fn base(&self) -> &FlowContext {
         &self.base
     }
@@ -604,14 +684,15 @@ impl ScreenPlaces {
         self.top.iter().chain(self.nested.iter()).cloned().collect()
     }
 
-    /// Eighteenth review (E5b): the embedded classes holding more than one document on this
-    /// screen ([`Confinement::mark_ambiguous`]).
+    /// The embedded classes on this screen that cover all of themselves (nineteenth review:
+    /// every one with no OS-given name, and a site's frames when the screen holds two;
+    /// [`Confinement::mark_ambiguous`]).
     pub fn ambiguous(&self) -> &[FlowContext] {
         &self.ambiguous
     }
 
-    /// The places reading this screen reads: every place on it (none for an icons-only
-    /// home screen), the screen's own first.
+    /// The places reading this screen reads: every place whose content it shows (none for
+    /// an icons-only home screen), the base first.
     pub fn read_places(&self) -> Vec<FlowContext> {
         if !self.read {
             return Vec::new();
@@ -619,8 +700,21 @@ impl ScreenPlaces {
         self.all()
     }
 
-    /// Every place on this screen, the screen's own first.
+    /// Every place whose content this screen shows, the base first (when it shows any of
+    /// it; nineteenth review: a browser's chrome showing nothing but the address field is
+    /// not shown content).
     pub fn all(&self) -> Vec<FlowContext> {
+        let mut out = Vec::new();
+        if self.base_read || (self.top.is_none() && self.nested.is_none()) {
+            out.push(self.base.clone());
+        }
+        out.extend(self.embedded_places());
+        out
+    }
+
+    /// Every place on this screen, shown content or not: [`Self::all`] and the base (what an
+    /// input whose place is not known may reach, and what leaving the screen leaves).
+    pub fn every(&self) -> Vec<FlowContext> {
         let mut out = vec![self.base.clone()];
         out.extend(self.embedded_places());
         out
@@ -672,9 +766,12 @@ impl ScreenPlaces {
             out.push(self.base.clone());
             return;
         }
-        match tree.and_then(|t| t.source(el).map(|s| (t, s))) {
+        match tree
+            .filter(|_| !self.webviews.is_empty())
+            .and_then(|t| t.source(el).map(|s| (t, s)))
+        {
             Some((t, s)) => out.push(self.of_node(s, t).clone()),
-            None => out.extend(self.all()),
+            None => out.extend(self.every()),
         }
     }
 
@@ -686,7 +783,7 @@ impl ScreenPlaces {
         if self.top.is_none() && self.nested.is_none() {
             return;
         }
-        let Some(t) = tree.filter(|t| !t.nodes.is_empty()) else {
+        let Some(t) = tree.filter(|t| !t.nodes.is_empty() && !self.webviews.is_empty()) else {
             out.extend(self.embedded_places());
             return;
         };
@@ -712,7 +809,7 @@ impl ScreenPlaces {
         let mut out = Vec::new();
         let element = |e: Option<&Element>, out: &mut Vec<FlowContext>| match e {
             Some(e) => self.of_element(e, tree, out),
-            None => out.extend(self.all()),
+            None => out.extend(self.every()),
         };
         match action {
             Action::Tap { element: i }
@@ -724,7 +821,7 @@ impl ScreenPlaces {
                     let p = Point::new(x * screen.size.width, y * screen.size.height);
                     self.of_point(p, tree, &mut out);
                 } else {
-                    out.extend(self.all());
+                    out.extend(self.every());
                 }
             }
             Action::Scroll {
@@ -746,7 +843,7 @@ impl ScreenPlaces {
                 }
                 match drag_gesture(kind, *direction, target.map(|e| e.frame), screen) {
                     Ok(g) => self.of_point(g.from, tree, &mut out),
-                    Err(_) => out.extend(self.all()),
+                    Err(_) => out.extend(self.every()),
                 }
             }
             Action::PressHome
@@ -777,7 +874,7 @@ pub fn observed_places(
     view: Option<(&[u32], &[u32], &[u32])>,
 ) -> ScreenPlaces {
     let app = raw.app_bundle_id.trim().to_lowercase();
-    let chrome = scan_chrome(&raw.root);
+    let chrome = scan_chrome(&raw.root, &raw.bounds());
     if is_springboard(&app) && !chrome.alert_like && home_icons_only(compact) {
         return ScreenPlaces {
             base: FlowContext::App(app),
@@ -792,14 +889,19 @@ pub fn observed_places(
     if !chrome.webview {
         return single(FlowContext::App(app));
     }
-    // Runner text: its structure is forgeable, so its web views are not told apart.
+    // Runner text: its structure is forgeable, so its web views are not told apart from the
+    // app or from each other: one place, covering from its first observation.
     if source == ScreenSource::RunnerText {
-        return single(FlowContext::SiteUnreadable(app));
+        let s = FlowContext::SiteUnreadable(app);
+        return ScreenPlaces {
+            ambiguous: vec![s.clone()],
+            ..single(s)
+        };
     }
     // Eighteenth review (E3): a host is read from the chrome of a listed browser only.
-    let host = (chrome.hosts.len() == 1 && !chrome.unreadable_address && is_browser(&app))
-        .then(|| chrome.hosts.iter().next().cloned())
-        .flatten();
+    // Nineteenth review (R-D): from its address field, the only address-like node on screen.
+    let browser = is_browser(&app);
+    let host = chrome.host().filter(|_| browser).map(str::to_owned);
     // Top-level web views (their raw subtree ranges, disjoint and ascending) and how many
     // web views lie inside another: one pass over the web views.
     let (webviews, ends, sources) = view.unwrap_or((&[], &[], &[]));
@@ -820,34 +922,42 @@ pub fn observed_places(
         }
     }
     // Content outside the web views: a listed element whose raw node no top-level web view
-    // holds (by the listed elements when the tree is known, else by the chrome walk).
-    let outside = if view.is_some() && !tops.is_empty() {
-        sources.iter().any(|&s| {
+    // holds (by the listed elements when the tree is known, else by the chrome walk). In a
+    // listed browser whose host is read, its one address field showing that host is the
+    // page's own name, not content of the chrome (nineteenth review, R-C).
+    let is_address = |e: &Element| {
+        host.is_some()
+            && matches!(e.role, Role::TextField | Role::Button)
+            && ADDRESS_LABELS.contains(&e.label.trim().to_lowercase().as_str())
+    };
+    let base_read = if view.is_some() && !tops.is_empty() {
+        sources.iter().zip(&compact.elements).any(|(&s, e)| {
             let k = tops.partition_point(|&(a, _)| a <= s);
-            !(k > 0 && tops.get(k - 1).is_some_and(|&(a, e)| s >= a && s < e))
+            let inside = k > 0 && tops.get(k - 1).is_some_and(|&(a, e)| s >= a && s < e);
+            !inside && !is_address(e)
         })
+    } else if host.is_some() {
+        chrome.outside_not_address
     } else {
         chrome.outside
     };
-    // Eighteenth review (E5a): the nesting level is part of the place — the top level of an
-    // app's web content and what is nested in it are two places; deeper levels share one.
-    let (base, top) = match &host {
-        Some(h) => (
-            FlowContext::Site {
-                app: app.clone(),
-                host: h.clone(),
-            },
-            None,
-        ),
-        None if outside => (
-            FlowContext::App(app.clone()),
-            Some(FlowContext::Embedded {
-                app: app.clone(),
-                within: None,
-            }),
-        ),
-        None => (FlowContext::SiteUnreadable(app.clone()), None),
-    };
+    // Nineteenth review (R-C): everything outside every web view is the app's own place —
+    // in a listed browser its chrome, whatever site is shown. The page inside the top-level
+    // web views is the site (its host read, R-D), else a listed browser's pages with no
+    // readable address, else (any other app) its web content; what is nested in a web view
+    // is a place of its own (eighteenth review, E5a), deeper levels sharing one.
+    let base = FlowContext::App(app.clone());
+    let top = Some(match (&host, browser) {
+        (Some(h), _) => FlowContext::Site {
+            app: app.clone(),
+            host: h.clone(),
+        },
+        (None, true) => FlowContext::SiteUnreadable(app.clone()),
+        (None, false) => FlowContext::Embedded {
+            app: app.clone(),
+            within: None,
+        },
+    });
     let nested = (nested_docs > 0).then(|| match host {
         Some(h) => FlowContext::Embedded {
             app: app.clone(),
@@ -855,22 +965,25 @@ pub fn observed_places(
         },
         None => FlowContext::NestedWeb(app.clone()),
     });
-    // Eighteenth review (E5b): a class holding more than one document cannot be told apart
-    // into its parts.
-    let mut ambiguous = Vec::new();
-    if let Some(t) = top.as_ref().filter(|_| tops.len() > 1) {
-        ambiguous.push(t.clone());
-    }
-    if let Some(n) = nested.as_ref().filter(|_| nested_docs > 1) {
-        ambiguous.push(n.clone());
-    }
-    let any = top.is_some() || nested.is_some();
+    // Nineteenth review (R-B): every class with no OS-given name covers all of itself from
+    // its first observation; a site's frames once this screen holds two of them (eighteenth
+    // review, E5b).
+    let ambiguous: Vec<FlowContext> = top
+        .iter()
+        .chain(nested.iter())
+        .filter(|c| {
+            c.always_covering() || (matches!(c, FlowContext::Embedded { .. }) && nested_docs > 1)
+        })
+        .cloned()
+        .collect();
     ScreenPlaces {
         base,
+        base_read,
+        browser,
         top,
         nested,
         ambiguous,
-        webviews: if any { webviews.to_vec() } else { Vec::new() },
+        webviews: webviews.to_vec(),
         read: true,
     }
 }
@@ -879,7 +992,7 @@ pub fn observed_places(
 /// action except `wait` (its timing is observable only by places that receive some other
 /// input, each of which is checked), `look` (it reads), and the text of `done`, `fail`
 /// and `ask_user` (shown on the phone). Taps, long presses, `tap_point`, swipes and
-/// scrolls, typing, clearing, `press_home` (into the place it leaves), `open_app` and a
+/// scrolls, typing, clearing, `press_home` (into every place it leaves), `open_app` and a
 /// home-screen launch (into the app), `open_url` (into the link's site, whoever gave it)
 /// and every tool call, with or without arguments.
 pub fn flow_checked(action: &Action) -> bool {
@@ -928,8 +1041,12 @@ impl Confinement {
     /// in a flow note says it covers all of it ([`FlowContext::display_covering`]). An
     /// approval given before it was known to be ambiguous named only "embedded content":
     /// it is dropped (fail closed), so the next input asks with the covering name.
+    ///
+    /// Nineteenth review: a class that covers all of itself from its first observation
+    /// ([`FlowContext::always_covering`]) was never named otherwise; marking it changes
+    /// nothing. Only a site's frames still become ambiguous here.
     pub fn mark_ambiguous(&mut self, context: FlowContext) {
-        if !self.ambiguous.insert(context.clone()) {
+        if context.always_covering() || !self.ambiguous.insert(context.clone()) {
             return;
         }
         self.allowed.remove(&context);
@@ -938,9 +1055,10 @@ impl Confinement {
         }
     }
 
-    /// Whether `context` was marked ambiguous in this task ([`Self::mark_ambiguous`]).
+    /// Whether `context` covers all of itself in this task: from its first observation
+    /// ([`FlowContext::always_covering`]) or since it was marked ([`Self::mark_ambiguous`]).
     pub fn is_ambiguous(&self, context: &FlowContext) -> bool {
-        self.ambiguous.contains(context)
+        context.always_covering() || self.ambiguous.contains(context)
     }
 
     /// Content of `context` (or text derived from it) entered a model prompt.
@@ -971,19 +1089,17 @@ impl Confinement {
         self.clipboard.iter()
     }
 
-    /// Whether the owner allowed `source` into `target`. An approval into an app covers
-    /// its "site not readable" page (the launch asks once, the first touch does not ask
-    /// again for the same flow).
+    /// Whether the owner allowed `source` into `target` (nineteenth review: exactly that
+    /// pair; an approval into an app no longer covers its pages with no readable address).
     fn allowed_into(&self, target: &FlowContext, source: &FlowContext) -> bool {
-        let has = |t: &FlowContext| self.allowed.get(t).is_some_and(|a| a.contains(source));
-        has(target)
-            || matches!(target, FlowContext::SiteUnreadable(a) if has(&FlowContext::App(a.clone())))
+        self.allowed.get(target).is_some_and(|a| a.contains(source))
     }
 
     /// The contexts whose content may flow into `target` and that the owner has not allowed
     /// into it in this task: what was read (and, with `pasting`, what the clipboard may
-    /// hold), but `target` itself and the embedded content it surrounds. Most recently
-    /// read first.
+    /// hold), but `target` itself unless it covers all of itself ([`Self::is_ambiguous`]).
+    /// Every other place is a source (nineteenth review: no one-way relation). Most
+    /// recently read first.
     pub fn unallowed(&self, target: &FlowContext, pasting: bool) -> Vec<FlowContext> {
         self.unallowed_into(std::slice::from_ref(target), pasting, false)
     }
@@ -1002,8 +1118,7 @@ impl Confinement {
         let mut out: Vec<FlowContext> = Vec::new();
         for target in targets {
             for c in self.read.keys().chain(clip.clone()) {
-                if (c == target && !self_source && !self.ambiguous.contains(c))
-                    || target.surrounds(c)
+                if (c == target && !self_source && !self.is_ambiguous(c))
                     || self.allowed_into(target, c)
                     || out.contains(c)
                 {
@@ -1176,6 +1291,54 @@ pub fn handoff_control(
     }
     let joined = label_words(&el.label).join(" ");
     !LOCAL_MENU_ITEMS.contains(&joined.as_str())
+}
+
+/// Nineteenth review (N4): whether `action` presses something on a share (activity) sheet.
+/// Every row and button of one may run another party's code with the shared content — a
+/// person or device (AirDrop), an app's share extension, a third-party action extension,
+/// whose title the extension chooses ("Copy", "Close") — so a press there always asks,
+/// phone only, whatever its label (the hand-on items' rule, [`handoff_control`]).
+///
+/// What a share sheet is rests on the roles the code knows, nothing else: a raw ancestor
+/// of the pressed control with role `Sheet` whose subtree lists an element whose whole
+/// label is "AirDrop" (the OS's row; the repository holds no real share-sheet tree, so this
+/// is an open device spike). Without the raw tree, any press on a screen that lists an
+/// "AirDrop" element asks, and so does a `tap_point` that resolves to nothing listed while
+/// one is listed (fail closed).
+pub fn share_sheet_control(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> bool {
+    // Only a press can be one (typing, Return, drags: nothing to scan).
+    let el = match actuation(action, screen) {
+        Actuation::Press(el) => Some(el),
+        Actuation::PressUnknown => None,
+        _ => return false,
+    };
+    // The OS's whole label "AirDrop" (or "Air Drop"), compared without allocating: one pass
+    // over the listed elements.
+    let airdrop: Vec<&Element> = screen
+        .elements
+        .iter()
+        .filter(|e| {
+            let l = e.label.trim();
+            l.eq_ignore_ascii_case("airdrop") || l.eq_ignore_ascii_case("air drop")
+        })
+        .collect();
+    if airdrop.is_empty() {
+        return false;
+    }
+    let Some(el) = el else {
+        return true;
+    };
+    let Some(t) = tree.filter(|t| !t.nodes.is_empty() && t.source(el).is_some()) else {
+        return true;
+    };
+    t.ancestors(el).into_iter().any(|a| {
+        crate::hit::raw_node(t, a).is_some_and(|n| n.role == Role::Sheet)
+            && airdrop.iter().any(|d| t.inside(d, a))
+    })
 }
 
 /// Whether `action` presses a Copy or Cut control (whole label starting with "copy" or

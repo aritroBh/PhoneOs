@@ -422,6 +422,9 @@ fn an_unreadable_host_is_the_app_with_its_site_not_readable() {
     // Seventeenth review: a browser screen with no readable host whose chrome lists
     // content (here the address field) is the app; its web view is "web content in
     // Safari", a place of its own (was: the whole screen "Safari (site not readable)").
+    // Nineteenth review (R-B/R-C, rule changed): in a listed browser the chrome is always the
+    // app and the page with no readable host is the browser's own covering class; the main
+    // place `observed_context` gives for a browser screen is the page's (was: the app).
     for v in ["", "Search or enter website name", "Apple – Official site"] {
         let s = app(
             "com.apple.mobilesafari",
@@ -430,7 +433,7 @@ fn an_unreadable_host_is_the_app_with_its_site_not_readable() {
         );
         assert_eq!(
             ctx(&s),
-            Some(FlowContext::App("com.apple.mobilesafari".into())),
+            Some(FlowContext::SiteUnreadable("com.apple.mobilesafari".into())),
             "{v:?}"
         );
     }
@@ -455,7 +458,8 @@ fn an_unreadable_host_is_the_app_with_its_site_not_readable() {
             address("b.example"),
         ],
     );
-    assert!(matches!(ctx(&s), Some(FlowContext::App(_))));
+    // (Nineteenth review, as above: was `Some(FlowContext::App(_))`.)
+    assert!(matches!(ctx(&s), Some(FlowContext::SiteUnreadable(_))));
     // Runner text: never read from its forgeable structure.
     let s = app(
         "com.apple.mobilesafari",
@@ -469,7 +473,8 @@ fn an_unreadable_host_is_the_app_with_its_site_not_readable() {
     ));
     let name = FlowContext::SiteUnreadable("com.apple.mobilesafari".into())
         .display(|_| Some("Safari".to_owned()));
-    assert_eq!(name, "Safari (site not readable)");
+    // Nineteenth review (name changed; was "Safari (site not readable)").
+    assert_eq!(name, "pages in Safari with no readable address");
 }
 
 fn icon(label: &str, x: f64) -> UiNode {

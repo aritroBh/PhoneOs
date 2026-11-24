@@ -587,10 +587,13 @@ fn vision_fallback_on_an_empty_tree() {
         run.outcome.summary
     );
     assert_eq!(run.confirms.len(), 1, "{:?}", run.confirms);
+    // Nineteenth review (names changed): the game's canvas is web content, which covers all
+    // of itself from its first observation and so is named too, and the screen picture's
+    // name says it covers later pictures (was: "Jarvis has read the screen picture").
     assert!(
-        run.confirms[0]
-            .summary
-            .contains("Jarvis has read the screen picture"),
+        run.confirms[0].summary.contains(
+            "Jarvis has read all web content in Game (Jarvis cannot tell its parts apart) and screen pictures (they can show notifications and other apps' banners) in this task"
+        ),
         "{}",
         run.confirms[0].summary
     );

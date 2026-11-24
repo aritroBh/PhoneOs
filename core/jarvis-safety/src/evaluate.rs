@@ -346,7 +346,9 @@ pub fn flow_note_fit(places: &[String]) -> (QuestionRow, usize) {
         let name = if p == crate::flow::SCREEN_PICTURE {
             p.clone()
         } else if let Some(head) = p.strip_suffix(crate::flow::COVERS_ALL) {
-            format!("{}{}", clean_label(head, 40), crate::flow::COVERS_ALL)
+            let pre = crate::flow::COVERS_ALL_PREFIX;
+            let (pre, head) = head.strip_prefix(pre).map_or(("", head), |h| (pre, h));
+            format!("{pre}{}{}", clean_label(head, 40), crate::flow::COVERS_ALL)
         } else {
             clean_label(p, 40)
         };
@@ -616,7 +618,11 @@ pub fn evaluate_flowing(
     }
     // Seventeenth review: an edit-menu item that is not a local action may hand the
     // selection to another app or service: always asks, phone only.
-    let hands_on = inserts.is_none() && crate::flow::handoff_control(action, screen, tree);
+    // Nineteenth review (N4): so does any press on a share sheet (its rows may be another
+    // party's extension, titled as it likes).
+    let hands_on = inserts.is_none()
+        && (crate::flow::handoff_control(action, screen, tree)
+            || crate::flow::share_sheet_control(action, screen, tree));
     if hands_on {
         category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
         unclear = true;

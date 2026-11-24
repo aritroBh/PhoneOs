@@ -85,18 +85,13 @@ fn app_web_content_is_one_way_a_frame_two_way() {
     };
     // Eighteenth review (E2, rule changed): one-way for Apple's own apps only; Acme is a
     // third party, so it and its web content are two-way (was: `app.surrounds(&web)`).
-    assert!(!app.surrounds(&web) && !web.surrounds(&app));
+    // Nineteenth review (R-A, rule changed): no one-way relation anywhere — `surrounds` is
+    // gone; Apple's apps are two-way too (asserted below with `Confinement`).
     let news = FlowContext::app("com.apple.news");
     let news_web = FlowContext::Embedded {
         app: "com.apple.news".into(),
         within: None,
     };
-    assert!(news.surrounds(&news_web) && !news_web.surrounds(&news));
-    // A frame in a page is two-way: neither surrounds the other.
-    assert!(!site.surrounds(&frame) && !frame.surrounds(&site));
-    assert!(!site.surrounds(&web));
-    let unreadable = FlowContext::SiteUnreadable("com.example.acme".into());
-    assert!(!unreadable.surrounds(&web));
     let mut f = Confinement::new();
     f.read(site.clone());
     f.read(frame.clone());
@@ -111,14 +106,20 @@ fn app_web_content_is_one_way_a_frame_two_way() {
     c.read(web.clone());
     // Into a third-party app the web content it shows is a source (rule changed, was: not
     // a source); into the web content, the app's own content is.
+    // Nineteenth review (R-B, rule changed): an app's web content covers all of itself from
+    // its first observation, so it is a source for itself too (was: `vec![app]`).
     assert_eq!(c.unallowed(&app, false), vec![web.clone()]);
-    assert_eq!(c.unallowed(&web, false), vec![app.clone()]);
-    // An Apple app keeps the one-way relation.
+    assert_eq!(c.unallowed(&web, false), vec![web.clone(), app.clone()]);
+    // Nineteenth review (R-A, rule changed): an Apple app is two-way too (was: the web
+    // content not a source for News).
     let mut c = Confinement::new();
     c.read(news.clone());
     c.read(news_web.clone());
-    assert!(c.unallowed(&news, false).is_empty());
-    assert_eq!(c.unallowed(&news_web, false), vec![news.clone()]);
+    assert_eq!(c.unallowed(&news, false), vec![news_web.clone()]);
+    assert_eq!(
+        c.unallowed(&news_web, false),
+        vec![news_web.clone(), news.clone()]
+    );
     assert_eq!(web.display(|_| Some("Acme".into())), "web content in Acme");
     assert_eq!(frame.display(|_| None), "embedded content in bank.example");
 }
@@ -180,9 +181,15 @@ fn the_screens_own_place() {
     let ctx =
         |s: &Screen| observed_context(s, &jarvis_observe_free_compact(s), ScreenSource::Typed);
     assert_eq!(ctx(&mixed), Some(FlowContext::app("com.example.acme")));
+    // Nineteenth review (rule changed): an app that is not a listed browser has no "site
+    // not readable"; its web view alone is its web content, a covering class (was:
+    // `SiteUnreadable`, which an approval into the app covered).
     assert_eq!(
         ctx(&alone),
-        Some(FlowContext::SiteUnreadable("com.example.acme".into()))
+        Some(FlowContext::Embedded {
+            app: "com.example.acme".into(),
+            within: None
+        })
     );
 }
 

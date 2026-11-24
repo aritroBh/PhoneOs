@@ -193,12 +193,22 @@ fn nesting_levels_and_ambiguous_classes_by_observation() {
             FlowContext::NestedWeb(SOCIAL.into()),
         ]
     );
-    assert!(one.ambiguous().is_empty());
+    // Nineteenth review (R-B, rule changed): an app's web content and what is nested in it
+    // cover all of themselves from their first observation, one document or two (was: none
+    // ambiguous with one frame, only the nested class with two).
+    let covering = vec![
+        FlowContext::Embedded {
+            app: SOCIAL.into(),
+            within: None,
+        },
+        FlowContext::NestedWeb(SOCIAL.into()),
+    ];
+    assert_eq!(one.ambiguous(), covering.as_slice());
     let two = places(&in_app(vec![
         frame(200.0, "Continue as Jane"),
         frame(400.0, "Next"),
     ]));
-    assert_eq!(two.ambiguous(), &[FlowContext::NestedWeb(SOCIAL.into())]);
+    assert_eq!(two.ambiguous(), covering.as_slice());
     // Two top-level web views beside the app's content: that class is ambiguous.
     let tops = places(&scr(
         SOCIAL,

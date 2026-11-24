@@ -41,22 +41,41 @@ final class SystemAppAgentTests: QATestCase {
         return list.replacingOccurrences(of: " and ", with: ", ").components(separatedBy: ", ")
     }
 
-    /// Seventeenth review: a flow question whose sources are only Safari's own pages read
-    /// before the link's page loaded — Safari's start page while the address is not yet a
-    /// host ("Safari" with "web content in Safari", or "Safari (site not readable)").
+    /// Nineteenth review: how the core names Safari's pages whose address it cannot read (the
+    /// address shown as a static text before the page loads, or no address field): one class
+    /// that covers all of itself from its first look.
+    static let safariUnreadablePages = "all pages in Safari with no readable address (Jarvis cannot tell its parts apart)"
+
+    /// Whether a flow question is for the first-launch tip's "Close" (Safari's own sheet).
+    static func isTipClose(_ request: ConfirmRequest) -> Bool {
+        request.summary.hasPrefix("Tap \"Close\"")
+    }
+
+    /// Seventeenth review: the flow question for the first typing into the page, whose
+    /// sources are only Safari's own places. Nineteenth review: Safari's chrome (its bar's
+    /// Back, More and reload buttons, the start page's lists) is Safari's place, not the
+    /// site's, so it is a source for the page ("Safari"); and if the model was shown Safari
+    /// before the page loaded (the address a static text, not yet the host), that page is the
+    /// covering class of Safari's unreadable pages, a source too. The typing asks once naming
+    /// "Safari", or "Safari and <that class>"; never the host (a site is not its own source).
+    /// Not a question for the tip's "Close" (that is `isSafariTipDismissFlow`).
     static func isSafariLoadingFlow(_ request: ConfirmRequest) -> Bool {
-        guard let names = flowSources(request) else { return false }
-        let own: Set<String> = ["Safari", "web content in Safari", "Safari (site not readable)"]
+        guard let names = flowSources(request), !isTipClose(request) else { return false }
+        let own: Set<String> = ["Safari", safariUnreadablePages]
         return !names.isEmpty && names.allSatisfy { own.contains($0) }
     }
 
     /// Run 118: Safari's first-launch tip came up over the page after the page had been read.
-    /// The tip is Safari's own sheet (no web view, no address bar), so closing it is an input
-    /// into Safari after reading the site, and the core asks: a flow question for the tip's
-    /// "Close" naming exactly the page's own host.
+    /// The tip is Safari's own sheet, so closing it is an input into Safari (its own place,
+    /// nineteenth review: also when the page shows beside it) after reading the site, and the
+    /// core asks: a flow question for the tip's "Close" naming the page's host — and, if the
+    /// model was shown the page before it loaded, the covering class of Safari's unreadable
+    /// pages (alone, when the tip comes up before the page loaded). Never "Safari" (the
+    /// destination is not its own source).
     static func isSafariTipDismissFlow(_ request: ConfirmRequest, host: String) -> Bool {
-        guard let names = flowSources(request) else { return false }
-        return request.summary.hasPrefix("Tap \"Close\"") && names == [host]
+        guard let names = flowSources(request), isTipClose(request) else { return false }
+        let read: Set<String> = [host, safariUnreadablePages]
+        return !names.isEmpty && names.allSatisfy { read.contains($0) }
     }
 
     private let settingsId = "com.apple.Preferences"
@@ -210,11 +229,11 @@ final class SystemAppAgentTests: QATestCase {
             if request.category == .firstUse { return true }
             // Home screen rule (sixteenth review): the run starts on the home screen, but its
             // widgets are not shown to the model, so it is not a read, and `open_url` (an
-            // input into the link's site since the seventeenth review) asks nothing. If the
-            // model was shown Safari before the page loaded (the start page, whose address is
-            // not yet the host), that is another place in Safari: the first typing into the
-            // page asks one flow question naming only Safari's own page, approved here. Any
-            // other flow question is declined.
+            // input into the link's site since the seventeenth review) asks nothing. Safari's
+            // chrome is Safari's own place (nineteenth review), read with every page, and the
+            // page before it loaded (its address not yet the host) is the covering class of
+            // Safari's unreadable pages: the first typing into the page asks one flow
+            // question naming only those, approved here. Any other flow question is declined.
             if SystemAppAgentTests.isSafariLoadingFlow(request) { return request.app == safari }
             // And the first-launch tip's "Close", when the tip comes up after the page was read.
             if SystemAppAgentTests.isSafariTipDismissFlow(request, host: host) { return request.app == safari }
@@ -229,8 +248,10 @@ final class SystemAppAgentTests: QATestCase {
         // (fifteenth review, R1), and this owner would decline that too.
         let task = "Open \(url) in Safari and fill in the contact form with the name Ada Lovelace and the email ada@example.com"
         let outcome = try await run.run(task: task, model: model, owner: owner, firstUseApproval: true, driveOwnApp: false)
-        // Flow questions: at most one about Safari's own page read while loading, at most one
-        // for closing Safari's first-launch tip after the page was read; no other.
+        // Flow questions: at most one for the first typing (naming Safari's chrome and, if
+        // read, its unreadable pages), at most one for closing Safari's first-launch tip
+        // (naming the host and/or the unreadable pages); no other. The two helpers are
+        // disjoint (only the tip's question starts with Tap "Close").
         let flowQuestions = owner.confirms.filter(SystemAppAgentTests.isFlowQuestion)
         let loading = flowQuestions.filter(SystemAppAgentTests.isSafariLoadingFlow)
         let tip = flowQuestions.filter { SystemAppAgentTests.isSafariTipDismissFlow($0, host: host) }

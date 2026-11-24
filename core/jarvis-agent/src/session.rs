@@ -3088,7 +3088,7 @@ impl Session {
         // task read anything (its slots are filled from the task's own words).
         // Seventeenth review: every model-chosen input goes through it — `open_app` and a
         // home-screen launch (into the app), `open_url` (into the link's site), `press_home`
-        // (into the place it leaves) and every tool call included. A replayed step is
+        // (into every place it leaves) and every tool call included. A replayed step is
         // exempt only where it runs in the place it was recorded in.
         pending.places = self.flow_targets(&gate, tool, home.as_ref()).0;
         pending.flow = self.flow_for(
@@ -3264,8 +3264,8 @@ impl Session {
     /// earlier content is a source too (a tool that is not self-contained). A tool call goes
     /// to the tool; `open_app` and a home-screen launch of a known app to that app (an app
     /// the home screen cannot name, or a search, to [`FlowContext::Unknown`]); `open_url` to
-    /// the site of the link's host ([`url_destination`]); `press_home` to the place it leaves
-    /// (the app in front observes when it is left; the Home Screen is the OS's); every input
+    /// the site of the link's host ([`url_destination`]); `press_home` to every place on
+    /// the screen it leaves (nineteenth review; the Home Screen is the OS's); every input
     /// on the screen to the place of what it targets ([`ScreenPlaces::destinations`]).
     fn flow_targets(
         &self,
@@ -3283,7 +3283,9 @@ impl Session {
             ),
             Action::OpenApp { app } => (vec![FlowContext::app(app)], false),
             Action::OpenUrl { url } => (vec![url_destination(url)], false),
-            Action::PressHome => (vec![self.here.clone()], false),
+            // Nineteenth review: every place on the screen it leaves observes being left (a
+            // page sees its visibility change; in a browser the chrome is the app's place).
+            Action::PressHome => (self.places.every(), false),
             _ => match home {
                 Some(HomeLaunch::App { bundle_id, .. }) => {
                     (vec![FlowContext::app(bundle_id)], false)
@@ -3402,8 +3404,12 @@ impl Session {
     fn execute(&mut self, mut pending: Pending) -> Out {
         // Sixteenth review (Rule P): Copy or Cut here puts this context on the clipboard; a
         // later Paste names it (and Rule T counts it as a source of the paste).
+        // Nineteenth review: the selection may be in any place on the screen (a page's text
+        // is selected, the menu is the app's), so every one of them may be on the clipboard.
         if copy_control(&pending.gate, &self.current.screen) {
-            self.confine.copied(self.here.clone());
+            for c in self.places.every() {
+                self.confine.copied(c);
+            }
         }
         match &mut pending.exec {
             Exec::Tool(call) => {
