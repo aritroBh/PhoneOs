@@ -56,12 +56,15 @@ final class SystemAppAgentTests: QATestCase {
     /// Back, More and reload buttons, the start page's lists) is Safari's place, not the
     /// site's, so it is a source for the page ("Safari"); and if the model was shown Safari
     /// before the page loaded (the address a static text, not yet the host), that page is the
-    /// covering class of Safari's unreadable pages, a source too. The typing asks once naming
-    /// "Safari", or "Safari and <that class>"; never the host (a site is not its own source).
-    /// Not a question for the tip's "Close" (that is `isSafariTipDismissFlow`).
-    static func isSafariLoadingFlow(_ request: ConfirmRequest) -> Bool {
+    /// covering class of Safari's unreadable pages, a source too. Twenty-third review (R23):
+    /// every step is also seen by every place on the screen, so Safari's chrome sees the
+    /// typing on the page and the page is named as a source for it (the host), and the
+    /// script's patience waits (seen by the chrome and the page) ask too, naming the same
+    /// places. Names only Safari's own places: "Safari", the host, that class. Not a question
+    /// for the tip's "Close" (that is `isSafariTipDismissFlow`).
+    static func isSafariLoadingFlow(_ request: ConfirmRequest, host: String) -> Bool {
         guard let names = flowSources(request), !isTipClose(request) else { return false }
-        let own: Set<String> = ["Safari", safariUnreadablePages]
+        let own: Set<String> = ["Safari", host, safariUnreadablePages]
         return !names.isEmpty && names.allSatisfy { own.contains($0) }
     }
 
@@ -70,11 +73,12 @@ final class SystemAppAgentTests: QATestCase {
     /// nineteenth review: also when the page shows beside it) after reading the site, and the
     /// core asks: a flow question for the tip's "Close" naming the page's host — and, if the
     /// model was shown the page before it loaded, the covering class of Safari's unreadable
-    /// pages (alone, when the tip comes up before the page loaded). Never "Safari" (the
-    /// destination is not its own source).
+    /// pages (alone, when the tip comes up before the page loaded). Twenty-third review (R23):
+    /// the page sees the tap on "Close", so "Safari" may be named too, as a source for the
+    /// page, when nothing approved before gave it the chrome.
     static func isSafariTipDismissFlow(_ request: ConfirmRequest, host: String) -> Bool {
         guard let names = flowSources(request), isTipClose(request) else { return false }
-        let read: Set<String> = [host, safariUnreadablePages]
+        let read: Set<String> = ["Safari", host, safariUnreadablePages]
         return !names.isEmpty && names.allSatisfy { read.contains($0) }
     }
 
@@ -233,8 +237,11 @@ final class SystemAppAgentTests: QATestCase {
             // chrome is Safari's own place (nineteenth review), read with every page, and the
             // page before it loaded (its address not yet the host) is the covering class of
             // Safari's unreadable pages: the first typing into the page asks one flow
-            // question naming only those, approved here. Any other flow question is declined.
-            if SystemAppAgentTests.isSafariLoadingFlow(request) { return request.app == safari }
+            // question naming only those (and, twenty-third review, the host, which the
+            // chrome sees), approved here; so do the script's first patience waits before and
+            // after the page loads (R23: a wait is seen by every place on the screen). Any
+            // other flow question is declined.
+            if SystemAppAgentTests.isSafariLoadingFlow(request, host: host) { return request.app == safari }
             // And the first-launch tip's "Close", when the tip comes up after the page was read.
             if SystemAppAgentTests.isSafariTipDismissFlow(request, host: host) { return request.app == safari }
             return request.app == safari
@@ -249,14 +256,20 @@ final class SystemAppAgentTests: QATestCase {
         let task = "Open \(url) in Safari and fill in the contact form with the name Ada Lovelace and the email ada@example.com"
         let outcome = try await run.run(task: task, model: model, owner: owner, firstUseApproval: true, driveOwnApp: false)
         // Flow questions: at most one for the first typing (naming Safari's chrome and, if
-        // read, its unreadable pages), at most one for closing Safari's first-launch tip
-        // (naming the host and/or the unreadable pages); no other. The two helpers are
+        // read, its unreadable pages and the host), at most one for closing Safari's
+        // first-launch tip (naming the host and/or the unreadable pages, and Safari); no
+        // other. Twenty-third review (R23): the script's patience waits ask too, once per new
+        // place of Safari's own on screen at the time (its unreadable page before the host is
+        // readable, the host once it is, and — if the address is unreadable again while the
+        // sent form loads — that class with the host as a source; each approval keeps what it
+        // named for the later waits), so at most four loading questions (was one). The core's
+        // replay of the real trees (`safari_minimized_bar.rs`) asks three. The two helpers are
         // disjoint (only the tip's question starts with Tap "Close").
         let flowQuestions = owner.confirms.filter(SystemAppAgentTests.isFlowQuestion)
-        let loading = flowQuestions.filter(SystemAppAgentTests.isSafariLoadingFlow)
+        let loading = flowQuestions.filter { SystemAppAgentTests.isSafariLoadingFlow($0, host: host) }
         let tip = flowQuestions.filter { SystemAppAgentTests.isSafariTipDismissFlow($0, host: host) }
         XCTAssertEqual(loading.count + tip.count, flowQuestions.count, "a flow question named another place: \(owner.confirms)")
-        XCTAssertLessThanOrEqual(loading.count, 1, "\(owner.confirms)")
+        XCTAssertLessThanOrEqual(loading.count, 4, "\(owner.confirms)")
         XCTAssertLessThanOrEqual(tip.count, 1, "\(owner.confirms)")
         XCTAssertFalse(owner.confirms.contains { $0.summary.contains("This text is not from your request") }, "the owner's own words were asked: \(owner.confirms)")
         XCTAssertFalse(owner.confirms.contains { $0.summary.contains("Open a link") }, "a link the owner gave was asked: \(owner.confirms)")

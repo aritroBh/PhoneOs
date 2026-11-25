@@ -46,6 +46,16 @@
 //! on "Next" included — is full: only a full grant covers it, and its approval keeps what any
 //! full input keeps.
 //!
+//! Twenty-third review (R23): every model-chosen step is seen by every place on the screen
+//! when it is decided. The oracle's kinds are observe < scroll < full: `wait`, `look` and
+//! `press_home` are observe-kind inputs into every place on the screen; every other step
+//! keeps its own destinations and kind and is also an observe-kind input into every other
+//! place on the screen. Grants are kept per (destination, source) pair with their kind (an
+//! observe question's approval keeps an observe-only grant; a grant covers its kind and the
+//! weaker ones, never a stronger one). A question names the action's own destinations as
+//! before, and the places that only see it when they need approval (`, to …, which can tell
+//! when Jarvis waits, looks or acts`).
+//!
 //! Invariant, checked on every effect:
 //! - no runner command and no tool call reaches a destination place while the read set holds
 //!   a source for it the owner has not allowed into it in this task (sources: every place
@@ -58,7 +68,11 @@
 //! - (twenty-first review, F2b) no runner command directly follows an approved question:
 //!   a look (an observation) always comes in between, on every path (partial approvals and
 //!   a Return decided again included);
-//! - `confirm: []` changes nothing about it.
+//! - `confirm: []` changes nothing about it;
+//! - (twenty-third review) no runner command, tool call or observation comes between a
+//!   model-chosen step and its flow question, and none after a declined one before the model
+//!   is asked again; a look's screenshot and a model wait are checked like any input (observe
+//!   kind, into every place on the screen).
 //!
 //! `FLOW_CASES` sets the number of cases (default 400), `FLOW_SEED` runs one seed.
 
@@ -76,7 +90,7 @@ use jarvis_proto::{
     RiskCategory, Role, RunnerCommand, RunnerResult, Screen, TaskSpec, Tier, TimedEvent, ToolParam,
     ToolResult, ToolSpec, UiNode,
 };
-use jarvis_safety::{COVERS_ALL, COVERS_ALL_PREFIX, SCREEN_PICTURE};
+use jarvis_safety::{COVERS_ALL, COVERS_ALL_PREFIX, HOME_SCREEN_READ, SCREEN_PICTURE};
 
 const FLOW: &str = "what it read there could be passed on here";
 const APPS: [&str; 7] = [
@@ -427,6 +441,16 @@ fn field_place(s: &Screen) -> Ctx {
     place_at(s, Point::new(196.5, 220.0))
 }
 
+/// The action name of the model's step `json`.
+fn kind_of_last(json: &str) -> Option<&'static str> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    match v["action"].as_str()? {
+        "look" => Some("look"),
+        "wait" => Some("wait"),
+        _ => None,
+    }
+}
+
 fn host_of(url: &str) -> usize {
     HOSTS.iter().position(|h| url.contains(h)).unwrap()
 }
@@ -473,7 +497,7 @@ fn dest_of_action(json: &str, current: &Screen) -> Vec<Ctx> {
         let g = scroll_path(&v, current).unwrap();
         return dedup(vec![base_of(current), place_at(current, g.from)]);
     }
-    if v["action"].as_str() == Some("press_home") {
+    if matches!(v["action"].as_str(), Some("press_home" | "wait" | "look")) {
         return every_of(current);
     }
     dest_one(json, current).into_iter().collect()
@@ -571,13 +595,21 @@ fn named(summary: &str) -> Vec<String> {
         .collect()
 }
 
+/// The oracle's kinds of input, weakest first (twentieth, twenty-first and twenty-third
+/// reviews).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Kind {
+    Observe,
+    Scroll,
+    Full,
+}
+
 /// The oracle's record of one task.
 #[derive(Default)]
 struct Oracle {
     read: BTreeSet<Ctx>,
-    allowed: BTreeMap<Ctx, BTreeSet<Ctx>>,
-    /// Twentieth review: allowed for scrolls only.
-    scroll_allowed: BTreeMap<Ctx, BTreeSet<Ctx>>,
+    /// Per (destination, source): the strongest kind allowed for the task.
+    granted: BTreeMap<(Ctx, Ctx), Kind>,
     /// (destination, source) pairs allowed for the action being carried out only.
     for_action: BTreeSet<(Ctx, Ctx)>,
     /// Embedded classes that held more than one document.
@@ -585,28 +617,105 @@ struct Oracle {
 }
 
 impl Oracle {
-    /// The sources that may not reach `dest` (section 1: a place is not a source for itself,
-    /// except a tool that is not self-contained and a covering embedded class; nineteenth
-    /// review: no one-way relation, every other place read is a source).
-    fn unallowed(&self, dest: &Ctx, scroll: bool) -> BTreeSet<Ctx> {
+    /// The sources that may not reach `dest` with an input of `kind` (section 1: a place is
+    /// not a source for itself, except a tool that is not self-contained and a covering
+    /// embedded class; nineteenth review: no one-way relation, every other place read is a
+    /// source).
+    fn unallowed(&self, dest: &Ctx, kind: Kind) -> BTreeSet<Ctx> {
         self.read
             .iter()
             .filter(|r| {
                 let itself = *r == dest && !dest.self_source(&self.ambiguous);
-                let for_action = self.for_action.contains(&(dest.clone(), (*r).clone()));
-                let by_scroll = scroll
-                    && self
-                        .scroll_allowed
-                        .get(dest)
-                        .is_some_and(|a| a.contains(*r));
-                !itself
-                    && !for_action
-                    && !by_scroll
-                    && !self.allowed.get(dest).is_some_and(|a| a.contains(*r))
+                let pair = (dest.clone(), (*r).clone());
+                let for_action = self.for_action.contains(&pair);
+                let granted = self.granted.get(&pair).is_some_and(|g| *g >= kind);
+                !itself && !for_action && !granted
             })
             .cloned()
             .collect()
     }
+
+    /// Keeps `kind` for (dest, source) for the task (never lowers a grant).
+    fn grant(&mut self, dest: &Ctx, source: &Ctx, kind: Kind) {
+        if *dest == Ctx::Unknown {
+            return;
+        }
+        let g = self
+            .granted
+            .entry((dest.clone(), source.clone()))
+            .or_insert(kind);
+        *g = (*g).max(kind);
+    }
+
+    /// The (destination, kind) pairs that must all allow every source before the step is
+    /// sent: its own destinations at its own kind, and every other place on the screen at
+    /// the observe kind (twenty-third review).
+    fn check(&self, dests: &[(Ctx, Kind)]) -> BTreeSet<(Ctx, Ctx)> {
+        dests
+            .iter()
+            .flat_map(|(d, k)| {
+                self.unallowed(d, *k)
+                    .into_iter()
+                    .map(move |c| (d.clone(), c))
+            })
+            .collect()
+    }
+}
+
+/// Twenty-third review: the step's own destinations at `kind`, and every other place on
+/// `current` at the observe kind.
+fn with_observers(own: Vec<Ctx>, kind: Kind, current: &Screen) -> Vec<(Ctx, Kind)> {
+    let mut out: Vec<(Ctx, Kind)> = own.iter().map(|d| (d.clone(), kind)).collect();
+    for p in every_of(current) {
+        if !own.contains(&p) {
+            out.push((p, Kind::Observe));
+        }
+    }
+    out
+}
+
+/// The oracle's kind of the model's action `json` on `current`.
+fn kind_of(json: &str, current: &Screen) -> Kind {
+    let v: serde_json::Value = serde_json::from_str(json).unwrap();
+    match v["action"].as_str().unwrap_or_default() {
+        "wait" | "look" | "press_home" => Kind::Observe,
+        _ if scroll_kind(json, current) => Kind::Scroll,
+        _ => Kind::Full,
+    }
+}
+
+/// The destinations a flow note names after `FLOW`: those the action's own input goes
+/// into (`, into …`), and those that only see it (`, to …, which can tell …`).
+fn named_dests(note: &str) -> (Vec<String>, Vec<String>) {
+    const SEEN: &str = ", which can tell when Jarvis waits, looks or acts";
+    let tail = &note[note.find(FLOW).unwrap() + FLOW.len()..];
+    let tail = tail.split(" (it ").next().unwrap_or_default();
+    let list = |l: &str| -> Vec<String> {
+        if l.is_empty() {
+            return Vec::new();
+        }
+        let l = l.replace(COVERS_ALL, "\u{2}");
+        let (head, last) = match l.rsplit_once(" and ") {
+            Some((h, x)) => (h.to_owned(), Some(x.to_owned())),
+            None => (l.clone(), None),
+        };
+        let mut out: Vec<String> = head.split(", ").map(str::to_owned).collect();
+        out.extend(last);
+        out.into_iter()
+            .map(|n| n.replace('\u{2}', COVERS_ALL))
+            .collect()
+    };
+    let (into, seen) = if let Some(rest) = tail.strip_prefix(", into ") {
+        match rest.split_once(", and to ") {
+            Some((i, s)) => (i, s.strip_suffix(SEEN).unwrap_or(s)),
+            None => (rest, ""),
+        }
+    } else if let Some(rest) = tail.strip_prefix(", to ") {
+        ("", rest.strip_suffix(SEEN).unwrap_or(rest))
+    } else {
+        ("", "")
+    };
+    (list(into), list(seen))
 }
 
 fn one_case(seed: u64) -> (u32, u32, u32) {
@@ -733,14 +842,38 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
     let mut declined_since_infer = false;
     // Twenty-first review (F2b): a question was approved and nothing was observed since.
     let mut approved_unlooked = false;
+    // Twenty-third review: effects (commands, tool calls, observations) since the model's
+    // last step was proposed, and whether its first question has been answered.
+    let mut since_proposal = 0u32;
+    let mut answered = false;
     let mut last_action = String::new();
     let mut now = 1_000u64;
     let mut event = Event::Start;
     for _ in 0..4_000 {
         let effect = session.step(TimedEvent::new(now, event));
         now += 50;
+        if matches!(
+            effect,
+            Effect::Observe { .. } | Effect::Act(_) | Effect::CallTool(_)
+        ) {
+            since_proposal += 1;
+            assert!(
+                !declined_since_infer,
+                "seed {seed}: {effect:?} after a declined flow question"
+            );
+        }
         event = match effect {
             Effect::Observe { screenshot } => {
+                // Twenty-third review: a look's screenshot is an observe-kind input into
+                // every place on the screen.
+                if screenshot && kind_of_last(&last_action) == Some("look") {
+                    let bad =
+                        oracle.check(&with_observers(every_of(&current), Kind::Observe, &current));
+                    assert!(
+                        bad.is_empty(),
+                        "seed {seed}: a look's screenshot while {bad:?} not allowed"
+                    );
+                }
                 approved_unlooked = false;
                 observed.extend(places_of(&current));
                 let f = Ctx::Frame(HOSTS[TWO_FRAMES].to_owned());
@@ -767,6 +900,8 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                 declined_since_infer = false;
                 // A new action is proposed: the approved one was carried out or dropped.
                 approved_unlooked = false;
+                since_proposal = 0;
+                answered = false;
                 match model.pop_front() {
                     Some(text) => {
                         last_action = text.clone();
@@ -783,26 +918,41 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                     "seed {seed}: {cmd:?} sent right after an approval, with no look"
                 );
                 let dests = dest_of(&cmd, &current);
-                if !dests.is_empty() {
+                // Twenty-third review: a model wait (sent at a level, 1 000 ms or more; the
+                // core's own waits are shorter) and Home are observe-kind inputs into every
+                // place on the screen; every other command also reaches every other place on
+                // it at the observe kind.
+                let model_wait = matches!(cmd, RunnerCommand::Wait { ms } if ms >= 1_000);
+                if !dests.is_empty() || model_wait {
                     sent += 1;
-                    assert!(
-                        !declined_since_infer,
-                        "seed {seed}: {cmd:?} sent after a declined flow question"
-                    );
                 }
                 // A scroll is the only action the generator sends as a drag; its kind is
                 // decided on the screen it acts on (R21-A).
-                let scroll = matches!(cmd, RunnerCommand::Swipe { .. })
-                    && scroll_kind(&last_action, &current);
-                for dest in dests {
-                    let bad = oracle.unallowed(&dest, scroll);
-                    assert!(
-                        bad.is_empty(),
-                        "seed {seed} (confirm empty: {confirm_nothing}): {cmd:?} into {dest:?} while {bad:?} not allowed (read {:?}, allowed {:?})",
-                        oracle.read,
-                        oracle.allowed
-                    );
-                }
+                let kind = match &cmd {
+                    RunnerCommand::Swipe { .. } if scroll_kind(&last_action, &current) => {
+                        Kind::Scroll
+                    }
+                    RunnerCommand::PressKey { key: Key::Home, .. } => Kind::Observe,
+                    RunnerCommand::Wait { .. } => Kind::Observe,
+                    _ => Kind::Full,
+                };
+                let checked = if model_wait {
+                    every_of(&current)
+                        .into_iter()
+                        .map(|d| (d, Kind::Observe))
+                        .collect()
+                } else if dests.is_empty() {
+                    Vec::new()
+                } else {
+                    with_observers(dests, kind, &current)
+                };
+                let bad = oracle.check(&checked);
+                assert!(
+                    bad.is_empty(),
+                    "seed {seed} (confirm empty: {confirm_nothing}): {cmd:?} into {checked:?} while {bad:?} not allowed (read {:?}, granted {:?})",
+                    oracle.read,
+                    oracle.granted
+                );
                 match &cmd {
                     RunnerCommand::LaunchApp { bundle_id } => {
                         let i = APPS.iter().position(|a| a == bundle_id).unwrap();
@@ -826,7 +976,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                     !declined_since_infer,
                     "seed {seed}: tool call after a decline"
                 );
-                let bad = oracle.unallowed(&dest, false);
+                let bad = oracle.check(&with_observers(vec![dest.clone()], Kind::Full, &current));
                 assert!(
                     bad.is_empty(),
                     "seed {seed}: tool call {} while {bad:?} not allowed",
@@ -843,38 +993,83 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                 let approve = rng.below(3) != 0;
                 if req.summary.contains(FLOW) {
                     assert!(req.phone_only, "seed {seed}: {}", req.summary);
-                    let dests = dest_of_action(&last_action, &current);
+                    // Twenty-third review: nothing was sent or observed for the step before its
+                    // first question (later questions of the same step follow approvals).
+                    if !answered {
+                        assert_eq!(
+                            since_proposal, 0,
+                            "seed {seed}: {since_proposal} effects between {last_action} and its question"
+                        );
+                    }
+                    let own = dest_of_action(&last_action, &current);
                     assert!(
-                        !dests.is_empty(),
+                        !own.is_empty(),
                         "seed {seed}: a flow question for {last_action}"
                     );
                     let v: serde_json::Value = serde_json::from_str(&last_action).unwrap();
-                    let kind = v["action"].as_str().unwrap_or_default().to_owned();
-                    let scroll = scroll_kind(&last_action, &current);
-                    let bad: BTreeSet<Ctx> = dests
+                    let action = v["action"].as_str().unwrap_or_default().to_owned();
+                    let kind = kind_of(&last_action, &current);
+                    let all = with_observers(own.clone(), kind, &current);
+                    let observers: Vec<Ctx> = all
                         .iter()
-                        .flat_map(|d| oracle.unallowed(d, scroll))
+                        .filter(|(d, _)| !own.contains(d))
+                        .map(|(d, _)| d.clone())
                         .collect();
-                    // Twentieth review (R20-A, rule 5): more than one destination: every
-                    // one is named instead of "here".
-                    if dests.len() > 1 {
-                        let tail = &req.summary[req.summary.find(FLOW).unwrap() + FLOW.len()..];
-                        assert!(tail.starts_with(", into "), "seed {seed}: {}", req.summary);
-                        for d in &dests {
+                    let unallowed_of = |d: &Ctx| -> BTreeSet<Ctx> {
+                        let k = all.iter().find(|(x, _)| x == d).map(|(_, k)| *k).unwrap();
+                        oracle.unallowed(d, k)
+                    };
+                    let bad: BTreeSet<Ctx> =
+                        all.iter().flat_map(|(d, _)| unallowed_of(d)).collect();
+                    let note = req
+                        .rows
+                        .iter()
+                        .find(|r| r.kind == jarvis_proto::QuestionRowKind::Flow)
+                        .map(|r| r.text.clone())
+                        .unwrap();
+                    let (into, seen) = named_dests(&note);
+                    let reaches_more = note.contains("(it reaches ");
+                    let name = |c: &Ctx| c.name(&oracle.ambiguous);
+                    // Twenty-third review (F2): the Home Screen read is named as such.
+                    let source_name = |c: &Ctx| match c {
+                        Ctx::App(a) if a == HOME => HOME_SCREEN_READ.to_owned(),
+                        other => other.name(&oracle.ambiguous),
+                    };
+                    // The places that only see the step are named when they need approval,
+                    // after `to`; the action's own after `into` (every one of them when it has
+                    // several), or "here" with one own destination and no other named.
+                    for d in &observers {
+                        let named = seen.contains(&name(d));
+                        assert!(
+                            named || unallowed_of(d).is_empty() || reaches_more,
+                            "seed {seed}: {d:?} not named: {note}"
+                        );
+                        assert!(!into.contains(&name(d)), "seed {seed}: {note}");
+                    }
+                    if kind == Kind::Observe {
+                        assert!(into.is_empty(), "seed {seed}: {note}");
+                        for d in &own {
                             assert!(
-                                tail.contains(&d.name(&oracle.ambiguous)),
-                                "seed {seed}: {d:?} not named: {}",
-                                req.summary
+                                seen.contains(&name(d))
+                                    || unallowed_of(d).is_empty()
+                                    || reaches_more,
+                                "seed {seed}: {d:?} not named: {note}"
                             );
                         }
-                    } else {
+                    } else if own.len() > 1 {
+                        for d in &own {
+                            assert!(
+                                into.contains(&name(d)) || reaches_more,
+                                "seed {seed}: {d:?} not named: {note}"
+                            );
+                        }
+                    } else if seen.is_empty() {
                         assert!(
-                            !req.summary.contains(&format!("{FLOW}, into ")),
-                            "seed {seed}: {}",
-                            req.summary
+                            !note.contains(&format!("{FLOW}, into ")),
+                            "seed {seed}: {note}"
                         );
                     }
-                    let dest = &dests;
+                    let dest = &all;
                     // Asked only when a source may not reach it; every one named, no "more".
                     assert!(
                         !bad.is_empty(),
@@ -883,8 +1078,20 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                     );
                     assert!(!req.summary.contains("and 1 more"), "{}", req.summary);
                     let names: BTreeSet<String> = named(&req.summary).into_iter().collect();
-                    let expected: BTreeSet<String> =
-                        bad.iter().map(|c| c.name(&oracle.ambiguous)).collect();
+                    // The destinations the question names: all of them unless some do not fit.
+                    let named_dests: Vec<(Ctx, Kind)> = if into.is_empty() && seen.is_empty() {
+                        all.clone()
+                    } else {
+                        all.iter()
+                            .filter(|(d, _)| into.contains(&name(d)) || seen.contains(&name(d)))
+                            .cloned()
+                            .collect()
+                    };
+                    let expected: BTreeSet<String> = named_dests
+                        .iter()
+                        .flat_map(|(d, _)| unallowed_of(d))
+                        .map(|c| source_name(&c))
+                        .collect();
                     // When the names do not fit, the question names as many as fit and says
                     // how many more it asks about next.
                     let rest = expected.len().saturating_sub(names.len());
@@ -907,34 +1114,37 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                     }
                     asked += 1;
                     declined += u32::from(!approve);
+                    answered = true;
                     if approve {
-                        // Exactly the places named.
-                        let srcs: Vec<Ctx> = bad
-                            .into_iter()
-                            .filter(|c| names.contains(&c.name(&oracle.ambiguous)))
-                            .collect();
-                        // Twentieth review (R20-A): what the approval keeps.
-                        let action_only = dests.contains(&Ctx::Unknown)
-                            || kind == "press_home"
-                            || (!scroll && dests.len() > 1);
-                        for d in dests.iter().cloned() {
-                            if action_only {
-                                // Nothing kept beyond this action.
-                                for c in &srcs {
-                                    oracle.for_action.insert((d.clone(), c.clone()));
+                        // Exactly the places named, into the destinations named; what each
+                        // pair keeps (twentieth review, R20-A; twenty-third, R23).
+                        // (destination, source, kept kind; `None`: this action only)
+                        let mut keep: Vec<(Ctx, Ctx, Option<Kind>)> = Vec::new();
+                        for (d, k) in &named_dests {
+                            for c in unallowed_of(d) {
+                                if !names.contains(&source_name(&c)) {
+                                    continue;
                                 }
-                            } else if scroll {
-                                oracle
-                                    .scroll_allowed
-                                    .entry(d)
-                                    .or_default()
-                                    .extend(srcs.iter().cloned());
-                            } else {
-                                oracle
-                                    .allowed
-                                    .entry(d)
-                                    .or_default()
-                                    .extend(srcs.iter().cloned());
+                                let own_dest = own.contains(d);
+                                let kept = if !own_dest || *k == Kind::Observe {
+                                    Some(Kind::Observe)
+                                } else if own.contains(&Ctx::Unknown)
+                                    || (*k == Kind::Full && own.len() > 1)
+                                    || action == "swipe"
+                                {
+                                    None
+                                } else {
+                                    Some(*k)
+                                };
+                                keep.push((d.clone(), c, kept));
+                            }
+                        }
+                        for (d, c, kept) in keep {
+                            match kept {
+                                Some(k) => oracle.grant(&d, &c, k),
+                                None => {
+                                    oracle.for_action.insert((d, c));
+                                }
                             }
                         }
                     } else {
@@ -1021,7 +1231,7 @@ fn the_generator_covers_every_kind_of_place() {
             }),
             r#"{"action":"done","summary":"ok"}"#,
         ])
-        .decisions(&[false]),
+        .decisions(&[true, false]),
     );
     let q: Vec<&String> = r
         .confirms
@@ -1029,8 +1239,11 @@ fn the_generator_covers_every_kind_of_place() {
         .map(|c| &c.summary)
         .filter(|s| s.contains(FLOW))
         .collect();
-    assert_eq!(q.len(), 1, "{q:?}");
-    let names: BTreeSet<String> = named(q[0]).into_iter().collect();
+    // Twenty-third review (R23): the look asks first (every place on the screen sees it and
+    // none was given the others); approved, then the tap's question names every place read.
+    assert_eq!(q.len(), 2, "{q:?}");
+    assert!(q[0].starts_with("Look at the screen"), "{}", q[0]);
+    let names: BTreeSet<String> = named(q[1]).into_iter().collect();
     let amb: BTreeSet<Ctx> = [Ctx::Frame(HOSTS[TWO_FRAMES].into())].into();
     let expected: BTreeSet<String> = [
         // Nineteenth review: Safari's chrome ("Tabs") is a place of its own, read.
@@ -1042,5 +1255,5 @@ fn the_generator_covers_every_kind_of_place() {
     .iter()
     .map(|c| c.name(&amb))
     .collect();
-    assert_eq!(names, expected, "{}", q[0]);
+    assert_eq!(names, expected, "{}", q[1]);
 }

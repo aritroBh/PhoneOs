@@ -285,18 +285,22 @@ fn flow_sources(c: &ConfirmRequest) -> Vec<String> {
         .collect()
 }
 
+/// Twenty-third review (R23): the places of Safari's own run a flow question may name —
+/// Safari's chrome, the host and Safari's unreadable pages. Every step on the page is seen
+/// by the chrome and every step in the chrome by the page (observe kind), so each is named
+/// as a source for the other (was: the host never, "Safari" not for the tip's "Close").
+fn safari_own(n: &str) -> bool {
+    n == "Safari" || n == HOST || n == UNREADABLE
+}
+
 /// `SystemAppAgentTests.isSafariTipDismissFlow`.
 fn is_tip_flow(c: &ConfirmRequest) -> bool {
-    c.summary.starts_with("Tap \"Close\"")
-        && flow_sources(c).iter().all(|n| n == HOST || n == UNREADABLE)
+    c.summary.starts_with("Tap \"Close\"") && flow_sources(c).iter().all(|n| safari_own(n))
 }
 
 /// `SystemAppAgentTests.isSafariLoadingFlow`.
 fn is_loading_flow(c: &ConfirmRequest) -> bool {
-    !c.summary.starts_with("Tap \"Close\"")
-        && flow_sources(c)
-            .iter()
-            .all(|n| n == "Safari" || n == UNREADABLE)
+    !c.summary.starts_with("Tap \"Close\"") && flow_sources(c).iter().all(|n| safari_own(n))
 }
 
 fn cfg() -> SessionConfig {
@@ -329,9 +333,10 @@ fn form(mut s: Screen, name: Option<&str>, email: Option<&str>, focus_email: boo
 /// page before it loads (2, 3: two waits), the first-launch tip (4: tap "Close"), the form
 /// with the keyboard hidden (6: type the name — the tap brings the keyboard up, 8: observation
 /// 9 without the typed name, the only difference in the capture), the keyboard-up look (9:
-/// type the email), done. An owner who approves everything sees exactly the two flow
-/// questions the UI test allows: one for the tip's "Close" and one at the first typing; the
-/// second typing asks nothing (it asked naming the host before the fix).
+/// type the email), done. An owner who approves everything sees exactly the flow questions
+/// the UI test allows: one for the tip's "Close" and one at the first typing — and, since
+/// the twenty-third review (R23), one at the first patience wait; the second typing asks
+/// nothing (it asked naming the host before the fix).
 #[test]
 fn the_form_fill_asks_only_the_tip_and_the_first_typing() {
     let home = parse(OBS01_HOME);
@@ -418,31 +423,44 @@ fn the_form_fill_asks_only_the_tip_and_the_first_typing() {
         );
         assert_eq!(c.app, SAFARI, "{asked:#?}");
     }
-    // Exactly two flow questions: the tip's "Close", then the first typing.
-    assert_eq!(flows.len(), 2, "{asked:#?}");
-    assert!(is_tip_flow(flows[0]), "{asked:#?}");
-    assert!(is_loading_flow(flows[1]), "{asked:#?}");
+    // Twenty-third review (R23, rule changed): exactly three flow questions (was two): the
+    // first patience wait (Safari's chrome and its unreadable page each see it, and neither
+    // was given the other), the tip's "Close", then the first typing — which now also names
+    // the host, because Safari's chrome sees the typing and was not given the page. The
+    // second wait asks nothing (its observe grants are kept).
+    assert_eq!(flows.len(), 3, "{asked:#?}");
+    assert!(flows[0].summary.starts_with("Wait"), "{asked:#?}");
+    assert!(is_loading_flow(flows[0]), "{asked:#?}");
+    assert!(is_tip_flow(flows[1]), "{asked:#?}");
+    assert!(is_loading_flow(flows[2]), "{asked:#?}");
     assert!(
-        flows[1].summary.starts_with("Type \"Ada Lovelace\""),
+        flows[2].summary.starts_with("Type \"Ada Lovelace\""),
         "{asked:#?}"
     );
-    assert_eq!(flow_sources(flows[0]), vec![UNREADABLE], "{asked:#?}");
     assert_eq!(
-        flow_sources(flows[1]),
+        flow_sources(flows[0]),
         vec!["Safari", UNREADABLE],
         "{asked:#?}"
     );
-    // The second typing asks nothing, and no question names the host as read.
+    assert_eq!(flow_sources(flows[1]), vec![UNREADABLE], "{asked:#?}");
+    assert_eq!(
+        flow_sources(flows[2]),
+        vec!["Safari", HOST, UNREADABLE],
+        "{asked:#?}"
+    );
+    // The second typing asks nothing; only the first typing names the host as read.
     assert!(
         !r.confirms
             .iter()
             .any(|c| c.summary.contains("ada@example.com")),
         "{asked:#?}"
     );
-    assert!(
+    assert_eq!(
         flows
             .iter()
-            .all(|c| !flow_sources(c).iter().any(|n| n == HOST)),
+            .filter(|c| flow_sources(c).iter().any(|n| n == HOST))
+            .count(),
+        1,
         "{asked:#?}"
     );
 }

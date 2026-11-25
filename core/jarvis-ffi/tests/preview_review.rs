@@ -394,7 +394,14 @@ fn probe_tap_point_is_marked_where_it_is_tapped() {
         |_, _| ok(),
     );
     eprintln!("outcome {:?} acts {:?}", trace.outcome, trace.acts);
-    let asked = trace.asked.first().expect("asked");
+    // Twenty-third review (R23): the look asks first (the thin-tree fallback's screen picture
+    // is a source for the app, which sees the look); the tap_point's question is the one
+    // that taps.
+    let asked = trace
+        .asked
+        .iter()
+        .find(|a| a.request.summary.starts_with("Tap at"))
+        .expect("asked");
     let t = asked.target.as_ref().unwrap();
     let Some(RunnerCommand::Tap { x: tx, y: ty }) = asked.acts_after.first() else {
         panic!("no tap: {:?}", asked.acts_after)

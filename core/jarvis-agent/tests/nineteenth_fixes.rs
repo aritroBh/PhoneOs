@@ -242,19 +242,30 @@ fn safari_chrome_is_the_browser() {
     let fq = flows(&r);
     let summaries: Vec<&String> = fq.iter().map(|c| &c.summary).collect();
     assert_eq!(fq.len(), 2, "{summaries:#?}");
+    // Twenty-third review (R23, rule changed): the page sees the tap on Back, and was given
+    // nothing of Safari's chrome, so the question names Safari too, as a place the page
+    // sees from (was: "Jarvis has read a.example in this task").
     assert!(
         fq[0].summary.starts_with("Tap \"Back\"")
             && fq[0]
                 .summary
-                .contains("Jarvis has read a.example in this task"),
+                .contains("Jarvis has read Safari and a.example in this task")
+            && fq[0]
+                .summary
+                .contains(&format!("{FLOW}, into Safari, and to a.example, which")),
         "{}",
         fq[0].summary
     );
     assert!(
+        // Twenty-third review (R23, rule changed): Safari's chrome sees the tap and was not
+        // given b.example, so it is named too (was: "Jarvis has read Safari and a.example").
         fq[1].summary.starts_with("Tap \"Go\"")
             && fq[1]
                 .summary
-                .contains("Jarvis has read Safari and a.example in this task"),
+                .contains("Jarvis has read Safari, b.example and a.example in this task")
+            && fq[1]
+                .summary
+                .contains(&format!("{FLOW}, into b.example, and to Safari, which")),
         "{}",
         fq[1].summary
     );
@@ -286,9 +297,20 @@ fn the_address_field_alone_is_not_chrome_content_but_an_input_into_the_browser()
         "Go on",
         MemoryStore::new(),
         Phone::still(only.clone()),
-        Script::model(&[&tap(next), DONE]),
+        Script::model(&[&tap(next), DONE]).decisions(&[true]),
     );
-    assert!(flows(&r).is_empty(), "{:?}", r.confirms);
+    // Twenty-third review (R23, rule changed): nothing read elsewhere, but Safari's chrome
+    // sees the tap on the page and was not given the page: one question naming the page
+    // into Safari, observe kind (was: none).
+    let fq = flows(&r);
+    assert_eq!(fq.len(), 1, "{:?}", r.confirms);
+    assert!(
+        fq[0]
+            .summary
+            .contains(&format!("{FLOW}, to Safari, which can tell")),
+        "{}",
+        fq[0].summary
+    );
     assert_eq!(taps_sent(&r), 1);
     let r = run(
         cfg(),

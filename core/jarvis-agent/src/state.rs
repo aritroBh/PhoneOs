@@ -104,8 +104,10 @@ pub(crate) struct FlowAsk {
     /// destination it names them instead of "here"; as many as fit): an approval allows the
     /// named sources into these only.
     pub dests: Vec<jarvis_safety::FlowContext>,
-    /// Twentieth review (R20-A): what an approval keeps.
-    pub keep: Keep,
+    /// Twenty-third review (R23): what an approval keeps, per named (destination, source)
+    /// pair — an observe-kind pair and a pair of the action's own input are kept apart, so
+    /// the two cannot be confused (twentieth review: one `Keep` per question).
+    pub grants: Vec<FlowGrant>,
     /// The contexts read in this task (or held on the clipboard, for a paste) not yet
     /// allowed into `targets` that the question names: exactly what its approval allows.
     pub sources: Vec<jarvis_safety::FlowContext>,
@@ -124,15 +126,31 @@ pub(crate) struct FlowAsk {
 /// question named.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Keep {
+    /// Twenty-third review (R23): shown for a destination that only sees the step (a wait, a
+    /// look, `press_home`, or a place on the screen besides the action's own destinations):
+    /// an observe-only grant for the pair, for the task. It never covers a scroll or a tap.
+    Observe,
     /// Shown for a scroll: a scroll-only grant for each named pair, for the task.
     Scroll,
     /// Shown for a full input with exactly one decidable destination: a full grant, for the
     /// task.
     Full,
-    /// A swipe, `press_home`, an undecidable destination, or any other input with more than
-    /// one destination: the named pairs for this action only (a typing and its Return are
-    /// one action).
+    /// A swipe, an undecidable destination, or any other input with more than one own
+    /// destination: the named pairs for this action only (a typing and its Return are one
+    /// action).
     Action,
+}
+
+/// Twenty-third review (R23): one (destination, source) pair a flow question named, and
+/// what its approval keeps for it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FlowGrant {
+    /// Where the input goes (or who sees it).
+    pub dest: jarvis_safety::FlowContext,
+    /// What was read.
+    pub source: jarvis_safety::FlowContext,
+    /// What approving keeps for this pair.
+    pub keep: Keep,
 }
 
 /// What a `type` action must leave in its field, checked after the text was typed.

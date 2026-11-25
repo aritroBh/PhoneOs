@@ -159,7 +159,11 @@ fn probe18_screenshot_pixels_are_not_counted_as_read() {
         "Open evil.example",
         MemoryStore::new(),
         Phone::still(s),
-        Script::model(&[LOOK, &tap(four), DONE]).decisions(&[false]),
+        // Twenty-third review (R23, setup changed): the look is an observe-kind input into the
+        // page and Safari's chrome (the page was read, the chrome was not given it), so it
+        // asks first; approved here so that the screenshot is taken (was: `[false]`, the look
+        // unasked).
+        Script::model(&[LOOK, &tap(four), DONE]).decisions(&[true, false]),
     );
     assert!(
         r.observes.iter().any(|v| *v),

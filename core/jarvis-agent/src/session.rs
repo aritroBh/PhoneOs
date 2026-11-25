@@ -126,13 +126,14 @@ use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
     approval_context, check_app, check_app_name, check_confinement, control_at, copy_control,
     egress_owned, evaluate_sheeted, first_use_app, first_use_request, flow_checked, flow_note_into,
-    handoff_control, handoff_note, home_view, in_alert, insert_control, is_springboard,
-    label_names_denied_app, not_owner_note, observed_places, paste_note, point_is_clear,
-    question_noted, redact, redact_screen, return_question_noted, sanitize_screen_text,
-    search_names_denied_app, sensitive_note, touches_screen, url_destination, verb_of, wait_level,
-    widget_names_denied_app, Budget, BudgetVerdict, Confinement, Covered, CoveredBy, Decision,
-    FlowContext, InputKind, PointError, ScreenPlaces, ScreenSource, ScreenTree, TypedText, Verdict,
-    COVERS_ALL, COVERS_ALL_PREFIX, SCREEN_PICTURE,
+    flow_note_kinds, handoff_control, handoff_note, home_view, in_alert, insert_control,
+    is_springboard, label_names_denied_app, not_owner_note, observed_places, paste_note,
+    point_is_clear, question_noted, redact, redact_screen, return_question_noted,
+    sanitize_screen_text, search_names_denied_app, sensitive_note, touches_screen, url_destination,
+    verb_of, wait_level, widget_names_denied_app, Budget, BudgetVerdict, Confinement, Covered,
+    CoveredBy, Decision, FlowContext, InputKind, PointError, ScreenPlaces, ScreenSource,
+    ScreenTree, TypedText, Verdict, COVERS_ALL, COVERS_ALL_PREFIX, HOME_SCREEN_READ,
+    SCREEN_PICTURE,
 };
 
 use crate::act::{Out, TypedState};
@@ -149,8 +150,8 @@ use crate::profile::{
 use crate::prompt::{self, PromptParts, ACTION_MAX_TOKENS};
 use crate::schema::{action_gbnf, action_json_schema};
 use crate::state::{
-    ApprovalLook, Exec, FlowAsk, FocusCheck, Keep, Late, ObservePurpose, Pending, PlanBasis,
-    Resume, Settle, Source, Stage, State, TypeCheck,
+    ApprovalLook, Exec, FlowAsk, FlowGrant, FocusCheck, Keep, Late, ObservePurpose, Pending,
+    PlanBasis, Resume, Settle, Source, Stage, State, TypeCheck,
 };
 use crate::tools::{check_call, relevant, signature, MAX_TOOLS};
 use crate::typing::{check_typed, correction_deletes, TypedVerdict};
@@ -417,6 +418,17 @@ fn same_layout(a: &BTreeSet<u64>, b: &BTreeSet<u64>) -> bool {
     share >= SAME_LAYOUT
 }
 
+/// Twenty-third review (R23): one destination of a model-chosen step under Rule T — the
+/// place, the kind of input it receives (the step's own kind for its own destinations, the
+/// observe kind for a place that only sees it) and the sources not yet allowed into it at
+/// that kind.
+struct Dest {
+    place: FlowContext,
+    kind: InputKind,
+    own: bool,
+    sources: Vec<FlowContext>,
+}
+
 /// What `prepare` made of a proposed action.
 enum Prepared {
     /// Allowed: execute now.
@@ -572,8 +584,9 @@ pub struct Session {
     /// and does not repeat the first), and for the Return of the `type … submit` whose
     /// typing was approved. Cleared when the next action is proposed.
     /// Twentieth review (R20-A): (destination, source) pairs, for every approval that keeps
-    /// nothing for the task ([`Keep::Action`]: a swipe, `press_home`, an input with more
-    /// than one destination, an undecidable one).
+    /// nothing for the task ([`Keep::Action`]: a swipe, an input with more than one own
+    /// destination, an undecidable one; twenty-third review: `press_home` keeps an
+    /// observe-only grant).
     action_allowed: Vec<(FlowContext, FlowContext)>,
     /// Twentieth review (R20-B): the app (lower-cased bundle id) whose look last showed a
     /// share sheet in the raw tree; cleared by a look that shows no `Sheet` at all.
@@ -1244,18 +1257,25 @@ impl Session {
                             // the question named. Eighteenth review: into an undecidable
                             // destination nothing is kept for the task; the approval covers
                             // this action only (a typing and its Return are one action) —
-                            // since the twentieth, so does one for a swipe, `press_home` or
-                            // any other input with more than one destination.
-                            match f.keep {
-                                Keep::Scroll => {
-                                    self.confine.allow_scroll_into(&f.dests, &f.sources)
-                                }
-                                Keep::Full => self.confine.allow_into(&f.dests, &f.sources),
-                                Keep::Action => {
-                                    for d in &f.dests {
-                                        for s in &f.sources {
-                                            self.action_allowed.push((d.clone(), s.clone()));
-                                        }
+                            // since the twentieth, so does one for a swipe or any other input
+                            // with more than one own destination. Twenty-third review (R23):
+                            // per named pair — an observe-kind pair keeps an observe-only
+                            // grant, the action's own pairs what their kind keeps.
+                            for g in &f.grants {
+                                let (dest, source) = (
+                                    std::slice::from_ref(&g.dest),
+                                    std::slice::from_ref(&g.source),
+                                );
+                                match g.keep {
+                                    Keep::Observe => self.confine.allow_kind_into(
+                                        dest,
+                                        source,
+                                        InputKind::Observe,
+                                    ),
+                                    Keep::Scroll => self.confine.allow_scroll_into(dest, source),
+                                    Keep::Full => self.confine.allow_into(dest, source),
+                                    Keep::Action => {
+                                        self.action_allowed.push((g.dest.clone(), g.source.clone()))
                                     }
                                 }
                             }
@@ -1732,6 +1752,11 @@ impl Session {
     /// equals the record.
     fn act_approved(&mut self, now: u64, mut look: ApprovalLook) -> Out {
         if let Some(fresh) = self.recheck_approved(&look.pending, look.approved.as_ref()) {
+            // Twenty-third review (R23): an approved look is taken on the screen it was asked
+            // about (the look after the approval found it unchanged).
+            if matches!(fresh.action, Action::Look) {
+                return self.look_now(now, &fresh.action);
+            }
             return self.execute(fresh);
         }
         let asked = look.pending.bound.app_bundle_id.trim().to_owned();
@@ -1826,6 +1851,34 @@ impl Session {
         let screen = &self.current.screen;
         // What was gated and bound (for a `type … submit`, its typing or its Return part).
         let gate = pending.gate.clone();
+        // Twenty-third review (R23): a wait or a look targets nothing on the screen; what its
+        // approval was about is who sees it. It runs when the gate on the fresh screen allows
+        // it and Rule T asks nothing more there (the approval's grants are kept: the same
+        // places need no new question; a place that came on screen since does, and then the
+        // approval is stale and the step is decided again). A live screen (a page still
+        // loading, the usual reason to wait) does not void it.
+        if matches!(gate, Action::Wait { .. } | Action::Look) {
+            if matches!(self.gate_decision(&gate, &gate, None), Decision::Deny(_))
+                || (matches!(gate, Action::Look) && self.app_declined(&screen.app_bundle_id))
+                || !matches!(
+                    self.flow_for(&gate, None, true, None, pending.source),
+                    Ok(None)
+                )
+            {
+                return None;
+            }
+            let mut fresh = pending.clone();
+            fresh.exec = Exec::Runner(plan(&gate, screen, None).unwrap_or_default());
+            fresh.expect_change = should_change(&pending.action, screen);
+            fresh.described = describe(&pending.action, &self.current.safe);
+            fresh.before = screen.clone();
+            fresh.before_safe = self.current.safe.clone();
+            fresh.bound = screen.clone();
+            fresh.bound_safe = self.current.safe.clone();
+            fresh.before_digest = self.current.digest;
+            fresh.before_target_source = None;
+            return Some(fresh);
+        }
         // A1: the raw digest; A2: the compact content (and the target's position, the app,
         // and the Return key); A3: the target is the same raw node.
         if self.current.digest != pending.before_digest
@@ -2708,18 +2761,7 @@ impl Session {
                 self.state = State::AwaitingAnswer { described };
                 Out::ask_user(question)
             }
-            Ok(Prepared::Look) => {
-                let described = describe(action, &self.current.safe);
-                if self.config.model.supports_vision {
-                    self.history.push(described, prompt::RESULT_LOOKED, false);
-                    self.vision_hash = Some(self.current.hash);
-                    self.observe(ObservePurpose::Vision, true)
-                } else {
-                    self.history
-                        .push(described, prompt::RESULT_NO_VISION, false);
-                    self.decide(now)
-                }
-            }
+            Ok(Prepared::Look) => self.look_now(now, action),
             Err(Reject::AppDenied(msg)) => {
                 self.app_denials = self.app_denials.saturating_add(1);
                 if self.app_denials >= MAX_APP_DENIALS {
@@ -2742,6 +2784,21 @@ impl Session {
                 let summary = format!("Blocked: {msg}.");
                 self.finish(now, OutcomeStatus::Blocked, &summary)
             }
+        }
+    }
+
+    /// A model-chosen `look` that may be taken (no flow question, or its question approved):
+    /// a screenshot when the model can see, else the model is told it cannot.
+    fn look_now(&mut self, now: u64, action: &Action) -> Out {
+        let described = describe(action, &self.current.safe);
+        if self.config.model.supports_vision {
+            self.history.push(described, prompt::RESULT_LOOKED, false);
+            self.vision_hash = Some(self.current.hash);
+            self.observe(ObservePurpose::Vision, true)
+        } else {
+            self.history
+                .push(described, prompt::RESULT_NO_VISION, false);
+            self.decide(now)
         }
     }
 
@@ -3102,7 +3159,9 @@ impl Session {
                     described,
                 })
             }
-            Action::Look => return Ok(Prepared::Look),
+            // Twenty-third review (R23): a look is gated under Rule T like any input (below);
+            // it sends nothing to act, so its plan is empty.
+            Action::Look => Exec::Runner(VecDeque::new()),
             Action::CallTool { name, args } => Exec::Tool(ToolCall {
                 name: name.clone(),
                 args: args.clone(),
@@ -3160,6 +3219,11 @@ impl Session {
             home.as_ref(),
             source,
         )?;
+        // Twenty-third review (R23): a look that needs no flow question is taken now; one
+        // that does is asked first, and nothing is observed before the answer.
+        if matches!(gate, Action::Look) && pending.flow.is_none() {
+            return Ok(Prepared::Look);
+        }
         let risk = match decision {
             Decision::Confirm(request) => {
                 // Describe the placeholder, never the substituted personal value, from the
@@ -3276,8 +3340,8 @@ impl Session {
         if !flow_checked(gate) {
             return Ok(None);
         }
-        let (targets, self_source) = self.flow_targets(gate, tool, home);
-        if self.replay_exempt(source, &targets) {
+        let (own, self_source) = self.flow_targets(gate, tool, home);
+        if self.replay_exempt(source, &own) {
             return Ok(None);
         }
         let pasting = insert_control(gate, &self.current.screen, Some(&self.tree())).is_some();
@@ -3294,23 +3358,51 @@ impl Session {
         // is a website or a search, a search's top hit, an icon Jarvis cannot name or a tap
         // it cannot resolve keeps every place read, the home screen included.
         let launch = matches!(home, Some(HomeLaunch::App { .. }));
-        // Per destination, the sources not yet allowed into it — less the pairs the owner
-        // allowed for this action only (no approval is kept for them beyond it).
-        let per: Vec<(FlowContext, Vec<FlowContext>)> = targets
+        // Twenty-third review (R23): every model-chosen step is seen by every place on the
+        // screen when it is decided, so it is an observe-kind input into each place there
+        // that is not one of its own destinations (a wait, a look and `press_home` have every
+        // place on the screen as their own destinations, of the observe kind). Jarvis's own
+        // app (the agent's bundle id, an OS fact the shell passes) is no party.
+        let observers: Vec<FlowContext> = if kind == InputKind::Observe {
+            Vec::new()
+        } else {
+            self.places
+                .observers(&own)
+                .into_iter()
+                .filter(|p| !p.bundle().is_some_and(|b| self.is_agent_app(b)))
+                .collect()
+        };
+        // Per destination, its kind and the sources not yet allowed into it at that kind —
+        // less the pairs the owner allowed for this action only (no approval is kept for
+        // them beyond it).
+        let unallowed = |t: &FlowContext, k: InputKind, own_dest: bool| {
+            let mut s = if own_dest {
+                self.confine
+                    .unallowed_kind(std::slice::from_ref(t), pasting, self_source, k)
+            } else {
+                self.confine
+                    .unallowed_kind(std::slice::from_ref(t), false, false, k)
+            };
+            if launch && own_dest {
+                s.retain(|c| *c != self.here);
+            }
+            s.retain(|c| !self.action_allowed.iter().any(|(d, a)| d == t && a == c));
+            s
+        };
+        let per: Vec<Dest> = own
             .iter()
-            .map(|t| {
-                let mut s = self.confine.unallowed_kind(
-                    std::slice::from_ref(t),
-                    pasting,
-                    self_source,
-                    kind,
-                );
-                if launch {
-                    s.retain(|c| *c != self.here);
-                }
-                s.retain(|c| !self.action_allowed.iter().any(|(d, a)| d == t && a == c));
-                (t.clone(), s)
+            .map(|t| Dest {
+                place: t.clone(),
+                kind,
+                own: true,
+                sources: unallowed(t, kind, true),
             })
+            .chain(observers.iter().map(|t| Dest {
+                place: t.clone(),
+                kind: InputKind::Observe,
+                own: false,
+                sources: unallowed(t, InputKind::Observe, false),
+            }))
             .collect();
         let recent = |v: &mut Vec<FlowContext>| {
             v.sort_by(|a, b| {
@@ -3320,10 +3412,10 @@ impl Session {
                     .then(a.cmp(b))
             });
         };
-        let union = |per: &[&(FlowContext, Vec<FlowContext>)]| {
+        let union = |per: &[&Dest]| {
             let mut out: Vec<FlowContext> = Vec::new();
-            for (_, s) in per {
-                for c in s {
+            for d in per {
+                for c in &d.sources {
                     if !out.contains(c) {
                         out.push(c.clone());
                     }
@@ -3332,37 +3424,29 @@ impl Session {
             out
         };
         // The destinations that receive an unallowed source first (named first when not all
-        // fit), then the rest.
-        let mut order: Vec<&(FlowContext, Vec<FlowContext>)> =
-            per.iter().filter(|(_, s)| !s.is_empty()).collect();
-        order.extend(per.iter().filter(|(_, s)| s.is_empty()));
+        // fit) — the action's own, then those that only see it — then, when the action has
+        // several own destinations, those of them that receive none (named as before); a
+        // place that needs no approval is otherwise not named.
+        let mut order: Vec<&Dest> = per.iter().filter(|d| !d.sources.is_empty()).collect();
+        order.extend(
+            per.iter()
+                .filter(|d| d.sources.is_empty() && d.own && own.len() > 1),
+        );
         let mut sources = union(&order);
         if sources.is_empty() {
             return Ok(None);
         }
         recent(&mut sources);
+        let targets: Vec<FlowContext> = per.iter().map(|d| d.place.clone()).collect();
         if self.confine.is_declined_into(&targets, &sources) {
             let target = targets
                 .first()
                 .map_or_else(|| "here".to_owned(), |t| self.flow_name(t));
             return Err(Reject::Blocked(format!(
                 "the owner did not allow what Jarvis read in {} to reach {target}",
-                self.flow_names(&sources).join(", "),
+                self.flow_names_read(&sources).join(", "),
             )));
         }
-        // Twentieth review (R20-A): what an approval keeps — a scroll keeps scroll-only
-        // grants; a full input with one decidable destination a full grant; a swipe,
-        // `press_home`, an undecidable destination or any other input with more than one
-        // destination this action only. Twenty-first review (R21-A): "a scroll" is `kind`
-        // (the same decision the grants above were read with); a scroll of the full kind
-        // keeps what any other full input keeps.
-        let keep = match gate {
-            _ if targets.contains(&FlowContext::Unknown) => Keep::Action,
-            _ if kind == InputKind::Scroll => Keep::Scroll,
-            Action::Swipe { .. } | Action::PressHome => Keep::Action,
-            _ if targets.len() > 1 => Keep::Action,
-            _ => Keep::Full,
-        };
         // Seventeenth review: the question names every place its approval allows, most
         // recently read first; what does not fit is asked next. Twentieth review (R20-A,
         // rule 5): with more than one destination it names them too, instead of "here", as
@@ -3371,30 +3455,63 @@ impl Session {
         // Twenty-first review (F2a): the question is partial by its destinations only when a
         // destination it does not name still receives an unallowed source (`order` puts
         // those first, so the unnamed ones with nothing unallowed need no second question).
-        let (dests, note, named, rest_unallowed) = if targets.len() > 1 {
-            let dest_names: Vec<String> = order.iter().map(|(t, _)| self.flow_name(t)).collect();
-            let (_, _, fit) = flow_note_into(&[], &dest_names);
-            let named_dests: Vec<&(FlowContext, Vec<FlowContext>)> =
-                order.iter().take(fit.max(1)).copied().collect();
-            let rest_unallowed = order
-                .iter()
-                .skip(named_dests.len())
-                .any(|(_, s)| !s.is_empty());
-            sources = union(&named_dests);
-            recent(&mut sources);
-            let (note, named, _) = flow_note_into(&self.flow_names(&sources), &dest_names);
-            let dests: Vec<FlowContext> = named_dests.iter().map(|(t, _)| t.clone()).collect();
-            (dests, note, named, rest_unallowed)
+        // Twenty-third review (R23): a destination that only sees the step is named apart
+        // (`flow_note_kinds`); with one own destination and none of those, "here" as before.
+        let dest_names: Vec<String> = order.iter().map(|d| self.flow_name(&d.place)).collect();
+        let watched: Vec<bool> = order.iter().map(|d| d.kind == InputKind::Observe).collect();
+        let (_, _, fit) = flow_note_kinds(&[], &dest_names, &watched);
+        let named_dests: Vec<&Dest> = order.iter().take(fit.max(1)).copied().collect();
+        let rest_unallowed = order
+            .iter()
+            .skip(named_dests.len())
+            .any(|d| !d.sources.is_empty());
+        sources = union(&named_dests);
+        recent(&mut sources);
+        let (note, named, _) = if order.len() > 1 || watched.first().copied().unwrap_or(false) {
+            flow_note_kinds(&self.flow_names_read(&sources), &dest_names, &watched)
         } else {
-            let (note, named, _) = flow_note_into(&self.flow_names(&sources), &[]);
-            (targets.clone(), note, named, false)
+            flow_note_into(&self.flow_names_read(&sources), &[])
         };
         let partial = named < sources.len() || rest_unallowed;
         sources.truncate(named);
+        // Twentieth review (R20-A), twenty-third (R23): what an approval keeps, per named
+        // pair, from the kind each destination was checked with (`InputKind::of` and the
+        // observe kind: the same values the grants above were read with). An observe-kind
+        // pair keeps an observe-only grant; the action's own destinations keep a scroll-only
+        // grant for the scroll kind, a full grant for a full input with exactly one own
+        // decidable destination, else nothing beyond this action (a swipe, an undecidable
+        // destination, several own destinations).
+        let own_count = own.len();
+        let keep_for = |d: &Dest| match d.kind {
+            InputKind::Observe => Keep::Observe,
+            _ if d.place == FlowContext::Unknown || own.contains(&FlowContext::Unknown) => {
+                Keep::Action
+            }
+            InputKind::Scroll => Keep::Scroll,
+            InputKind::Full if matches!(gate, Action::Swipe { .. }) || own_count > 1 => {
+                Keep::Action
+            }
+            InputKind::Full => Keep::Full,
+        };
+        let grants: Vec<FlowGrant> = named_dests
+            .iter()
+            .flat_map(|d| {
+                let keep = keep_for(d);
+                d.sources
+                    .iter()
+                    .filter(|s| sources.contains(s))
+                    .map(move |s| FlowGrant {
+                        dest: d.place.clone(),
+                        source: s.clone(),
+                        keep,
+                    })
+            })
+            .collect();
+        let dests: Vec<FlowContext> = named_dests.iter().map(|d| d.place.clone()).collect();
         Ok(Some(FlowAsk {
             targets,
             dests,
-            keep,
+            grants,
             sources,
             partial,
             note,
@@ -3427,7 +3544,10 @@ impl Session {
             Action::OpenUrl { url } => (vec![url_destination(url)], false),
             // Nineteenth review: every place on the screen it leaves observes being left (a
             // page sees its visibility change; in a browser the chrome is the app's place).
-            Action::PressHome => (self.places.every(), false),
+            // Twenty-third review (R23): a wait and a look are seen by every place on the
+            // screen (each observation is a snapshot served by the app in front and its web
+            // content), of the observe kind, like leaving.
+            Action::PressHome | Action::Wait { .. } | Action::Look => (self.places.every(), false),
             _ => match home {
                 Some(HomeLaunch::App { bundle_id, .. }) => {
                     (vec![FlowContext::app(bundle_id)], false)
@@ -3490,6 +3610,22 @@ impl Session {
     /// [`Self::flow_name`] of each of `contexts`.
     fn flow_names(&self, contexts: &[FlowContext]) -> Vec<String> {
         contexts.iter().map(|c| self.flow_name(c)).collect()
+    }
+
+    /// Twenty-third review (F2): how a question names `contexts` as places Jarvis read —
+    /// [`Self::flow_name`], except that the Home Screen (a read only when it showed more than
+    /// icons) says what it covers ([`jarvis_safety::HOME_SCREEN_READ`]).
+    fn flow_names_read(&self, contexts: &[FlowContext]) -> Vec<String> {
+        contexts
+            .iter()
+            .map(|c| {
+                if self.confine.is_ambiguous(c) {
+                    self.flow_name(c)
+                } else {
+                    c.display_read(|b| self.place_app_name(b))
+                }
+            })
+            .collect()
     }
 
     /// The display name of `bundle_id` (compared ignoring ASCII case).
@@ -4667,6 +4803,12 @@ fn name_reads_as_list(name: &str) -> bool {
         || n.starts_with(COVERS_ALL_PREFIX)
         || n.contains(&words(COVERS_ALL))
         || n.contains(&words(SCREEN_PICTURE.split('(').next().unwrap_or_default()))
+        // Twenty-third review (F2): the Home Screen's names are Jarvis's words (SpringBoard
+        // by bundle id); an app's name never reads as them.
+        || n.contains("home screen")
+        || n.contains(&words(
+            HOME_SCREEN_READ.split_once('(').map_or("", |(_, rest)| rest),
+        ))
 }
 
 fn place_key(places: &[FlowContext]) -> String {

@@ -350,13 +350,46 @@ pub fn flow_note_fit(places: &[String]) -> (QuestionRow, usize) {
 /// the row, how many sources and how many destinations it named: an approval allows exactly
 /// the named sources into the named destinations.
 pub fn flow_note_into(places: &[String], dests: &[String]) -> (QuestionRow, usize, usize) {
+    let observe = vec![false; dests.len()];
+    flow_note_kinds(places, dests, &observe)
+}
+
+/// Twenty-third review (R23): [`flow_note_into`] where some destinations receive only the
+/// observe kind (`observe[i]` for `dests[i]`: the place sees when Jarvis waits, looks or acts,
+/// and gets no other input). The destinations are fitted in order as before; the named ones
+/// that receive the action's own input are listed after `into`, the observe-only ones after
+/// `to`, with [`MARK_OBSERVE`]: `…; what it read there could be passed on here, into
+/// bank.example, and to Safari, which can tell when Jarvis waits, looks or acts` — or, for a
+/// wait, `…, to Shop, which can tell when Jarvis waits, looks or acts`. With one destination
+/// that receives the action's own input and no observe-only one named, the note says "here"
+/// as before.
+pub fn flow_note_kinds(
+    places: &[String],
+    dests: &[String],
+    observe: &[bool],
+) -> (QuestionRow, usize, usize) {
     let (list, named) = fit_names(places);
     let mut text = format!(". Jarvis has read {list} in this task; {MARK_FLOW}");
+    let watched = |i: usize| observe.get(i).copied().unwrap_or(false);
     let mut named_dests = dests.len().min(1);
-    if dests.len() > 1 {
-        let (into, n) = fit_names(dests);
+    if dests.len() > 1 || (0..dests.len()).any(watched) {
+        let (_, n) = fit_names(dests);
         named_dests = n;
-        text.push_str(&format!(", into {into}"));
+        let own: Vec<String> = (0..n)
+            .filter(|i| !watched(*i))
+            .filter_map(|i| dests.get(i).cloned())
+            .collect();
+        let seen: Vec<String> = (0..n)
+            .filter(|i| watched(*i))
+            .filter_map(|i| dests.get(i).cloned())
+            .collect();
+        if !own.is_empty() {
+            text.push_str(&format!(", into {}", fit_names(&own).0));
+        }
+        if !seen.is_empty() {
+            let and = if own.is_empty() { "" } else { " and" };
+            text.push_str(&format!(",{and} to {}, {MARK_OBSERVE}", fit_names(&seen).0));
+        }
     }
     let rest = places.len().saturating_sub(named);
     if rest > 0 {
@@ -389,7 +422,8 @@ fn fit_names(places: &[String]) -> (String, usize) {
         // Eighteenth review: the screen picture's name and the covering suffix of an
         // ambiguous embedded class are Jarvis's own words, never shortened (only the place's
         // own name before the suffix is).
-        let name = if p == crate::flow::SCREEN_PICTURE {
+        // Twenty-third review (F2): so is the Home Screen's name as a place read.
+        let name = if p == crate::flow::SCREEN_PICTURE || p == crate::flow::HOME_SCREEN_READ {
             p.clone()
         } else if let Some(head) = p.strip_suffix(crate::flow::COVERS_ALL) {
             let pre = crate::flow::COVERS_ALL_PREFIX;
@@ -1556,6 +1590,8 @@ const MARK_ALERT: &str = "This answers an alert";
 const MARK_PERMISSION: &str = "This answers a system alert and may grant a permission";
 /// Sixteenth review (Rule T): what was read elsewhere could reach this place.
 const MARK_FLOW: &str = "what it read there could be passed on here";
+/// Twenty-third review (R23): a destination that only sees when Jarvis acts (observe kind).
+const MARK_OBSERVE: &str = "which can tell when Jarvis waits, looks or acts";
 /// Sixteenth review (Rule P): a control that inserts content the question cannot show.
 const MARK_PASTE: &str = "content Jarvis cannot show";
 /// Seventeenth review: an edit-menu item that may hand the selection to another place.
@@ -1589,6 +1625,7 @@ pub const QUESTION_MARKERS: &[&str] = &[
     MARK_ALERT,
     MARK_PERMISSION,
     MARK_FLOW,
+    MARK_OBSERVE,
     MARK_PASTE,
     MARK_HANDOFF,
 ];
@@ -1690,6 +1727,7 @@ const PHRASE_MARKERS: &[&str] = &[
     MARK_ALERT,
     MARK_PERMISSION,
     MARK_FLOW,
+    MARK_OBSERVE,
     MARK_PASTE,
     MARK_HANDOFF,
 ];
@@ -6731,7 +6769,9 @@ fn action_line(
         Action::PressHome => whole("Go to the Home Screen".to_owned()),
         Action::OpenApp { app } => whole(format!("Open {}", clean(app, MAX_QUOTE_CHARS))),
         Action::OpenUrl { url } => whole(open_url_line(url, category, label)),
-        Action::Wait { ms } => whole(format!("Wait {ms} ms")),
+        // Twenty-third review (R23): a wait and a look are seen by the app in front, so
+        // their question names it.
+        Action::Wait { ms } => (format!("Wait {ms} ms"), in_app),
         Action::CallTool { name, args } => {
             let mut parts = Vec::new();
             if let Some(map) = args.as_object() {
@@ -6758,7 +6798,7 @@ fn action_line(
             }
         }
         Action::AskUser { question } => whole(format!("Ask: {}", clean(question, 120))),
-        Action::Look => ("Take a screenshot".to_owned(), in_app),
+        Action::Look => ("Look at the screen".to_owned(), in_app),
         Action::Done { summary } => whole(format!("Finish: {}", clean(summary, 120))),
         Action::Fail { reason } => whole(format!("Give up: {}", clean(reason, 120))),
     }

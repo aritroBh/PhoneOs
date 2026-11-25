@@ -47,8 +47,11 @@
 //! - **memory**: text recorded in an earlier task.
 //!
 //! Every model-chosen action is an input into its destination place ([`flow_checked`]:
-//! all but `wait`, `look` and the text of `done`, `fail` and `ask_user` shown on the
-//! phone). The session keeps a [`Confinement`]: the places whose content (or text derived
+//! all but the text of `done`, `fail` and `ask_user` shown on the phone). Twenty-third
+//! review (R23): every model-chosen step is also seen by every place on the screen when it
+//! is decided — an input of the weakest kind ([`InputKind::Observe`]) into each of them
+//! (`wait`, `look` and `press_home` have no other destinations; [`ScreenPlaces::observers`]).
+//! The session keeps a [`Confinement`]: the places whose content (or text derived
 //! from it) entered a model prompt in this task, most recent first, what the clipboard may
 //! hold, and the flows the owner allowed or declined. Before an input into a place while
 //! another place read in this task has not been allowed into it, the owner is asked on the
@@ -108,6 +111,13 @@ pub fn is_browser(bundle_id: &str) -> bool {
 /// covers the later pictures too.
 pub const SCREEN_PICTURE: &str =
     "screen pictures (they can show notifications and other apps' banners)";
+
+/// Twenty-third review (F2): how a flow question names the Home Screen as a place Jarvis
+/// read. SpringBoard is a read only when it showed more than icons (a banner, a notification
+/// list, an alert, Spotlight's field or results: [`home_icons_only`] and the alert-like roles
+/// of the chrome walk), so its name as a source says so; as a destination it stays "the Home
+/// Screen". Jarvis's own words: never shortened, and holding neither `, ` nor ` and `.
+pub const HOME_SCREEN_READ: &str = "the Home Screen (notifications or search results shown on it)";
 
 /// Nineteenth review: what the name of a covering embedded class
 /// ([`Confinement::is_ambiguous`]) starts with (`all web content in Mail (…)`).
@@ -267,6 +277,16 @@ impl FlowContext {
             FlowContext::Unknown => "a place Jarvis cannot name".to_owned(),
             FlowContext::NestedWeb(b) => format!("nested web content in {}", app(b)),
             FlowContext::ScreenPicture => SCREEN_PICTURE.to_owned(),
+        }
+    }
+
+    /// Twenty-third review (F2): how a flow note names this context as a place Jarvis read
+    /// (a source): [`Self::display`], except that SpringBoard — a read only when it showed
+    /// more than icons — is [`HOME_SCREEN_READ`].
+    pub fn display_read(&self, app_name: impl Fn(&str) -> Option<String>) -> String {
+        match self {
+            FlowContext::App(b) if is_springboard(b) => HOME_SCREEN_READ.to_owned(),
+            other => other.display(app_name),
         }
     }
 
@@ -785,6 +805,17 @@ impl ScreenPlaces {
         out
     }
 
+    /// Twenty-third review (R23): the places on this screen that see a model-chosen step
+    /// whose own destinations are `own` without receiving its input — every place on the
+    /// screen ([`Self::every`]) that is not one of them. Each is an observe-kind destination
+    /// of the step ([`InputKind::Observe`]).
+    pub fn observers(&self, own: &[FlowContext]) -> Vec<FlowContext> {
+        self.every()
+            .into_iter()
+            .filter(|p| !own.contains(p))
+            .collect()
+    }
+
     /// The place of the content of raw node `n`: how many web views hold it (itself
     /// included), walking its ancestors — O(depth · log web views).
     fn of_node(&self, n: u32, tree: &ScreenTree<'_>) -> &FlowContext {
@@ -911,13 +942,13 @@ impl ScreenPlaces {
                     Err(_) => out.extend(self.every()),
                 }
             }
-            Action::PressHome
-            | Action::OpenApp { .. }
+            // Twenty-third review (R23): a wait, a look and leaving are seen by every place
+            // on the screen.
+            Action::Wait { .. } | Action::Look | Action::PressHome => out.extend(self.every()),
+            Action::OpenApp { .. }
             | Action::OpenUrl { .. }
-            | Action::Wait { .. }
             | Action::CallTool { .. }
             | Action::AskUser { .. }
-            | Action::Look
             | Action::Done { .. }
             | Action::Fail { .. } => out.push(self.base.clone()),
         }
@@ -1083,12 +1114,18 @@ fn places_of(
 }
 
 /// Seventeenth review: whether `action` is an input Rule T checks — every model-chosen
-/// action except `wait` (its timing is observable only by places that receive some other
-/// input, each of which is checked), `look` (it reads), and the text of `done`, `fail`
-/// and `ask_user` (shown on the phone). Taps, long presses, `tap_point`, swipes and
-/// scrolls, typing, clearing, `press_home` (into every place it leaves), `open_app` and a
-/// home-screen launch (into the app), `open_url` (into the link's site, whoever gave it)
-/// and every tool call, with or without arguments.
+/// action except the text of `done`, `fail` and `ask_user` (shown on the phone; a task must
+/// be able to end and to ask). Taps, long presses, `tap_point`, swipes and scrolls, typing,
+/// clearing, `press_home` (into every place it leaves), `open_app` and a home-screen launch
+/// (into the app), `open_url` (into the link's site, whoever gave it) and every tool call,
+/// with or without arguments.
+///
+/// Twenty-third review (R23): `wait` and `look` too. Every observation is an accessibility
+/// snapshot served by the app in front (a page's content is read through its web content
+/// process), so a model-chosen wait or look is seen, at a moment the model chose, by every
+/// place on the screen: an input of the weakest kind ([`InputKind::Observe`]) into each of
+/// them. Every other model-chosen step is seen the same way by every place on the screen
+/// besides its own destinations ([`ScreenPlaces::observers`]).
 pub fn flow_checked(action: &Action) -> bool {
     match action {
         Action::Tap { .. }
@@ -1101,12 +1138,10 @@ pub fn flow_checked(action: &Action) -> bool {
         | Action::PressHome
         | Action::OpenApp { .. }
         | Action::OpenUrl { .. }
-        | Action::CallTool { .. } => true,
-        Action::Wait { .. }
-        | Action::Look
-        | Action::AskUser { .. }
-        | Action::Done { .. }
-        | Action::Fail { .. } => false,
+        | Action::CallTool { .. }
+        | Action::Wait { .. }
+        | Action::Look => true,
+        Action::AskUser { .. } | Action::Done { .. } | Action::Fail { .. } => false,
     }
 }
 
@@ -1118,10 +1153,11 @@ pub struct Confinement {
     read: BTreeMap<FlowContext, u64>,
     seq: u64,
     clipboard: BTreeSet<FlowContext>,
-    allowed: BTreeMap<FlowContext, BTreeSet<FlowContext>>,
-    /// Twentieth review (R20-A): flows allowed for scrolls only (a question shown for a
-    /// scroll was approved): a later scroll does not ask, any other input does.
-    scroll_allowed: BTreeMap<FlowContext, BTreeSet<FlowContext>>,
+    /// Per destination, per source: the strongest kind of input the owner allowed (twentieth
+    /// review, R20-A: a scroll's approval keeps a scroll-only grant; twenty-third, R23: an
+    /// observe question's approval an observe-only one). A grant covers its kind and every
+    /// weaker kind, never a stronger one.
+    granted: BTreeMap<FlowContext, BTreeMap<FlowContext, InputKind>>,
     declined: BTreeMap<FlowContext, BTreeSet<FlowContext>>,
     ambiguous: BTreeSet<FlowContext>,
 }
@@ -1130,16 +1166,22 @@ pub struct Confinement {
 /// An approval kept for a kind never covers a stronger one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InputKind {
+    /// Twenty-third review (R23): being seen. `wait`, `look` and `press_home` are this kind
+    /// into every place on the screen; every other model-chosen step is this kind into every
+    /// place on the screen that is not one of its own destinations
+    /// ([`ScreenPlaces::observers`]). Leaving is the same strength as being looked at.
+    Observe,
     /// A scroll that only moves content (twenty-first review, R21-A: see [`InputKind::of`]).
     Scroll,
     /// Everything else: a tap, long press, typing, clear, Return, a tool call, `open_app`,
-    /// `open_url`, a home-screen launch, a swipe, `press_home` — and a scroll that names a
-    /// control or works one.
+    /// `open_url`, a home-screen launch, a swipe — and a scroll that names a control or works
+    /// one.
     Full,
 }
 
 impl InputKind {
-    /// The kind of `action` on `screen` (the screen it will act on). Twenty-first review
+    /// The kind of `action` on `screen` (the screen it will act on). Twenty-third review
+    /// (R23): `wait`, `look` and `press_home` are of the *observe* kind. Twenty-first review
     /// (R21-A): an action is of the *scroll* kind only when all of these hold:
     ///
     /// 1. it is `Action::Scroll`;
@@ -1158,6 +1200,12 @@ impl InputKind {
     /// session derives both the grants a scroll may use and what its approval keeps from
     /// this one function. O(elements) for a scroll; nothing for any other action.
     pub fn of(action: &Action, screen: &CompactScreen) -> InputKind {
+        if matches!(
+            action,
+            Action::Wait { .. } | Action::Look | Action::PressHome
+        ) {
+            return InputKind::Observe;
+        }
         let Action::Scroll { direction, element } = action else {
             return InputKind::Full;
         };
@@ -1198,13 +1246,8 @@ impl Confinement {
         if context.always_covering() || !self.ambiguous.insert(context.clone()) {
             return;
         }
-        self.allowed.remove(&context);
-        self.scroll_allowed.remove(&context);
-        for sources in self
-            .allowed
-            .values_mut()
-            .chain(self.scroll_allowed.values_mut())
-        {
+        self.granted.remove(&context);
+        for sources in self.granted.values_mut() {
             sources.remove(&context);
         }
     }
@@ -1243,21 +1286,20 @@ impl Confinement {
         self.clipboard.iter()
     }
 
-    /// Whether the owner allowed `source` into `target` (nineteenth review: exactly that
-    /// pair; an approval into an app no longer covers its pages with no readable address).
-    fn allowed_into(&self, target: &FlowContext, source: &FlowContext) -> bool {
-        self.allowed.get(target).is_some_and(|a| a.contains(source))
+    /// Whether `source` may reach `target` with an input of `kind` (nineteenth review:
+    /// exactly that pair): a grant covers its own kind and every weaker one — a full grant
+    /// every kind, a scroll grant scrolls and observing (twentieth review, R20-A), an observe
+    /// grant observing only (twenty-third review, R23). A grant never upgrades.
+    fn allowed_kind(&self, target: &FlowContext, source: &FlowContext, kind: InputKind) -> bool {
+        self.granted(target, source).is_some_and(|g| g >= kind)
     }
 
-    /// Whether `source` may reach `target` with an input of `kind`: a full grant covers
-    /// every kind, a scroll grant scrolls only (twentieth review, R20-A).
-    fn allowed_kind(&self, target: &FlowContext, source: &FlowContext, kind: InputKind) -> bool {
-        self.allowed_into(target, source)
-            || (kind == InputKind::Scroll
-                && self
-                    .scroll_allowed
-                    .get(target)
-                    .is_some_and(|a| a.contains(source)))
+    /// The strongest kind of input the owner allowed `source` into `target` with, if any.
+    pub fn granted(&self, target: &FlowContext, source: &FlowContext) -> Option<InputKind> {
+        self.granted
+            .get(target)
+            .and_then(|a| a.get(source))
+            .copied()
     }
 
     /// The order a source was last read in (0: never read, e.g. only on the clipboard);
@@ -1323,23 +1365,32 @@ impl Confinement {
     /// [`Self::allow`] into each of `targets`; nothing is kept for
     /// [`FlowContext::Unknown`] (each such input asks again).
     pub fn allow_into(&mut self, targets: &[FlowContext], sources: &[FlowContext]) {
-        for t in targets.iter().filter(|t| **t != FlowContext::Unknown) {
-            self.allowed
-                .entry(t.clone())
-                .or_default()
-                .extend(sources.iter().cloned());
-        }
+        self.allow_kind_into(targets, sources, InputKind::Full);
     }
 
     /// Twentieth review (R20-A): the owner approved a question shown for a scroll: `sources`
     /// may reach each of `targets` by later scrolls for the rest of the task, not by any
     /// other input. Nothing is kept for [`FlowContext::Unknown`].
     pub fn allow_scroll_into(&mut self, targets: &[FlowContext], sources: &[FlowContext]) {
+        self.allow_kind_into(targets, sources, InputKind::Scroll);
+    }
+
+    /// Twenty-third review (R23): `sources` may reach each of `targets` by later inputs of
+    /// `kind` or a weaker kind for the rest of the task (an observe question's approval: by
+    /// waits, looks and leaving only). A grant never lowers one already kept. Nothing is kept
+    /// for [`FlowContext::Unknown`].
+    pub fn allow_kind_into(
+        &mut self,
+        targets: &[FlowContext],
+        sources: &[FlowContext],
+        kind: InputKind,
+    ) {
         for t in targets.iter().filter(|t| **t != FlowContext::Unknown) {
-            self.scroll_allowed
-                .entry(t.clone())
-                .or_default()
-                .extend(sources.iter().cloned());
+            let entry = self.granted.entry(t.clone()).or_default();
+            for s in sources {
+                let g = entry.entry(s.clone()).or_insert(kind);
+                *g = (*g).max(kind);
+            }
         }
     }
 

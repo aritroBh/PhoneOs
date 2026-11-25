@@ -520,9 +520,15 @@ fn probe17_flow_note_cap_hides_the_place_that_matters() {
             &tap(next),
             DONE,
         ])
-        .decisions(&[true]),
+        .decisions(&[true; 16]),
     );
-    let fq = flows(&r);
+    // Twenty-third review (R23, rule changed): each wait after the first is seen by the app
+    // in front (asked, observe kind), and the tap on the page by Safari's chrome; all
+    // approved here. What the probe is about is the link's question (was: the only one).
+    let fq: Vec<_> = flows(&r)
+        .into_iter()
+        .filter(|q| q.verb == jarvis_proto::ConfirmVerb::OpenUrl)
+        .collect();
     assert_eq!(fq.len(), 1, "{:?}", r.confirms);
     assert!(
         fq[0].summary.contains("Messages"),

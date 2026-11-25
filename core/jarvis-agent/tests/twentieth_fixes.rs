@@ -250,10 +250,13 @@ fn a_swipe_asks_every_time_and_keeps_nothing() {
     );
 }
 
-/// R20-A rule 4: `press_home` asks every time and keeps nothing (here Home leaves the phone
-/// in Shop): the second asks again, and so does a tap after it.
+/// R20-A rule 4: `press_home` asked every time and kept nothing (here Home leaves the phone
+/// in Shop). Twenty-third review (R23, rule changed): leaving is an observe-kind input into
+/// every place it leaves, and its approval keeps an observe-only grant: the second Home is
+/// not asked again (was: asked), and a tap after it still asks (an observe grant never
+/// covers a tap).
 #[test]
-fn press_home_asks_every_time_and_keeps_nothing() {
+fn press_home_keeps_an_observe_grant_and_a_tap_still_asks() {
     let open = index_of(&acme(), "Open Shop");
     let item = index_of(&shop(), "Item 2");
     let r = run(
@@ -265,11 +268,7 @@ fn press_home_asks_every_time_and_keeps_nothing() {
     );
     assert_eq!(
         verbs(&r),
-        vec![
-            ConfirmVerb::PressHome,
-            ConfirmVerb::PressHome,
-            ConfirmVerb::Tap
-        ],
+        vec![ConfirmVerb::PressHome, ConfirmVerb::Tap],
         "{:#?}",
         r.confirms
     );
@@ -310,9 +309,22 @@ fn a_tap_point_with_two_destinations_keeps_nothing() {
         ])
         .decisions(&[true; 4]),
     );
+    // Twenty-third review (R23, rule changed): each look asks too — the first because the
+    // app and its web content were each given nothing of the other, the second because of
+    // the screen picture — so the flows are look, tap_point, look, tap_point (was: the two
+    // tap_points only); each tap_point still asks.
     let f = flows(&r);
-    assert_eq!(f.len(), 2, "{f:#?} {:?} {:?}", r.outcome, r.acts);
-    assert!(f[0].summary.contains(", into "), "{}", f[0].summary);
+    assert_eq!(f.len(), 4, "{f:#?} {:?} {:?}", r.outcome, r.acts);
+    let points: Vec<_> = f
+        .iter()
+        .filter(|q| q.verb == ConfirmVerb::TapPoint)
+        .collect();
+    assert_eq!(points.len(), 2, "{f:#?}");
+    assert!(
+        points[0].summary.contains(", into "),
+        "{}",
+        points[0].summary
+    );
     assert_eq!(count(&r, is_tap), 2);
 }
 
@@ -372,12 +384,11 @@ fn destinations_that_do_not_fit_are_asked_next_and_the_task_finishes() {
             .contains("(it reaches 1 more place; Jarvis asks about it next if needed)")),
         "{f:#?}"
     );
+    // Twenty-third review (R23, wording changed): leaving is an observe-kind input, so the
+    // places are named as seeing it (`, to …, which can tell when Jarvis waits, looks or
+    // acts`; was `, into …`).
     for q in &f {
-        assert!(
-            q.summary.contains(&format!("{FLOW}, into ")),
-            "{}",
-            q.summary
-        );
+        assert!(q.summary.contains(&format!("{FLOW}, to ")), "{}", q.summary);
     }
     // No question repeats.
     for (i, a) in f.iter().enumerate() {

@@ -25,6 +25,13 @@
 //! view is one covering class, a source for itself) and is asked before the first-use
 //! question, as the structured mode's flow question already was.
 //!
+//! Twenty-third review: 164 questions, still 164; one changed (re-blessed after review, a
+//! rule change, R23): `news_dense_page` structured — the story tap goes into News's web
+//! content and News itself sees it (every model-chosen step is an observe-kind input into
+//! every place on the screen), so the flow note now names both destinations: `…, into all
+//! web content in News (Jarvis cannot tell its parts apart), and to News, which can tell
+//! when Jarvis waits, looks or acts`. Its sources are unchanged.
+//!
 //! `JARVIS_BLESS_QUESTIONS=1` rewrites the snapshot; never do that to make this pass: a
 //! changed question is a behaviour change to review.
 

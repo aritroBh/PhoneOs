@@ -794,11 +794,14 @@ fn a_tap_point_on_a_key_says_jarvis_does_not_tap_keys() {
         "Tell Alice",
         MemoryStore::new(),
         Phone::still(chat_kb(Some("On my way"))),
+        // Twenty-third review (R23, setup changed): the look asks (the thin-tree fallback's
+        // screen picture is a source for the chat, which sees the look); approved here.
         Script::model(&[
             r#"{"action":"look"}"#,
             &tap_send_key(),
             r#"{"action":"fail","reason":"x"}"#,
-        ]),
+        ])
+        .decisions(&[true]),
     );
     assert!(r.acts.is_empty(), "{:?}", r.acts);
     assert!(

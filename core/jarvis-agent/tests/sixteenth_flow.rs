@@ -157,8 +157,10 @@ fn open(app: &str) -> String {
 
 const DONE: &str = r#"{"action":"done","summary":"ok"}"#;
 
-/// A wait: no input anywhere (seventeenth review: the one model action besides `look` and
-/// the final text that Rule T never asks). The phones below bring a page to front on it.
+/// A wait. The phones below bring a page to front on it. Twenty-third review (R23): a wait
+/// is an observe-kind input into every place on the screen, so it asks once something read
+/// elsewhere is not allowed there (was: never asked); the waits below run before anything
+/// else was read, or are approved.
 const WAIT: &str = r#"{"action":"wait","ms":500}"#;
 
 fn flows(r: &Run) -> Vec<&jarvis_proto::ConfirmRequest> {
@@ -166,6 +168,20 @@ fn flows(r: &Run) -> Vec<&jarvis_proto::ConfirmRequest> {
         .iter()
         .filter(|c| c.summary.contains(FLOW))
         .collect()
+}
+
+/// Twenty-third review (R23): a question asked only because Safari's chrome sees a step on
+/// the page (the page was read; the chrome, which shows nothing but the address field in
+/// these fixtures, was not given it): `…, to Safari, which can tell when Jarvis waits, looks
+/// or acts`.
+fn chrome_sees(c: &jarvis_proto::ConfirmRequest) -> bool {
+    c.summary
+        .contains(&format!("{FLOW}, to Safari, which can tell"))
+}
+
+/// [`flows`] less the questions [`chrome_sees`] (what the tests below were written about).
+fn flows_but_chrome(r: &Run) -> Vec<&jarvis_proto::ConfirmRequest> {
+    flows(r).into_iter().filter(|c| !chrome_sees(c)).collect()
 }
 
 /// Index of the first `Act` touching the screen (taps, typing, keys, swipes).
@@ -272,13 +288,18 @@ fn probe16_page_keypad_spells_a_code_unasked() {
     assert_eq!(entered, "482913");
 }
 
-/// The mirror: a task that has read only the keypad page sends its taps unasked. Safe: the
-/// model knows nothing the page does not — everything it could spell with the keypad came
-/// from the page itself or the owner's request.
+/// The mirror: a task that has read only the keypad page sends its taps with no question
+/// about anything read elsewhere. Safe: the model knows nothing the page does not —
+/// everything it could spell with the keypad came from the page itself or the owner's
+/// request. Twenty-third review (R23, rule changed): Safari's chrome is a place of its own
+/// on the screen and sees every tap on the page, so the first tap asks once (the page into
+/// Safari, observe kind; was: not asked), and its approval keeps that for the rest.
 #[test]
 fn keypad_taps_after_reading_only_the_page_are_not_asked() {
-    let (r, entered) = keypad_run(keypad(""), &[]);
-    assert!(r.confirms.is_empty(), "{:?}", r.confirms);
+    let (r, entered) = keypad_run(keypad(""), &[true]);
+    assert_eq!(r.confirms.len(), 1, "{:?}", r.confirms);
+    assert!(chrome_sees(&r.confirms[0]), "{:?}", r.confirms);
+    assert!(flows_but_chrome(&r).is_empty(), "{:?}", r.confirms);
     assert_eq!(entered, "482913");
 }
 
@@ -306,17 +327,25 @@ fn a_two_app_task_asks_once() {
             &tap(more),
             DONE,
         ])
-        .decisions(&[true, true]),
+        .decisions(&[true, true, true]),
     );
+    // Twenty-third review (R23, rule changed): the first tap on the page is seen by
+    // Safari's chrome, which was given neither the page nor Messages: one question more,
+    // between the link's and the scroll's (was: 2 questions).
     let fq = flows(&r);
-    assert_eq!(fq.len(), 2, "{:?}", r.confirms);
+    assert_eq!(fq.len(), 3, "{:?}", r.confirms);
     assert!(
-        fq[1].summary.starts_with("Scroll")
-            && fq[1]
+        fq[1].summary.starts_with("Tap") && chrome_sees(fq[1]),
+        "{}",
+        fq[1].summary
+    );
+    assert!(
+        fq[2].summary.starts_with("Scroll")
+            && fq[2]
                 .summary
                 .contains("Jarvis has read news.example and Messages in this task"),
         "{}",
-        fq[1].summary
+        fq[2].summary
     );
     assert!(
         fq[0]
@@ -365,11 +394,14 @@ fn three_contexts_and_a_new_source_after_approval() {
             &tap(next),
             DONE,
         ])
-        .decisions(&[true, true]),
+        .decisions(&[true, true, true]),
     );
     // Seventeenth review: opening Notes is an input into Notes (asked, naming Messages);
-    // opening the link one into news.example (asked, naming both); the tap asks nothing.
-    let fq = flows(&r);
+    // opening the link one into news.example (asked, naming both); the tap asks nothing
+    // about news.example. Twenty-third review (R23, rule changed): the tap is seen by
+    // Safari's chrome, which was given nothing: one more question (`chrome_sees`).
+    let fq = flows_but_chrome(&r);
+    assert_eq!(flows(&r).len(), 3, "{:?}", r.confirms);
     assert_eq!(fq.len(), 2, "{:?}", r.confirms);
     assert!(
         fq[0].summary.contains("read Messages in"),
@@ -400,11 +432,12 @@ fn three_contexts_and_a_new_source_after_approval() {
             &tap(next),
             DONE,
         ])
-        .decisions(&[true, true, true]),
+        .decisions(&[true; 8]),
     );
     // Seventeenth review: opening Notes after reading the page and Messages asks too (the
-    // middle question); the last names Notes alone.
-    let fq = flows(&r);
+    // middle question); the last names Notes alone. Twenty-third review (R23): besides
+    // these, Safari's chrome sees the taps on the page (`chrome_sees`).
+    let fq = flows_but_chrome(&r);
     assert_eq!(fq.len(), 3, "{:?}", r.confirms);
     assert!(
         fq[0].summary.contains("read Messages in"),
@@ -431,11 +464,13 @@ fn home_screen_icons_are_not_a_read_a_banner_is() {
                 &tap(next),
                 DONE,
             ])
-            .decisions(&[true]),
+            .decisions(&[true, true]),
         )
     };
+    // Twenty-third review (R23): the tap on the page also asks once because Safari's chrome
+    // sees it (`chrome_sees`); what is asserted here is about the home screen.
     let r = go(home(Vec::new()));
-    assert!(flows(&r).is_empty(), "{:?}", r.confirms);
+    assert!(flows_but_chrome(&r).is_empty(), "{:?}", r.confirms);
     let banner = UiNode::new(
         Role::Other("NotificationBanner".into()),
         rect(8.0, 50.0, 377.0, 80.0),
@@ -445,7 +480,7 @@ fn home_screen_icons_are_not_a_read_a_banner_is() {
         rect(16.0, 60.0, 300.0, 20.0),
     )]);
     let r = go(home(vec![banner]));
-    let fq = flows(&r);
+    let fq = flows_but_chrome(&r);
     assert_eq!(fq.len(), 1, "{:?}", r.confirms);
     assert!(
         fq[0].summary.contains("the Home Screen"),
@@ -455,7 +490,7 @@ fn home_screen_icons_are_not_a_read_a_banner_is() {
     // Home screen rule: a widget is not shown to the model, so it is not a read (before
     // this rule a home screen with a widget asked a flow question at the next app's input).
     let r = go(home(vec![secret_widget()]));
-    assert!(flows(&r).is_empty(), "{:?}", r.confirms);
+    assert!(flows_but_chrome(&r).is_empty(), "{:?}", r.confirms);
 }
 
 const WIDGET_SECRET: &str = "ZEBRAQUILL4417";
@@ -501,9 +536,10 @@ fn a_widgets_text_reaches_no_prompt_and_asks_no_flow_question() {
             vec![(SAFARI, a.clone())],
             |_, _| Transition::Stay,
         ),
-        Script::model(&[&open("Safari"), &tap(next), DONE]).decisions(&[true]),
+        Script::model(&[&open("Safari"), &tap(next), DONE]).decisions(&[true, true]),
     );
-    assert!(flows(&r).is_empty(), "{:?}", r.confirms);
+    // Twenty-third review (R23): only Safari's chrome seeing the tap on the page asks.
+    assert!(flows_but_chrome(&r).is_empty(), "{:?}", r.confirms);
     assert!(r
         .acts
         .iter()
@@ -538,7 +574,7 @@ fn a_banner_or_alert_on_the_home_screen_is_shown_and_read_but_the_widget_is_not(
                 &tap(next),
                 DONE,
             ])
-            .decisions(&[true]),
+            .decisions(&[true, true]),
         )
     };
     let banner = UiNode::new(
@@ -549,8 +585,11 @@ fn a_banner_or_alert_on_the_home_screen_is_shown_and_read_but_the_widget_is_not(
         "Bank: your statement is ready",
         rect(16.0, 60.0, 300.0, 20.0),
     )]);
+    // Twenty-third review (R23, rule changed): the tap on the page asks once more, Safari's
+    // chrome seeing it (it was given neither the page nor the Home Screen): 2 questions.
     let r = go(home(vec![secret_widget(), banner]));
-    assert_eq!(flows(&r).len(), 1, "{:?}", r.confirms);
+    assert_eq!(flows(&r).len(), 2, "{:?}", r.confirms);
+    assert_eq!(flows_but_chrome(&r).len(), 1, "{:?}", r.confirms);
     let prompts = r.all_prompt_text();
     assert!(prompts.contains("your statement is ready"), "{prompts}");
     assert!(!prompts.contains(WIDGET_SECRET), "{prompts}");
@@ -562,7 +601,7 @@ fn a_banner_or_alert_on_the_home_screen_is_shown_and_read_but_the_widget_is_not(
             node(Role::Button, "OK", rect(50.0, 440.0, 290.0, 44.0)),
         ]);
     let r = go(home(vec![secret_widget(), alert]));
-    assert_eq!(flows(&r).len(), 1, "{:?}", r.confirms);
+    assert_eq!(flows(&r).len(), 2, "{:?}", r.confirms);
     let prompts = r.all_prompt_text();
     assert!(prompts.contains("Battery is low"), "{prompts}");
     assert!(prompts.contains("OK"), "{prompts}");
@@ -705,9 +744,12 @@ fn an_unreadable_host_is_named_as_such() {
             &tap(index_of(&article("a.example"), "Next")),
             DONE,
         ])
-        .decisions(&[true]),
+        .decisions(&[true, true]),
     );
-    let fq = flows(&r2);
+    // Twenty-third review (R23, rule changed): the tap on the page asks once more, Safari's
+    // chrome seeing it (was: 1 question).
+    assert_eq!(flows(&r2).len(), 2, "{:?}", r2.confirms);
+    let fq = flows_but_chrome(&r2);
     assert_eq!(fq.len(), 1, "{:?}", r2.confirms);
     assert!(
         // Nineteenth review (R-B, name changed; was "Safari (site not readable)"): the class
@@ -839,7 +881,7 @@ fn own_app_is_a_stub_unless_driven() {
                 &tap(next),
                 DONE,
             ])
-            .decisions(&[true]),
+            .decisions(&[true, true]),
         )
     };
     let r = go(c.clone());
@@ -855,7 +897,8 @@ fn own_app_is_a_stub_unless_driven() {
         "{}",
         r.requests[1].user
     );
-    assert!(flows(&r).is_empty(), "{:?}", r.confirms);
+    // Twenty-third review (R23): only Safari's chrome seeing the tap on the page asks.
+    assert!(flows_but_chrome(&r).is_empty(), "{:?}", r.confirms);
     assert_eq!(
         r.acts
             .iter()
@@ -867,7 +910,7 @@ fn own_app_is_a_stub_unless_driven() {
     c.drive_own_app = true;
     let r = go(c);
     assert!(r.requests[0].user.contains("door code"));
-    let fq = flows(&r);
+    let fq = flows_but_chrome(&r);
     assert_eq!(fq.len(), 1, "{:?}", r.confirms);
     assert!(fq[0].summary.contains("Jarvis"), "{}", fq[0].summary);
 }
@@ -982,9 +1025,18 @@ fn a_declined_flow_does_not_poison_categories() {
         Script::model(&[WAIT, &tap(next), &open("Messages"), &tap(info), DONE])
             .decisions(&[false, true]),
     );
+    // Twenty-third review (R23, rule changed): the declined question named Messages and the
+    // page into the page and into Safari's chrome (which sees the tap); leaving with
+    // `open_app` is seen by both, so it would carry a declined flow and ends the task
+    // `Blocked` on that flow (was: asked, naming the page). Still not a category.
     let fq = flows(&r);
-    assert_eq!(fq.len(), 2, "{:?}\n{}", r.confirms, r.outcome.summary);
-    assert!(fq[1].summary.contains("news.example"), "{}", fq[1].summary);
+    assert_eq!(fq.len(), 1, "{:?}\n{}", r.confirms, r.outcome.summary);
+    assert_eq!(r.outcome.status, jarvis_proto::OutcomeStatus::Blocked);
+    assert!(
+        r.outcome.summary.contains("did not allow what Jarvis read"),
+        "{}",
+        r.outcome.summary
+    );
     assert!(
         !r.outcome.summary.contains("already declined"),
         "{}",

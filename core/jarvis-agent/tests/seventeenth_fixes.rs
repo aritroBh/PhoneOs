@@ -17,8 +17,8 @@ use jarvis_agent::Session;
 use jarvis_memory::MemoryStore;
 use jarvis_proto::fixtures::{node, rect, screen, text, IPHONE_SIZE};
 use jarvis_proto::{
-    AppInfo, Effect, Event, Observation, ParamKind, Policy, RiskCategory, Role, RunnerCommand,
-    Screen, SessionConfig, TaskSpec, Tier, TimedEvent, ToolParam, ToolSpec, UiNode,
+    AppInfo, ConfirmVerb, Effect, Event, Observation, ParamKind, Policy, RiskCategory, Role,
+    RunnerCommand, Screen, SessionConfig, TaskSpec, Tier, TimedEvent, ToolParam, ToolSpec, UiNode,
 };
 
 const FLOW: &str = "what it read there could be passed on here";
@@ -187,11 +187,13 @@ fn embedded_web_content_is_one_way() {
     let fq = flows(&r);
     assert_eq!(fq.len(), 1, "{:?}", r.confirms);
     // Nineteenth review (name changed): the covering name (was "read web content in Acme
-    // in").
+    // in"). Twenty-third review (R23, rule changed): the web content sees the tap, so Acme
+    // is named as a source for it too, in the same question (was: "read all web content in
+    // Acme (…) in").
     assert!(
-        fq[0]
-            .summary
-            .contains("read all web content in Acme (Jarvis cannot tell its parts apart) in"),
+        fq[0].summary.contains(
+            "read Acme and all web content in Acme (Jarvis cannot tell its parts apart) in"
+        ),
         "{}",
         fq[0].summary
     );
@@ -212,11 +214,12 @@ fn embedded_web_content_is_one_way() {
     );
     let fq = flows(&r);
     assert_eq!(fq.len(), 1, "{:?}", r.confirms);
+    // Twenty-third review (R23, rule changed): as above, Acme is named too.
     assert!(
-        fq[0]
-            .summary
+        fq[0].summary.contains(
             // (the screen still calls itself "Acme")
-            .contains("read all web content in Acme (Jarvis cannot tell its parts apart) in"),
+            "read Acme and all web content in Acme (Jarvis cannot tell its parts apart) in"
+        ),
         "{}",
         fq[0].summary
     );
@@ -265,24 +268,42 @@ fn a_frame_and_its_page_are_two_way() {
             Script::model(&refs).decisions(decisions),
         )
     };
-    // Page into frame.
+    // Page into frame. Twenty-third review (R23, rule changed): the page and Safari's
+    // chrome see the tap, so the frame is named as a source for them in the same question
+    // (was: "read bank.example in").
     let r = go(&[chat], &[false]);
     let fq = flows(&r);
     assert_eq!(fq.len(), 1, "{:?}", r.confirms);
     assert!(
-        fq[0].summary.contains("read bank.example in"),
+        fq[0]
+            .summary
+            .contains("read bank.example and embedded content in bank.example in"),
         "{}",
         fq[0].summary
     );
     assert!(!touched(&r));
-    // Frame into page.
+    assert!(
+        fq[0]
+            .summary
+            .contains(", into embedded content in bank.example, and to "),
+        "{}",
+        fq[0].summary
+    );
+    // Frame into page. Twenty-third review (R23, rule changed): the frame and Safari's
+    // chrome see the tap, so the page is named as a source for them too (was: "read
+    // embedded content in bank.example in"); the input itself goes into the page.
     let r = go(&[menu], &[false]);
     let fq = flows(&r);
     assert_eq!(fq.len(), 1, "{:?}", r.confirms);
     assert!(
         fq[0]
             .summary
-            .contains("read embedded content in bank.example in"),
+            .contains("read bank.example and embedded content in bank.example in"),
+        "{}",
+        fq[0].summary
+    );
+    assert!(
+        fq[0].summary.contains(", into bank.example, and to "),
         "{}",
         fq[0].summary
     );
@@ -414,8 +435,11 @@ fn clock() -> ToolSpec {
 
 /// After reading Messages the task is in Notes (it came to front while Jarvis waited):
 /// under `confirm: []` every action kind either asks the flow question before it is carried
-/// out, or is one of the three exempt outputs (`wait`, `look`, the text of `done`/`fail`/
-/// `ask_user` shown on the phone).
+/// out, or is one of the exempt outputs (the text of `done`/`fail`/`ask_user` shown on the
+/// phone). Twenty-third review (R23, rule changed): `wait` and `look` are observe-kind
+/// inputs into every place on the screen and ask too (were exempt); and the leading wait in
+/// Messages asks, the screen picture of the thin-tree fallback being a source for Messages
+/// (approved below, so the task reaches Notes as before).
 #[test]
 fn every_action_kind_asks_under_confirm_nothing_or_is_exempt() {
     let notes = plain(NOTES, "Notes");
@@ -482,9 +506,10 @@ fn every_action_kind_asks_under_confirm_nothing_or_is_exempt() {
             vec![r#"{"action":"call_tool","name":"clock","args":{}}"#.to_owned()],
         ),
     ];
+    let mut inputs = inputs;
+    inputs.push(("wait", vec![WAIT.to_owned()]));
+    inputs.push(("look", vec![r#"{"action":"look"}"#.to_owned()]));
     let exempt: Vec<(&str, Vec<String>)> = vec![
-        ("wait", vec![WAIT.to_owned()]),
-        ("look", vec![r#"{"action":"look"}"#.to_owned()]),
         (
             "ask_user",
             vec![r#"{"action":"ask_user","question":"Which one?"}"#.to_owned()],
@@ -494,7 +519,7 @@ fn every_action_kind_asks_under_confirm_nothing_or_is_exempt() {
             vec![r#"{"action":"fail","reason":"cannot"}"#.to_owned()],
         ),
     ];
-    let go = |steps: &[String]| {
+    let go = |steps: &[String], decisions: &[bool]| {
         let mut c = vision_config();
         c.known_apps.push(AppInfo::new(NOTES, "Notes"));
         c.known_apps.push(AppInfo::new(MAPS, "Maps"));
@@ -513,18 +538,38 @@ fn every_action_kind_asks_under_confirm_nothing_or_is_exempt() {
                 vec![plain(NOTES, "Notes")],
                 vec![(MAPS, plain(MAPS, "Maps"))],
             ),
-            Script::model(&refs),
+            Script::model(&refs).decisions(decisions),
         )
     };
+    // The places a flow question names as read.
+    let read = |q: &jarvis_proto::ConfirmRequest| {
+        let from = q.summary.find("Jarvis has read ").unwrap_or(0);
+        let to = q.summary.find(" in this task;").unwrap_or(from);
+        q.summary.get(from..to).unwrap_or_default().to_owned()
+    };
     for (kind, steps) in &inputs {
-        let r = go(steps);
+        // The leading wait's question is approved; so is the look before a `tap_point` (it
+        // asks too, R23), so that the `tap_point` itself is decided.
+        let decisions: &[bool] = if *kind == "tap_point" {
+            &[true, true]
+        } else {
+            &[true]
+        };
+        let r = go(steps, decisions);
         let fq = flows(&r);
-        assert!(!fq.is_empty(), "{kind}: not asked: {:?}", r.acts);
         assert!(
-            fq[0].summary.contains("Messages"),
+            fq.len() >= 2,
+            "{kind}: not asked: {:?} {:?}",
+            r.acts,
+            r.confirms
+        );
+        assert!(
+            fq[0].summary.starts_with("Wait"),
             "{kind}: {}",
             fq[0].summary
         );
+        let q = fq.last().unwrap();
+        assert!(read(q).contains("Messages"), "{kind}: {}", q.summary);
         // Declined: nothing of it was carried out.
         assert!(!touched(&r), "{kind}: {:?}", r.acts);
         assert!(
@@ -538,8 +583,9 @@ fn every_action_kind_asks_under_confirm_nothing_or_is_exempt() {
         assert!(r.tool_calls.is_empty(), "{kind}: {:?}", r.tool_calls);
     }
     for (kind, steps) in &exempt {
-        let r = go(steps);
-        assert!(flows(&r).is_empty(), "{kind}: {:?}", r.confirms);
+        let r = go(steps, &[true]);
+        // Only the leading wait's question.
+        assert_eq!(flows(&r).len(), 1, "{kind}: {:?}", r.confirms);
     }
 }
 
@@ -578,6 +624,27 @@ fn every_place_an_approval_allows_is_named() {
             Script::model(&[WAIT, WAIT, WAIT, WAIT, WAIT, WAIT, &tap(ok), DONE])
                 .decisions(decisions),
         )
+    };
+    // Twenty-third review (R23, rule changed): every wait after the first is seen by the app
+    // in front, which was given none of the apps read before, so it asks (observe kind).
+    // Those questions are approved here (an observe grant never covers the tap); what is
+    // asserted is about the tap's questions.
+    let waits = flows(&go(&[true; 40]))
+        .iter()
+        .filter(|q| q.verb != ConfirmVerb::Tap)
+        .count();
+    assert!(waits >= 5, "{waits}");
+    let go = |decisions: &[bool]| {
+        let mut all = vec![true; waits];
+        all.extend_from_slice(decisions);
+        go(&all)
+    };
+    let flows = |r: &Run| -> Vec<jarvis_proto::ConfirmRequest> {
+        flows(r)
+            .into_iter()
+            .filter(|q| q.verb == ConfirmVerb::Tap)
+            .cloned()
+            .collect()
     };
     let first = "Number 0";
     let r = go(&[true, false]);

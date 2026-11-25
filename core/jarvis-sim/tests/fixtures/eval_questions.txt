@@ -53,7 +53,7 @@ switch_already_on	structured	FirstUse	"Let Jarvis act in Settings (com.apple.Pre
 done_after_decline	structured	FirstUse	"Let Jarvis act in Shop (com.example.shop)?"
 done_after_decline	structured	Payment	"Tap \"Place Order\" in Shop, screen \"Cart\". Amounts on screen: Total: $129.00; Wireless Headphones, $129.00. Recipient not verified"
 notes_two_scrolls	structured	FirstUse	"Let Jarvis act in Notes (com.apple.mobilenotes)?"
-news_dense_page	structured	SendMessage	"Tap \"Harbour bridge repairs will … updates expected later today\" in News, screen \"Today\". Jarvis has read News and all web content in News (Jarvis cannot tell its parts apart) in this task; what it read there could be passed on here"
+news_dense_page	structured	SendMessage	"Tap \"Harbour bridge repairs will … updates expected later today\" in News, screen \"Today\". Jarvis has read News and all web content in News (Jarvis cannot tell its parts apart) in this task; what it read there could be passed on here, into all web content in News (Jarvis cannot tell its parts apart), and to News, which can tell when Jarvis waits, looks or acts"
 news_dense_page	structured	FirstUse	"Let Jarvis act in News (com.example.news)?"
 wifi_off	runner-text	FirstUse	"Let Jarvis act in Settings (com.apple.Preferences)?"
 wifi_off	runner-text	Unverified	"Warning: this screen was read through an unverified text format and may not be what is on the phone. Tap \"Wi-Fi, HomeNet\" in Settings"
