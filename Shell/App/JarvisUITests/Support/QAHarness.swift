@@ -360,45 +360,111 @@ enum SimulatorLock {
 
     /// Wakes and unlocks a simulator without a passcode the way the probe found works (a
     /// home press), then brings `app` back to the front, as unlocking a phone returns to the
-    /// app that was in front.
+    /// app that was in front. Returns what happened, for the transcript: how many
+    /// activations it took, or that the time budget ran out.
     ///
-    /// State-aware, up to four rounds. Two failures seen in simulator runs:
-    /// - run 83: the lock took 7 s to show, the one home press landed while the simulator
-    ///   was still locking, and the app stayed in the background. So a round that ends with
-    ///   the app not in front presses home again.
+    /// It waits for facts, not for fixed times. Failures seen in simulator runs:
     /// - run 101: the home press on the lock screen started the unlock transition, the
     ///   `activate()` 0.5 s later brought the app forward, and the unlock transition then
     ///   finished and sent it back to the home screen about 2 s later (xcodebuild log:
     ///   "Pressing Home button", "Activate dev.jarvis.app", the app in front at t+13 to
     ///   t+14 s, SpringBoard from t+15 s, and no runner command in between). So the app
-    ///   counts as back only when it stays in front for a settle period, and home is never
-    ///   pressed while the app is in front.
+    ///   counts as back only when it stays in front for a settle period.
+    /// - run 129 (slow simulator): `press(.home)` took 5.5 s to return, `activate()` 3.2 s,
+    ///   and SpringBoard took the front by itself 5.6 s after the activate, 2.3 s after a
+    ///   fixed 1.5 s wait plus a 3 s settle check had reported success. So the helper first
+    ///   waits until the unlock is over by the lock readings, then requires the app to stay
+    ///   in front for 8 s, and when SpringBoard still takes the front in that window it
+    ///   waits for stillness again and activates once more (at most 3 activations; no new
+    ///   activation starts after 30 s, so the helper ends within about 50 s).
+    /// - run 83: the lock took 7 s to show and the one home press landed while the simulator
+    ///   was still locking. Home is still pressed only once: a second press when the phone
+    ///   may already be unlocked sends the app to the home screen. A press that did not
+    ///   unlock shows as "unlock not confirmed" in the returned text, and the tests' own
+    ///   assertions fail.
+    ///
+    /// Synchronous on purpose: it blocks the main actor, so the session's unlock polls are
+    /// frozen while it works and the session resumes only once the app is back in front, as
+    /// after a real unlock (which returns to the app that was in front; pressing Home and
+    /// re-activating is a simulator artifact). Waits are short `Thread.sleep` slices.
     @MainActor
     static func unlock(returningTo app: XCUIApplication) -> String {
-        var states: [String] = []
-        for attempt in 1...4 {
-            if attempt == 1 || app.state != .runningForeground {
-                XCUIDevice.shared.press(.home)
-                // Let the unlock transition finish before bringing the app back.
-                Thread.sleep(forTimeInterval: 1.5)
-            }
-            app.activate()
-            if app.wait(for: .runningForeground, timeout: 5), staysInFront(app, for: 3) {
-                return "home pressed \(attempt)x; app back in front"
-            }
-            states.append("\(app.state.rawValue)")
+        let started = Date()
+        let budget = started.addingTimeInterval(30)
+        // The runner's own lock readers (the notify state of com.apple.springboard.lockstate
+        // and the lock screen check, judged by `LockJudge`), on a runner of its own so the
+        // session's runner and its judge are not fed extra readings.
+        let readings = XCUITestPhoneRunner()
+        var notes: [String] = []
+        XCUIDevice.shared.press(.home)
+        notes.append("home pressed once (returned at \(since(started)))")
+        if let reading = unlockOver(readings, app, until: min(started.addingTimeInterval(15), budget)) {
+            notes.append("unlock over at \(since(started)) (\(reading))")
+        } else {
+            notes.append("unlock not confirmed over by \(since(started)) (lock state \(readings.commandLockState().rawValue), app state \(app.state.rawValue)); activating anyway")
         }
-        return "home pressed up to 4x; app not in front (states \(states.joined(separator: ", ")))"
+        var activations = 0
+        while activations < 3, Date() < budget {
+            activations += 1
+            app.activate()
+            if staysInFront(app) {
+                notes.append("activation \(activations) at \(since(started)): app stayed in front")
+                return "app back in front after \(activations) activation(s), home pressed once, \(since(started)) in all; "
+                    + notes.joined(separator: "; ")
+            }
+            notes.append("activation \(activations) at \(since(started)): app not in front through the settle window (state \(app.state.rawValue))")
+            if activations == 3 { break }
+            // A late unlock transition took the front: wait until things are still again.
+            if let reading = unlockOver(readings, app, until: budget) {
+                notes.append("still again at \(since(started)) (\(reading))")
+            } else {
+                notes.append("not still again by \(since(started))")
+            }
+        }
+        return "app not in front after \(activations) activation(s): budget 30 s, \(since(started)) used, home pressed once, state \(app.state.rawValue); "
+            + notes.joined(separator: "; ")
     }
 
-    /// True when `app` is in the foreground at every check over `seconds`.
+    /// Polls until the unlock is over: the runner's judged lock state is unlocked (which
+    /// needs the lock screen not showing: a confirmed lock screen always judges locked) and
+    /// two consecutive readings of (lock state, app state) at least 0.5 s apart are equal.
+    /// Returns the stable reading, or `nil` at `deadline`.
     @MainActor
-    private static func staysInFront(_ app: XCUIApplication, for seconds: TimeInterval) -> Bool {
-        let end = Date().addingTimeInterval(seconds)
-        while Date() < end {
+    private static func unlockOver(_ readings: XCUITestPhoneRunner, _ app: XCUIApplication,
+                                   until deadline: Date) -> String? {
+        var previous: String?
+        while true {
+            let lock = readings.commandLockState()
+            let reading = "lock state \(lock.rawValue), app state \(app.state.rawValue)"
+            if lock == .unlocked, reading == previous { return reading }
+            previous = reading
+            if Date() >= deadline { return nil }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+    }
+
+    /// True when `app` reaches the foreground within 5 s of this call (made right after an
+    /// `activate()` returned) and then stays there at every check for 8 s. The lock
+    /// readings cannot see a home-screen transition still running (SpringBoard in front,
+    /// unlocked, no lock screen either way), so the settle window must outlast the late
+    /// takeover seen in run 129 (5.6 s after the activate returned).
+    @MainActor
+    private static func staysInFront(_ app: XCUIApplication) -> Bool {
+        let reachBy = Date().addingTimeInterval(5)
+        while app.state != .runningForeground {
+            if Date() >= reachBy { return false }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        let settledAt = Date().addingTimeInterval(8)
+        while Date() < settledAt {
             if app.state != .runningForeground { return false }
             Thread.sleep(forTimeInterval: 0.25)
         }
         return app.state == .runningForeground
+    }
+
+    /// "12.3 s": the time since `start`.
+    private static func since(_ start: Date) -> String {
+        String(format: "%.1f s", Date().timeIntervalSince(start))
     }
 }
