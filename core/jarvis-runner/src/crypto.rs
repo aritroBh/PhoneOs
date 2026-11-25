@@ -260,10 +260,11 @@ mod tests {
         );
     }
 
+    // Re-pinned for protocol version 2 (the version byte is in the transcript and AAD).
     const KNOWN_ANSWER: &str = concat!(
-        "3028e85b58f19c3d8c509bd25ff7ec620cb6245db695ebf703356b604b8fa979|",
-        "261204207c5588e5c7a2269b6d249a16133316a6bee4e10537b9c7f94cb686d9|",
-        "b3dd252634ab31347cc9fce92d3470c2201a"
+        "a894d8ff93d794e1ebdb514fa45ef2c6f267649b10e430817722e1c26c72c79c|",
+        "0fac56410318410f419922f85855865d266253643d2c13a214ef0ab2b9f8d295|",
+        "b3dd5517e0c9edcdc9f9164e0101f415cf50"
     );
 
     #[test]

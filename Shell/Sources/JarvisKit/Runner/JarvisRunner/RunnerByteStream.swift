@@ -6,13 +6,22 @@ import Synchronization
 /// Framing, authentication and everything else is the core's (`JarvisRunnerClientChannel`,
 /// `JarvisRunnerServerChannel`); a stream only moves bytes.
 public protocol RunnerByteStream: Sendable {
-    /// Writes `bytes` after everything written before. Throws when the connection is gone.
+    /// Writes `bytes` after everything written before. Throws when the connection is gone;
+    /// throws `RunnerStreamClosed` only when none of `bytes` was sent (the client may then
+    /// send the request again on a fresh connection).
     func write(_ bytes: Data) async throws
     /// The next bytes that arrived (never empty), or `nil` at the end of the stream (the
     /// peer closed, or `close()` was called). Throws when the connection failed.
     func read() async throws -> Data?
     /// Closes the connection. Idempotent; a pending `read` returns `nil` or throws.
     func close() async
+    /// `true` when the stream already knows the connection is closed (by either side), so
+    /// nothing written now would be sent. Default `false` (not known).
+    var isKnownClosed: Bool { get }
+}
+
+extension RunnerByteStream {
+    public var isKnownClosed: Bool { false }
 }
 
 /// Opens connections to the runner (the app's side).
@@ -112,13 +121,17 @@ public final class InMemoryRunnerStream: RunnerByteStream {
     /// Whether this end can no longer write.
     public var isClosed: Bool { outgoing.isClosed }
 
+    public var isKnownClosed: Bool { isClosed }
+
     public func write(_ bytes: Data) async throws {
         guard !bytes.isEmpty else {
             if outgoing.isClosed { throw RunnerStreamClosed() }
             return
         }
-        written.withLock { $0.append(bytes) }
+        // Nothing is sent (or recorded) when the pipe is closed: `RunnerStreamClosed` keeps
+        // the protocol's promise that none of `bytes` left.
         guard outgoing.push(bytes) else { throw RunnerStreamClosed() }
+        written.withLock { $0.append(bytes) }
     }
 
     public func read() async throws -> Data? {

@@ -18,6 +18,10 @@ fn entropy(seed: u8) -> Vec<u8> {
 }
 
 const KEY: [u8; 32] = [0x11; 32];
+/// The shell's clock at every server `receive` in these tests (ms of shared uptime).
+const NOW: u64 = 1_000_000;
+/// A `not_after_ms` comfortably after [`NOW`].
+const FAR: u64 = NOW + 60_000;
 
 fn sends_s(events: &[RunnerServerEvent]) -> Vec<u8> {
     events
@@ -48,10 +52,10 @@ fn connect() -> (
     let client = JarvisRunnerClientChannel::new(KEY.to_vec(), entropy(1)).unwrap();
     let server = JarvisRunnerServerChannel::new(KEY.to_vec(), entropy(2)).unwrap();
     let hello = client.start().unwrap();
-    let sh = sends_s(&server.receive(hello).unwrap());
+    let sh = sends_s(&server.receive(hello, NOW).unwrap());
     let events = client.receive(sh).unwrap();
     assert!(events.contains(&RunnerClientEvent::Authenticated));
-    let events = server.receive(sends_c(&events)).unwrap();
+    let events = server.receive(sends_c(&events), NOW).unwrap();
     assert_eq!(events, vec![RunnerServerEvent::Authenticated]);
     assert!(client.is_open().unwrap() && server.is_open().unwrap());
     (client, server)
@@ -63,12 +67,13 @@ fn round_trip(
     request: RunnerWireRequest,
     reply: RunnerWireReply,
 ) -> RunnerWireReply {
-    let out = client.request(request.clone()).unwrap();
-    let events = server.receive(out.bytes).unwrap();
+    let out = client.request(request.clone(), FAR).unwrap();
+    let events = server.receive(out.bytes, NOW).unwrap();
     assert_eq!(
         events,
         vec![RunnerServerEvent::Request {
             request_id: out.request_id,
+            not_after_ms: FAR,
             request
         }]
     );
@@ -192,14 +197,14 @@ fn requests_and_typed_replies_cross_intact() {
         RunnerWireReply::FrontBundleId { bundle_id: None },
     );
     assert_eq!(got, RunnerWireReply::FrontBundleId { bundle_id: None });
-    assert_eq!(runner_protocol_version(), 1);
+    assert_eq!(runner_protocol_version(), 2);
 }
 
 #[test]
 fn a_wrong_key_is_an_authentication_problem_and_closes_the_channel() {
     let client = JarvisRunnerClientChannel::new([0x22; 32].to_vec(), entropy(3)).unwrap();
     let server = JarvisRunnerServerChannel::new(KEY.to_vec(), entropy(4)).unwrap();
-    let sh = sends_s(&server.receive(client.start().unwrap()).unwrap());
+    let sh = sends_s(&server.receive(client.start().unwrap(), NOW).unwrap());
     let err = client.receive(sh).unwrap_err();
     assert!(matches!(
         err,
@@ -211,7 +216,9 @@ fn a_wrong_key_is_an_authentication_problem_and_closes_the_channel() {
     let text = format!("{err} {err:?}");
     assert!(!text.contains("34") && !text.contains("0x22"), "{text}");
     assert!(!client.is_open().unwrap());
-    let err = client.request(RunnerWireRequest::LockState).unwrap_err();
+    let err = client
+        .request(RunnerWireRequest::LockState, FAR)
+        .unwrap_err();
     assert!(matches!(
         err,
         JarvisError::RunnerChannel {
@@ -243,4 +250,43 @@ fn bad_keys_and_entropy_are_typed() {
             ..
         }
     ));
+}
+
+#[test]
+fn an_expired_request_is_refused_through_the_ffi() {
+    let client = JarvisRunnerClientChannel::new(
+        KEY.to_vec(),
+        (0u8..32)
+            .map(|i| i.wrapping_mul(29).wrapping_add(3))
+            .collect(),
+    )
+    .unwrap();
+    let server = JarvisRunnerServerChannel::new(
+        KEY.to_vec(),
+        (0u8..32)
+            .map(|i| i.wrapping_mul(31).wrapping_add(5))
+            .collect(),
+    )
+    .unwrap();
+    let sh = sends_s(&server.receive(client.start().unwrap(), NOW).unwrap());
+    let events = client.receive(sh).unwrap();
+    server.receive(sends_c(&events), NOW).unwrap();
+    let out = client
+        .request(
+            RunnerWireRequest::Perform {
+                command: RunnerCommand::Tap { x: 1.0, y: 2.0 },
+                expect: None,
+            },
+            NOW,
+        )
+        .unwrap();
+    let err = server.receive(out.bytes, NOW + 1).unwrap_err();
+    assert!(matches!(
+        err,
+        JarvisError::RunnerChannel {
+            problem: RunnerChannelProblem::Expired,
+            ..
+        }
+    ));
+    assert!(!server.is_open().unwrap());
 }

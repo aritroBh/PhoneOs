@@ -15,6 +15,21 @@ public protocol PhoneRunner: Sendable {
     /// could not be read.
     func perform(_ command: RunnerCommand) async throws -> RunnerResult
 
+    /// Performs one command planned on the app `expect` names (`Effect.act`'s `expect`;
+    /// `nil` for commands that carry none). A runner that `verifiesFrontApp` compares
+    /// `expect` with the app in front itself, next to the gesture, and answers
+    /// `RunnerResult.stale` (nothing done) when another app is in front or the front app
+    /// cannot be read. The default ignores `expect` and calls `perform(_:)`: for such
+    /// runners `FrontAppGuard`'s check before the call is the only one, as before.
+    func perform(_ command: RunnerCommand, expect: CommandExpect?) async throws -> RunnerResult
+
+    /// `true` when this runner can always tell which app is in front and checks `expect`
+    /// itself in `perform(_:expect:)` (Jarvis's own runner, the in-process XCUITest
+    /// runner). For such a runner a `frontBundleId()` that throws means the runner failed,
+    /// not "cannot tell": `FrontAppGuard` then refuses the command (the error surfaces;
+    /// nothing is sent) instead of sending it unchecked. Default `false`.
+    var verifiesFrontApp: Bool { get }
+
     /// Whether the phone is locked now. `SessionDriver` polls it while the session waits for
     /// an unlock and while it waits for the model or the owner (a lock then interrupts the
     /// wait). Runners that cannot tell return `.unknown` (the default); the driver then
@@ -36,6 +51,14 @@ public protocol PhoneRunner: Sendable {
 }
 
 extension PhoneRunner {
+    /// Default: `expect` is not checked by the runner (see `FrontAppGuard`).
+    public func perform(_ command: RunnerCommand, expect: CommandExpect?) async throws -> RunnerResult {
+        try await perform(command)
+    }
+
+    /// Default: the runner may not be able to tell which app is in front.
+    public var verifiesFrontApp: Bool { false }
+
     /// Default: the runner cannot tell.
     public func lockState() async throws -> DeviceLockState { .unknown }
 
@@ -69,6 +92,16 @@ extension RunnerResult {
             failure: .stale
         )
     }
+
+    /// The command was refused because the app in front could not be read where the check
+    /// has to be made (by a runner that checks `expect` itself); nothing was carried out.
+    public static func staleUnreadable(expected: String) -> RunnerResult {
+        RunnerResult(
+            ok: false,
+            error: "not carried out: the app in front could not be read, and the command was planned on \(expected)",
+            failure: .stale
+        )
+    }
 }
 
 /// Stale-screen guard, layer 2 (docs/ARCHITECTURE.md, *Stale-screen guard*): a gesture or
@@ -83,6 +116,12 @@ extension RunnerResult {
 /// - Unknown (the runner returns `nil` or the read fails): sent, and the first such command
 ///   of the run returns a note saying the check could not be made (once per guard).
 /// - No `expect` (launching an app, opening a link, waiting, Home): sent unchecked.
+/// - A runner that `verifiesFrontApp` (twenty-first review): a read that throws refuses the
+///   command (the error is rethrown, nothing is sent), since for such a runner a throw is a
+///   failure, not "cannot tell"; a `nil` reading sends it without a note. Either way the
+///   command goes out with its `expect` (`perform(_:expect:)`) and the runner checks it
+///   again next to the gesture, so a channel that fails between the two calls cannot make
+///   an unchecked command.
 ///
 /// `SessionDriver` runs every command through one guard, so every runner gets the check.
 /// Limits: between the read and the synthesized touch a few milliseconds remain, and
@@ -114,20 +153,43 @@ public final class FrontAppGuard: Sendable {
     /// Checks `expect` against `runner`'s front app, then sends `command` (or refuses it).
     public func perform(_ command: RunnerCommand, expect: CommandExpect?, on runner: any PhoneRunner) async throws -> Outcome {
         guard let expect else {
-            return Outcome(result: try await runner.perform(command), note: nil)
+            return Outcome(result: try await runner.perform(command, expect: nil), note: nil)
         }
-        let front = try? await runner.frontBundleId()
+        let front: String?
+        if runner.verifiesFrontApp {
+            // A throw here is the runner failing: refuse (surface it), never send unchecked.
+            front = try await runner.frontBundleId()
+        } else {
+            front = try? await runner.frontBundleId()
+        }
         switch Self.holds(expect, front: front) {
         case false?:
             return Outcome(result: .stale(front: front ?? "", expected: expect.bundleId), note: nil)
         case true?:
-            return Outcome(result: try await runner.perform(command), note: nil)
+            return Outcome(result: try await runner.perform(command, expect: expect), note: nil)
         case nil:
+            // The runner checks `expect` itself next to the gesture: nothing to note.
+            if runner.verifiesFrontApp {
+                return Outcome(result: try await runner.perform(command, expect: expect), note: nil)
+            }
             let first = unknownNoted.withLock { noted in
                 defer { noted = true }
                 return !noted
             }
-            return Outcome(result: try await runner.perform(command), note: first ? Self.unknownNote : nil)
+            return Outcome(result: try await runner.perform(command, expect: expect), note: first ? Self.unknownNote : nil)
+        }
+    }
+
+    /// For a runner that checks `expect` itself (`verifiesFrontApp`), in the same step as the
+    /// gesture: the refusal to answer instead of acting when `front` (the reading taken right
+    /// there) is another app or could not be read (`nil`); `nil` when the command may run
+    /// (it carries no `expect`, or the app it was planned on is in front).
+    public static func refusalNextToGesture(_ expect: CommandExpect?, front: String?) -> RunnerResult? {
+        guard let expect else { return nil }
+        switch holds(expect, front: front) {
+        case true?: return nil
+        case false?: return .stale(front: front ?? "", expected: expect.bundleId)
+        case nil: return .staleUnreadable(expected: expect.bundleId)
         }
     }
 }
@@ -347,14 +409,20 @@ public final class LockCheckingRunner: PhoneRunner {
     }
 
     public func perform(_ command: RunnerCommand) async throws -> RunnerResult {
-        if case .wait = command { return try await inner.perform(command) }
+        try await perform(command, expect: nil)
+    }
+
+    public func perform(_ command: RunnerCommand, expect: CommandExpect?) async throws -> RunnerResult {
+        if case .wait = command { return try await inner.perform(command, expect: expect) }
         if (try? await inner.lockState()) == .locked {
             return .deviceLocked("the phone is locked; \(Transcript.describe(command)) was not sent")
         }
-        let result = try await inner.perform(command)
+        let result = try await inner.perform(command, expect: expect)
         let after = (try? await inner.lockState()) ?? .unknown
         return result.checkedAfterCommand(command, lockedAfter: after)
     }
+
+    public var verifiesFrontApp: Bool { inner.verifiesFrontApp }
 
     public func lockState() async throws -> DeviceLockState {
         try await inner.lockState()

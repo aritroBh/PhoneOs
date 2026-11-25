@@ -1,5 +1,6 @@
 import Foundation
 import JarvisCore
+import Synchronization
 
 /// The runner's side of Jarvis's own runner protocol, transport-free: serves any
 /// `PhoneRunner` (on the phone, `XCUITestPhoneRunner` in the runner's UI-test process) to
@@ -8,8 +9,18 @@ import JarvisCore
 /// - One connection at a time: a connection accepted while another is served is closed at
 ///   once. A connection that has not proved the key within `handshakeDeadline` is closed,
 ///   so a stranger cannot hold the slot for longer than that.
-/// - Every runner call has a deadline; past it the client gets an error reply (the call
-///   itself may go on: XCUITest calls cannot be interrupted).
+/// - An authenticated connection that sends no request for `idleTimeout` is closed, so a
+///   connection its app abandoned does not hold the slot (the client replaces idle
+///   connections itself before that).
+/// - A request received after its `not_after_ms` (the client's deadline, in the uptime
+///   clock both processes share) is refused by the core channel and closes the connection:
+///   nothing held back is carried out late.
+/// - Every runner call has a deadline (`JarvisRunnerTiming`, inside the client's); past it
+///   the client gets an error reply (the call itself may go on: XCUITest calls cannot be
+///   interrupted).
+/// - A command's `expect` goes to the runner (`perform(_:expect:)`), which checks it next
+///   to the gesture; a runner that cannot (`verifiesFrontApp` false) gets no such command:
+///   the reply is `stale`, nothing is done.
 /// - A failed or closed connection leaves the server ready for the next one.
 /// - The core channel does the cryptography and framing; nothing here parses bytes.
 public actor RunnerServer {
@@ -22,17 +33,21 @@ public actor RunnerServer {
         public var commandDeadline: Duration
         /// The name sent in the hello.
         public var runnerName: String
+        /// An authenticated connection with no request for this long is closed.
+        public var idleTimeout: Duration
 
         public init(
             handshakeDeadline: Duration = .seconds(5),
-            readDeadline: Duration = .seconds(30),
-            commandDeadline: Duration = .seconds(45),
-            runnerName: String = JarvisRunnerDefaults.runnerName
+            readDeadline: Duration = JarvisRunnerTiming.serverRead,
+            commandDeadline: Duration = JarvisRunnerTiming.serverCommand,
+            runnerName: String = JarvisRunnerDefaults.runnerName,
+            idleTimeout: Duration = JarvisRunnerTiming.serverIdle
         ) {
             self.handshakeDeadline = handshakeDeadline
             self.readDeadline = readDeadline
             self.commandDeadline = commandDeadline
             self.runnerName = runnerName
+            self.idleTimeout = idleTimeout
         }
     }
 
@@ -50,21 +65,28 @@ public actor RunnerServer {
     private let random: any RandomSource
     private let configuration: Configuration
     private let onEvent: @Sendable (Event) -> Void
+    private let clock: @Sendable () -> UInt64
     private var active: (any RunnerByteStream)?
+    /// The idle watch of the active connection, once it authenticated.
+    private var activeIdle: IdleWatch?
     private var stopped = false
 
+    /// `clock`: milliseconds of the uptime clock the app reads too (`RunnerUptimeClock.nowMs`;
+    /// tests pass their own).
     public init(
         runner: any PhoneRunner,
         key: Redacted<Data>,
         random: any RandomSource,
         configuration: Configuration = Configuration(),
-        onEvent: @escaping @Sendable (Event) -> Void = { _ in }
+        onEvent: @escaping @Sendable (Event) -> Void = { _ in },
+        clock: @escaping @Sendable () -> UInt64 = RunnerUptimeClock.nowMs
     ) {
         self.runner = runner
         self.key = key
         self.random = random
         self.configuration = configuration
         self.onEvent = onEvent
+        self.clock = clock
     }
 
     /// Whether a connection is being served.
@@ -92,6 +114,7 @@ public actor RunnerServer {
     private func finished(_ connection: any RunnerByteStream, reason: String) async {
         await connection.close()
         active = nil
+        activeIdle = nil
         onEvent(.closed(reason: reason))
     }
 
@@ -111,25 +134,96 @@ public actor RunnerServer {
             await connection.close()
         }
         defer { watchdog.cancel() }
+        let idle = IdleWatch(nowMs: clock())
+        var idleWatchdog: Task<Void, Never>?
+        defer { idleWatchdog?.cancel() }
         do {
             while let bytes = try await connection.read() {
-                for event in try channel.receive(bytes: bytes) {
+                for event in try channel.receive(bytes: bytes, nowMs: clock()) {
                     switch event {
                     case .send(let out):
                         try await connection.write(out)
                     case .authenticated:
                         watchdog.cancel()
                         onEvent(.authenticated)
-                    case .request(let id, let request):
+                        idle.busy(false, nowMs: clock())
+                        activeIdle = idle
+                        idleWatchdog = watchIdle(idle)
+                    case .request(let id, _, let request): // not_after: checked by the core channel on receipt
+                        idle.busy(true, nowMs: clock())
                         onEvent(.request(request.operationName))
                         let reply = await answer(request)
                         try await connection.write(try channel.reply(requestId: id, reply: reply))
+                        idle.busy(false, nowMs: clock())
                     }
                 }
             }
-            await finished(connection, reason: "the client closed the connection")
+            let reason = idle.fired ? "no request for \(configuration.idleTimeout)" : "the client closed the connection"
+            await finished(connection, reason: reason)
         } catch {
             await finished(connection, reason: CoreErrorMessage(error).message)
+        }
+    }
+
+    /// Tracks the last request of one authenticated connection, in the server's `clock`.
+    final class IdleWatch: Sendable {
+        private struct State {
+            var busy = false
+            var sinceMs: UInt64
+            var fired = false
+        }
+
+        private let state: Mutex<State>
+
+        init(nowMs: UInt64) {
+            state = Mutex(State(sinceMs: nowMs))
+        }
+
+        func busy(_ busy: Bool, nowMs: UInt64) {
+            state.withLock {
+                $0.busy = busy
+                $0.sinceMs = nowMs
+            }
+        }
+
+        /// Milliseconds until the connection counts as idle at `nowMs`; `nil` once it does
+        /// (and remembers it). A request being carried out never counts as idle.
+        func remainingMs(_ limitMs: UInt64, nowMs: UInt64) -> UInt64? {
+            state.withLock { s in
+                if s.busy { return limitMs }
+                let idleMs = nowMs &- min(nowMs, s.sinceMs)
+                if idleMs < limitMs { return limitMs - idleMs }
+                s.fired = true
+                return nil
+            }
+        }
+
+        var fired: Bool { state.withLock { $0.fired } }
+    }
+
+    /// Closes the active connection when it has gone `idleTimeout` (by `clock`) without a
+    /// request. The watchdog calls it; tests call it after moving their clock.
+    func checkIdle() async {
+        guard let idle = activeIdle, let connection = active else { return }
+        if idle.remainingMs(configuration.idleTimeout.wholeMilliseconds, nowMs: clock()) == nil {
+            await connection.close()
+        }
+    }
+
+    /// Sleeps until the connection may have gone idle, then checks (by `clock`).
+    private func watchIdle(_ idle: IdleWatch) -> Task<Void, Never> {
+        let limitMs = configuration.idleTimeout.wholeMilliseconds
+        let clock = clock
+        return Task { [weak self] in
+            while !Task.isCancelled {
+                let waitMs = idle.remainingMs(limitMs, nowMs: clock()) ?? 0
+                if waitMs > 0 {
+                    try? await Task.sleep(for: .milliseconds(Int64(clamping: waitMs)))
+                    continue
+                }
+                await self?.checkIdle()
+                if idle.fired || self == nil { return }
+            }
         }
     }
 
@@ -148,11 +242,16 @@ public actor RunnerServer {
                 }
                 return .snapshot(snapshot: wire)
             }
-        case .perform(let command, _):
+        case .perform(let command, let expect):
+            // A runner that cannot check `expect` next to the gesture never gets a command
+            // that carries one.
+            if let expect, !runner.verifiesFrontApp {
+                return .performed(result: .staleUnreadable(expected: expect.bundleId))
+            }
             var limit = configuration.commandDeadline
             if case .wait(let ms) = command { limit += .milliseconds(Int64(clamping: ms)) }
             return await deadlined(.act, limit) {
-                .performed(result: try await runner.perform(command))
+                .performed(result: try await runner.perform(command, expect: expect))
             }
         case .lockState:
             return await deadlined(.lockState, configuration.readDeadline) {

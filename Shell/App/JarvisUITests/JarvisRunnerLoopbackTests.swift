@@ -57,13 +57,18 @@ final class JarvisRunnerLoopbackTests: QATestCase {
 
         let runner = XCUITestPhoneRunner()
         runner.noteActivated(Self.appBundleId)
-        let server = RunnerServer(runner: runner, key: key, random: random)
+        // A slow simulator's whole-tree reads can take tens of seconds (QAHarness gives the
+        // in-process runner 30 s): longer deadlines here, in the same order as the app's
+        // (server < client).
+        let server = RunnerServer(runner: runner, key: key, random: random,
+                                  configuration: RunnerServer.Configuration(readDeadline: .seconds(40), commandDeadline: .seconds(40)))
         let listener = NWRunnerListener(server: server)
         let port = try await listener.start(port: 0)
         defer { listener.stop() }
 
         // 1. A typed tree of the playground.
-        let client = JarvisRunnerClient(connector: NWRunnerConnector(port: port), keySource: FixedRunnerKeySource(key.reveal()), random: random)
+        let client = JarvisRunnerClient(connector: NWRunnerConnector(port: port), keySource: FixedRunnerKeySource(key.reveal()), random: random,
+                                        configuration: JarvisRunnerClient.Configuration(readTimeout: .seconds(45), commandTimeout: .seconds(45)))
         let first = try await client.snapshot(includeScreenshot: false)
         let root = try XCTUnwrap(first.root, "the runner sent text, not a typed tree")
         XCTAssertGreaterThan(Self.count(root), 3, "the typed tree has no elements")
@@ -82,6 +87,11 @@ final class JarvisRunnerLoopbackTests: QATestCase {
         }
         XCTAssertTrue(opened, "the Alerts screen did not appear in the typed tree after the tap")
         XCTAssertTrue(app.buttons["alerts.show"].waitForExistence(timeout: 5), "the tap did not open the Alerts screen")
+
+        // 2b. A command planned on another app is refused by the runner next to the gesture.
+        let refused = try await client.perform(.tap(x: 1, y: 1), expect: CommandExpect(bundleId: "com.apple.Preferences"))
+        XCTAssertFalse(refused.ok, "a tap planned on Settings ran over the playground")
+        XCTAssertEqual(refused.failure, .stale)
 
         // Free the one connection slot for the next client.
         await client.disconnect()

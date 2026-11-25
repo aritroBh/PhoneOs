@@ -19,6 +19,13 @@
 //! server accepts no request before it has verified the client's proof. Exactly one
 //! request is outstanding at a time; a reply must carry the outstanding request's id and
 //! answer its kind (or be an error).
+//!
+//! Every request carries `not_after_ms`, set by the client from its own deadline for that
+//! call. The server channel is given the shell's `now_ms` with every `receive` and refuses
+//! a request whose `not_after_ms` has passed ([`RunnerError::Expired`], the channel
+//! closes): a request held back by anything between the two processes and delivered late
+//! is never surfaced. The server keeps the latest `now_ms` it saw, so a clock reading that
+//! goes backwards cannot make an expired request current again.
 
 use crate::crypto::{
     nonce_from_entropy, Psk, SessionKeys, DIR_C2S, DIR_S2C, KIND_DATA, MAC_LEN, MAGIC, NONCE_LEN,
@@ -285,10 +292,15 @@ impl RunnerClientChannel {
         }
     }
 
-    /// Seals a request. Returns its id and the bytes to write. Refused (nothing sent, the
-    /// channel stays open) before authentication, while a request is outstanding, or when
-    /// the request is too large.
-    pub fn request(&mut self, request: &Request) -> Result<(u64, Vec<u8>), RunnerError> {
+    /// Seals a request that the server may act on until `not_after_ms` of the shell's
+    /// shared uptime clock (set it from this call's own deadline). Returns its id and the
+    /// bytes to write. Refused (nothing sent, the channel stays open) before
+    /// authentication, while a request is outstanding, or when the request is too large.
+    pub fn request(
+        &mut self,
+        request: &Request,
+        not_after_ms: u64,
+    ) -> Result<(u64, Vec<u8>), RunnerError> {
         let sealer = match &mut self.state {
             ClientState::Open(sealer) => sealer,
             ClientState::Closed => return Err(RunnerError::Closed),
@@ -298,7 +310,7 @@ impl RunnerClientChannel {
             return Err(RunnerError::State("a request is outstanding"));
         }
         let id = self.next_id;
-        let plaintext = encode_request(id, request).map_err(RunnerError::TooLarge)?;
+        let plaintext = encode_request(id, not_after_ms, request).map_err(RunnerError::TooLarge)?;
         if plaintext.len() + DATA_OVERHEAD > MAX_CLIENT_FRAME {
             return Err(RunnerError::TooLarge(crate::MessageError::Limit("request")));
         }
@@ -324,6 +336,8 @@ pub enum ServerEvent {
     Request {
         /// Its id.
         id: u64,
+        /// The client's deadline for it (already checked against `now_ms`).
+        not_after_ms: u64,
         /// The request.
         request: Request,
     },
@@ -342,6 +356,8 @@ pub struct RunnerServerChannel {
     deframer: Deframer,
     last_id: u64,
     pending: Option<(u64, ReplyKind)>,
+    /// The latest `now_ms` given to `receive` (never decreases).
+    now_ms: u64,
 }
 
 impl std::fmt::Debug for RunnerServerChannel {
@@ -365,6 +381,7 @@ impl RunnerServerChannel {
             deframer: Deframer::new(CLIENT_HELLO_LEN.max(CLIENT_FINISH_LEN)),
             last_id: 0,
             pending: None,
+            now_ms: 0,
         })
     }
 
@@ -378,11 +395,15 @@ impl RunnerServerChannel {
         self.pending.is_some()
     }
 
-    /// Feeds bytes read from the connection. Any failure closes the channel.
-    pub fn receive(&mut self, bytes: &[u8]) -> Result<Vec<ServerEvent>, RunnerError> {
+    /// Feeds bytes read from the connection, at `now_ms` of the shell's shared uptime clock
+    /// (requests received past their `not_after_ms` are refused). Any failure closes the
+    /// channel.
+    pub fn receive(&mut self, bytes: &[u8], now_ms: u64) -> Result<Vec<ServerEvent>, RunnerError> {
         if matches!(self.state, ServerState::Closed) {
             return Err(RunnerError::Closed);
         }
+        // A clock reading that goes backwards is ignored: expiry only ever moves forward.
+        self.now_ms = self.now_ms.max(now_ms);
         let mut events = Vec::new();
         let mut input = bytes;
         let result = (|| {
@@ -439,7 +460,7 @@ impl RunnerServerChannel {
             ServerState::Open(mut sealer) => {
                 let plaintext = sealer.open(body)?;
                 self.state = ServerState::Open(sealer);
-                let (id, request) = decode_request(&plaintext)
+                let (id, not_after_ms, request) = decode_request(&plaintext)
                     .map_err(|_| RunnerError::Protocol("undecodable request"))?;
                 if self.pending.is_some() {
                     return Err(RunnerError::Protocol("a request while one is outstanding"));
@@ -447,9 +468,17 @@ impl RunnerServerChannel {
                 if id <= self.last_id {
                     return Err(RunnerError::Protocol("request ids must increase"));
                 }
+                // Checked before anything is surfaced: an expired request is never acted on.
+                if self.now_ms > not_after_ms {
+                    return Err(RunnerError::Expired);
+                }
                 self.last_id = id;
                 self.pending = Some((id, request.reply_kind()));
-                events.push(ServerEvent::Request { id, request });
+                events.push(ServerEvent::Request {
+                    id,
+                    not_after_ms,
+                    request,
+                });
                 Ok(())
             }
             ServerState::Closed => Err(RunnerError::Closed),

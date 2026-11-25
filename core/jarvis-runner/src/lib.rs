@@ -49,7 +49,11 @@
 //! Before authentication a side accepts only frames of the exact handshake size, so a
 //! stranger cannot make it buffer more than a few dozen bytes. The plaintext of a data
 //! frame is one message ([`message`]): `kind || request id (u64 BE) || body`, a compact
-//! binary encoding of exactly the `PhoneRunner` surface over the `jarvis-proto` types.
+//! binary encoding of exactly the `PhoneRunner` surface over the `jarvis-proto` types. A
+//! request also carries `not_after_ms` after its id: the server refuses (and closes on) a
+//! request it receives after that instant of the shell's shared uptime clock, so a request
+//! held back and delivered late is never carried out. The server's clock never runs
+//! backwards: it keeps the latest `now_ms` it was given.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(
@@ -74,7 +78,10 @@ pub use error::{MessageError, RunnerError};
 pub use message::{LockState, Reply, ReplyKind, Request, Screenshot, Snapshot};
 
 /// Protocol version, carried in both hellos and bound into every MAC and AEAD tag.
-pub const PROTOCOL_VERSION: u8 = 1;
+///
+/// Version 2 (twenty-first review) added `not_after_ms` to every request. A peer of
+/// another version is refused in the hello; nothing is negotiated.
+pub const PROTOCOL_VERSION: u8 = 2;
 /// Length of the pre-shared key, in bytes.
 pub const KEY_LEN: usize = 32;
 /// Least entropy the shell passes per connection, in bytes.

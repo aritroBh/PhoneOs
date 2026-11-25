@@ -121,7 +121,15 @@ final class XCUITestPhoneRunner: PhoneRunner {
         await frontOnMain()
     }
 
+    /// The runner checks a command's `expect` itself, in the same main-actor step as the
+    /// gesture, and can always read the app in front (`FrontAppGuard`).
+    nonisolated var verifiesFrontApp: Bool { true }
+
     nonisolated func perform(_ command: RunnerCommand) async throws -> RunnerResult {
+        try await perform(command, expect: nil)
+    }
+
+    nonisolated func perform(_ command: RunnerCommand, expect: CommandExpect?) async throws -> RunnerResult {
         if case .wait(let ms) = command {
             try await Task.sleep(for: .milliseconds(Int(min(ms, 30_000)))) // capped: no UI-test wait over 30 s
             return RunnerResult(ok: true, error: nil)
@@ -134,7 +142,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
             await noteRefusal(command)
             return .deviceLocked("the device is locked; \(Transcript.describe(command)) was not performed")
         }
-        return await act(command)
+        return await act(command, expect: expect)
     }
 
     /// After a command: the notify state alone (cheap, and it flips about 0.3 s before the
@@ -367,7 +375,13 @@ final class XCUITestPhoneRunner: PhoneRunner {
 
     // MARK: - Commands (main actor)
 
-    private func act(_ command: RunnerCommand) -> RunnerResult {
+    private func act(_ command: RunnerCommand, expect: CommandExpect?) -> RunnerResult {
+        // Stale-screen check next to the gesture: the front app is read in this same
+        // main-actor step, with no suspension before `execute` acts on it.
+        if let refusal = FrontAppGuard.refusalNextToGesture(expect, front: frontOnMain()) {
+            onCommand?(command, refusal)
+            return refusal
+        }
         settlePending = true
         let result = execute(command).checkedAfterCommand(command, lockedAfter: lockedAfterCommand())
         onCommand?(command, result)

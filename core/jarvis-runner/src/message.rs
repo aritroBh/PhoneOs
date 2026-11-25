@@ -3,8 +3,14 @@
 //! over the `jarvis-proto` types the driver already hands to the core.
 //!
 //! ```text
-//! message = kind (u8) || request id (u64 BE) || body
+//! request = kind (u8) || request id (u64 BE) || not_after_ms (u64 BE) || body
+//! reply   = kind (u8) || request id (u64 BE) || body
 //! ```
+//!
+//! `not_after_ms` is the last instant (milliseconds of the uptime clock both processes on
+//! the phone share; see `docs/JARVIS-RUNNER.md`) at which the server may still act on the
+//! request. It is inside the AEAD like everything else, so only the key holder sets it; the
+//! server channel refuses a request it receives later ([`crate::RunnerError::Expired`]).
 //!
 //! A compact binary encoding, not JSON: screenshots are raw bytes, and trees are written
 //! and read iteratively (pre-order, each node followed by its child count), so no tree
@@ -200,46 +206,39 @@ const REP_VIEWER_SHOT: u8 = 0x85;
 const REP_FRONT: u8 = 0x86;
 const REP_ERROR: u8 = 0xEF;
 
-/// Encodes a request with its id.
-pub fn encode_request(id: u64, request: &Request) -> Result<Vec<u8>, MessageError> {
+/// Encodes a request with its id and expiry (`not_after_ms`, see the module docs).
+pub fn encode_request(
+    id: u64,
+    not_after_ms: u64,
+    request: &Request,
+) -> Result<Vec<u8>, MessageError> {
     let mut w = Writer::default();
+    let kind = match request {
+        Request::Hello { .. } => REQ_HELLO,
+        Request::Snapshot { .. } => REQ_SNAPSHOT,
+        Request::Perform { .. } => REQ_PERFORM,
+        Request::LockState => REQ_LOCK,
+        Request::ViewerScreenshot => REQ_VIEWER_SHOT,
+        Request::FrontBundleId => REQ_FRONT,
+    };
+    w.u8(kind);
+    w.u64(id);
+    w.u64(not_after_ms);
     match request {
-        Request::Hello { protocol_version } => {
-            w.u8(REQ_HELLO);
-            w.u64(id);
-            w.u8(*protocol_version);
-        }
-        Request::Snapshot { include_screenshot } => {
-            w.u8(REQ_SNAPSHOT);
-            w.u64(id);
-            w.bool(*include_screenshot);
-        }
-        Request::Perform { command } => {
-            w.u8(REQ_PERFORM);
-            w.u64(id);
-            write_command(&mut w, command)?;
-        }
-        Request::LockState => {
-            w.u8(REQ_LOCK);
-            w.u64(id);
-        }
-        Request::ViewerScreenshot => {
-            w.u8(REQ_VIEWER_SHOT);
-            w.u64(id);
-        }
-        Request::FrontBundleId => {
-            w.u8(REQ_FRONT);
-            w.u64(id);
-        }
+        Request::Hello { protocol_version } => w.u8(*protocol_version),
+        Request::Snapshot { include_screenshot } => w.bool(*include_screenshot),
+        Request::Perform { command } => write_command(&mut w, command)?,
+        Request::LockState | Request::ViewerScreenshot | Request::FrontBundleId => {}
     }
     Ok(w.buf)
 }
 
-/// Decodes a request and its id.
-pub fn decode_request(bytes: &[u8]) -> Result<(u64, Request), MessageError> {
+/// Decodes a request: its id, its expiry (`not_after_ms`) and the request.
+pub fn decode_request(bytes: &[u8]) -> Result<(u64, u64, Request), MessageError> {
     let mut r = Reader::new(bytes);
     let kind = r.u8()?;
     let id = r.u64()?;
+    let not_after_ms = r.u64()?;
     let request = match kind {
         REQ_HELLO => Request::Hello {
             protocol_version: r.u8()?,
@@ -256,7 +255,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<(u64, Request), MessageError> {
         _ => return Err(MessageError::Unknown("request kind")),
     };
     r.finish()?;
-    Ok((id, request))
+    Ok((id, not_after_ms, request))
 }
 
 /// Encodes a reply with the id of the request it answers.

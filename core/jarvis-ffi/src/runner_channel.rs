@@ -6,6 +6,9 @@
 //! (`SecRandomCopyBytes`, at least 32 bytes, one channel per connection) and writes every
 //! `send` event's bytes in order. The pre-shared key crosses the boundary once per
 //! channel, into a zeroizing buffer; it is never returned, logged or put in an error.
+//! Swift also passes the time: `not_after_ms` with each request (the client) and `now_ms`
+//! with each `receive` (the server), both in milliseconds of the uptime clock the two
+//! processes on the phone share (`RunnerUptimeClock`); Rust reads no clock.
 //!
 //! Errors are `JarvisError.runnerChannel(problem:message:)`. `authentication` means the
 //! peer could not prove the key (a stranger, a squatter, tampering, replay): the client
@@ -80,8 +83,9 @@ pub enum RunnerWireRequest {
     Snapshot {
         include_screenshot: bool,
     },
-    /// `expect` is carried so a runner may check it too; the app's driver already checks
-    /// it (`FrontAppGuard`) before sending.
+    /// `expect` is carried to the runner, which checks it next to the gesture and answers
+    /// `stale` (nothing done) when another app is in front or the front app cannot be
+    /// read. The app's driver also checks it (`FrontAppGuard`) before sending.
     Perform {
         command: RunnerCommand,
         expect: Option<CommandExpect>,
@@ -146,9 +150,11 @@ pub enum RunnerServerEvent {
     Send { bytes: Vec<u8> },
     /// The app proved the key.
     Authenticated,
-    /// Carry this out and answer with `reply(requestId:reply:)`.
+    /// Carry this out and answer with `reply(requestId:reply:)`, no later than
+    /// `not_after_ms` (the client's deadline; already checked against `now_ms`).
     Request {
         request_id: u64,
+        not_after_ms: u64,
         request: RunnerWireRequest,
     },
 }
@@ -178,6 +184,8 @@ pub enum RunnerChannelProblem {
     TooLarge,
     /// Not valid now (not authenticated, a request outstanding; nothing sent; still open).
     NotNow,
+    /// A request arrived after its `not_after_ms`; nothing was carried out. Closed.
+    Expired,
     /// The channel failed earlier.
     Closed,
 }
@@ -191,6 +199,7 @@ fn channel_error(e: r::RunnerError) -> JarvisError {
         r::RunnerError::Protocol(_) => RunnerChannelProblem::Message,
         r::RunnerError::TooLarge(_) => RunnerChannelProblem::TooLarge,
         r::RunnerError::State(_) => RunnerChannelProblem::NotNow,
+        r::RunnerError::Expired => RunnerChannelProblem::Expired,
         r::RunnerError::Closed => RunnerChannelProblem::Closed,
     };
     // The texts are fixed strings of `jarvis-runner`; none quotes input or key bytes.
@@ -527,13 +536,17 @@ impl JarvisRunnerClientChannel {
         })
     }
 
-    /// Seals a request (only after `authenticated`, one at a time).
+    /// Seals a request (only after `authenticated`, one at a time) that the runner may act
+    /// on until `not_after_ms` of the shared uptime clock (this call's own deadline).
     pub fn request(
         &self,
         request: RunnerWireRequest,
+        not_after_ms: u64,
     ) -> Result<RunnerOutgoingRequest, JarvisError> {
         with_slot(&self.inner, "runner client request", |c| {
-            let (request_id, bytes) = c.request(&request.into()).map_err(channel_error)?;
+            let (request_id, bytes) = c
+                .request(&request.into(), not_after_ms)
+                .map_err(channel_error)?;
             Ok(RunnerOutgoingRequest { request_id, bytes })
         })
     }
@@ -566,17 +579,28 @@ impl JarvisRunnerServerChannel {
         })
     }
 
-    /// Feeds bytes read from the connection; carry out the events in order.
-    pub fn receive(&self, bytes: Vec<u8>) -> Result<Vec<RunnerServerEvent>, JarvisError> {
+    /// Feeds bytes read from the connection at `now_ms` of the shared uptime clock (a
+    /// request received past its `not_after_ms` fails with `expired`); carry out the
+    /// events in order.
+    pub fn receive(
+        &self,
+        bytes: Vec<u8>,
+        now_ms: u64,
+    ) -> Result<Vec<RunnerServerEvent>, JarvisError> {
         with_slot(&self.inner, "runner server receive", |s| {
-            let events = s.receive(&bytes).map_err(channel_error)?;
+            let events = s.receive(&bytes, now_ms).map_err(channel_error)?;
             Ok(events
                 .into_iter()
                 .map(|e| match e {
                     r::ServerEvent::Send(bytes) => RunnerServerEvent::Send { bytes },
                     r::ServerEvent::Authenticated => RunnerServerEvent::Authenticated,
-                    r::ServerEvent::Request { id, request } => RunnerServerEvent::Request {
+                    r::ServerEvent::Request {
+                        id,
+                        not_after_ms,
+                        request,
+                    } => RunnerServerEvent::Request {
                         request_id: id,
+                        not_after_ms,
                         request: request.into(),
                     },
                 })

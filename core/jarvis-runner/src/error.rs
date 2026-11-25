@@ -53,6 +53,10 @@ pub enum RunnerError {
     /// nothing was sent and the channel stays open.
     #[error("not now: {0}")]
     State(&'static str),
+    /// A request arrived after its `not_after_ms` (held back, or the client already gave
+    /// up on it). Nothing was carried out.
+    #[error("request expired")]
+    Expired,
     /// The channel failed earlier and is unusable.
     #[error("channel closed")]
     Closed,
