@@ -11,7 +11,8 @@ import JarvisKit
 /// snapshot) and writes plain sentences about what it did and found by simple checks.
 ///
 /// Artifacts per probe (`fact-<letter>-<name>`): `<fact>.NN-tree.txt` and `<fact>.NN.png` per
-/// capture, and one `<fact>.result.txt`. A probe never judges: a missing element is recorded
+/// capture, `<fact>.NN-query.txt` where XCUITest's query view (`debugDescription`) is recorded
+/// too, and one `<fact>.result.txt`. A probe never judges: a missing element is recorded
 /// (with the tree dumped anyway) and the probe ends without failing. XCTest issues raised by
 /// probing calls are captured as data with `XCTExpectFailure` (non-strict), as the lock probe
 /// does. Only harness errors (the app does not launch) fail a probe.
@@ -30,6 +31,8 @@ final class TreeFactProbeTests: QATestCase {
     private var captures = 0
     private var lines: [String] = []
     private var started = Date()
+    /// The last observation `runnerView`'s runner reported (main actor only).
+    private var runnerRecord: RunnerObservationRecord?
 
     override func tearDownWithError() throws {
         // Never leave the simulator rotated (the other tests assume portrait), even when a
@@ -179,12 +182,14 @@ final class TreeFactProbeTests: QATestCase {
         defer { server.stop() }
         let url = server.baseURL.absoluteString + "/"
         note("local page \(url), passed to the app as -jarvis-probe-url")
-        let app = launchPlayground(extraArguments: ["-jarvis-probe-url", url])
+        let arguments = ["-jarvis-probe-url", url]
+        let app = launchPlayground(extraArguments: arguments)
         let board = XCUIApplication(bundleIdentifier: Self.springboardId)
         guard await openProbeScreen(app, "probe.sheets") else {
             capture(app, Self.appBundleId, "the Browser sheets probe screen was not reached")
             return
         }
+        let auth = app.buttons["probe.sheets.auth"].firstMatch
 
         // 1. SFSafariViewController.
         let open = app.buttons["probe.sheets.safari"].firstMatch
@@ -200,30 +205,30 @@ final class TreeFactProbeTests: QATestCase {
             let front = await frontApp()
             note("front app by the runner's reading: \(front)")
             reportBrowser(sheet, "SFSafariViewController, Jarvis's tree")
-            var closed = false
-            tolerant("tap Done (or Close)") {
-                for label in ["Done", "Close"] where !closed {
-                    let button = app.buttons[label].firstMatch
-                    if button.exists {
-                        button.tap()
-                        closed = true
-                        note("tapped \(label) to close the in-app browser")
-                    }
+            attachQuery(app, "SFSafariViewController presented (Jarvis's query view)")
+            // What the queries reach, next to what the snapshot holds.
+            let queried: [(String, XCUIElement)] = [
+                ("the page heading \"Contact form\"", heading),
+                ("button Close", app.buttons["Close"].firstMatch),
+                ("button Done", app.buttons["Done"].firstMatch),
+            ]
+            var closeFrame: CGRect?
+            for (what, element) in queried {
+                if let frame = queryFrame(element) {
+                    note("by query: \(what) exists, frame \(Self.frameText(frame))")
+                    if closeFrame == nil, what.hasPrefix("button") { closeFrame = frame }
+                } else {
+                    note("by query: no \(what)")
                 }
             }
-            await pause(1.5)
-            if !closed {
-                note("no Done button in Jarvis's tree to close the in-app browser: relaunching Jarvis for the web sign-in")
-                _ = launchPlayground(extraArguments: ["-jarvis-probe-url", url])
-                guard await openProbeScreen(app, "probe.sheets") else {
-                    capture(app, Self.appBundleId, "the Browser sheets probe screen was not reached after the relaunch")
-                    return
-                }
+            report(sheet, "the snapshot above (capture of Jarvis): nodes labelled Contact form, Close or Done (compare with the queries just above)") { e in
+                ["Contact form", "Close", "Done"].contains(e.label)
             }
+            await runnerView("SFSafariViewController up")
+            guard await dismissBrowser(app, auth, closeFrame: closeFrame, arguments: arguments) else { return }
         }
 
         // 2. ASWebAuthenticationSession: a consent alert first, then the sheet.
-        let auth = app.buttons["probe.sheets.auth"].firstMatch
         guard waitFor(auth, "the Start web sign-in button", 5) else {
             capture(app, Self.appBundleId, "no Start web sign-in button (the in-app browser may still be up)")
             return
@@ -244,8 +249,16 @@ final class TreeFactProbeTests: QATestCase {
         let alertBoard = capture(board, Self.springboardId, "web sign-in consent alert expected (SpringBoard)")
         report(alertApp, "Jarvis's tree: Alert nodes") { $0.elementType == XCUIElementTypeCode.alert }
         report(alertBoard, "SpringBoard's tree: Alert nodes") { $0.elementType == XCUIElementTypeCode.alert }
+        reportInsideAlert(alertApp, "Jarvis's tree")
+        reportInsideAlert(alertBoard, "SpringBoard's tree")
         if let (ownerId, owner) = alertOwner {
             note("the consent alert was found by query in \(ownerId)'s tree")
+            tolerant("read the consent alert by query") {
+                let alert = owner.alerts.firstMatch
+                let texts = alert.staticTexts.allElementsBoundByIndex.map { "\"\(Self.clip($0.label))\"" }
+                let buttons = alert.buttons.allElementsBoundByIndex.map { "\"\($0.label)\"" }
+                note("consent alert (\(ownerId)): label \"\(Self.clip(alert.label))\", frame \(Self.frameText(alert.frame)); texts: \(texts.joined(separator: ", ")); buttons: \(buttons.joined(separator: ", "))")
+            }
             tolerant("tap Continue on the consent alert") {
                 let button = owner.alerts.firstMatch.buttons["Continue"].firstMatch
                 if button.exists {
@@ -268,11 +281,25 @@ final class TreeFactProbeTests: QATestCase {
         let front = await frontApp()
         note("front app by the runner's reading: \(front)")
         reportBrowser(authSheet, "web sign-in sheet, Jarvis's tree")
+        attachQuery(app, "web sign-in sheet up (Jarvis's query view)")
+        for (what, element) in [("the page heading \"Contact form\"", heading), ("button Cancel", app.buttons["Cancel"].firstMatch)] {
+            if let frame = queryFrame(element) {
+                note("by query (web sign-in sheet): \(what) exists, frame \(Self.frameText(frame))")
+            } else {
+                note("by query (web sign-in sheet): no \(what)")
+            }
+        }
         tolerant("cancel the web sign-in") {
             let cancel = app.buttons["Cancel"].firstMatch
             if cancel.exists { cancel.tap() } else { note("no Cancel button in Jarvis's tree") }
         }
-        await pause(1)
+        await pause(1.5)
+        var status = "(unread)"
+        tolerant("read the sheets status") {
+            let text = app.staticTexts["probe.sheets.status"].firstMatch
+            status = text.exists ? text.label : "(no status text: the sheet may still be up)"
+        }
+        note("after the cancel, the probe screen's status: \"\(status)\"")
         let log = server.log
         note("server log: " + (log.isEmpty ? "(no request reached the server)" : log.joined(separator: " | ")))
     }
@@ -297,10 +324,90 @@ final class TreeFactProbeTests: QATestCase {
         }
     }
 
+    /// Closes the in-app browser, each step verified by the probe screen's own Start web sign-in
+    /// button being hittable again: the Close/Done button, a coordinate tap at the queried close
+    /// control, one at the top-left corner, a drag down, and last a relaunch of Jarvis with the
+    /// same arguments. Returns whether the probe screen is back.
+    @MainActor
+    private func dismissBrowser(_ app: XCUIApplication, _ auth: XCUIElement, closeFrame: CGRect?, arguments: [String]) async -> Bool {
+        var tapped = ""
+        tolerant("tap Close (or Done)") {
+            for label in ["Close", "Done"] where tapped.isEmpty {
+                let button = app.buttons[label].firstMatch
+                if button.exists {
+                    button.tap()
+                    tapped = label
+                }
+            }
+        }
+        note(tapped.isEmpty ? "no Close or Done button by query; nothing tapped" : "tapped \(tapped) (XCUIElement.tap) to close the in-app browser")
+        if await probeScreenBack(auth, "after the \(tapped.isEmpty ? "missing" : tapped) button") { return true }
+
+        if let frame = closeFrame, frame.width > 0, frame.height > 0 {
+            let x = frame.midX
+            let y = frame.midY
+            tolerant("coordinate tap at the queried close control") {
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: x, dy: y)).tap()
+            }
+            note("coordinate tap at the centre of the queried close control (\(Int(x)), \(Int(y)))")
+            if await probeScreenBack(auth, "after the coordinate tap at the queried close control") { return true }
+        }
+
+        tolerant("coordinate tap at the top-left close control") {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.09, dy: 0.088)).tap()
+        }
+        note("coordinate tap at the top-left corner (9% of the width, 8.8% of the height)")
+        if await probeScreenBack(auth, "after the coordinate tap at the top-left corner") { return true }
+
+        drag(app, from: 0.15, to: 0.95, "drag the in-app browser down")
+        if await probeScreenBack(auth, "after the drag down") { return true }
+
+        capture(app, Self.appBundleId, "the in-app browser still up after every way of closing it")
+        note("the in-app browser could not be closed: relaunching Jarvis with the same arguments")
+        _ = launchPlayground(extraArguments: arguments)
+        guard await openProbeScreen(app, "probe.sheets") else {
+            capture(app, Self.appBundleId, "the Browser sheets probe screen was not reached after the relaunch")
+            return false
+        }
+        return await probeScreenBack(auth, "after the relaunch")
+    }
+
+    /// Whether `button` (a control of the probe screen under a sheet) exists and is hittable.
+    @MainActor
+    private func probeScreenBack(_ button: XCUIElement, _ when: String) async -> Bool {
+        await pause(1)
+        var back = false
+        tolerant("check that the probe screen is back") {
+            back = button.waitForExistence(timeout: 3) && button.isHittable
+        }
+        note("\(when): the Start web sign-in button is " + (back ? "hittable (the probe screen is back)" : "not hittable (the sheet is still up)"))
+        return back
+    }
+
+    /// Static texts and buttons that sit inside a raw Alert node of `tree`.
+    @MainActor
+    private func reportInsideAlert(_ tree: RawElement?, _ what: String) {
+        guard let tree else {
+            note("\(what): texts and buttons inside an Alert: no tree (the capture failed)")
+            return
+        }
+        let candidates = Self.hits(tree, { e in
+            e.elementType == XCUIElementTypeCode.staticText || e.elementType == XCUIElementTypeCode.button
+        })
+        let inside = candidates.filter { hit in
+            hit.ancestors.contains(where: { $0.elementType == XCUIElementTypeCode.alert })
+        }
+        note("\(what): texts and buttons inside an Alert: \(inside.count)")
+        for hit in inside.prefix(12) {
+            lines.append("        - " + Self.describe(hit, screen: tree.frame))
+        }
+    }
+
     // MARK: - (c) Edit menu and context menu
 
     @MainActor
     func testFactC_EditAndContextMenus() async throws {
+        executionTimeAllowance = 240
         begin("fact-c-menus")
         await probeMenus()
         await finish(terminating: [])
@@ -327,22 +434,42 @@ final class TreeFactProbeTests: QATestCase {
         let firstBoard = capture(board, Self.springboardId, "after a double-tap on the text field (SpringBoard)")
         reportMenus(first, "edit menu, Jarvis's tree")
         reportMenus(firstBoard, "edit menu, SpringBoard's tree")
+        reportMenuPage(first, "edit menu, page 1")
 
-        let selectAll = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Select All")).firstMatch
-        if !selectAll.exists {
-            note("no \"Select All\" node after the double-tap; trying a long press on the field")
+        var menuCount = 0
+        tolerant("count app.menuItems") { menuCount = app.menuItems.count }
+        if menuCount == 0 {
+            note("no menu item by query after the double-tap; trying a long press on the field")
             tolerant("long-press the text field") { field.press(forDuration: 1.0) }
             await pause(1.2)
             let long = capture(app, Self.appBundleId, "after a long press on the text field")
             reportMenus(long, "edit menu after a long press, Jarvis's tree")
+            reportMenuPage(long, "edit menu after a long press, page 1")
         }
-        if selectAll.exists {
+        await pageMenu(app, "edit menu")
+
+        // Select All may sit on an earlier page than the last one shown: page back to it.
+        let selectAll = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Select All")).firstMatch
+        var backTaps = 0
+        while !existsNow(selectAll), backTaps < 6 {
+            let back = app.buttons.matching(NSPredicate(format: "label == %@", "Back")).firstMatch
+            var usable = false
+            tolerant("look for the menu's Back button") { usable = back.exists && back.isEnabled }
+            guard usable else { break }
+            tolerant("tap the menu's Back button") { back.tap() }
+            backTaps += 1
+            await pause(0.8)
+        }
+        if existsNow(selectAll) {
+            note("\"Select All\" is in the menu after \(backTaps) tap(s) on the menu's Back button")
             tolerant("tap Select All") { selectAll.tap() }
             await pause(1.2)
             let all = capture(app, Self.appBundleId, "after Select All (edit menu for the whole text expected)")
             reportMenus(all, "edit menu after Select All, Jarvis's tree")
+            reportMenuPage(all, "menu after Select All, page 1")
+            await pageMenu(app, "menu after Select All")
         } else {
-            note("no \"Select All\" node found; not tapped")
+            note("no \"Select All\" node found on any page (after \(backTaps) Back taps); not tapped")
         }
 
         // Context menu.
@@ -361,6 +488,8 @@ final class TreeFactProbeTests: QATestCase {
         let menuBoard = capture(board, Self.springboardId, "context menu up (SpringBoard)")
         reportMenus(menu, "context menu, Jarvis's tree")
         reportMenus(menuBoard, "context menu, SpringBoard's tree")
+        attachQuery(app, "context menu up (Jarvis's query view)")
+        queryMenuItems(app, "context menu")
         tolerant("dismiss the context menu") {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
         }
@@ -379,13 +508,85 @@ final class TreeFactProbeTests: QATestCase {
             [XCUIElementTypeCode.menu, XCUIElementTypeCode.menuItem, XCUIElementTypeCode.menuButton,
              XCUIElementTypeCode.popover, XCUIElementTypeCode.sheet].contains(e.elementType)
         }
-        report(tree, "\(what): nodes whose raw type or identifier contains \"menu\" or \"callout\"", Self.menuish)
+        report(tree, "\(what): nodes whose raw type or identifier contains \"menu\" or \"callout\" (the probe's own probe.* identifiers and navigation bars left out)", Self.foreignMenuish)
+    }
+
+    /// One page of an edit menu as the snapshot holds it: its items and its paging buttons
+    /// (raw type, typed role, label, identifier and frame are in each line).
+    @MainActor
+    private func reportMenuPage(_ tree: RawElement?, _ what: String) {
+        report(tree, "\(what): MenuItem nodes", limit: 20) { $0.elementType == XCUIElementTypeCode.menuItem }
+        report(tree, "\(what): the menu's paging buttons (Button Back or Forward)") { e in
+            e.elementType == XCUIElementTypeCode.button && (e.label == "Back" || e.label == "Forward")
+        }
+    }
+
+    /// Pages the edit menu with its own Forward button and captures every page, until Forward
+    /// is gone or disabled, a page repeats, or `maxPages` pages were seen (page 1 is the
+    /// caller's capture).
+    @MainActor
+    private func pageMenu(_ app: XCUIApplication, _ title: String, maxPages: Int = 6) async {
+        var previous = queryMenuItems(app, "\(title), page 1")
+        var page = 1
+        while page < maxPages {
+            let forward = app.buttons.matching(NSPredicate(format: "label == %@", "Forward")).firstMatch
+            var usable = false
+            var frame = "-"
+            tolerant("look for the menu's Forward button") {
+                usable = forward.exists && forward.isEnabled
+                if forward.exists { frame = Self.frameText(forward.frame) }
+            }
+            guard usable else {
+                note("\(title): no enabled Forward button after page \(page); paging ends")
+                return
+            }
+            tolerant("tap the menu's Forward button") { forward.tap() }
+            note("\(title): tapped Forward (query frame \(frame))")
+            await pause(0.8)
+            page += 1
+            let tree = capture(app, Self.appBundleId, "\(title), page \(page)")
+            reportMenuPage(tree, "\(title), page \(page)")
+            let labels = queryMenuItems(app, "\(title), page \(page)")
+            if labels == previous {
+                note("\(title): page \(page) holds the same items as the page before; paging ends")
+                return
+            }
+            previous = labels
+        }
+        note("\(title): stopped after \(maxPages) pages")
+    }
+
+    /// What `app.menuItems.allElementsBoundByIndex` reports: labels, identifiers and frames.
+    @MainActor
+    @discardableResult
+    private func queryMenuItems(_ app: XCUIApplication, _ what: String) -> [String] {
+        var labels: [String] = []
+        var rows: [String] = []
+        tolerant("query app.menuItems") {
+            for item in app.menuItems.allElementsBoundByIndex {
+                let label = item.label
+                labels.append(label)
+                rows.append("\"\(Self.clip(label))\" id " + (item.identifier.isEmpty ? "-" : Self.clip(item.identifier)) + " frame " + Self.frameText(item.frame))
+            }
+        }
+        note("\(what): app.menuItems.allElementsBoundByIndex reports \(labels.count)")
+        for row in rows { lines.append("        - " + row) }
+        return labels
+    }
+
+    /// `element.exists`, read tolerantly.
+    @MainActor
+    private func existsNow(_ element: XCUIElement) -> Bool {
+        var found = false
+        tolerant("check existence") { found = element.exists }
+        return found
     }
 
     // MARK: - (g) Share sheet
 
     @MainActor
     func testFactG_ShareSheet() async throws {
+        executionTimeAllowance = 240
         begin("fact-g-share-sheet")
         await probeShareSheet()
         await finish(terminating: [])
@@ -393,18 +594,28 @@ final class TreeFactProbeTests: QATestCase {
 
     @MainActor
     private func probeShareSheet() async {
-        let app = launchPlayground()
+        let server: FormCaptureServer
+        do {
+            server = try FormCaptureServer()
+        } catch {
+            note("the local test server did not start: \(error)")
+            return
+        }
+        defer { server.stop() }
+        let url = server.baseURL.absoluteString + "/"
+        note("local page \(url), passed to the app as -jarvis-probe-url; the probe shares that URL and a small generated image (probe.share.rich)")
+        let app = launchPlayground(extraArguments: ["-jarvis-probe-url", url])
         let board = XCUIApplication(bundleIdentifier: Self.springboardId)
         guard await openProbeScreen(app, "probe.share") else {
             capture(app, Self.appBundleId, "the Share sheet probe screen was not reached")
             return
         }
-        let open = app.buttons["probe.share.open"].firstMatch
-        guard waitFor(open, "the Share text button", 5) else {
-            capture(app, Self.appBundleId, "no Share text button")
+        let open = app.buttons["probe.share.rich"].firstMatch
+        guard waitFor(open, "the Share link and image button", 5) else {
+            capture(app, Self.appBundleId, "no Share link and image button")
             return
         }
-        tolerant("tap Share text") { open.tap() }
+        tolerant("tap Share link and image") { open.tap() }
         let marker = NSPredicate(format: "label == %@ OR label == %@", "AirDrop", "Copy")
         let inApp = app.descendants(matching: .any).matching(marker).firstMatch
         let inBoard = board.descendants(matching: .any).matching(marker).firstMatch
@@ -423,21 +634,124 @@ final class TreeFactProbeTests: QATestCase {
              ? "no node labelled AirDrop or Copy was found by query in Jarvis's or SpringBoard's tree within 8 s"
              : "a node labelled AirDrop or Copy was first found by query in \(seenIn)'s tree")
         await pause(1)
-        reportShare(capture(app, Self.appBundleId, "share sheet as presented (Jarvis)"), "as presented, Jarvis's tree")
+        let presented = capture(app, Self.appBundleId, "share sheet as presented (Jarvis)")
+        reportShare(presented, "as presented, Jarvis's tree")
         reportShare(capture(board, Self.springboardId, "share sheet as presented (SpringBoard)"), "as presented, SpringBoard's tree")
+        attachQuery(app, "share sheet as presented (Jarvis's query view)")
+        await runnerView("share sheet up")
+        frameTable(app, presented, "as presented")
+        note("the \"on screen\" in the node lines compares a node's own frame with the screen; frames inside the remote container are local to it (see the frame tables), so \"on screen yes\" tells nothing for those nodes")
 
-        drag(app, from: 0.62, to: 0.12, "swipe the sheet up (expand)")
+        // Expand: press on the grabber area, then drag up.
+        let collection = app.collectionViews["activityCollectionView"].firstMatch
+        var frameBefore = queryFrame(collection)
+        var shotBefore = XCUIScreen.main.screenshot().pngRepresentation
+        tolerant("press and drag the sheet's grabber up") {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.10))
+            start.press(forDuration: 0.3, thenDragTo: end)
+        }
+        note("pressed for 0.3 s at 60% of the height (the grabber area) and dragged to 10%")
         await pause(1.5)
-        reportShare(capture(app, Self.appBundleId, "after swiping the sheet up (Jarvis)"), "after the swipe up, Jarvis's tree")
+        var frameAfter = queryFrame(collection)
+        var shotAfter = XCUIScreen.main.screenshot().pngRepresentation
+        noteChange("the press-and-drag", frameBefore, frameAfter, shotBefore, shotAfter)
+        let expanded = capture(app, Self.appBundleId, "after the press-and-drag on the grabber (Jarvis)")
+        reportShare(expanded, "after the press-and-drag, Jarvis's tree")
+        frameTable(app, expanded, "after the press-and-drag")
 
-        drag(app, from: 0.85, to: 0.2, "scroll the sheet's list up (top row off screen)")
+        // Scroll the list.
+        frameBefore = frameAfter
+        shotBefore = shotAfter
+        tolerant("swipe up on activityCollectionView") { collection.swipeUp() }
+        note("swiped up on the collection view found by its identifier activityCollectionView")
         await pause(1.5)
-        reportShare(capture(app, Self.appBundleId, "after scrolling the list (Jarvis)"), "after scrolling, Jarvis's tree")
+        frameAfter = queryFrame(collection)
+        shotAfter = XCUIScreen.main.screenshot().pngRepresentation
+        noteChange("the swipe up on the list", frameBefore, frameAfter, shotBefore, shotAfter)
+        let scrolled = capture(app, Self.appBundleId, "after scrolling the list (Jarvis)")
+        reportShare(scrolled, "after scrolling, Jarvis's tree")
         reportShare(capture(board, Self.springboardId, "after scrolling the list (SpringBoard)"), "after scrolling, SpringBoard's tree")
+        frameTable(app, scrolled, "after scrolling")
 
         tolerant("close the share sheet") {
             let close = app.buttons["Close"].firstMatch
             if close.exists { close.tap() } else { note("no Close button in Jarvis's tree; the app is terminated at the end instead") }
+        }
+    }
+
+    /// Whether a gesture changed the collection view's queried frame or the screen.
+    @MainActor
+    private func noteChange(_ gesture: String, _ frameBefore: CGRect?, _ frameAfter: CGRect?, _ shotBefore: Data, _ shotAfter: Data) {
+        let before = frameBefore.map { Self.frameText($0) } ?? "none"
+        let after = frameAfter.map { Self.frameText($0) } ?? "none"
+        let frameChanged = before != after ? "yes" : "no"
+        let shotChanged = shotBefore != shotAfter ? "yes" : "no"
+        note("\(gesture): activityCollectionView frame by query \(before) -> \(after) (changed: \(frameChanged)); screenshot changed: \(shotChanged) (checksum \(Self.checksum(shotBefore)) -> \(Self.checksum(shotAfter)); the status bar clock alone can change it)")
+    }
+
+    /// For the share sheet's containers and rows found by query: the frame the query reports
+    /// next to the frame of the node with the same raw type, label and identifier in the
+    /// snapshot `tree`, and their difference (query minus snapshot).
+    @MainActor
+    private func frameTable(_ app: XCUIApplication, _ tree: RawElement?, _ what: String) {
+        let collection = app.collectionViews["activityCollectionView"].firstMatch
+        var elements: [(String, XCUIElement)] = [
+            ("app.popovers[0]", app.popovers.firstMatch),
+            ("app.otherElements[ActivityListView]", app.otherElements["ActivityListView"].firstMatch),
+            ("app.otherElements[ShareSheet.RemoteContainerView]", app.otherElements["ShareSheet.RemoteContainerView"].firstMatch),
+            ("app.collectionViews[activityCollectionView]", collection),
+            ("the first node labelled AirDrop", Self.node(in: app, labelled: "AirDrop")),
+        ]
+        tolerant("list app.cells") {
+            for (i, cell) in app.cells.allElementsBoundByIndex.prefix(12).enumerated() {
+                elements.append(("app.cells[\(i)]", cell))
+            }
+        }
+        tolerant("list the collection view's buttons") {
+            for (i, button) in collection.buttons.allElementsBoundByIndex.prefix(4).enumerated() {
+                elements.append(("activityCollectionView.buttons[\(i)]", button))
+            }
+        }
+        var nodes: [Hit] = []
+        if let tree { nodes = Self.hits(tree, { _ in true }) }
+        let container = nodes.first(where: { $0.element.identifier == "ShareSheet.RemoteContainerView" })?.element.frame
+        let containerText = container.map { Self.rectText($0) } ?? "not in the snapshot"
+        lines.append("\(what): frames by query next to the snapshot's (difference = query - snapshot; the remote container's snapshot frame is \(containerText)):")
+        for (name, element) in elements {
+            var row = "\(name): unreadable"
+            tolerant("read \(name) by query") {
+                guard element.exists else {
+                    row = "\(name): not found by query"
+                    return
+                }
+                let type = element.elementType.rawValue
+                let label = element.label
+                let identifier = element.identifier
+                let frame = element.frame
+                var text = "\(name): \(XCUIElementTypeCode.name(type))"
+                if !label.isEmpty { text += " \"\(Self.clip(label))\"" }
+                if !identifier.isEmpty { text += " id \(Self.clip(identifier))" }
+                text += " query " + Self.frameText(frame)
+                let match = nodes.first(where: { n in
+                    n.element.elementType == type && n.element.label == label && n.element.identifier == identifier
+                })
+                if let snapped = match?.element.frame {
+                    let dx = Double(frame.origin.x) - snapped.x
+                    let dy = Double(frame.origin.y) - snapped.y
+                    text += " snapshot " + Self.rectText(snapped) + String(format: " difference %+.0f,%+.0f", dx, dy)
+                    if let c = container {
+                        text += String(format: " (difference less the container's snapshot origin %+.0f,%+.0f)", dx - c.x, dy - c.y)
+                    }
+                    if abs(Double(frame.width) - snapped.width) > 0.5 || abs(Double(frame.height) - snapped.height) > 0.5 {
+                        text += "; sizes differ"
+                    }
+                } else {
+                    text += " snapshot: no node of that raw type, label and identifier"
+                }
+                row = text
+            }
+            lines.append("        - " + row)
         }
     }
 
@@ -534,6 +848,8 @@ final class TreeFactProbeTests: QATestCase {
         tolerant("type Settings") { typingApp.typeText("Settings") }
         await pause(2)
         captureSpotlight(spotlight, board, "Spotlight after typing \"Settings\"", query: "Settings")
+        // What Jarvis's own runner sees while Spotlight is up (the code the agent runs).
+        await runnerView("Spotlight up with \"Settings\" typed", query: "Settings")
         tolerant("clear the query") { typingApp.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 10)) }
         tolerant("type example.com") { typingApp.typeText("example.com") }
         await pause(2)
@@ -566,6 +882,10 @@ final class TreeFactProbeTests: QATestCase {
 
     @MainActor
     func testFactHomeScreenIconMenu() async throws {
+        // XCUITest waits for SpringBoard to idle after the long press (60 s in round 1: "App
+        // animations complete notification not received"); no way around that wait is used in
+        // this repo, so the probe is given room for it.
+        executionTimeAllowance = 180
         begin("fact-home-icon-menu")
         await probeIconMenu()
         await finish(terminating: [])
@@ -580,7 +900,9 @@ final class TreeFactProbeTests: QATestCase {
             capture(board, Self.springboardId, "no Settings icon found")
             return
         }
+        let pressStart = Date()
         tolerant("long-press the Settings icon") { icon.press(forDuration: 1.2) }
+        note(String(format: "the long press returned after %.1f s (XCUITest waits for SpringBoard to idle after it)", Date().timeIntervalSince(pressStart)))
         await pause(1)
         let menu = capture(board, Self.springboardId, "Settings icon menu up")
         report(menu, "menu-like nodes (raw type or identifier contains menu or callout)", Self.menuish)
@@ -626,15 +948,61 @@ final class TreeFactProbeTests: QATestCase {
         defer { server.stop() }
         let url = server.baseURL.absoluteString + "/"
         guard let safari = await openInSafari(url, waitFor: "Contact form") else { return }
+        note("extra Safari tabs (left by earlier tests) are not closed: Safari's tab overview offers no stable identifiers to close them by, so the open tabs are counted from the tab bar in landscape instead")
         reportAddress(capture(safari, Self.safariId, "Safari portrait, page loaded"), "portrait")
         tolerant("rotate to landscape left") { XCUIDevice.shared.orientation = .landscapeLeft }
         await pause(2.5)
         note("device orientation now \(XCUIDevice.shared.orientation.rawValue) (landscapeLeft is 3)")
-        reportAddress(capture(safari, Self.safariId, "Safari landscape left"), "landscape")
+        let landscape = capture(safari, Self.safariId, "Safari landscape left")
+        reportAddress(landscape, "landscape")
+        let tabs = reportAddressTabs(landscape, "landscape")
         tolerant("rotate back to portrait") { XCUIDevice.shared.orientation = .portrait }
         await pause(2)
         reportAddress(capture(safari, Self.safariId, "Safari portrait again"), "portrait again")
-        note("not covered: a neighbouring tab's address capsule (only one tab is open)")
+        note(tabs > 1
+             ? "\(tabs) tabs are open (TabBarTab nodes in landscape): the inactive tabs' address capsules are in the landscape lines above, each with its tab's isActive flag"
+             : "\(tabs) TabBarTab node(s) in landscape: no neighbouring tab's address capsule was available to record")
+    }
+
+    /// The tab bar's tabs (`TabBarTab?isActive=…` nodes), and every node labelled Address
+    /// with the tab it sits in (the nearest node, itself included, whose identifier carries
+    /// `isActive=`), so active and inactive tabs can be told apart. Returns the tab count.
+    @MainActor
+    @discardableResult
+    private func reportAddressTabs(_ tree: RawElement?, _ what: String) -> Int {
+        guard let tree else {
+            note("\(what): no tree (the capture failed)")
+            return 0
+        }
+        let tabs = Self.hits(tree, { $0.identifier.hasPrefix("TabBarTab") })
+        note("\(what): TabBarTab nodes (the tabs in the tab bar): \(tabs.count)")
+        for tab in tabs {
+            let e = tab.element
+            lines.append("        - " + Self.activeFlag(e.identifier) + " value \"\(Self.clip(e.value ?? ""))\" frame " + Self.rectText(e.frame) + (e.isSelected ? " selected" : ""))
+        }
+        let addresses = Self.hits(tree, { $0.label == "Address" })
+        note("\(what): nodes labelled Address, with the tab they sit in: \(addresses.count)")
+        for hit in addresses {
+            let e = hit.element
+            let chain: [RawElement] = [e] + Array(hit.ancestors.reversed())
+            let owner = chain.first(where: { $0.identifier.contains("isActive=") })
+            var line = "        - \(XCUIElementTypeCode.name(e.elementType)) value \"\(Self.clip(e.value ?? ""))\" id \(Self.clip(e.identifier)) frame " + Self.rectText(e.frame)
+            if let owner {
+                let kind = String(owner.identifier.prefix(while: { $0 != "?" }))
+                line += "; in \(kind) " + Self.activeFlag(owner.identifier)
+            } else {
+                line += "; no node with isActive= around it"
+            }
+            lines.append(line)
+        }
+        return tabs.count
+    }
+
+    /// `isActive=true` or `isActive=false` out of a Safari tab identifier.
+    private static func activeFlag(_ identifier: String) -> String {
+        guard let range = identifier.range(of: "isActive=") else { return "isActive unknown" }
+        let value = identifier[range.upperBound...].prefix(while: { $0 != "&" })
+        return "isActive=\(value)"
     }
 
     @MainActor
@@ -710,6 +1078,25 @@ final class TreeFactProbeTests: QATestCase {
         capture(app, Self.appBundleId, "counter screen (this probe's capture: app.snapshot() and a screenshot)")
         readCounter(counter, "capture", "the probe's own capture, one plain read", &readings)
 
+        // Round 2 additions, after the unchanged sequence above (so the two runs compare).
+        tolerant("app.snapshot() alone") { _ = try app.snapshot() }
+        await pause(1)
+        readCounter(counter, "snapshot-only", "app.snapshot() alone (no screenshot), 1 s, one plain read", &readings)
+        let counted = app.descendants(matching: .any)["snapshot.counted"].firstMatch
+        var countedExists = false
+        tolerant("resolve the counted element by its identifier") { countedExists = counted.exists }
+        await pause(1)
+        readCounter(counter, "query-exists", "a query resolving the counted element by its identifier (.exists), 1 s, one plain read", &readings)
+        var countedLabel = "(unread)"
+        tolerant("read the counted element's label by query") { countedLabel = counted.label }
+        await pause(1)
+        readCounter(counter, "query-label", "the counted element's .label by query, 1 s, one plain read", &readings)
+        var described = 0
+        tolerant("read app.debugDescription") { described = app.debugDescription.count }
+        await pause(1)
+        readCounter(counter, "debugDescription", "app.debugDescription, 1 s, one plain read", &readings)
+        note("the counted element by query: exists \(countedExists), label \"\(countedLabel)\"; app.debugDescription was \(described) characters")
+
         lines.append("readings (seconds since the probe started, the text read, the change since the reading before, what happened in between):")
         var byKind: [String: [Int]] = [:]
         for (i, r) in readings.enumerated() {
@@ -718,7 +1105,7 @@ final class TreeFactProbeTests: QATestCase {
             if let delta { byKind[r.kind, default: []].append(delta) }
             lines.append(String(format: "    %7.2f s  ", r.at) + "\"\(r.label)\"  change \(delta.map { String($0) } ?? "-")  after: \(r.after)")
         }
-        for kind in ["read", "idle", "snapshot", "screenshot", "capture"] {
+        for kind in ["read", "idle", "snapshot", "screenshot", "capture", "snapshot-only", "query-exists", "query-label", "debugDescription"] {
             let deltas = byKind[kind] ?? []
             note("changes after \(kind): \(deltas.isEmpty ? "none readable" : deltas.map { String($0) }.joined(separator: ", "))")
         }
@@ -761,38 +1148,149 @@ final class TreeFactProbeTests: QATestCase {
             capture(safari, Self.safariId, "no counter line on the page")
             return
         }
-        note("the page logs focus, blur, focusin, focusout, visibilitychange, scroll, selectionchange, resize, pointerdown and touchstart events and runs a 50 ms heartbeat (beats, the largest gap, gaps over 100 and 250 ms, the last big gaps as page-time:gap ms); its line is re-rendered every second and read here with one plain XCUITest query")
-        await pause(3)
-        var readings: [Reading] = []
-        readCounter(out, "start", "page loaded, 3 s quiet", &readings)
-        readCounter(out, "read", "one plain read", &readings)
+        note("the page logs focus, blur, focusin, focusout, visibilitychange, scroll, selectionchange, resize, pointerdown and touchstart events, document.hasFocus() and document.visibilityState (and how often each changed), and runs a 10 ms heartbeat (h) and a requestAnimationFrame loop (r); every gap over 50 ms is kept (the last \(Self.gapRing) of each kind) as kind:Date.now():performance.now():gap ms. Its line is re-rendered every 500 ms and read with one plain XCUITest query, only before and after the snapshots. The simulator and this test share the Mac's clock, so Date.now() on the page and the probe's wall clock line up")
         await pause(2)
-        readCounter(out, "idle", "2 s quiet, one plain read", &readings)
+        var readings: [Reading] = []
+        let baseStart = Self.epochMs()
+        await pause(10)
+        let baseEnd = Self.epochMs()
+        readCounter(out, "baseline", "10 s quiet (the baseline window), one plain read", &readings)
         let runner = XCUITestPhoneRunner()
         runner.noteActivated(Self.safariId)
-        runner.onObservation = { [weak self] record in self?.attachObservation(record) }
-        for i in 1...5 {
+        var windows: [(start: Double, end: Double)] = []
+        for i in 1...20 {
+            let start = Self.epochMs()
             do {
                 _ = try await runner.snapshot(includeScreenshot: false)
             } catch {
                 note("runner snapshot \(i) threw: \(error)")
             }
-            await pause(1)
+            windows.append((start: start, end: Self.epochMs()))
+            await pause(0.5)
         }
-        runner.onObservation = nil
-        readCounter(out, "snapshot", "5 runner snapshots 1 s apart, one plain read", &readings)
+        await pause(1)
+        readCounter(out, "snapshot", "20 runner snapshots 500 ms apart, 1 s, one plain read", &readings)
         await pause(3)
         readCounter(out, "idle", "3 s quiet, one plain read", &readings)
         lines.append("page readings (seconds since the probe started, then the page's own line):")
         for r in readings {
             lines.append(String(format: "    %7.2f s  ", r.at) + "after \(r.after): \"\(r.label)\"")
         }
-        note("how to read them: compare the event counters and the heartbeat's gaps between the readings before and after the snapshots; page time (t=) is performance.now() in ms. No change beyond what the plain reads themselves cause means no snapshot was observable from the page on this OS")
+        analyseWebGaps(readings, baseStart: baseStart, baseEnd: baseEnd, windows: windows)
         let log = server.log
         note("server log: " + (log.isEmpty ? "(no request reached the server)" : log.joined(separator: " | ")))
     }
 
-    /// The probe page for (i): event counters and a heartbeat, shown as one line of text.
+    /// A gap the page kept: `kind` h (heartbeat) or r (animation frame), its end on the shared
+    /// wall clock (`Date.now()`, ms) and in page time (`performance.now()`), and its length.
+    private struct PageGap: Equatable {
+        var kind: String
+        var epoch: Double
+        var pageTime: Double
+        var gap: Double
+    }
+
+    /// Gaps kept per kind by the page (its `keep` ring).
+    private static let gapRing = 60
+
+    private static func epochMs() -> Double {
+        Date().timeIntervalSince1970 * 1_000
+    }
+
+    /// The value of `name=` in the page's line.
+    private static func pageField(_ line: String, _ name: String) -> String? {
+        for token in line.split(separator: " ") where token.hasPrefix(name + "=") {
+            return String(token.dropFirst(name.count + 1))
+        }
+        return nil
+    }
+
+    /// The gaps listed in the page's line (`hgaps=` and `rgaps=`).
+    private static func pageGaps(_ line: String) -> [PageGap] {
+        var out: [PageGap] = []
+        for name in ["hgaps", "rgaps"] {
+            guard let list = pageField(line, name) else { continue }
+            for item in list.split(separator: ",") {
+                let parts = item.split(separator: ":").map { String($0) }
+                guard parts.count == 4, let epoch = Double(parts[1]), let pageTime = Double(parts[2]),
+                      let gap = Double(parts[3]) else { continue }
+                out.append(PageGap(kind: parts[0], epoch: epoch, pageTime: pageTime, gap: gap))
+            }
+        }
+        return out
+    }
+
+    /// Lines the 20 snapshot windows up with the page's gaps over 50 ms, against the rate of
+    /// such gaps in the quiet baseline window, and says whether any focus, visibility or event
+    /// counter changed.
+    @MainActor
+    private func analyseWebGaps(_ readings: [Reading], baseStart: Double, baseEnd: Double, windows: [(start: Double, end: Double)]) {
+        guard let baseline = readings.first, Self.pageField(baseline.label, "off") != nil else {
+            note("the page's line could not be read (no off= field); no gap analysis")
+            return
+        }
+        let offset = Double(Self.pageField(baseline.label, "off") ?? "") ?? 0
+        var gaps: [PageGap] = []
+        for r in readings {
+            for g in Self.pageGaps(r.label) where !gaps.contains(g) { gaps.append(g) }
+        }
+        gaps.sort { $0.epoch < $1.epoch }
+        // Where the baseline reading's rings start: a full ring has lost its oldest gaps.
+        let baseGapsRead = Self.pageGaps(baseline.label)
+        var covered = baseStart
+        for kind in ["h", "r"] {
+            let ofKind = baseGapsRead.filter { $0.kind == kind }
+            if ofKind.count >= Self.gapRing, let oldest = ofKind.first?.epoch { covered = max(covered, oldest) }
+        }
+        let span = max(1, baseEnd - covered)
+        let inBase = gaps.filter { $0.epoch >= covered && $0.epoch <= baseEnd }
+        let rate = Double(inBase.count) / span
+        let totalGap: Double = inBase.map { $0.gap }.reduce(0, +)
+        let meanGap: Double = inBase.isEmpty ? 50 : totalGap / Double(inBase.count)
+        let heartbeatCount = inBase.filter { $0.kind == "h" }.count
+        let frameCount = inBase.filter { $0.kind == "r" }.count
+        let coverage = covered > baseStart ? "the rings had already dropped the window's start" : "the whole window"
+        note("baseline: \(inBase.count) gap(s) over 50 ms (heartbeat \(heartbeatCount), animation frame \(frameCount)) in "
+             + String(format: "%.1f s", span / 1_000) + " of quiet (\(coverage)), "
+             + String(format: "%.2f per second, mean length %.0f ms; page time = wall clock - %.0f ms", rate * 1_000, meanGap, offset))
+
+        lines.append("snapshot windows (wall clock ms, page time ms = wall clock - offset, the call's length, gaps over 50 ms overlapping the window widened by 60 ms on each side):")
+        var hits = 0
+        var expected = 0.0
+        for (i, w) in windows.enumerated() {
+            let low = w.start - 60
+            let high = w.end + 60
+            let near = gaps.filter { g in g.epoch >= low && g.epoch - g.gap <= high }
+            if !near.isEmpty { hits += 1 }
+            expected += min(1, rate * (high - low + meanGap))
+            let listed = near.map { g in g.kind + String(format: " %.0f ms ending at page %.0f", g.gap, g.pageTime) }
+            lines.append("    \(i + 1)  " + String(format: "wall %.0f  page %.0f  took %.0f ms  ", w.start, w.start - offset, w.end - w.start)
+                         + (listed.isEmpty ? "no gap" : listed.joined(separator: "; ")))
+        }
+        if let first = windows.first {
+            let snapshotRead = readings.first(where: { $0.kind == "snapshot" }).map { Self.pageGaps($0.label) } ?? []
+            for kind in ["h", "r"] {
+                let ofKind = snapshotRead.filter { $0.kind == kind }
+                if ofKind.count >= Self.gapRing, let oldest = ofKind.first?.epoch, oldest > first.start {
+                    note("the page's \(kind) ring had dropped gaps from before \(String(format: "%.0f", oldest)) when it was read after the snapshots: the earliest snapshot windows may have lost gaps")
+                }
+            }
+        }
+        note("RESULT: \(hits) of \(windows.count) snapshot times fall within ±60 ms of a heartbeat or animation-frame gap over 50 ms; by chance, from the baseline rate, about "
+             + String(format: "%.1f", expected) + " would")
+
+        // Focus, visibility and event counters, against the baseline reading.
+        let fields = ["hasFocus", "vis", "hfChanges", "visChanges", "focus", "blur", "focusin", "focusout", "visibilitychange",
+                      "scroll", "selectionchange", "resize", "pointerdown", "touchstart"]
+        for r in readings.dropFirst() {
+            let changed = fields.filter { Self.pageField(r.label, $0) != Self.pageField(baseline.label, $0) }
+            let described = changed.map { "\($0) \(Self.pageField(baseline.label, $0) ?? "?") -> \(Self.pageField(r.label, $0) ?? "?")" }
+            note("against the baseline, after \(r.after): " + (changed.isEmpty ? "document.hasFocus(), document.visibilityState and every event counter unchanged" : "changed: " + described.joined(separator: ", ")))
+        }
+    }
+
+    /// The probe page for (i): event counters, focus and visibility, a 10 ms heartbeat and an
+    /// animation-frame loop with their gaps over 50 ms, shown as one line of text.
     private static let probePage = """
     <!doctype html>
     <html><head><meta charset="utf-8">
@@ -800,7 +1298,7 @@ final class TreeFactProbeTests: QATestCase {
     <title>Jarvis QA probe</title>
     <style>
     body { font: 18px -apple-system, sans-serif; margin: 20px; }
-    p { word-break: break-all; }
+    p { word-break: break-all; font-size: 7px; }
     </style></head>
     <body>
     <h1>Snapshot probe</h1>
@@ -810,22 +1308,43 @@ final class TreeFactProbeTests: QATestCase {
     function bump(name) { return function () { counts[name] += 1; }; }
     ['focus', 'blur', 'scroll', 'resize'].forEach(function (n) { window.addEventListener(n, bump(n), true); });
     ['focusin', 'focusout', 'visibilitychange', 'selectionchange', 'pointerdown', 'touchstart'].forEach(function (n) { document.addEventListener(n, bump(n), true); });
-    var beats = 0, maxGap = 0, gaps100 = 0, gaps250 = 0, last = performance.now(), big = [];
+    var beats = 0, frames = 0, hMax = 0, rMax = 0, h50 = 0, r50 = 0, hGaps = [], rGaps = [];
+    var hLast = performance.now(), rLast = performance.now();
+    var lastFocus = document.hasFocus(), lastVis = document.visibilityState, hfChanges = 0, visChanges = 0;
+    function keep(list, kind, now, gap) {
+      list.push(kind + ':' + Date.now() + ':' + Math.round(now) + ':' + Math.round(gap));
+      if (list.length > 60) { list.shift(); }
+    }
     setInterval(function () {
-      var now = performance.now(), gap = now - last;
-      last = now;
+      var now = performance.now(), gap = now - hLast;
+      hLast = now;
       beats += 1;
-      if (gap > maxGap) { maxGap = gap; }
-      if (gap > 100) { gaps100 += 1; big.push(Math.round(now) + ':' + Math.round(gap)); if (big.length > 6) { big.shift(); } }
-      if (gap > 250) { gaps250 += 1; }
-    }, 50);
+      if (gap > hMax) { hMax = gap; }
+      if (gap > 50) { h50 += 1; keep(hGaps, 'h', now, gap); }
+      var f = document.hasFocus(), v = document.visibilityState;
+      if (f !== lastFocus) { hfChanges += 1; lastFocus = f; }
+      if (v !== lastVis) { visChanges += 1; lastVis = v; }
+    }, 10);
+    function frame() {
+      var now = performance.now(), gap = now - rLast;
+      rLast = now;
+      frames += 1;
+      if (gap > rMax) { rMax = gap; }
+      if (gap > 50) { r50 += 1; keep(rGaps, 'r', now, gap); }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
     function render() {
-      var parts = ['probe t=' + Math.round(performance.now()), 'beats=' + beats, 'maxgap=' + Math.round(maxGap), 'gaps100=' + gaps100, 'gaps250=' + gaps250];
+      var t = performance.now();
+      var parts = ['probe t=' + Math.round(t), 'off=' + Math.round(Date.now() - t), 'beats=' + beats, 'frames=' + frames,
+        'hmax=' + Math.round(hMax), 'rmax=' + Math.round(rMax), 'h50=' + h50, 'r50=' + r50,
+        'hasFocus=' + (document.hasFocus() ? 1 : 0), 'vis=' + document.visibilityState, 'hfChanges=' + hfChanges, 'visChanges=' + visChanges];
       Object.keys(counts).forEach(function (k) { parts.push(k + '=' + counts[k]); });
-      parts.push('big=' + (big.length ? big.join(',') : 'none'));
+      parts.push('hgaps=' + hGaps.join(','));
+      parts.push('rgaps=' + rGaps.join(','));
       document.getElementById('out').textContent = parts.join(' ');
     }
-    setInterval(render, 1000);
+    setInterval(render, 500);
     render();
     </script>
     </body></html>
@@ -943,6 +1462,79 @@ final class TreeFactProbeTests: QATestCase {
         return front ?? "?"
     }
 
+    /// What Jarvis's own runner sees at this moment: the code the agent runs
+    /// (`XCUITestPhoneRunner().frontBundleId()` and `.snapshot(includeScreenshot: false)`, with no
+    /// app noted as activated), its snapshot attached like a capture and checked for result
+    /// rows, search and text fields, web views and (with `query`) nodes mentioning it.
+    @MainActor
+    private func runnerView(_ moment: String, query: String? = nil) async {
+        let runner = XCUITestPhoneRunner()
+        runnerRecord = nil
+        runner.onObservation = { [weak self] record in self?.keepRunnerRecord(record) }
+        var front = "?"
+        do {
+            let id = try await runner.frontBundleId()
+            front = id ?? "nil"
+        } catch {
+            front = "threw \(error)"
+        }
+        note("\(moment): the runner's frontBundleId() is \(front)")
+        do {
+            let observation = try await runner.snapshot(includeScreenshot: false)
+            note("\(moment): the runner's snapshot reports app \(observation.appBundleId); notes: " + (observation.notes.isEmpty ? "none" : observation.notes.joined(separator: " | ")))
+        } catch {
+            note("\(moment): the runner's snapshot threw \(error)")
+        }
+        runner.onObservation = nil
+        guard let record = runnerRecord else {
+            note("\(moment): the runner reported no observation")
+            return
+        }
+        runnerRecord = nil
+        note("\(moment): the runner's snapshot is of \(record.bundleId), \(record.built.nodeCount) nodes (root \"\(Self.clip(record.raw.label))\")")
+        let tree: RawElement? = record.raw
+        report(tree, "\(moment), the runner's snapshot: Cell nodes (result rows)", limit: 8) { $0.elementType == XCUIElementTypeCode.cell }
+        report(tree, "\(moment), the runner's snapshot: SearchField and TextField nodes") { e in
+            e.elementType == XCUIElementTypeCode.searchField || e.elementType == XCUIElementTypeCode.textField
+        }
+        report(tree, "\(moment), the runner's snapshot: WebView nodes") { $0.elementType == XCUIElementTypeCode.webView }
+        if let query {
+            report(tree, "\(moment), the runner's snapshot: nodes mentioning \"\(query)\"", limit: 8, Self.mentions(query))
+        }
+    }
+
+    @MainActor
+    private func keepRunnerRecord(_ record: RunnerObservationRecord) {
+        runnerRecord = record
+        attachObservation(record)
+    }
+
+    /// The frame XCUITest's query reports for `element` (resolving it), nil when it does not
+    /// exist or the read fails.
+    @MainActor
+    private func queryFrame(_ element: XCUIElement) -> CGRect? {
+        var frame: CGRect?
+        tolerant("read a frame by query") {
+            if element.exists { frame = element.frame }
+        }
+        return frame
+    }
+
+    private static func frameText(_ r: CGRect) -> String {
+        String(format: "{%.0f,%.0f %.0fx%.0f}", Double(r.origin.x), Double(r.origin.y), Double(r.width), Double(r.height))
+    }
+
+    private static func rectText(_ f: Rect) -> String {
+        String(format: "{%.0f,%.0f %.0fx%.0f}", f.x, f.y, f.width, f.height)
+    }
+
+    /// A cheap checksum of a screenshot's bytes (for the record; equality is checked on the data).
+    private static func checksum(_ data: Data) -> UInt32 {
+        var sum: UInt32 = 0
+        for byte in data { sum = sum &* 31 &+ UInt32(byte) }
+        return sum
+    }
+
     private func pause(_ seconds: Double) async {
         try? await Task.sleep(for: .milliseconds(Int(seconds * 1_000)))
     }
@@ -1051,6 +1643,20 @@ final class TreeFactProbeTests: QATestCase {
         return raw
     }
 
+    /// Attaches `app.debugDescription` (XCUITest's query view of the app, which reaches remote
+    /// content the snapshot does not) as `<fact>.NN-query.txt`.
+    @MainActor
+    private func attachQuery(_ app: XCUIApplication, _ moment: String) {
+        captures += 1
+        let n = String(format: "%02d", captures)
+        let start = Date()
+        var text = "(not read)"
+        tolerant("read debugDescription") { text = app.debugDescription }
+        let ms = Int(Date().timeIntervalSince(start) * 1_000)
+        attach(XCTAttachment(string: "capture \(n): \(moment)\nXCUIApplication.debugDescription (the query view), read in \(ms) ms\n\n" + text), "\(fact).\(n)-query.txt")
+        note("capture \(n) (\(moment)): debugDescription, \(text.count) characters, \(ms) ms -> \(fact).\(n)-query.txt")
+    }
+
     /// An observation the runner made itself (R23, (i)), attached like a capture.
     @MainActor
     private func attachObservation(_ record: RunnerObservationRecord) {
@@ -1119,7 +1725,7 @@ final class TreeFactProbeTests: QATestCase {
         if e.isSelected { s += " selected" }
         let sheet = hit.ancestors.contains { $0.elementType == XCUIElementTypeCode.sheet }
         s += "; inside a raw Sheet " + (sheet ? "yes" : "no")
-        if let menu = hit.ancestors.last(where: menuish) {
+        if let menu = hit.ancestors.last(where: foreignMenuish) {
             s += "; menu/callout ancestor \(XCUIElementTypeCode.name(menu.elementType))" + (menu.identifier.isEmpty ? "" : " id \(clip(menu.identifier))")
         } else {
             s += "; menu/callout ancestor none"
@@ -1146,6 +1752,12 @@ final class TreeFactProbeTests: QATestCase {
         let type = XCUIElementTypeCode.name(e.elementType).lowercased()
         let id = e.identifier.lowercased()
         return type.contains("menu") || id.contains("menu") || id.contains("callout")
+    }
+
+    /// `menuish`, leaving out the probe fixtures' own `probe.*` identifiers and navigation bars
+    /// (the "Menus" screen's title made them match in round 1).
+    private static func foreignMenuish(_ e: RawElement) -> Bool {
+        menuish(e) && !e.identifier.hasPrefix("probe.") && e.elementType != XCUIElementTypeCode.navigationBar
     }
 
     /// Label, value or identifier contains `text` (case-insensitive).

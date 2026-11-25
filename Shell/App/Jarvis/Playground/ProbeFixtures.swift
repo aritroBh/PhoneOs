@@ -167,7 +167,8 @@ struct ProbeMenusFixture: View {
     }
 }
 
-/// Fact (g): the system share sheet (`UIActivityViewController`) on a plain text.
+/// Fact (g): the system share sheet (`UIActivityViewController`) on a plain text, and on the
+/// probe's URL (`-jarvis-probe-url`) with a small generated image (people row, more actions).
 struct ProbeShareFixture: View {
     var body: some View {
         Form {
@@ -175,8 +176,26 @@ struct ProbeShareFixture: View {
                 ProbePresenter.present(UIActivityViewController(activityItems: ["Jarvis probe share text"], applicationActivities: nil))
             }
             .accessibilityIdentifier("probe.share.open")
+            Button("Share link and image") {
+                var items: [Any] = []
+                if let url = ProbePresenter.probeURL { items.append(url) }
+                items.append(Self.probeImage())
+                ProbePresenter.present(UIActivityViewController(activityItems: items, applicationActivities: nil))
+            }
+            .accessibilityIdentifier("probe.share.rich")
         }
         .navigationTitle("Share sheet")
+    }
+
+    /// A 120 x 120 pt image of two colour blocks, made in code (no asset).
+    private static func probeImage() -> UIImage {
+        let size = CGSize(width: 120, height: 120)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor.systemOrange.setFill()
+            context.fill(CGRect(x: 30, y: 30, width: 60, height: 60))
+        }
     }
 }
 
