@@ -1266,6 +1266,10 @@ impl Session {
                                 self.prior_approval = None;
                                 // Eighteenth review (E7): the Return of a `type … submit`
                                 // is decided again alone; its text is already typed.
+                                // Twenty-first review (F2b): an action that needs no further
+                                // question is the consequence of this approval: it goes
+                                // through the look after an approval (digest, target and gate
+                                // re-checked on a fresh look), never straight to the runner.
                                 if pending.stage == Stage::Return {
                                     let field = match &pending.gate {
                                         Action::Type {
@@ -1273,11 +1277,16 @@ impl Session {
                                         } => self.current.screen.get(*i).map(|e| e.fingerprint),
                                         _ => None,
                                     };
-                                    return self.gate_return(now, *pending, field);
+                                    return self.gate_return_after(now, *pending, field, true);
                                 }
                                 let action = pending.action.clone();
                                 let source = pending.source;
-                                let prepared = self.prepare(&action, source);
+                                let prepared = match self.prepare(&action, source) {
+                                    Ok(Prepared::Execute(next)) => {
+                                        return self.look_then_act(next, None);
+                                    }
+                                    other => other,
+                                };
                                 return self.dispatch(now, &action, source, prepared);
                             }
                         }
@@ -1684,10 +1693,19 @@ impl Session {
     /// blind: tools (which do not use the screen) run now, runner actions look at the screen
     /// once more first ([`Self::act_approved`]).
     fn after_approval(&mut self, pending: Pending, request: ConfirmRequest) -> Out {
+        let approved = (request.category != RiskCategory::FirstUse).then_some(request);
+        self.look_then_act(pending, approved)
+    }
+
+    /// The look after an approval ([`Self::after_approval`]) for `pending`, whose fresh
+    /// gate must ask nothing (`approved: None`) or ask exactly `approved`. Twenty-first
+    /// review (F2b): also the path of an action decided again after a partial approval
+    /// that needs no further question (the last approval was the partial one): it is sent
+    /// only if a fresh look equals the screen it was asked on and the gate there allows it.
+    fn look_then_act(&mut self, pending: Pending, approved: Option<ConfirmRequest>) -> Out {
         if matches!(pending.exec, Exec::Tool(_)) {
             return self.execute(pending);
         }
-        let approved = (request.category != RiskCategory::FirstUse).then_some(request);
         let look = ApprovalLook {
             pending: Box::new(pending),
             approved,
@@ -3257,8 +3275,11 @@ impl Session {
         }
         let pasting = insert_control(gate, &self.current.screen, Some(&self.tree())).is_some();
         // Twentieth review (R20-A): a scroll is allowed by a scroll grant too; any other
-        // input only by a full one.
-        let kind = InputKind::of(gate);
+        // input only by a full one. Twenty-first review (R21-A): the kind is decided on the
+        // screen the action will act on (the one `prepare` and `gate_return` gate on) by
+        // the one function that also decides what an approval keeps (below): a scroll that
+        // names a control, starts on one or crosses one that reacts is a full input.
+        let kind = InputKind::of(gate, &self.current.screen);
         // A launch from the home screen of a known installed app (an icon or an app result
         // the core resolves to a known app): the home screen's own content is not counted as
         // a source for the app it opens; a banner or an alert read there is, at the first
@@ -3325,10 +3346,12 @@ impl Session {
         // Twentieth review (R20-A): what an approval keeps — a scroll keeps scroll-only
         // grants; a full input with one decidable destination a full grant; a swipe,
         // `press_home`, an undecidable destination or any other input with more than one
-        // destination this action only.
+        // destination this action only. Twenty-first review (R21-A): "a scroll" is `kind`
+        // (the same decision the grants above were read with); a scroll of the full kind
+        // keeps what any other full input keeps.
         let keep = match gate {
             _ if targets.contains(&FlowContext::Unknown) => Keep::Action,
-            Action::Scroll { .. } => Keep::Scroll,
+            _ if kind == InputKind::Scroll => Keep::Scroll,
             Action::Swipe { .. } | Action::PressHome => Keep::Action,
             _ if targets.len() > 1 => Keep::Action,
             _ => Keep::Full,
@@ -3338,21 +3361,28 @@ impl Session {
         // rule 5): with more than one destination it names them too, instead of "here", as
         // many as fit; the sources it names are those not allowed into a named destination
         // (so every approval allows a pair that was not allowed: no question repeats).
-        let (dests, note, named) = if targets.len() > 1 {
+        // Twenty-first review (F2a): the question is partial by its destinations only when a
+        // destination it does not name still receives an unallowed source (`order` puts
+        // those first, so the unnamed ones with nothing unallowed need no second question).
+        let (dests, note, named, rest_unallowed) = if targets.len() > 1 {
             let dest_names: Vec<String> = order.iter().map(|(t, _)| self.flow_name(t)).collect();
             let (_, _, fit) = flow_note_into(&[], &dest_names);
             let named_dests: Vec<&(FlowContext, Vec<FlowContext>)> =
                 order.iter().take(fit.max(1)).copied().collect();
+            let rest_unallowed = order
+                .iter()
+                .skip(named_dests.len())
+                .any(|(_, s)| !s.is_empty());
             sources = union(&named_dests);
             recent(&mut sources);
             let (note, named, _) = flow_note_into(&self.flow_names(&sources), &dest_names);
             let dests: Vec<FlowContext> = named_dests.iter().map(|(t, _)| t.clone()).collect();
-            (dests, note, named)
+            (dests, note, named, rest_unallowed)
         } else {
             let (note, named, _) = flow_note_into(&self.flow_names(&sources), &[]);
-            (targets.clone(), note, named)
+            (targets.clone(), note, named, false)
         };
-        let partial = named < sources.len() || dests.len() < targets.len();
+        let partial = named < sources.len() || rest_unallowed;
         sources.truncate(named);
         Ok(Some(FlowAsk {
             targets,
@@ -3803,6 +3833,20 @@ impl Session {
     /// model is told ("typed, not submitted"). Neither part adds a step or a history line of
     /// its own: the pair is one model step.
     fn gate_return(&mut self, now: u64, typing: Pending, field: Option<u64>) -> Out {
+        self.gate_return_after(now, typing, field, false)
+    }
+
+    /// [`Self::gate_return`]; with `approved` (twenty-first review, F2b: decided again
+    /// right after a partial approval of the Return), a Return that needs no further
+    /// question goes through the look after an approval ([`Self::look_then_act`]) instead
+    /// of straight to the runner.
+    fn gate_return_after(
+        &mut self,
+        now: u64,
+        typing: Pending,
+        field: Option<u64>,
+        approved: bool,
+    ) -> Out {
         let screen = &self.current.screen;
         let target = field
             .and_then(|fp| screen.find_by_fingerprint(fp))
@@ -3959,6 +4003,7 @@ impl Session {
         }
         match risk {
             Some(request) => self.ask_confirm(now, pending, request, None, None),
+            None if approved => self.look_then_act(pending, None),
             None => self.execute(pending),
         }
     }

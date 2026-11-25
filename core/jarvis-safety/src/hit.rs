@@ -406,7 +406,9 @@ fn other_name(role: &Role) -> Option<String> {
 }
 
 /// Scroll views, tables, collection views and web views: what page content scrolls in.
-fn is_scroller(role: &Role) -> bool {
+/// Twenty-first review (R21-A): also what a scroll may name and stay a scroll
+/// ([`crate::InputKind::of`]).
+pub(crate) fn is_scroller(role: &Role) -> bool {
     match role {
         Role::ScrollView | Role::Table | Role::CollectionView | Role::WebView => true,
         _ => other_name(role).is_some_and(|n| {

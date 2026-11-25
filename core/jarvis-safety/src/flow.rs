@@ -1130,20 +1130,50 @@ pub struct Confinement {
 /// An approval kept for a kind never covers a stronger one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InputKind {
-    /// `Action::Scroll`: a direction only.
+    /// A scroll that only moves content (twenty-first review, R21-A: see [`InputKind::of`]).
     Scroll,
     /// Everything else: a tap, long press, typing, clear, Return, a tool call, `open_app`,
-    /// `open_url`, a home-screen launch, a swipe, `press_home`.
+    /// `open_url`, a home-screen launch, a swipe, `press_home` — and a scroll that names a
+    /// control or works one.
     Full,
 }
 
 impl InputKind {
-    /// The kind of `action`.
-    pub fn of(action: &Action) -> InputKind {
-        if matches!(action, Action::Scroll { .. }) {
-            InputKind::Scroll
-        } else {
-            InputKind::Full
+    /// The kind of `action` on `screen` (the screen it will act on). Twenty-first review
+    /// (R21-A): an action is of the *scroll* kind only when all of these hold:
+    ///
+    /// 1. it is `Action::Scroll`;
+    /// 2. it names no element, or its element is a scroll container of the screen — a role
+    ///    the tree gives (scroll view, table, collection view, web view: the set the hit
+    ///    test calls scrollable, `hit::is_scroller`), never decided by a label;
+    /// 3. the drag it will produce can be computed (`gestures::drag_gesture`, the path the
+    ///    runner is sent) and works no control: the one drag classification
+    ///    (`actuation` → `classify::drag_target`) finds no control it starts on, crosses
+    ///    and reacts to, or is named (`Actuation::Navigation`).
+    ///
+    /// Everything else is *full*: a scroll on a picker wheel, slider, switch, a row dragged
+    /// sideways, a button or any other non-container element (the drag's touch-down lands
+    /// on the element the model chose), or one whose path crosses a control that reacts to
+    /// it, or whose path cannot be computed. Only a full grant covers a full input. The
+    /// session derives both the grants a scroll may use and what its approval keeps from
+    /// this one function. O(elements) for a scroll; nothing for any other action.
+    pub fn of(action: &Action, screen: &CompactScreen) -> InputKind {
+        let Action::Scroll { direction, element } = action else {
+            return InputKind::Full;
+        };
+        let frame = match element {
+            None => None,
+            Some(i) => match screen.get(*i) {
+                Some(e) if crate::hit::is_scroller(&e.role) => Some(e.frame),
+                _ => return InputKind::Full,
+            },
+        };
+        if drag_gesture(GestureKind::Scroll, *direction, frame, screen).is_err() {
+            return InputKind::Full;
+        }
+        match actuation(action, screen) {
+            Actuation::Navigation => InputKind::Scroll,
+            _ => InputKind::Full,
         }
     }
 }

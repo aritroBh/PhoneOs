@@ -37,6 +37,15 @@
 //! one destination keep nothing beyond the action. A question for an input with more than
 //! one destination names every destination (`, into A and B`).
 //!
+//! Twenty-first review (R21-A): the kind is decided on the screen the action acts on. The
+//! oracle's own model of it: a scroll is of the scroll kind only when it names no element
+//! (the generator's elements are never scroll containers), its path can be computed, it does
+//! not start on an enabled button, link, slider, switch or picker, and it crosses no picker or
+//! vertical slider (the generator's `com.example.c` holds one on the screen scroll's path; a
+//! mixed app's "Ad" lies under the screen scroll's start point). Everything else — a scroll
+//! on "Next" included — is full: only a full grant covers it, and its approval keeps what any
+//! full input keeps.
+//!
 //! Invariant, checked on every effect:
 //! - no runner command and no tool call reaches a destination place while the read set holds
 //!   a source for it the owner has not allowed into it in this task (sources: every place
@@ -46,6 +55,9 @@
 //!   (no "and N more"; an ambiguous class by its covering name), and its approval allows
 //!   exactly the places it named (into an undecidable destination: for that action only);
 //! - after a declined flow question nothing is sent before the model is asked again;
+//! - (twenty-first review, F2b) no runner command directly follows an approved question:
+//!   a look (an observation) always comes in between, on every path (partial approvals and
+//!   a Return decided again included);
 //! - `confirm: []` changes nothing about it.
 //!
 //! `FLOW_CASES` sets the number of cases (default 400), `FLOW_SEED` runs one seed.
@@ -81,6 +93,9 @@ const MIXED: usize = 3;
 /// The Apple app whose screen holds an embedded web view (two-way since the nineteenth
 /// review).
 const APPLE_MIXED: usize = 4;
+/// Twenty-first review (R21-A): the plain app whose screen holds a vertical slider on the
+/// screen scroll's path (a screen scroll there works the slider: a full input).
+const SLIDER: usize = 2;
 /// The third-party app that draws a fake address bar beside its web view.
 const EVIL: usize = 5;
 /// A listed third-party browser.
@@ -189,6 +204,16 @@ fn app_screen(i: usize) -> Screen {
                 "Ad",
                 rect(16.0, 620.0, 361.0, 40.0),
             )]),
+        );
+    }
+    if i == SLIDER {
+        // Below "Next" in reading order (element numbers unchanged), across the screen
+        // scroll's path.
+        kids.push(
+            UiNode::new(Role::Slider, rect(180.0, 380.0, 33.0, 200.0))
+                .with_label("Level")
+                .with_value("50%")
+                .hittable(true),
         );
     }
     if i == EVIL {
@@ -445,19 +470,60 @@ fn dedup(v: Vec<Ctx>) -> Vec<Ctx> {
 fn dest_of_action(json: &str, current: &Screen) -> Vec<Ctx> {
     let v: serde_json::Value = serde_json::from_str(json).unwrap();
     if v["action"].as_str() == Some("scroll") {
-        let g = jarvis_safety::gestures::drag_gesture(
-            jarvis_safety::gestures::GestureKind::Scroll,
-            jarvis_proto::Direction::Down,
-            None,
-            &compact(current),
-        )
-        .unwrap();
+        let g = scroll_path(&v, current).unwrap();
         return dedup(vec![base_of(current), place_at(current, g.from)]);
     }
     if v["action"].as_str() == Some("press_home") {
         return every_of(current);
     }
     dest_one(json, current).into_iter().collect()
+}
+
+/// The drag a generated scroll (`down`, on its element if it names one) makes on `current`.
+fn scroll_path(
+    v: &serde_json::Value,
+    current: &Screen,
+) -> Option<jarvis_safety::gestures::Gesture> {
+    let c = compact(current);
+    let frame = v["element"].as_u64().map(|i| {
+        c.elements
+            .iter()
+            .find(|e| u64::from(e.index) == i)
+            .unwrap()
+            .frame
+    });
+    jarvis_safety::gestures::drag_gesture(
+        jarvis_safety::gestures::GestureKind::Scroll,
+        jarvis_proto::Direction::Down,
+        frame,
+        &c,
+    )
+    .ok()
+}
+
+/// Twenty-first review (R21-A), the oracle's own model: whether the action `json` is of the
+/// scroll kind on `current` — a scroll naming no element, with a path, that starts on no
+/// enabled button, link, slider, switch or picker and crosses no picker or vertical slider
+/// (the generator's scroll goes down: the finger moves up).
+fn scroll_kind(json: &str, current: &Screen) -> bool {
+    let v: serde_json::Value = serde_json::from_str(json).unwrap();
+    if v["action"].as_str() != Some("scroll") || !v["element"].is_null() {
+        return false;
+    }
+    let Some(g) = scroll_path(&v, current) else {
+        return false;
+    };
+    let (y0, y1) = (g.from.y.min(g.to.y), g.from.y.max(g.to.y));
+    !compact(current).elements.iter().any(|e| {
+        let f = e.frame;
+        let control = matches!(
+            e.role,
+            Role::Button | Role::Link | Role::Slider | Role::Switch | Role::Picker
+        );
+        let reacts = e.role == Role::Picker || (e.role == Role::Slider && f.height > f.width);
+        let crosses = f.x <= g.from.x && f.max_x() >= g.from.x && f.y <= y1 && f.max_y() >= y0;
+        e.enabled && ((control && f.contains(g.from)) || (reacts && crosses))
+    })
 }
 
 /// [`dest_of_action`] for an action with one destination.
@@ -604,6 +670,10 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
             ),
             3 | 4 => format!(r#"{{"action":"tap","element":{next}}}"#),
             5 => format!(r#"{{"action":"tap","element":{ad}}}"#),
+            // Twenty-first review: a third of the scrolls start on "Next" (a full input).
+            6 if rng.below(3) == 0 => {
+                format!(r#"{{"action":"scroll","direction":"down","element":{next}}}"#)
+            }
             6 => r#"{"action":"scroll","direction":"down"}"#.to_owned(),
             7 => format!(r#"{{"action":"type","element":{field},"text":"hello","submit":false}}"#),
             8 => r#"{"action":"call_tool","name":"lookup","args":{"q":"hello"}}"#.to_owned(),
@@ -661,6 +731,8 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
     let mut oracle = Oracle::default();
     let mut observed: BTreeSet<Ctx> = BTreeSet::new();
     let mut declined_since_infer = false;
+    // Twenty-first review (F2b): a question was approved and nothing was observed since.
+    let mut approved_unlooked = false;
     let mut last_action = String::new();
     let mut now = 1_000u64;
     let mut event = Event::Start;
@@ -669,6 +741,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
         now += 50;
         event = match effect {
             Effect::Observe { screenshot } => {
+                approved_unlooked = false;
                 observed.extend(places_of(&current));
                 let f = Ctx::Frame(HOSTS[TWO_FRAMES].to_owned());
                 if places_of(&current).contains(&f) {
@@ -692,6 +765,8 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                 }
                 oracle.for_action.clear();
                 declined_since_infer = false;
+                // A new action is proposed: the approved one was carried out or dropped.
+                approved_unlooked = false;
                 match model.pop_front() {
                     Some(text) => {
                         last_action = text.clone();
@@ -703,6 +778,10 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                 }
             }
             Effect::Act(cmd) => {
+                assert!(
+                    !approved_unlooked,
+                    "seed {seed}: {cmd:?} sent right after an approval, with no look"
+                );
                 let dests = dest_of(&cmd, &current);
                 if !dests.is_empty() {
                     sent += 1;
@@ -711,8 +790,10 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                         "seed {seed}: {cmd:?} sent after a declined flow question"
                     );
                 }
-                // A scroll is the only action the generator sends as a drag.
-                let scroll = matches!(cmd, RunnerCommand::Swipe { .. });
+                // A scroll is the only action the generator sends as a drag; its kind is
+                // decided on the screen it acts on (R21-A).
+                let scroll = matches!(cmd, RunnerCommand::Swipe { .. })
+                    && scroll_kind(&last_action, &current);
                 for dest in dests {
                     let bad = oracle.unallowed(&dest, scroll);
                     assert!(
@@ -769,7 +850,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                     );
                     let v: serde_json::Value = serde_json::from_str(&last_action).unwrap();
                     let kind = v["action"].as_str().unwrap_or_default().to_owned();
-                    let scroll = kind == "scroll";
+                    let scroll = scroll_kind(&last_action, &current);
                     let bad: BTreeSet<Ctx> = dests
                         .iter()
                         .flat_map(|d| oracle.unallowed(d, scroll))
@@ -860,6 +941,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                         declined_since_infer = true;
                     }
                 }
+                approved_unlooked |= approve;
                 Event::UserDecision { approved: approve }
             }
             Effect::AskUser { .. } => Event::UserAnswer {
