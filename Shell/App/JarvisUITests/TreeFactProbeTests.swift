@@ -47,6 +47,19 @@ final class TreeFactProbeTests: QATestCase {
 
     // MARK: - (a) Notification banner over another app
 
+    /// Seconds from the tap on Notify to the notification (`-jarvis-probe-notify-delay`):
+    /// long enough for Settings to be in front first (run 137: Settings reached the front
+    /// 13 s after `activate()`, so a 6 s notification fired over Jarvis and showed no banner).
+    ///
+    /// Timing (typical): launch and the probe screen ~19 s, "Scheduled" ~21 s, due ~46 s;
+    /// Settings in front by ~30-36 s leaves 10-16 s (below 5 s the race is recorded as lost);
+    /// the banner is polled until 15 s after it is due (~61 s), captures and the runner's
+    /// view ~3 s, the banner goes within 10 s, the end ~10 s: ~70-85 s. Worst case: launch 20
+    /// + probe screen 16 + alert 6 + status 8 + due within 25 s of the status, polled to 15 s
+    /// after it (40, Settings' 15 s wait inside it) + captures 5 + banner gone 10 + end 12 =
+    /// ~117 s, inside the 240 s allowance.
+    private static let notifyDelay = 25.0
+
     @MainActor
     func testFactA_BannerOverAnotherApp() async throws {
         executionTimeAllowance = 240
@@ -57,19 +70,20 @@ final class TreeFactProbeTests: QATestCase {
 
     @MainActor
     private func probeBanner() async {
-        let app = launchPlayground()
+        let app = launchPlayground(extraArguments: ["-jarvis-probe-notify-delay", String(format: "%g", Self.notifyDelay)])
         let board = XCUIApplication(bundleIdentifier: Self.springboardId)
         guard await openProbeScreen(app, "probe.notify") else {
             capture(app, Self.appBundleId, "the Notification probe screen was not reached")
             return
         }
         let schedule = app.buttons["probe.notify.schedule"].firstMatch
-        guard waitFor(schedule, "the Notify in 6 s button", 5) else {
+        guard waitFor(schedule, "the Notify button", 5) else {
             capture(app, Self.appBundleId, "no Notify button")
             return
         }
-        tolerant("tap Notify in 6 s") { schedule.tap() }
-        note("tapped Notify in 6 s: the app asks for notification permission, then schedules a local notification 6 s ahead")
+        var scheduledAfter = Date()
+        tolerant("tap Notify") { schedule.tap() }
+        note("tapped Notify: the app asks for notification permission, then schedules a local notification \(Self.notifyDelay.compactText) s ahead")
 
         // The permission alert (first run on a simulator only): SpringBoard's or the app's.
         // Without one (permission already decided) the status changes at once and the
@@ -82,7 +96,7 @@ final class TreeFactProbeTests: QATestCase {
                 alertOwner = (Self.springboardId, board)
             } else if app.alerts.firstMatch.exists {
                 alertOwner = (Self.appBundleId, app)
-            } else if status.exists, ["Scheduled", "Not allowed"].contains(status.label) {
+            } else if status.exists, status.label.hasPrefix("Scheduled") || status.label == "Not allowed" {
                 break
             } else {
                 await pause(0.3)
@@ -99,6 +113,7 @@ final class TreeFactProbeTests: QATestCase {
             tolerant("tap Allow") {
                 let allow = alert.buttons["Allow"].firstMatch
                 if allow.exists {
+                    scheduledAfter = Date()
                     allow.tap()
                     note("tapped Allow")
                 } else {
@@ -116,23 +131,60 @@ final class TreeFactProbeTests: QATestCase {
             if statusText != "Asking" && statusText != "Not scheduled" && statusText != "(unread)" { break }
             await pause(0.4)
         }
+        let statusSeen = Date()
         note("the app's notify status: \"\(statusText)\"")
-        guard statusText == "Scheduled" else {
+        guard statusText.hasPrefix("Scheduled") else {
             note("the notification was not scheduled, so no banner can appear; if the status says Not allowed, notification permission could not be obtained in this simulator")
             capture(app, Self.appBundleId, "notification not scheduled")
             return
         }
 
+        // When the notification is due: the app's own reading (the clock the simulator shares
+        // with the test runner), else from the last action before scheduling (earliest) and
+        // the moment "Scheduled" was read (latest).
+        var dueEarliest = scheduledAfter.addingTimeInterval(Self.notifyDelay)
+        var dueLatest = statusSeen.addingTimeInterval(Self.notifyDelay)
+        var dueText = "(unread)"
+        tolerant("read the due time") {
+            let field = app.staticTexts["probe.notify.due"].firstMatch
+            dueText = field.exists ? field.label : "(no due text)"
+        }
+        if let epoch = Double(dueText), epoch.isFinite {
+            dueEarliest = Date(timeIntervalSince1970: epoch)
+            dueLatest = dueEarliest
+            note("the app reports the notification due at \(dueText), " + String(format: "%.1f s from now", dueEarliest.timeIntervalSinceNow))
+        } else {
+            note("the app's due time is unreadable (\"\(dueText)\"); " + String(format: "due between %.1f and %.1f s from now", dueEarliest.timeIntervalSinceNow, dueLatest.timeIntervalSinceNow))
+        }
+
         let settings = XCUIApplication(bundleIdentifier: Self.settingsId)
+        let activated = Date()
         tolerant("open Settings") { settings.activate() }
-        let inFront = settings.wait(for: .runningForeground, timeout: 10)
-        note(inFront ? "Settings is in front" : "Settings did not reach the foreground in 10 s (state \(settings.state.rawValue))")
+        var inFront = false
+        tolerant("wait for Settings in front") { inFront = settings.wait(for: .runningForeground, timeout: 15) }
+        let frontAtStart = await frontApp()
+        let remaining = dueEarliest.timeIntervalSinceNow
+        let settingsState = inFront ? "Settings is in front" : "Settings did not reach the foreground in 15 s (state \(stateText(settings)))"
+        let afterActivate = String(format: "%.1f s after activate()", Date().timeIntervalSince(activated))
+        let left = String(format: "%.1f s left before the notification is due", remaining)
+        note("\(settingsState), \(afterActivate); the runner's frontBundleId() \(frontAtStart); \(left)")
 
         let predicate = NSPredicate(format: "label CONTAINS %@", Self.bannerBody)
         let inBoard = board.descendants(matching: .any).matching(predicate).firstMatch
         let inSettings = settings.descendants(matching: .any).matching(predicate).firstMatch
+        if !inFront || frontAtStart != Self.settingsId || remaining < 5 {
+            note("the race was lost: Settings was not certainly the foreground app at least 5 s before the notification was due, so no banner over another app can be relied on (recorded, not judged)")
+            // Let the notification come and go before leaving (bounded).
+            await pause(max(0, min(dueLatest.timeIntervalSinceNow + 2, 30)))
+            let passDeadline = Date().addingTimeInterval(10)
+            while inBoard.exists, Date() < passDeadline { await pause(0.5) }
+            return
+        }
+
+        // Polled from before its due time until 15 s after it.
         var seenIn = ""
-        let bannerDeadline = Date().addingTimeInterval(15)
+        let bannerDeadline = dueLatest.addingTimeInterval(15)
+        note(String(format: "polling for the banner until 15 s after it is due (%.1f s from now)", bannerDeadline.timeIntervalSinceNow))
         while seenIn.isEmpty, Date() < bannerDeadline {
             if inBoard.exists {
                 seenIn = "SpringBoard"
@@ -143,8 +195,8 @@ final class TreeFactProbeTests: QATestCase {
             }
         }
         note(seenIn.isEmpty
-             ? "no node whose label contains \"\(Self.bannerBody)\" appeared in SpringBoard's or Settings' tree within 15 s (polled with XCUITest queries every 0.3 s); trees captured anyway"
-             : "a node whose label contains \"\(Self.bannerBody)\" was first found by query in \(seenIn)'s tree")
+             ? "no node whose label contains \"\(Self.bannerBody)\" appeared in SpringBoard's or Settings' tree by 15 s after the notification was due (polled with XCUITest queries every 0.3 s); trees captured anyway"
+             : "a node whose label contains \"\(Self.bannerBody)\" was first found by query in \(seenIn)'s tree, " + String(format: "%.1f s after its due time", -dueLatest.timeIntervalSinceNow))
         let frontTree = capture(settings, Self.settingsId, "banner expected up: the front app (Settings)")
         let boardTree = capture(board, Self.springboardId, "banner expected up: SpringBoard")
         let front = await frontApp()
@@ -153,6 +205,9 @@ final class TreeFactProbeTests: QATestCase {
         report(frontTree, "Settings' tree: nodes mentioning \"Jarvis probe\" (the notification's title)", Self.mentions("Jarvis probe"))
         report(boardTree, "SpringBoard's tree: nodes whose label, value or id contains \"\(Self.bannerBody)\"", Self.mentions(Self.bannerBody))
         report(boardTree, "SpringBoard's tree: nodes mentioning \"Jarvis probe\" (the notification's title)", Self.mentions("Jarvis probe"))
+        // What Jarvis's runner sees with the banner up: the front id, the node count and the
+        // covering node (`BannerCover`) with its frame.
+        await runnerView(seenIn.isEmpty ? "banner expected up" : "banner up over Settings")
 
         // Let the banner go before leaving (it would cover the next test's first screen).
         let goneDeadline = Date().addingTimeInterval(10)
@@ -1492,6 +1547,11 @@ final class TreeFactProbeTests: QATestCase {
         }
         runnerRecord = nil
         note("\(moment): the runner's snapshot is of \(record.bundleId), \(record.built.nodeCount) nodes (root \"\(Self.clip(record.raw.label))\")")
+        // The runner's banner covers (`BannerCover.node`: a button with no label, disabled,
+        // appended to the root), which are not in the raw snapshot.
+        let covers = record.built.root.children.filter { $0.role == .button && ($0.label ?? "").isEmpty && !$0.enabled }
+        note("\(moment): the runner's typed tree: \(Self.typedCount(record.built.root)) nodes; covering node (button, no label, disabled, at the root): "
+             + (covers.isEmpty ? "none" : covers.map { Self.rectText($0.frame) }.joined(separator: ", ")))
         let tree: RawElement? = record.raw
         report(tree, "\(moment), the runner's snapshot: Cell nodes (result rows)", limit: 8) { $0.elementType == XCUIElementTypeCode.cell }
         report(tree, "\(moment), the runner's snapshot: SearchField and TextField nodes") { e in
@@ -1522,6 +1582,17 @@ final class TreeFactProbeTests: QATestCase {
 
     private static func frameText(_ r: CGRect) -> String {
         String(format: "{%.0f,%.0f %.0fx%.0f}", Double(r.origin.x), Double(r.origin.y), Double(r.width), Double(r.height))
+    }
+
+    /// Nodes in a typed tree (with the runner's covering nodes, which `nodeCount` does not count).
+    private static func typedCount(_ root: UiNode) -> Int {
+        var count = 0
+        var stack = [root]
+        while let node = stack.popLast() {
+            count += 1
+            stack.append(contentsOf: node.children)
+        }
+        return count
     }
 
     private static func rectText(_ f: Rect) -> String {

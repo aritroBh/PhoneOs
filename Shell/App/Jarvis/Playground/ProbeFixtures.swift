@@ -52,17 +52,37 @@ enum ProbePresenter {
 
 /// Fact (a): schedules a local notification a few seconds ahead, so its banner shows over
 /// another app. Asks for permission first (the system alert; playground mode never asks
-/// anywhere else).
+/// anywhere else). The delay is 6 s, or the seconds passed with
+/// `-jarvis-probe-notify-delay <seconds>` (the tests pass a delay long enough to bring
+/// another app to the front first); the status shows it ("Scheduled in 25 s"), and
+/// `probe.notify.due` shows when the notification is due (seconds since 1970, the clock the
+/// simulator shares with the test runner).
 struct ProbeNotifyFixture: View {
     static let bannerBody = "Probe banner 4417"
     @State private var status = "Not scheduled"
+    @State private var due = "no due time"
+
+    /// The delay, from `-jarvis-probe-notify-delay <seconds>` (1 to 120 s), else 6 s.
+    static var delay: TimeInterval {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-jarvis-probe-notify-delay"), index + 1 < arguments.count,
+              let seconds = TimeInterval(arguments[index + 1]), seconds.isFinite else { return 6 }
+        return min(max(seconds, 1), 120)
+    }
+
+    /// The delay as the screen shows it ("6", "25").
+    static var delayText: String {
+        String(format: "%g", delay)
+    }
 
     var body: some View {
         Form {
-            Button("Notify in 6 s") { schedule() }
+            Button("Notify in \(Self.delayText) s") { schedule() }
                 .accessibilityIdentifier("probe.notify.schedule")
             Text(status)
                 .accessibilityIdentifier("probe.notify.status")
+            Text(due)
+                .accessibilityIdentifier("probe.notify.due")
         }
         .navigationTitle("Notification")
     }
@@ -85,10 +105,13 @@ struct ProbeNotifyFixture: View {
             let content = UNMutableNotificationContent()
             content.title = "Jarvis probe"
             content.body = Self.bannerBody
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 6, repeats: false)
+            let delay = Self.delay
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false)
+            let dueAt = Date().addingTimeInterval(delay)
             do {
                 try await center.add(UNNotificationRequest(identifier: "jarvis.probe.banner", content: content, trigger: trigger))
-                status = "Scheduled"
+                due = String(format: "%.3f", dueAt.timeIntervalSince1970)
+                status = "Scheduled in \(Self.delayText) s"
             } catch {
                 status = "Scheduling failed: \(error.localizedDescription)"
             }
