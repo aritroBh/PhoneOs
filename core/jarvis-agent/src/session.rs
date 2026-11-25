@@ -127,20 +127,20 @@ use jarvis_safety::{
     approval_context, check_app, check_app_name, check_confinement, control_at, copy_control,
     egress_owned, evaluate_sheeted, first_use_app, first_use_request, flow_checked, flow_note_into,
     flow_note_kinds, handoff_control, handoff_note, home_view, in_alert, insert_control,
-    is_springboard, label_names_denied_app, not_owner_note, observed_places, paste_note,
-    point_is_clear, question_noted, redact, redact_screen, return_question_noted,
-    sanitize_screen_text, search_names_denied_app, sensitive_note, touches_screen, url_destination,
-    verb_of, wait_level, widget_names_denied_app, Budget, BudgetVerdict, Confinement, Covered,
-    CoveredBy, Decision, FlowContext, InputKind, PointError, ScreenPlaces, ScreenSource,
-    ScreenTree, TypedText, Verdict, COVERS_ALL, COVERS_ALL_PREFIX, HOME_SCREEN_READ,
-    SCREEN_PICTURE, UNREADABLE_SCREEN_PREFIX,
+    is_launcher, is_spotlight, is_springboard, label_names_denied_app, not_owner_note,
+    observed_places, paste_note, point_is_clear, question_noted, redact, redact_screen,
+    return_question_noted, sanitize_screen_text, search_names_denied_app, sensitive_note,
+    touches_screen, url_destination, verb_of, wait_level, widget_names_denied_app, Budget,
+    BudgetVerdict, Confinement, Covered, CoveredBy, Decision, FlowContext, InputKind, PointError,
+    ScreenPlaces, ScreenSource, ScreenTree, TypedText, Verdict, COVERS_ALL, COVERS_ALL_PREFIX,
+    HOME_SCREEN_READ, SCREEN_PICTURE, SPOTLIGHT, SYSTEM_ALERT, UNREADABLE_SCREEN_PREFIX,
 };
 
 use crate::act::{Out, TypedState};
 use crate::changes::describe_change;
 use crate::commands::{
-    home_launch, is_widget, launches, plan, resolve_app, should_change, AppTarget, HomeLaunch,
-    PlanError, MAX_CLEAR_DELETES,
+    home_launch, is_widget, launcher_launch, launches, plan, resolve_app, should_change,
+    spotlight_launch, AppTarget, HomeLaunch, PlanError, MAX_CLEAR_DELETES,
 };
 use crate::history::{clean, describe, History, MAX_SHOWN};
 use crate::parser::{parse_model_output, ParseError};
@@ -1799,7 +1799,10 @@ impl Session {
         let asked = look.pending.bound.app_bundle_id.trim().to_owned();
         let front = self.current.screen.app_bundle_id.trim().to_owned();
         let same_app = front.eq_ignore_ascii_case(&asked);
-        let between = is_springboard(&front) || self.is_agent_app(&front);
+        // Top layer: a system alert (SpringBoard's) that came up since is not the Home Screen
+        // passed through: the approval is stale (the step is decided again on the alert).
+        let between = (is_springboard(&front) && self.here != FlowContext::SystemAlert)
+            || self.is_agent_app(&front);
         if !same_app && !between {
             return self.approval_stale(now, &look.pending);
         }
@@ -1924,9 +1927,9 @@ impl Session {
         {
             return None;
         }
-        if is_springboard(&screen.app_bundle_id)
+        if is_launcher(&screen.app_bundle_id)
             && matches!(
-                home_launch(&gate, screen, &self.apps),
+                launcher_launch(&gate, screen, Some(&self.tree()), &self.apps),
                 Some(HomeLaunch::Unresolved { .. } | HomeLaunch::Search { .. })
             )
             && self.denied_search_result().is_some()
@@ -2367,6 +2370,12 @@ impl Session {
     fn observes(&self, place: &FlowContext) -> bool {
         match place {
             FlowContext::App(a) if is_springboard(a) => false,
+            // Top layer: a SpringBoard alert is the OS too. Spotlight is an Apple process
+            // that draws its results itself (no web view, no other party's code runs there):
+            // a look or a wait there tells no third party anything; what is typed there is a
+            // full input into it (gated) and its rows are undecidable destinations.
+            FlowContext::SystemAlert => false,
+            FlowContext::App(a) if is_spotlight(a) => false,
             p => !p.bundle().is_some_and(|b| self.is_agent_app(b)),
         }
     }
@@ -3280,6 +3289,15 @@ impl Session {
             } else {
                 home_launch(&gate, screen, &self.apps)
             }
+        } else if is_spotlight(&screen.app_bundle_id) {
+            // Top layer (probe runs 134 and 135): Spotlight is its own process; its rows are
+            // decided by the OS's identifiers (`spotlight_launch`), never by their labels.
+            let tree = self.tree();
+            if in_alert(&gate, screen, Some(&tree)) {
+                None
+            } else {
+                spotlight_launch(&gate, screen, Some(&tree), &self.apps)
+            }
         } else {
             None
         };
@@ -3380,11 +3398,12 @@ impl Session {
         //     refused before it is typed (see `search_names_denied_app`); anything else is
         //     typed, and its Return waits for the results check (`on_settle`).
         if let Action::Type { text, .. } = &executed {
-            if is_springboard(&screen.app_bundle_id)
+            if is_launcher(&screen.app_bundle_id)
                 && search_names_denied_app(policy, &self.apps, text).is_some()
             {
                 return Err(Reject::AppDenied(format!(
-                    "searching the home screen for \"{}\" would open {}, which is on the deny list",
+                    "searching {} for \"{}\" would open {}, which is on the deny list",
+                    launcher_name(&screen.app_bundle_id),
                     clean(text, 60),
                     clean(text.trim(), 60)
                 )));
@@ -3525,7 +3544,8 @@ impl Session {
         {
             if policy.denies_category(RiskCategory::FirstUse) {
                 return Err(Reject::AppDenied(format!(
-                    "{what} on the home screen is not a known app, and new apps are not allowed"
+                    "{what} on {} is not a known app, and new apps are not allowed",
+                    launcher_name(&screen.app_bundle_id)
                 )));
             }
             let request = ConfirmRequest::one_line(
@@ -3533,7 +3553,8 @@ impl Session {
                 QuestionRowKind::Action,
                 clean(
                     &format!(
-                        "Let Jarvis open {what} from the home screen? It is not one of the known apps."
+                        "Let Jarvis open {what} from {}? It is not one of the known apps.",
+                        launcher_name(&screen.app_bundle_id)
                     ),
                     200,
                 ),
@@ -4074,7 +4095,7 @@ impl Session {
                 if pending.stage != Stage::Typing {
                     return self.verify(now, pending);
                 }
-                if is_springboard(&self.current.screen.app_bundle_id) {
+                if is_launcher(&self.current.screen.app_bundle_id) {
                     // Return on the home screen opens Spotlight's top hit: look once more
                     // so results that load late are seen; Return is then gated while no
                     // denied app is among them.
@@ -4215,7 +4236,7 @@ impl Session {
     /// not count.
     fn denied_search_result(&self) -> Option<String> {
         let screen = &self.current.screen;
-        if !is_springboard(&screen.app_bundle_id) {
+        if !is_launcher(&screen.app_bundle_id) {
             return None;
         }
         screen
@@ -4295,7 +4316,7 @@ impl Session {
             text: text.clone(),
             submit: true,
         };
-        if is_springboard(&screen.app_bundle_id) {
+        if is_launcher(&screen.app_bundle_id) {
             if let Some(name) = self.denied_search_result() {
                 let msg = format!(
                     "not done: Return was not pressed: it could open {name}, which is on the deny list and among the results"
@@ -4338,11 +4359,7 @@ impl Session {
                         ) == *summary
                 });
         let decision = if covered { Decision::Allow } else { decision };
-        let home = if is_springboard(&screen.app_bundle_id) {
-            home_launch(&gate, screen, &self.apps)
-        } else {
-            None
-        };
+        let home = launcher_launch(&gate, screen, Some(&self.tree()), &self.apps);
         let mut pending = typing;
         pending.before_target_source = self.target_source(&gate);
         pending.gate = gate.clone();
@@ -4412,8 +4429,9 @@ impl Session {
                 QuestionRowKind::Action,
                 clean(
                     &format!(
-                        "Let Jarvis open the top search result for \"{}\" from the home screen? It is not one of the known apps.",
-                        clean(&text, 60)
+                        "Let Jarvis open the top search result for \"{}\" from {}? It is not one of the known apps.",
+                        clean(&text, 60),
+                        launcher_name(&self.current.screen.app_bundle_id)
                     ),
                     200,
                 ),
@@ -4527,7 +4545,14 @@ impl Session {
             looks,
         } = settle;
         let fresh = self.result_labels();
-        let still_home = is_springboard(&self.current.screen.app_bundle_id);
+        // Top layer: still the launcher the text was typed in (SpringBoard or Spotlight).
+        let still_home = is_launcher(&self.current.screen.app_bundle_id)
+            && self
+                .current
+                .screen
+                .app_bundle_id
+                .trim()
+                .eq_ignore_ascii_case(pending.bound.app_bundle_id.trim());
         if still_home && fresh == labels {
             return self.press_held_return(now, *pending, field);
         }
@@ -5103,10 +5128,24 @@ fn name_reads_as_list(name: &str) -> bool {
         || n.contains(&words(
             HOME_SCREEN_READ.split_once('(').map_or("", |(_, rest)| rest),
         ))
+        // Top layer: nor as a system alert or as Spotlight (Jarvis's words for the OS's
+        // alert and search).
+        || n.contains(&words(SYSTEM_ALERT.trim_start_matches("a ")))
+        || n.contains(&words(SPOTLIGHT))
         // Probe run 134 (fix 3): nor as the name of a screen Jarvis cannot read.
         || n.starts_with(UNREADABLE_SCREEN_PREFIX.trim())
         || n.contains("cannot read")
         || n.contains("another party")
+}
+
+/// Top layer: how a launch question names the launcher it is asked on: Spotlight, else the
+/// home screen (as before).
+fn launcher_name(bundle_id: &str) -> &'static str {
+    if is_spotlight(bundle_id) {
+        SPOTLIGHT
+    } else {
+        "the home screen"
+    }
 }
 
 fn place_key(places: &[FlowContext]) -> String {

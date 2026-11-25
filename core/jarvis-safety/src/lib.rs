@@ -57,8 +57,9 @@ mod validate;
 
 pub use actuation::touches_screen;
 pub use app::{
-    app_level, check_app, check_app_name, denied_app_names, is_springboard, label_names_denied_app,
-    matching_rule, mode_level, search_names_denied_app, widget_names_denied_app, Verdict,
+    app_level, check_app, check_app_name, denied_app_names, is_launcher, is_spotlight,
+    is_springboard, label_names_denied_app, matching_rule, mode_level, search_names_denied_app,
+    widget_names_denied_app, Verdict,
 };
 pub use approval::{approval_context, ApprovalContext};
 pub use budget::{Budget, BudgetVerdict};
@@ -77,12 +78,13 @@ pub use evaluate::{
     RECIPIENT_FIELD_STRONG_HEADS, RECIPIENT_FIELD_WEAK_HEADS, UNVERIFIED_SCREEN_WARNING,
 };
 pub use flow::{
-    copy_control, edit_menu_shape, edit_menu_view, few_actionable, flow_checked, handoff_control,
-    home_menu_row, home_view, insert_control, is_browser, notification_banner, observed_context,
-    observed_places, remote_container, share_sheet_control, thin_tree, unplaced_target,
-    url_destination, Confinement, EditMenuShape, FlowContext, InputKind, ScreenPlaces, BROWSERS,
-    COVERS_ALL, COVERS_ALL_PREFIX, EDIT_MENU_OS_LABELS, HOME_SCREEN_READ, LOCAL_MENU_ITEMS,
-    MIN_ACTIONABLE, SCREEN_PICTURE, SHARE_SHEET_IDS, SYSTEM_BROWSER, UNREADABLE_SCREEN_PREFIX,
+    copy_control, edit_menu_shape, edit_menu_view, few_actionable, flow_checked, grid_cell,
+    handoff_control, home_menu_row, home_view, insert_control, inside_text_input, is_browser,
+    notification_banner, observed_context, observed_places, remote_container, share_sheet_control,
+    spotlight_app_icon, thin_tree, unplaced_target, url_destination, Confinement, EditMenuShape,
+    FlowContext, InputKind, ScreenPlaces, BROWSERS, COVERS_ALL, COVERS_ALL_PREFIX,
+    EDIT_MENU_OS_LABELS, HOME_SCREEN_READ, LOCAL_MENU_ITEMS, MIN_ACTIONABLE, SCREEN_PICTURE,
+    SHARE_SHEET_IDS, SPOTLIGHT, SYSTEM_ALERT, SYSTEM_BROWSER, UNREADABLE_SCREEN_PREFIX,
     UNREADABLE_SCREEN_SUFFIX,
 };
 pub use gate::{changes_state, gate, gate_in, gate_on, gate_owned, Gate, TRUSTED_ALLOWED};

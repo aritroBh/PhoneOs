@@ -66,6 +66,9 @@ pub const WALLET_BUNDLE_ID: &str = "com.apple.Passbook";
 pub const SETTINGS_BUNDLE_ID: &str = "com.apple.Preferences";
 /// Bundle id of SpringBoard, the home screen (and lock screen, Control Center host).
 pub const SPRINGBOARD_BUNDLE_ID: &str = "com.apple.springboard";
+/// Bundle id of Spotlight, the system search: its own process on iOS 26 (probe runs 134 and
+/// 135), shown over the Home Screen after a swipe down, with its own accessibility tree.
+pub const SPOTLIGHT_BUNDLE_ID: &str = "com.apple.Spotlight";
 
 /// How closely the owner supervises actions in apps without their own [`AppRule`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]

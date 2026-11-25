@@ -62,6 +62,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
     }
 
     static let springboard = "com.apple.springboard"
+    static let spotlight = TopLayer.spotlight
     nonisolated static let defaultKnownApps = [
         "dev.jarvis.app", "com.apple.Preferences", "com.apple.mobilesafari", "com.apple.MobileSMS",
         "com.apple.mobilenotes", "com.apple.mobilecal", "com.apple.reminders", "com.apple.mobileslideshow",
@@ -88,6 +89,9 @@ final class XCUITestPhoneRunner: PhoneRunner {
     /// The one judge for commands and for resume (JarvisKit, Linux-tested): staleness of the
     /// notify reading is decided by time, here, nowhere else.
     private let lockJudge = LockJudge()
+    /// The banners (screen points) the last observation added to the front app's tree as
+    /// covering nodes (`BannerCover`): what the next touch was planned with.
+    private var reportedBanners: [Rect] = []
     /// Lock readings with the time since the runner was made: every change, and every
     /// reading with `noteLockSignalsEveryObservation` (for failure messages).
     private(set) var lockSignalHistory: [String] = []
@@ -114,9 +118,10 @@ final class XCUITestPhoneRunner: PhoneRunner {
         await lockStateOnMain()
     }
 
-    /// Stale-screen guard (`FrontAppGuard`): the app in front, by the same reading the
-    /// observations use (the last activated app while it is in front, else a known app in
-    /// front, else SpringBoard). No snapshot is taken.
+    /// Stale-screen guard (`FrontAppGuard`): the top layer, by the same decision the
+    /// observations and the check next to a gesture use (`TopLayer`: a SpringBoard alert,
+    /// else Spotlight in front, else the last activated app while it is in front, else a
+    /// known app in front, else SpringBoard). No snapshot is taken.
     nonisolated func frontBundleId() async throws -> String? {
         await frontOnMain()
     }
@@ -167,7 +172,10 @@ final class XCUITestPhoneRunner: PhoneRunner {
 
     private func observe(includeScreenshot: Bool) throws -> RunnerObservation {
         var notes: [String] = []
-        let bundleId = foregroundBundleId(notes: &notes)
+        let foreground = foregroundBundleId(notes: &notes)
+        let top = topLayer(foreground: foreground)
+        if let note = top.note { notes.append(note) }
+        let bundleId = top.bundleId
         let app = application(bundleId)
         let start = Date()
         let snapshot = try app.snapshot()
@@ -182,11 +190,36 @@ final class XCUITestPhoneRunner: PhoneRunner {
                         height: Double(image.size.height).finiteClamped(Rect.coordinateLimit))
             notes.append("the application element has no frame; screen size taken from a screenshot (\(size.width.compactText)x\(size.height.compactText))")
         }
-        let built = UiTreeBuilder.build(raw, screenSize: size)
+        var built = UiTreeBuilder.build(raw, screenSize: size)
+        // A notification banner over an app or Spotlight is SpringBoard's: one covering node
+        // per banner, with no text (`BannerCover`). On SpringBoard the banner is in the tree.
+        reportedBanners = []
+        if bundleId != Self.springboard {
+            let banners = bannerFrames()
+            if !banners.isEmpty {
+                built.root = BannerCover.covering(built.root, banners: banners)
+                reportedBanners = banners
+                notes.append("a notification banner (SpringBoard's) is up: \(banners.count) covering node(s) with no text added at its frame")
+            }
+        }
+        // The lock readings keep their meaning: they are of the foreground reading (the
+        // known app in front, else SpringBoard), whatever the top layer is. With SpringBoard
+        // the foreground reading, the lock screen check reads SpringBoard's tree: the one
+        // just taken, or (Spotlight on top) SpringBoard's own snapshot.
+        let lockScreen: Bool?
+        if foreground == Self.springboard {
+            if bundleId == Self.springboard {
+                lockScreen = LockScreenSignature.matches(raw)
+            } else {
+                lockScreen = (try? application(Self.springboard).snapshot()).map { LockScreenSignature.matches(SnapshotCopy.copy($0)) }
+            }
+        } else {
+            lockScreen = nil
+        }
         let signals = LockSignals(
             notify: notifyLockState(),
-            lockScreen: bundleId == Self.springboard ? LockScreenSignature.matches(raw) : nil,
-            front: bundleId == Self.springboard ? .springBoard : .app(bundleId)
+            lockScreen: lockScreen,
+            front: foreground == Self.springboard ? .springBoard : .app(foreground)
         )
         let verdict = lockJudge.judge(signals, at: lockClockNow())
         record(signals, verdict, everyTime: configuration.noteLockSignalsEveryObservation)
@@ -257,7 +290,33 @@ final class XCUITestPhoneRunner: PhoneRunner {
 
     private func frontOnMain() -> String {
         var notes: [String] = []
-        return foregroundBundleId(notes: &notes)
+        return topLayer(foreground: foregroundBundleId(notes: &notes)).bundleId
+    }
+
+    /// The top layer (`TopLayer.decide`) from cheap queries on the OS's processes, never on
+    /// the front app's tree (R23): whether SpringBoard shows an alert (`.exists` on its
+    /// alerts query), and whether Spotlight runs in the foreground (its application state)
+    /// showing its search field (`.exists` on that field's query, made only while it is in
+    /// the foreground).
+    private func topLayer(foreground: String) -> TopLayer.Decision {
+        let alertUp = application(Self.springboard).alerts.firstMatch.exists
+        var spotlightUp = false
+        if !alertUp {
+            let spotlight = application(Self.spotlight)
+            spotlightUp = spotlight.state == .runningForeground
+                && spotlight.textFields[TopLayer.spotlightFieldIdentifier].firstMatch.exists
+        }
+        return TopLayer.decide(systemAlertUp: alertUp, spotlightInFront: spotlightUp, foreground: foreground)
+    }
+
+    /// The frames (screen points) of the notification banners SpringBoard shows now: a query
+    /// for the banner's identifier on SpringBoard, and only when one exists, SpringBoard's
+    /// snapshot for the frames (`BannerCover.frames`: some SpringBoard windows report pixels).
+    private func bannerFrames() -> [Rect] {
+        let board = application(Self.springboard)
+        guard board.descendants(matching: .any).matching(identifier: BannerCover.identifier).firstMatch.exists,
+              let snapshot = try? board.snapshot() else { return [] }
+        return BannerCover.frames(inSpringBoard: SnapshotCopy.copy(snapshot))
     }
 
     private func application(_ bundleId: String) -> XCUIApplication {
@@ -277,8 +336,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
     }
 
     private func keyboardIsUp() -> Bool {
-        var notes: [String] = []
-        return application(foregroundBundleId(notes: &notes)).keyboards.count > 0
+        application(frontOnMain()).keyboards.count > 0
     }
 
     // MARK: - Lock state (main actor)
@@ -376,21 +434,29 @@ final class XCUITestPhoneRunner: PhoneRunner {
     // MARK: - Commands (main actor)
 
     private func act(_ command: RunnerCommand, expect: CommandExpect?) -> RunnerResult {
-        // Stale-screen check next to the gesture: the front app is read in this same
+        // Stale-screen check next to the gesture: the top layer is read in this same
         // main-actor step, with no suspension before `execute` acts on it.
-        if let refusal = FrontAppGuard.refusalNextToGesture(expect, front: frontOnMain()) {
+        let top = frontOnMain()
+        if let refusal = FrontAppGuard.refusalNextToGesture(expect, front: top) {
+            onCommand?(command, refusal)
+            return refusal
+        }
+        // A banner that came up since the look and holds the point the command touches.
+        if let expect, top != Self.springboard, let p = BannerCover.touchPoint(command),
+           BannerCover.refuses(x: p.x, y: p.y, banners: bannerFrames(), planned: reportedBanners) {
+            let refusal = RunnerResult.staleBanner(expected: expect.bundleId)
             onCommand?(command, refusal)
             return refusal
         }
         settlePending = true
-        let result = execute(command).checkedAfterCommand(command, lockedAfter: lockedAfterCommand())
+        let result = execute(command, in: top).checkedAfterCommand(command, lockedAfter: lockedAfterCommand())
         onCommand?(command, result)
         return result
     }
 
-    private func execute(_ command: RunnerCommand) -> RunnerResult {
-        var notes: [String] = []
-        let bundleId = foregroundBundleId(notes: &notes)
+    /// Carries out `command` on the top layer `bundleId` (the app whose coordinates and
+    /// keyboard it uses: Spotlight's keyboard is in Spotlight's tree).
+    private func execute(_ command: RunnerCommand, in bundleId: String) -> RunnerResult {
         let app = application(bundleId)
         switch command {
         case .tap(let x, let y):

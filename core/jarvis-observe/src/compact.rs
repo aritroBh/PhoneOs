@@ -932,6 +932,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
                     text,
                     keyboard: v.quiet != Quiet::No,
                     banner: jarvis_safety::notification_banner(node),
+                    grid_cell: jarvis_safety::grid_cell(node),
                 });
             }
         }

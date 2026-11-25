@@ -1,0 +1,194 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 135, fact
+# probe SpotlightRows (`fact-spotlight-rows.04-tree.txt`), as the runner dumps it ("typed tree"):
+# Spotlight after typing "example.com": website rows (`ResultCell`), the go-to-web row (`PunchOutToWebSuggestionCell`), `SuggestionCell`.
+# note: fact probe fact-spotlight-rows, capture 04: Spotlight after typing "example.com" (Spotlight)
+# note: app state 4, device orientation 1
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 4: com.apple.Spotlight
+screen 440x956 pt, keyboard visible
+
+Application "Spotlight" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 54}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{-160, -480}, {760, 1596}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      CollectionView {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 0}, {440, 126.8}}
+                          Other(Other) {{0, 517.2}, {440, 185.6}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 517.2}, {440, 185.6}}
+                            Image id=AdditionalDimmingOverlay {{-120, 522}, {680, 361.6}}
+                            Other(Other) {{0, 517.2}, {440, 185.6}}
+                              Other(Other) {{0, 517.2}, {440, 185.6}}
+                            Other(Other) {{0, 517.2}, {440, 185.6}}
+                              Other(Other) {{0, 517.2}, {440, 185.6}}
+                              Other(Other) {{0, 517.2}, {440, 185.6}}
+                        Other(Other) id=Identifier:SectionHeader,Section:0,Title:Top Hit {{20, 62}, {400, 36}}
+                          Other(Other) {{20, 62}, {400, 36}}
+                            Other(Other) {{20, 62}, {400, 36}}
+                              Other(Other) {{20, 62}, {400, 36}}
+                                StaticText "Top Hit" {{20, 74}, {51, 18}}
+                        Cell "Example Domain, This domain is for use in documentation examples without needing permission. L’usage de ce domaine est réservé à des exemples de documentation, sans autorisation préalable. Il ne s’agit pas d’un service ; son utilisation à des fins de test ou de surveillance est à éviter. Это не сервис; не рекомендуется его использование для тестирования и мониторинга., example.com" id=Identifier:ResultCell,Section:0,Row:0 {{20, 98}, {400, 100}}
+                          Other(Other) {{20, 98}, {400, 100}}
+                            Other(Other) {{20, 98}, {400, 100}}
+                          Other(Other) {{17, 95}, {406, 106}}
+                          Other(Other) {{20, 98}, {400, 100}}
+                            Other(Other) {{20, 98}, {400, 100}}
+                              Image {{40, 116}, {64, 64}} [selected]
+                              Image {{40, 116}, {64, 64}} [selected]
+                              StaticText "Example Domain" {{118, 118.6}, {132.3, 20.3}} [selected]
+                              StaticText "This domain is for use in documentation examples without needing permission. L’usage de ce domaine est réservé à des exemples de documentation, sans autorisation préalable. Il ne s’agit pas d’un service ; son utilisation à des fins de test ou de surveillance est à éviter. Это не сервис; не рекомендуется его использование для тестирования и мониторинга." {{118, 140.4}, {276.3, 18}} [selected]
+                              StaticText "example.com" {{118, 159.4}, {91, 18}} [selected]
+                        Other(Other) id=Identifier:SectionHeader,Section:1,Title:Suggestions {{20, 214}, {400, 33}}
+                          Other(Other) {{20, 214}, {400, 33}}
+                            Other(Other) {{20, 214}, {400, 33}}
+                              Other(Other) {{20, 214}, {400, 33}}
+                                StaticText "Suggestions" {{20, 221}, {89.3, 18}}
+                        Cell "example.com" id=Identifier:PunchOutToWebSuggestionCell,Section:1,Row:0 {{0, 247}, {440, 56.3}}
+                          Other(Other) {{0, 247}, {440, 56.3}}
+                          Other(Other) {{0, 247}, {440, 56.3}}
+                          Other(Other) {{0, 247}, {440, 56.3}}
+                            Other(Other) {{0, 247}, {440, 56.3}}
+                              Other(Other) "example.com" {{0, 247}, {440, 56.3}}
+                        Other(Other) {{20, 246}, {400, 1}}
+                          Other(Other) {{20, 246}, {400, 1}}
+                            Other(Other) {{20, 246}, {400, 1}}
+                              Other(Other) {{20, 246}, {400, 1}}
+                        Other(Other) id=Identifier:SectionHeader,Section:2,Title:Websites {{20, 307.3}, {400, 38}}
+                          Other(Other) {{20, 307.3}, {400, 38}}
+                            Other(Other) {{20, 307.3}, {400, 38}}
+                              Other(Other) {{20, 307.3}, {400, 38}}
+                                StaticText "Websites" {{20, 319.3}, {66, 18}}
+                                Button "Show More" {{340.3, 319.3}, {79.7, 18}}
+                        Cell "Generate from real-world examples | Examples.com, examples.com" id=Identifier:ResultCell,Section:2,Row:0 {{0, 345.3}, {440, 92}}
+                          Other(Other) {{0, 345.3}, {440, 92}}
+                          Other(Other) {{0, 345.3}, {440, 92}}
+                          Other(Other) {{0, 345.3}, {440, 92}}
+                            Other(Other) {{0, 345.3}, {440, 92}}
+                              Image {{20, 359.3}, {66, 66}}
+                              Image {{66, 405.3}, {20, 20}}
+                              Image {{20, 359.3}, {66, 66}}
+                              Image {{20, 359.3}, {66, 66}}
+                              StaticText "Generate from real-world examples | Examples.com" {{98, 360.8}, {293.3, 42.3}}
+                              StaticText "examples.com" {{98, 403.9}, {98.7, 18}}
+                        Other(Other) {{20, 344.3}, {400, 1}}
+                          Other(Other) {{20, 344.3}, {400, 1}}
+                            Other(Other) {{20, 344.3}, {400, 1}}
+                              Other(Other) {{20, 344.3}, {400, 1}}
+                        Cell "example.com, en.wikipedia.org › wiki › Example" id=Identifier:ResultCell,Section:2,Row:1 {{0, 437.3}, {440, 92.0}}
+                          Other(Other) {{0, 437.3}, {440, 92.0}}
+                          Other(Other) {{0, 437.3}, {440, 92.0}}
+                          Other(Other) {{0, 437.3}, {440, 92.0}}
+                            Other(Other) {{0, 437.3}, {440, 92.0}}
+                              Image {{20, 451.3}, {64, 64.0}}
+                              Image {{66, 497.3}, {20, 20.0}}
+                              Image {{20, 451.3}, {64, 64.0}}
+                              Image {{66, 497.3}, {20, 20.0}}
+                              StaticText "example.com" {{98, 463.7}, {106.3, 20.3}}
+                              StaticText "en.wikipedia.org › wiki › Example" {{98, 485}, {224, 18}}
+                        Other(Other) {{98, 436.3}, {322, 1}}
+                        Other(Other) id=Identifier:SectionHeader,Section:3,Title:Search in Apps {{20, 533.3}, {400, 38}}
+                          Other(Other) {{20, 533.3}, {400, 38}}
+                            Other(Other) {{20, 533.3}, {400, 38}}
+                              Other(Other) {{20, 533.3}, {400, 38}}
+                                StaticText "Search in Apps" {{20, 545.3}, {107.3, 18}}
+                        Cell "Search Maps" id=Identifier:SuggestionCell,Section:3,Row:0 {{0, 571.3}, {440, 56.3}}
+                          Other(Other) {{0, 571.3}, {440, 56.3}}
+                          Other(Other) {{0, 571.3}, {440, 56.3}}
+                          Other(Other) {{0, 571.3}, {440, 56.3}}
+                            Other(Other) {{0, 571.3}, {440, 56.3}}
+                              Other(Other) "Search Maps" {{0, 571.3}, {440, 56.3}}
+                        Other(Other) {{20, 570.3}, {400, 1}}
+                          Other(Other) {{20, 570.3}, {400, 1}}
+                            Other(Other) {{20, 570.3}, {400, 1}}
+                              Other(Other) {{20, 570.3}, {400, 1}}
+                        Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 55.7}, {30, 815.3}}
+                          Other(Other) {{434, 689.7}, {3, 178.3}}
+                        Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{56, 838}, {328, 30}}
+                          Other(Other) {{59, 865}, {322, 3}}
+                        Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 55.7}, {30, 815.3}}
+                          Other(Other) {{434, 689.7}, {3, 178.3}}
+                        Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{56, 838}, {328, 30}}
+                          Other(Other) {{59, 865}, {322, 3}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 582}, {440, 51}}
+            Other(Other) {{8, 582}, {424, 51}}
+              Other(Other) {{8, 582}, {424, 48}}
+                TextField value="example.com" placeholder="Search" id=SpotlightSearchField {{8, 582}, {424, 48}} [focused]
+                  Image "Search" id=magnifyingglass {{20, 596}, {20.7, 19.3}}
+                  Button "Clear text" {{394.7, 596.7}, {19.7, 19}}
+                  Other(Other) {{48.7, 582}, {349.3, 48}}
+                    Other(Other) {{48.7, 596}, {349.3, 20.3}}
+                      Other(Other) {{152.7, 596}, {176.3, 20.3}}
+                      StaticText " — " {{152.7, 596}, {27.7, 20.3}}
+                      StaticText "https://example.com/" {{180.3, 596}, {143.7, 20.3}}
+                      Other(Other) {{324, 596}, {74, 20.3}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 638}, {440, 318}}
+        Other(Other) id=inputView {{0, 638}, {440, 318}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 638}, {440, 318}}
+        Other(Other) {{0, 638}, {440, 318}}
+          Other(Other) {{0, 638}, {440, 318}}
+            Other(Other) {{0, 638}, {440, 318}}
+        Other(Other) {{0, 655}, {440, 243}}
+          Keyboard {{0, 655}, {440, 243}}
+            Other(Other) {{0, 655}, {440, 243}}
+              Other(Other) id=UIKeyboardLayoutStar Preview {{0, 655}, {440, 243}}
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "q" {{4.7, 662}, {43, 56}}
+                Key "w" {{47.7, 662}, {43.3, 56}}
+                Key "e" {{91.0, 662}, {43.3, 56}}
+                Key "r" {{134.3, 662}, {43.3, 56}}
+                Key "t" {{177.7, 662}, {43.3, 56}}
+                Key "y" {{221, 662}, {43.3, 56}}
+                Key "u" {{264.3, 662}, {43.3, 56}}
+                Key "i" {{307.7, 662}, {43.3, 56}}
+                Key "o" {{351, 662}, {43.3, 56}}
+                Key "p" {{394.3, 662}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "a" {{26.0, 718}, {43.3, 56}}
+                Key "s" {{69.3, 718}, {43.3, 56}}
+                Key "d" {{112.7, 718}, {43.3, 56}}
+                Key "f" {{156, 718}, {43.3, 56}}
+                Key "g" {{199.3, 718}, {43.3, 56}}
+                Key "h" {{242.7, 718}, {43.3, 56}}
+                Key "j" {{286, 718}, {43.3, 56}}
+                Key "k" {{329.3, 718}, {43.3, 56}}
+                Key "l" {{372.7, 718}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Button "shift" id=shift {{4.7, 774}, {56, 56}}
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "z" {{69.3, 774}, {43.3, 56}}
+                Key "x" {{112.7, 774}, {43.3, 56}}
+                Key "c" {{156, 774}, {43.3, 56}}
+                Key "v" {{199.3, 774}, {43.3, 56}}
+                Key "b" {{242.7, 774}, {43.3, 56}}
+                Key "n" {{286, 774}, {43.3, 56}}
+                Key "m" {{329.3, 774}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Key "delete" id=delete {{381.3, 774}, {56.3, 56}}
+                Key "numbers" id=more {{4.7, 830}, {108, 56}}
+                Key " " id=space {{112.7, 830}, {216.7, 56}}
+                Button "go" id=Go {{329.3, 830}, {108.3, 56}}
+        Other(Other) {{0, 655}, {440, 301}}
+          Button "Emoji" {{2.5, 887.7}, {80.1, 68.7}}
+            StaticText {{2.5, 887.7}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText {{357.4, 887.4}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText {{357.4, 887.4}, {0, 0}} [hidden]

@@ -191,6 +191,12 @@ pub struct RawNode {
     /// name says neither "banner" nor "notification").
     #[serde(default)]
     pub banner: bool,
+    /// Probe runs 134 and 135 (iOS 26.5): it is a `Cell` whose identifier holds
+    /// `Identifier:GridCell` — Spotlight's app result row (`com.apple.Spotlight`), which
+    /// holds the app's `Icon` (a `Button` labelled with the app's display name). The OS's
+    /// identifier; read only on a Spotlight screen (`jarvis_safety::spotlight_app_row`).
+    #[serde(default)]
+    pub grid_cell: bool,
 }
 
 /// A text input of the raw tree a compact screen was built from, listed or not (eighth

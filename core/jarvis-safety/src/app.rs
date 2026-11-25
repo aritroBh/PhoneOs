@@ -375,6 +375,23 @@ pub fn is_springboard(bundle_id: &str) -> bool {
     bundle_id.trim().eq_ignore_ascii_case(SPRINGBOARD_BUNDLE_ID)
 }
 
+/// Whether `bundle_id` is Spotlight (`com.apple.Spotlight`), the system search: on iOS 26
+/// its own process, with its own tree (probe runs 134 and 135), never SpringBoard. It is
+/// an app Jarvis acts in like any other for first-use approval (it sends what is typed to
+/// a search service and shows other parties' results), and the OS's search for the rules
+/// of typing a search and opening its results (`is_launcher`).
+pub fn is_spotlight(bundle_id: &str) -> bool {
+    bundle_id
+        .trim()
+        .eq_ignore_ascii_case(jarvis_proto::SPOTLIGHT_BUNDLE_ID)
+}
+
+/// Whether `bundle_id` is one of the OS's launchers, where typing searches and Return opens
+/// the top hit: SpringBoard (the App Library's search) or Spotlight.
+pub fn is_launcher(bundle_id: &str) -> bool {
+    is_springboard(bundle_id) || is_spotlight(bundle_id)
+}
+
 /// The `denied_apps` part of [`check_app`].
 fn check_listed(policy: &Policy, target: &str, is_name: bool, words: &[String]) -> Option<Verdict> {
     for entry in &policy.denied_apps {

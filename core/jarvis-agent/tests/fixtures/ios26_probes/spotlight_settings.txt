@@ -1,0 +1,249 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 135, fact
+# probe SpotlightRows (`fact-spotlight-rows.01-tree.txt`), as the runner dumps it ("typed tree"):
+# Spotlight (`com.apple.Spotlight`) after typing "Settings": the app row `Identifier:GridCell` holding an `Icon` (typed `Button`) "Settings".
+# note: fact probe fact-spotlight-rows, capture 01: Spotlight after typing "Settings" (Spotlight)
+# note: app state 4, device orientation 1
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 1: com.apple.Spotlight
+screen 440x956 pt, keyboard visible
+
+Application "Spotlight" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 54}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{-160, -480}, {760, 1596}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      CollectionView {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 0}, {440, 126.8}}
+                          Other(Other) {{0, 517.2}, {440, 185.6}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 517.2}, {440, 185.6}}
+                            Image id=AdditionalDimmingOverlay {{-120, 522}, {680, 361.6}}
+                            Other(Other) {{0, 517.2}, {440, 185.6}}
+                              Other(Other) {{0, 517.2}, {440, 185.6}}
+                            Other(Other) {{0, 517.2}, {440, 185.6}}
+                              Other(Other) {{0, 517.2}, {440, 185.6}}
+                              Other(Other) {{0, 517.2}, {440, 185.6}}
+                        Other(Other) id=Identifier:SectionHeader,Section:0,Title:Top Hit {{20, 62}, {400, 36}}
+                          Other(Other) {{20, 62}, {400, 36}}
+                            Other(Other) {{20, 62}, {400, 36}}
+                              Other(Other) {{20, 62}, {400, 36}}
+                                StaticText "Top Hit" {{20, 74}, {51, 18}}
+                        Other(Other) {{20, 98}, {400, 126}}
+                          Other(Other) {{20, 98}, {400, 126}}
+                            Other(Other) {{20, 98}, {400, 126}}
+                        Cell "Settings" id=Identifier:GridCell,Section:0,Row:0 {{25.3, 98}, {389.3, 126}}
+                          Other(Other) {{25.3, 98}, {389.3, 126}}
+                          Other(Other) {{25.3, 98}, {389.3, 126}}
+                          Other(Other) {{25.3, 98}, {389.3, 126}}
+                            Other(Other) {{25.3, 98}, {389.3, 126}}
+                              Other(Other) "Settings" {{25.3, 98}, {389.3, 126}}
+                                Other(Other) {{25.3, 98}, {389.3, 126}}
+                                  Button "Settings" id=Settings {{38.0, 116}, {72, 94.7}}
+                                    Other(Other) {{37.0, 115}, {74, 74}}
+                                    Other(Other) {{40.0, 118}, {68, 68}}
+                                    Other(Other) {{40.0, 118}, {68, 82}}
+                                      Other(Other) {{40.0, 118}, {68, 68}}
+                                        Other(Other) {{40.0, 118}, {68, 68}}
+                                          Other(Other) {{40.0, 118}, {68, 68}}
+                                      Image id=label-view {{41.7, 189}, {64.3, 19.7}}
+                        Other(Other) id=Identifier:SectionHeader,Section:1,Title:Suggestions {{20, 240}, {400, 33}}
+                          Other(Other) {{20, 240}, {400, 33}}
+                            Other(Other) {{20, 240}, {400, 33}}
+                              Other(Other) {{20, 240}, {400, 33}}
+                                StaticText "Suggestions" {{20, 247}, {89.3, 18}}
+                        Cell "settings" id=Identifier:PunchOutToWebSuggestionCell,Section:1,Row:0 {{0, 273}, {440, 56.3}}
+                          Other(Other) {{0, 273}, {440, 56.3}}
+                          Other(Other) {{0, 273}, {440, 56.3}}
+                          Other(Other) {{0, 273}, {440, 56.3}}
+                            Other(Other) {{0, 273}, {440, 56.3}}
+                              Other(Other) "settings" {{0, 273}, {440, 56.3}}
+                        Other(Other) {{20, 272}, {400, 1}}
+                          Other(Other) {{20, 272}, {400, 1}}
+                            Other(Other) {{20, 272}, {400, 1}}
+                              Other(Other) {{20, 272}, {400, 1}}
+                        Other(Other) id=Identifier:SectionHeader,Section:2,Title:Apps {{20, 333.3}, {400, 38}}
+                          Other(Other) {{20, 333.3}, {400, 38}}
+                            Other(Other) {{20, 333.3}, {400, 38}}
+                              Other(Other) {{20, 333.3}, {400, 38}}
+                                StaticText "Apps" {{20, 345.3}, {37, 18}}
+                        Cell "Watch" id=Identifier:ResultCell,Section:2,Row:0 {{0, 371.3}, {440, 96}}
+                          Other(Other) {{0, 371.3}, {440, 96}}
+                          Other(Other) {{0, 371.3}, {440, 96}}
+                          Other(Other) {{0, 371.3}, {440, 96}}
+                            Other(Other) {{0, 371.3}, {440, 96}}
+                              Other(Other) "Watch" {{0, 371.3}, {440, 96}}
+                        Other(Other) {{20, 370.3}, {400, 1}}
+                          Other(Other) {{20, 370.3}, {400, 1}}
+                            Other(Other) {{20, 370.3}, {400, 1}}
+                              Other(Other) {{20, 370.3}, {400, 1}}
+                        Other(Other) id=Identifier:SectionHeader,Section:3,Title:Siri Knowledge {{20, 471.3}, {400, 38}}
+                          Other(Other) {{20, 471.3}, {400, 38}}
+                            Other(Other) {{20, 471.3}, {400, 38}}
+                              Other(Other) {{20, 471.3}, {400, 38}}
+                                StaticText "Siri Knowledge" {{20, 483.3}, {106.7, 18}}
+                        Cell "Windows Settings, Configuration interface of Microsoft Windows" id=Identifier:ResultCell,Section:3,Row:0 {{0, 509.3}, {440, 92.0}}
+                          Other(Other) {{0, 509.3}, {440, 92.0}}
+                          Other(Other) {{0, 509.3}, {440, 92.0}}
+                          Other(Other) {{0, 509.3}, {440, 92.0}}
+                            Other(Other) {{0, 509.3}, {440, 92.0}}
+                              Image "Photo" id=photo {{20, 523.3}, {64, 64}}
+                              Image "Photo" id=photo {{20, 523.3}, {64, 64}}
+                              StaticText "Windows Settings" {{98, 535}, {143.3, 20.3}}
+                              StaticText "Configuration interface of Microsoft Windows" {{98, 557.7}, {311.3, 18}}
+                        Other(Other) {{20, 508.3}, {400, 1}}
+                          Other(Other) {{20, 508.3}, {400, 1}}
+                            Other(Other) {{20, 508.3}, {400, 1}}
+                              Other(Other) {{20, 508.3}, {400, 1}}
+                        Other(Other) id=Identifier:SectionHeader,Section:4,Title:Websites {{20, 605.3}, {400, 38}}
+                          Other(Other) {{20, 605.3}, {400, 38}}
+                            Other(Other) {{20, 605.3}, {400, 38}}
+                              Other(Other) {{20, 605.3}, {400, 38}}
+                                StaticText "Websites" {{20, 617.3}, {66, 18}}
+                                Button "Show More" {{340.3, 617.3}, {79.7, 18}}
+                        Cell "Search Settings, ContentManage the kinds of search results you see by setting preferences for personalization and explicit content. FeedbackHelp Privacy Terms. LanguageManage the language of your Google Search display, and select preferences for your results. DesktopCustomize how Google Search looks and functions on your device., google.com › preferences" id=Identifier:ResultCell,Section:4,Row:0 {{0, 643.3}, {440, 87}}
+                          Other(Other) {{0, 643.3}, {440, 87}}
+                          Other(Other) {{0, 643.3}, {440, 87}}
+                          Other(Other) {{0, 643.3}, {440, 87}}
+                            Other(Other) {{0, 643.3}, {440, 87}}
+                              Other(Other) {{0, 0}, {0, 0}} [hidden]
+                              Other(Other) {{0, 0}, {0, 0}} [hidden]
+                              StaticText "Search Settings" {{34, 657.4}, {126.3, 20.3}}
+                              StaticText "ContentManage the kinds of search results you see by setting preferences for personalization and explicit content. FeedbackHelp Privacy Terms. LanguageManage the language of your Google Search display, and select preferences for your results. DesktopCustomize how Google Search looks and functions on your device." {{34, 679.2}, {383.7, 18}}
+                              StaticText "google.com › preferences" {{34, 698.2}, {177, 18}}
+                        Other(Other) {{20, 642.3}, {400, 1}}
+                          Other(Other) {{20, 642.3}, {400, 1}}
+                            Other(Other) {{20, 642.3}, {400, 1}}
+                              Other(Other) {{20, 642.3}, {400, 1}}
+                        Cell "http://developer.android.com/reference/android/provider/Settings?authuser=83&hl=id, developer.android.com › reference › android" id=Identifier:ResultCell,Section:4,Row:1 {{0, 730.3}, {440, 89.3}}
+                          Other(Other) {{0, 730.3}, {440, 89.3}}
+                          Other(Other) {{0, 730.3}, {440, 89.3}}
+                          Other(Other) {{0, 730.3}, {440, 89.3}}
+                            Other(Other) {{0, 730.3}, {440, 89.3}}
+                              Other(Other) {{0, 0}, {0, 0}} [hidden]
+                              Other(Other) {{0, 0}, {0, 0}} [hidden]
+                              StaticText "http://developer.android.com/reference/android/provider/Settings?authuser=83&hl=id" {{34, 744.4}, {383.7, 42.3}}
+                              StaticText "developer.android.com › reference › android" {{34, 787.6}, {303, 18}}
+                        Other(Other) {{34, 729.3}, {386, 1}}
+                        Cell "Manage your Google Settings, If your phone or tablet uses Google Play Services, you can manage your Google apps and services in Google Settin, support.google.com › accounts › answer" id=Identifier:ResultCell,Section:4,Row:2 {{0, 819.7}, {440, 87}}
+                          Other(Other) {{0, 819.7}, {440, 87}}
+                          Other(Other) {{0, 819.7}, {440, 87}}
+                          Other(Other) {{0, 819.7}, {440, 87}}
+                            Other(Other) {{0, 819.7}, {440, 87}}
+                              Other(Other) {{0, 0}, {0, 0}} [hidden]
+                              Other(Other) {{0, 0}, {0, 0}} [hidden]
+                              StaticText "Manage your Google Settings" {{34, 833.8}, {234.3, 20.3}}
+                              StaticText "If your phone or tablet uses Google Play Services, you can manage your Google apps and services in Google Settin" {{34, 855.6}, {380.7, 18}}
+                              StaticText "support.google.com › accounts › answer" {{34, 874.6}, {278.3, 18}}
+                        Other(Other) {{34, 818.7}, {386, 1}}
+                        Other(Other) id=Identifier:SectionHeader,Section:5,Title:Music {{20, 910.7}, {400, 38}}
+                          Other(Other) {{20, 910.7}, {400, 38}}
+                            Other(Other) {{20, 910.7}, {400, 38}}
+                              Other(Other) {{20, 910.7}, {400, 38}}
+                                StaticText "Music" {{20, 922.7}, {42.7, 18}}
+                                Button "Search in App" {{302.7, 922.7}, {117.3, 18}}
+                                  StaticText "Search in App" {{302.7, 922.7}, {117.3, 18}}
+                                  Image "arrow.up.forward.app.fill" id=arrow.up.forward.app.fill {{407.3, 926}, {11.3, 11.3}}
+                        Cell id=Identifier:ResultCell,Section:5,Row:0 {{0, 948.7}, {440, 92.0}}
+                          Other(Other) {{0, 948.7}, {440, 92.0}}
+                          Other(Other) {{0, 948.7}, {440, 92.0}}
+                          Other(Other) {{0, 948.7}, {440, 92.0}}
+                            Other(Other) {{0, 948.7}, {440, 92.0}}
+                              Other(Other) {{20, 962.7}, {64, 64.0}} [hidden]
+                              Other(Other) {{20, 962.7}, {64, 64.0}} [hidden]
+                              StaticText "settings! " {{98, 974.3}, {90, 20.3}} [hidden]
+                              StaticText "Song · Chow Lee · 2:35" {{98, 997}, {158.3, 18}} [hidden]
+                        Other(Other) {{20, 947.7}, {400, 1}}
+                          Other(Other) {{20, 947.7}, {400, 1}}
+                            Other(Other) {{20, 947.7}, {400, 1}}
+                              Other(Other) {{20, 947.7}, {400, 1}}
+                        Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{407, 55.7}, {30, 815.3}}
+                          Other(Other) {{434, 689.7}, {3, 178.3}}
+                        Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{56, 838}, {328, 30}}
+                          Other(Other) {{59, 865}, {322, 3}}
+                        Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{407, 55.7}, {30, 815.3}}
+                          Other(Other) {{434, 689.7}, {3, 178.3}}
+                        Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{56, 838}, {328, 30}}
+                          Other(Other) {{59, 865}, {322, 3}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 582}, {440, 51}}
+            Other(Other) {{8, 582}, {424, 51}}
+              Other(Other) {{8, 582}, {424, 48}}
+                TextField "Settings" value="Settings" placeholder="Search" id=SpotlightSearchField {{8, 582}, {424, 48}} [focused]
+                  Image "Search" id=magnifyingglass {{20, 596}, {20.7, 19.3}}
+                  Button "Clear text" {{394.7, 596.7}, {19.7, 19}}
+                  Other(Other) {{48.7, 582}, {349.3, 48}}
+                    Other(Other) {{48.7, 596}, {349.3, 20.3}}
+                      StaticText "Settings" {{48.7, 596}, {65, 20.3}}
+                      Other(Other) {{113.6, 596}, {70.1, 20.3}}
+                      StaticText " — " {{113.7, 596}, {27.7, 20.3}}
+                      StaticText "Open" {{141.3, 596}, {37.3, 20.3}}
+                      Other(Other) {{178.7, 596}, {219.3, 20.3}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 638}, {440, 318}}
+        Other(Other) id=inputView {{0, 638}, {440, 318}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 638}, {440, 318}}
+        Other(Other) {{0, 638}, {440, 318}}
+          Other(Other) {{0, 638}, {440, 318}}
+            Other(Other) {{0, 638}, {440, 318}}
+        Other(Other) {{0, 655}, {440, 243}}
+          Keyboard {{0, 655}, {440, 243}}
+            Other(Other) {{0, 655}, {440, 243}}
+              Other(Other) id=UIKeyboardLayoutStar Preview {{0, 655}, {440, 243}}
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "q" {{4.7, 662}, {43, 56}}
+                Key "w" {{47.7, 662}, {43.3, 56}}
+                Key "e" {{91.0, 662}, {43.3, 56}}
+                Key "r" {{134.3, 662}, {43.3, 56}}
+                Key "t" {{177.7, 662}, {43.3, 56}}
+                Key "y" {{221, 662}, {43.3, 56}}
+                Key "u" {{264.3, 662}, {43.3, 56}}
+                Key "i" {{307.7, 662}, {43.3, 56}}
+                Key "o" {{351, 662}, {43.3, 56}}
+                Key "p" {{394.3, 662}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "a" {{26.0, 718}, {43.3, 56}}
+                Key "s" {{69.3, 718}, {43.3, 56}}
+                Key "d" {{112.7, 718}, {43.3, 56}}
+                Key "f" {{156, 718}, {43.3, 56}}
+                Key "g" {{199.3, 718}, {43.3, 56}}
+                Key "h" {{242.7, 718}, {43.3, 56}}
+                Key "j" {{286, 718}, {43.3, 56}}
+                Key "k" {{329.3, 718}, {43.3, 56}}
+                Key "l" {{372.7, 718}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Button "shift" id=shift {{4.7, 774}, {56, 56}}
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "z" {{69.3, 774}, {43.3, 56}}
+                Key "x" {{112.7, 774}, {43.3, 56}}
+                Key "c" {{156, 774}, {43.3, 56}}
+                Key "v" {{199.3, 774}, {43.3, 56}}
+                Key "b" {{242.7, 774}, {43.3, 56}}
+                Key "n" {{286, 774}, {43.3, 56}}
+                Key "m" {{329.3, 774}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Key "delete" id=delete {{381.3, 774}, {56.3, 56}}
+                Key "numbers" id=more {{4.7, 830}, {108, 56}}
+                Key " " id=space {{112.7, 830}, {216.7, 56}}
+                Button "go" id=Go {{329.3, 830}, {108.3, 56}}
+        Other(Other) {{0, 655}, {440, 301}}
+          Button "Emoji" {{2.5, 887.7}, {80.1, 68.7}}
+            StaticText {{2.5, 887.7}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText {{357.4, 887.4}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText {{357.4, 887.4}, {0, 0}} [hidden]

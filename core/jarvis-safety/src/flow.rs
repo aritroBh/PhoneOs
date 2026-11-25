@@ -71,7 +71,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use jarvis_proto::{Action, CompactScreen, Element, Point, RiskCategory, Role, Screen, UiNode};
 
 use crate::actuation::{self, actuation, Actuation};
-use crate::app::is_springboard;
+use crate::app::{is_spotlight, is_springboard};
 use crate::classify::type_target;
 use crate::evaluate::{ScreenSource, ScreenTree};
 use crate::gestures::{drag_gesture, GestureKind};
@@ -118,6 +118,17 @@ pub const SCREEN_PICTURE: &str =
 /// of the chrome walk), so its name as a source says so; as a destination it stays "the Home
 /// Screen". Jarvis's own words: never shortened, and holding neither `, ` nor ` and `.
 pub const HOME_SCREEN_READ: &str = "the Home Screen (notifications or search results shown on it)";
+
+/// Top layer (iOS 26.5, probe runs 134 and 135): how a question names
+/// [`FlowContext::SystemAlert`] — an alert SpringBoard shows over whatever is in front (a
+/// permission or sign-in consent prompt). Jarvis's own words: never shortened, holding
+/// neither `, ` nor ` and `; an app name reading as them is shown by its bundle id.
+pub const SYSTEM_ALERT: &str = "a system alert";
+
+/// Top layer: how a question names Spotlight (`com.apple.Spotlight`, its own process on iOS
+/// 26), as a source and as a destination: Jarvis's word for the OS's search, like "the Home
+/// Screen" (an app named like it is shown by its bundle id).
+pub const SPOTLIGHT: &str = "Spotlight";
 
 /// Probe run 134 (fix 3): how a question names a screen whose tree does not describe what
 /// is on it ([`FlowContext::UnreadableScreen`]): [`UNREADABLE_SCREEN_PREFIX`], the app's
@@ -229,6 +240,15 @@ pub enum FlowContext {
     /// place read is a source for it, no approval is kept for it, and it is never read
     /// itself (what is read there is the screen picture and the app's place, as before).
     UnreadableScreen(String),
+    /// Top layer (probe runs 134 and 135): an alert SpringBoard shows — the notification
+    /// permission prompt, the web sign-in consent prompt (`Alert "“Jarvis” Wants to Use
+    /// “127.0.0.1” to Sign In"`) — which is in SpringBoard's tree only, over the app in
+    /// front. A SpringBoard screen holding a raw `Alert` is this place, not the Home Screen
+    /// ([`SYSTEM_ALERT`]). Its texts are the OS's words about other parties (the app, the
+    /// site): read when shown, a source like any place read. As the OS it is never an
+    /// observer (the session's `observes`); a full input into it (pressing one of its
+    /// buttons) keeps Rule T's rules, and R4 decides what its buttons ask.
+    SystemAlert,
 }
 
 impl FlowContext {
@@ -250,7 +270,8 @@ impl FlowContext {
             | FlowContext::Memory
             | FlowContext::Unknown
             | FlowContext::ScreenPicture
-            | FlowContext::UnreadableScreen(_) => None,
+            | FlowContext::UnreadableScreen(_)
+            | FlowContext::SystemAlert => None,
         }
     }
 
@@ -303,11 +324,13 @@ impl FlowContext {
             FlowContext::NestedWeb(a) => format!("nested:{a}"),
             FlowContext::ScreenPicture => "screen-picture".to_owned(),
             FlowContext::UnreadableScreen(a) => format!("unreadable-screen:{a}"),
+            FlowContext::SystemAlert => "system-alert".to_owned(),
         }
     }
 
     /// How a question names this context: `app_name` gives an app's display name from its
-    /// bundle id (the session's known apps); SpringBoard is "the Home Screen". A site is
+    /// bundle id (the session's known apps); SpringBoard is "the Home Screen", Spotlight
+    /// [`SPOTLIGHT`], a SpringBoard alert [`SYSTEM_ALERT`]. A site is
     /// named by its host — in Safari by its host alone, in any other app (a third-party
     /// browser) as `<host> in <App>` (eighteenth review, E3: two places are never named
     /// alike) — a tool by its name, embedded content by where it is embedded.
@@ -315,6 +338,8 @@ impl FlowContext {
         let app = |b: &str| {
             if is_springboard(b) {
                 "the Home Screen".to_owned()
+            } else if is_spotlight(b) {
+                SPOTLIGHT.to_owned()
             } else {
                 app_name(b).unwrap_or_else(|| b.to_owned())
             }
@@ -344,6 +369,7 @@ impl FlowContext {
                     app(b)
                 )
             }
+            FlowContext::SystemAlert => SYSTEM_ALERT.to_owned(),
         }
     }
 
@@ -384,6 +410,9 @@ struct Chrome {
     /// Probe run 134: a shown `Cell` outside every web view (on SpringBoard: the rows of an
     /// icon's menu, a notification list; the Home Screen of icons has none).
     cell: bool,
+    /// Top layer: a raw `Alert` outside every web view, shown or not (on SpringBoard: a
+    /// system alert, [`FlowContext::SystemAlert`]).
+    alert: bool,
     /// Twentieth review (R20-B): a raw `Sheet` outside every web view whose subtree holds the
     /// OS's "AirDrop" node — shown, hidden, scrolled away or wholly off the screen.
     share_sheet: bool,
@@ -427,6 +456,73 @@ pub fn remote_container(n: &UiNode) -> bool {
 /// core role (`Other(Type83)`) and its role name says neither "banner" nor "notification".
 pub fn notification_banner(n: &UiNode) -> bool {
     n.identifier.as_deref().map(str::trim) == Some("NotificationShortLookView")
+}
+
+/// Probe runs 134 and 135 (iOS 26.5): whether a raw node is Spotlight's app result row, by
+/// the OS's identifier: a `Cell` whose identifier holds `Identifier:GridCell` (the real row
+/// `Cell "Settings" id=Identifier:GridCell,Section:0,Row:0` holding the app's `Icon`). Every
+/// other Spotlight row (`PunchOutToWebSuggestionCell`, `ResultCell`,
+/// `ShortcutSuggestionCell`, `SuggestionCell`, anything unknown) is not.
+pub fn grid_cell(n: &UiNode) -> bool {
+    n.role == Role::Cell
+        && n.identifier
+            .as_deref()
+            .is_some_and(|i| i.contains("Identifier:GridCell"))
+}
+
+/// Top layer (probe runs 134 and 135): on a Spotlight screen (`com.apple.Spotlight`), the
+/// label of the app icon of the app result row (`grid_cell`, by its raw node) that holds
+/// `el` — `el` itself when it is a `Button` in the row, else the row's one labelled
+/// `Button` (the real row holds one `Icon`, typed `Button`, labelled and identified with
+/// the app's display name). `None` anywhere else, for a row that holds no labelled button
+/// or several, or without the raw tree: what the label names is the session's call (a known
+/// app's display name, compared whole).
+pub fn spotlight_app_icon(
+    el: &Element,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> Option<String> {
+    if !is_spotlight(&screen.app_bundle_id) {
+        return None;
+    }
+    let t = tree.filter(|t| !t.nodes.is_empty())?;
+    let own = t.source(el)?;
+    let mut chain = vec![own];
+    chain.extend(t.ancestors(el));
+    let cell = chain
+        .into_iter()
+        .find(|&i| crate::hit::raw_node(t, i).is_some_and(|n| n.grid_cell))?;
+    let end = usize::try_from(cell)
+        .ok()
+        .and_then(|i| t.ends.get(i))
+        .copied()
+        .unwrap_or(cell);
+    let icons: Vec<&jarvis_proto::RawNode> = t
+        .nodes
+        .iter()
+        .filter(|n| n.node > cell && n.node < end && n.role == Role::Button)
+        .filter(|n| n.label.as_deref().is_some_and(|l| !l.trim().is_empty()))
+        .collect();
+    let label = |n: &jarvis_proto::RawNode| n.label.clone().unwrap_or_default();
+    match icons.iter().find(|n| n.node == own) {
+        Some(n) => Some(label(n)),
+        None => match icons.as_slice() {
+            [one] => Some(label(one)),
+            _ => None,
+        },
+    }
+}
+
+/// Top layer: whether `el` is a text input or lies inside one by its raw ancestors (the
+/// search field's own "Clear text" button): pressing it is an input into the screen's own
+/// place (it searches nothing and launches nothing).
+pub fn inside_text_input(el: &Element, tree: Option<&ScreenTree<'_>>) -> bool {
+    el.role.is_text_input()
+        || tree.is_some_and(|t| {
+            t.ancestors(el)
+                .into_iter()
+                .any(|a| crate::hit::raw_node(t, a).is_some_and(|n| n.role.is_text_input()))
+        })
 }
 
 /// Probe run 134: whether a raw node is alert-like content — by its role
@@ -617,6 +713,7 @@ fn scan_chrome(root: &UiNode, bounds: &jarvis_proto::Rect) -> Chrome {
         if alert_like(n) {
             out.alert_like = true;
         }
+        out.alert |= n.role == Role::Alert;
         let shown = shown && !pruned(n);
         stack.extend(n.children.iter().map(|c| (c, shown, in_sheet)));
         if !shown || off_screen(n, bounds) {
@@ -1183,6 +1280,17 @@ fn places_of(
     chrome: &Chrome,
 ) -> ScreenPlaces {
     let app = raw.app_bundle_id.trim().to_lowercase();
+    // Top layer (probe runs 134 and 135): a SpringBoard screen holding an alert is a system
+    // alert (over the Home Screen or over the app in front, whose tree does not hold it):
+    // one place of its own, read, whatever else SpringBoard shows behind it (an alert is
+    // modal).
+    if is_springboard(&app) && chrome.alert {
+        return ScreenPlaces {
+            base: FlowContext::SystemAlert,
+            read: true,
+            ..ScreenPlaces::default()
+        };
+    }
     // Probe run 134: the real icon menu lists its rows as plain buttons (in cells): a cell
     // on screen makes the Home Screen a read too (its quick actions are the app's text).
     if is_springboard(&app) && !chrome.alert_like && !chrome.cell && home_icons_only(compact) {

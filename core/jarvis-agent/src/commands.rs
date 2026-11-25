@@ -460,6 +460,89 @@ pub(crate) fn home_launch(
     })
 }
 
+/// Top layer (probe runs 134 and 135): what `action` on a Spotlight screen
+/// (`com.apple.Spotlight`, its own process on iOS 26) may launch, decided by the OS's
+/// identifiers, never by a row's label: a press inside an app result row
+/// (`jarvis_safety::grid_cell`, `Identifier:GridCell`) whose `Icon` is labelled with a known
+/// app's display name (whole, trimmed, case-insensitive; `spotlight_app_icon`) is a launch of
+/// that app ([`HomeLaunch::App`], the home-launch exemption applies as for a Home Screen
+/// icon); a press on the search field or inside it (its clear button) launches nothing
+/// (`None`: an input into Spotlight); every other press — a website row (`ResultCell`), the
+/// go-to-web row (`PunchOutToWebSuggestionCell`), a suggestion or shortcut row, a section's
+/// button, a key, anything unknown — is [`HomeLaunch::Unknown`] (an input into an
+/// undecidable destination). A `tap_point` on no listed element or in the keyboard's area is
+/// [`HomeLaunch::Unresolved`]; Return in the field (`type` with `submit`) is
+/// [`HomeLaunch::Search`]. The label rule of the Home Screen ([`home_launch`]:
+/// `known_app_named`, the `, App` suffix) is not used here.
+pub(crate) fn spotlight_launch(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+    known_apps: &[AppInfo],
+) -> Option<HomeLaunch> {
+    let target = match action {
+        Action::Tap { element } | Action::LongPress { element, .. } => screen.get(*element)?,
+        Action::TapPoint { x, y } => {
+            let keyboard =
+                screen.keyboard_visible && y.is_finite() && *y >= 1.0 - KEYBOARD_AREA_SHARE;
+            match element_at(*x, *y, screen) {
+                Some(e) if !keyboard => e,
+                _ => {
+                    return Some(HomeLaunch::Unresolved {
+                        x: *x,
+                        y: *y,
+                        keyboard,
+                    })
+                }
+            }
+        }
+        Action::Type {
+            text, submit: true, ..
+        } => {
+            return Some(HomeLaunch::Search { text: text.clone() });
+        }
+        _ => return None,
+    };
+    if jarvis_safety::inside_text_input(target, tree) {
+        return None;
+    }
+    let app = jarvis_safety::spotlight_app_icon(target, screen, tree).and_then(|icon| {
+        let icon = icon.trim().to_owned();
+        known_apps
+            .iter()
+            .find(|a| !icon.is_empty() && a.name.trim().eq_ignore_ascii_case(&icon))
+            .map(|a| (a, icon))
+    });
+    Some(match app {
+        Some((app, icon)) => HomeLaunch::App {
+            bundle_id: app.bundle_id.clone(),
+            label: icon,
+            widget: false,
+        },
+        None => HomeLaunch::Unknown {
+            label: target.label.clone(),
+            widget: false,
+        },
+    })
+}
+
+/// Top layer: what `action` on `screen` may launch — [`home_launch`] on the Home Screen
+/// (SpringBoard), [`spotlight_launch`] in Spotlight, `None` anywhere else.
+pub(crate) fn launcher_launch(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+    known_apps: &[AppInfo],
+) -> Option<HomeLaunch> {
+    if jarvis_safety::is_spotlight(&screen.app_bundle_id) {
+        spotlight_launch(action, screen, tree, known_apps)
+    } else if jarvis_safety::is_springboard(&screen.app_bundle_id) {
+        home_launch(action, screen, known_apps)
+    } else {
+        None
+    }
+}
+
 /// Twenty-sixth review (L1): whether `action`, resolved by [`home_launch`] to a known app,
 /// launches it. A long press on an icon opens SpringBoard's icon menu and puts nothing into
 /// the app: it is an input into the Home Screen like any other long press there (the tap on

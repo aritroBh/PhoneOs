@@ -1113,9 +1113,9 @@ fn the_web_sign_in_tree_is_unreadable() {
     );
 }
 
-/// Open (a follow-up, not fixed here): system alerts are in SpringBoard's tree only, and the
-/// runner snapshots only the front app, so Jarvis does not see them today. These pin the
-/// trees the follow-up will use.
+/// System alerts are in SpringBoard's tree only. The runner now reports the top layer (the
+/// alert, SpringBoard's tree) and the core reads it as "a system alert": `top_layer.rs`.
+/// These pin the trees.
 #[test]
 fn system_alerts_are_in_springboards_tree() {
     for (text, title) in [
