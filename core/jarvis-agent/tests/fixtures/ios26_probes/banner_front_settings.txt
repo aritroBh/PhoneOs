@@ -1,0 +1,187 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 134, fact
+# probe A_BannerOverAnotherApp (`fact-a-banner.03-tree.txt`), as the runner dumps it ("typed tree"):
+# Settings in front while a notification banner is up (the banner is not in this tree).
+# note: fact probe fact-a-banner, capture 03: banner expected up: the front app (Settings)
+# note: app state 4, device orientation 0
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 3: com.apple.Preferences
+screen 440x956 pt, keyboard hidden
+
+Application "Settings" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    NavigationBar id=Settings {{0, 62}, {440, 106}}
+                      StaticText "Settings" {{20, 119.7}, {133, 40.7}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            CollectionView {{0, 0}, {440, 956}}
+                              Other(Other) {{-20, -1744}, {480, 2020}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 815.2}, {440, 140.8}}
+                                  Image id=AdditionalDimmingOverlay {{-120, 820}, {680, 272}}
+                                  Other(Other) {{0, 815.2}, {440, 140.8}}
+                                    Other(Other) {{0, 815.2}, {440, 140.8}}
+                                  Other(Other) {{0, 815.2}, {440, 140.8}}
+                                    Other(Other) {{0, 815.2}, {440, 140.8}}
+                                    Other(Other) {{0, 815.2}, {440, 140.8}}
+                              Cell {{20, 168}, {400, 90.3}}
+                                Other(Other) {{20, 168}, {400, 90.3}}
+                                  Other(Other) {{20, 168}, {400, 90.3}}
+                                Other(Other) {{20, 168}, {400, 90.3}}
+                                  Other(Other) {{20, 168}, {400, 90.3}}
+                                    Other(Other) {{20, 168}, {400, 90.3}}
+                                      Button "Apple Account, Sign in to access your iCloud data, the App Store, Apple services, and more." id=com.apple.settings.primaryAppleAccount {{20, 168}, {400, 90.3}}
+                                        Image "apple.id" id=apple.id {{40, 183}, {60, 60.3}}
+                                        StaticText "Apple Account" {{108, 183}, {134.7, 24}}
+                                        StaticText "Sign in to access your iCloud data, the App Store, Apple services, and more." {{108, 209.7}, {264, 33.7}}
+                                        Image id=chevron.forward {{390.7, 207}, {7, 12}}
+                              Other(Other) {{-20, 276}, {480, 87}}
+                              Cell {{20, 293.3}, {400, 52}}
+                                Other(Other) {{20, 293.3}, {400, 52}}
+                                  Other(Other) {{20, 293.3}, {400, 52}}
+                                Other(Other) {{20, 293.3}, {400, 52}}
+                                  Other(Other) {{20, 293.3}, {400, 52}}
+                                    Other(Other) {{20, 293.3}, {400, 52}}
+                                      Button "Ready for Apple Intelligence" id=com.apple.settings.followUpItem.com.apple.icloud.gm {{20, 293.3}, {400, 52}}
+                                        StaticText "Ready for Apple Intelligence" {{40, 309.2}, {212.7, 20.3}}
+                                        Image id=chevron.forward {{390.7, 313.3}, {7, 12}}
+                              Other(Other) {{-20, 363}, {480, 451}}
+                              Cell {{20, 380.3}, {400, 52}}
+                                Other(Other) {{20, 380.3}, {400, 52}}
+                                  Other(Other) {{20, 380.3}, {400, 52}}
+                                Other(Other) {{20, 380.3}, {400, 52}}
+                                  Other(Other) {{20, 380.3}, {400, 52}}
+                                    Other(Other) {{20, 380.3}, {400, 52}}
+                                      Button "General" id=com.apple.settings.general {{20, 380.3}, {400, 52}}
+                                        Image {{37.7, 392.0}, {29.0, 29}}
+                                        StaticText "General" {{37.7, 392}, {101.7, 29}}
+                                        Image id=chevron.forward {{390.7, 400.3}, {7, 12}}
+                              Cell {{20, 432.3}, {400, 52}}
+                                Other(Other) {{20, 432.3}, {400, 52}}
+                                  Other(Other) {{20, 432.3}, {400, 52}}
+                                Other(Other) {{20, 432.3}, {400, 52}}
+                                  Other(Other) {{20, 432.3}, {400, 52}}
+                                    Other(Other) {{20, 432.3}, {400, 52}}
+                                      Button "Accessibility" id=com.apple.settings.accessibility {{20, 432.3}, {400, 52}}
+                                        Image {{37.7, 444}, {29.0, 29}}
+                                        StaticText "Accessibility" {{37.7, 444}, {137.0, 29}}
+                                        Image id=chevron.forward {{390.7, 452.3}, {7, 12}}
+                              Other(Other) {{80, 431.3}, {320, 1}}
+                              Cell {{20, 484.3}, {400, 52.0}}
+                                Other(Other) {{20, 484.3}, {400, 52.0}}
+                                  Other(Other) {{20, 484.3}, {400, 52.0}}
+                                Other(Other) {{20, 484.3}, {400, 52.0}}
+                                  Other(Other) {{20, 484.3}, {400, 52.0}}
+                                    Other(Other) {{20, 484.3}, {400, 52.0}}
+                                      Button "Action Button" id=com.apple.settings.actionButton {{20, 484.3}, {400, 52.0}}
+                                        Image {{37.7, 496}, {29.0, 29}}
+                                        StaticText "Action Button" {{37.7, 496}, {146.0, 29}}
+                                        Image id=chevron.forward {{390.7, 504.3}, {7, 12.0}}
+                              Other(Other) {{80, 483.3}, {320, 1}}
+                              Cell {{20, 536.3}, {400, 52}}
+                                Other(Other) {{20, 536.3}, {400, 52}}
+                                  Other(Other) {{20, 536.3}, {400, 52}}
+                                Other(Other) {{20, 536.3}, {400, 52}}
+                                  Other(Other) {{20, 536.3}, {400, 52}}
+                                    Other(Other) {{20, 536.3}, {400, 52}}
+                                      Button "Apple Intelligence & Siri" id=com.apple.settings.siri {{20, 536.3}, {400, 52}}
+                                        Image {{37.7, 548.0}, {29.0, 29}}
+                                        StaticText "Apple Intelligence & Siri" {{37.7, 548}, {222.3, 29}}
+                                        Image id=chevron.forward {{390.7, 556.3}, {7, 12}}
+                              Other(Other) {{80, 535.3}, {320, 1}}
+                              Cell {{20, 588.3}, {400, 52}}
+                                Other(Other) {{20, 588.3}, {400, 52}}
+                                  Other(Other) {{20, 588.3}, {400, 52}}
+                                Other(Other) {{20, 588.3}, {400, 52}}
+                                  Other(Other) {{20, 588.3}, {400, 52}}
+                                    Other(Other) {{20, 588.3}, {400, 52}}
+                                      Button "Camera" id=com.apple.settings.camera {{20, 588.3}, {400, 52}}
+                                        Image {{37.7, 600.0}, {29.0, 29}}
+                                        StaticText "Camera" {{37.7, 600}, {101.7, 29}}
+                                        Image id=chevron.forward {{390.7, 608.3}, {7, 12}}
+                              Other(Other) {{80, 587.3}, {320, 1}}
+                              Cell {{20, 640.3}, {400, 52}}
+                                Other(Other) {{20, 640.3}, {400, 52}}
+                                  Other(Other) {{20, 640.3}, {400, 52}}
+                                Other(Other) {{20, 640.3}, {400, 52}}
+                                  Other(Other) {{20, 640.3}, {400, 52}}
+                                    Other(Other) {{20, 640.3}, {400, 52}}
+                                      Button "Home Screen & App Library" id=com.apple.settings.homeScreen {{20, 640.3}, {400, 52}}
+                                        Image {{37.7, 652.0}, {29.0, 29}}
+                                        StaticText "Home Screen & App Library" {{37.7, 652}, {254.0, 29}}
+                                        Image id=chevron.forward {{390.7, 660.3}, {7, 12}}
+                              Other(Other) {{80, 639.3}, {320, 1}}
+                              Cell {{20, 692.3}, {400, 52}}
+                                Other(Other) {{20, 692.3}, {400, 52}}
+                                  Other(Other) {{20, 692.3}, {400, 52}}
+                                Other(Other) {{20, 692.3}, {400, 52}}
+                                  Other(Other) {{20, 692.3}, {400, 52}}
+                                    Other(Other) {{20, 692.3}, {400, 52}}
+                                      Button "Search" id=com.apple.settings.search {{20, 692.3}, {400, 52}}
+                                        Image {{37.7, 704}, {29.0, 29}}
+                                        StaticText "Search" {{37.7, 704}, {95.7, 29}}
+                                        Image id=chevron.forward {{390.7, 712.3}, {7, 12}}
+                              Other(Other) {{80, 691.3}, {320, 1}}
+                              Cell {{20, 744.3}, {400, 52}}
+                                Other(Other) {{20, 744.3}, {400, 52}}
+                                  Other(Other) {{20, 744.3}, {400, 52}}
+                                Other(Other) {{20, 744.3}, {400, 52}}
+                                  Other(Other) {{20, 744.3}, {400, 52}}
+                                    Other(Other) {{20, 744.3}, {400, 52}}
+                                      Button "StandBy" id=com.apple.settings.standBy {{20, 744.3}, {400, 52}}
+                                        Image {{37.7, 756}, {29.0, 29}}
+                                        StaticText "StandBy" {{37.7, 756}, {106.7, 29}}
+                                        Image id=chevron.forward {{390.7, 764.3}, {7, 12}}
+                              Other(Other) {{80, 743.3}, {320, 1}}
+                              Other(Other) {{-20, 813.7}, {480, 87}}
+                              Cell {{20, 831.3}, {400, 52}}
+                                Other(Other) {{20, 831.3}, {400, 52}}
+                                  Other(Other) {{20, 831.3}, {400, 52}}
+                                Other(Other) {{20, 831.3}, {400, 52}}
+                                  Other(Other) {{20, 831.3}, {400, 52}}
+                                    Other(Other) {{20, 831.3}, {400, 52}}
+                                      Button "Screen Time" id=com.apple.settings.screenTime {{20, 831.3}, {400, 52}}
+                                        Image {{37.7, 843}, {29.0, 29}}
+                                        StaticText "Screen Time" {{37.7, 843}, {137.7, 29}}
+                                        Image id=chevron.forward {{390.7, 851.3}, {7, 12}}
+                              Other(Other) {{-20, 901}, {480, 139}}
+                              Cell {{20, 918.3}, {400, 52}}
+                                Other(Other) {{20, 918.3}, {400, 52}}
+                                  Other(Other) {{20, 918.3}, {400, 52}}
+                                Other(Other) {{20, 918.3}, {400, 52}}
+                                  Other(Other) {{20, 918.3}, {400, 52}}
+                                    Other(Other) {{20, 918.3}, {400, 52}}
+                                      Button "Passcode" id=com.apple.settings.passcodeAndBiometrics {{20, 918.3}, {400, 52}}
+                                        Image {{37.7, 930}, {29.0, 29}}
+                                        StaticText "Passcode" {{37.7, 930}, {116.3, 29}}
+                                        Image id=chevron.forward {{390.7, 938.3}, {7, 12}}
+                              Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{407, 116}, {30, 754}}
+                                Other(Other) {{434, 119}, {3, 528}}
+                              Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{407, 116}, {30, 754}}
+                                Other(Other) {{434, 119}, {3, 528}}
+                            Other(Other) {{220, 519}, {0, 0}} [hidden]
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Toolbar "Toolbar" id=Toolbar {{0, 870}, {440, 86}}
+                          Other(Other) {{28, 880}, {384, 48}}
+                            Other(Other) {{28, 880}, {384, 48}}
+                              Other(Other) {{28, 880}, {0, 0}} [hidden]
+                                Other(Other) {{28.0, 880}, {384, 48}}
+                                  Other(Other) {{28.0, 880}, {384, 48}}
+                                    Other(Other) {{33.0, 885}, {374, 38}}
+                                      SearchField "Search" placeholder="Search" {{33.0, 885}, {374, 38}}
+                                        Button "Dictate" id=Dictate {{373.7, 893}, {17.3, 22}}
+                                        Image "Search" id=magnifyingglass {{46.0, 894.3}, {20.3, 18.7}}
+                                        Button "Dictate" id=Dictate {{373.7, 893}, {17.3, 22}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}

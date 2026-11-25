@@ -84,6 +84,11 @@ struct UiTreeBuilderTests {
     @Test("every XCTest type maps; icons and menu items are pressable; containers stay containers")
     func roleTable() {
         #expect(T.role(T.icon) == .button)
+        // Probe run 134: a menu item keeps its own role (the core recognises the edit menu by
+        // it); a popover is still a sheet (the share sheet is a raw `Popover`).
+        #expect(T.role(T.menuItem) == .other(name: "MenuItem"))
+        #expect(T.role(T.popover) == .sheet)
+        #expect(T.role(T.sheet) == .sheet)
         #expect(T.role(T.toggle) == .switch)
         #expect(T.role(T.cell) == .cell)
         #expect(T.role(T.webView) == .webView)
@@ -94,6 +99,25 @@ struct UiTreeBuilderTests {
         for raw in UInt(0)...82 {
             #expect(!T.name(raw).hasPrefix("Type"), "type \(raw) has a name")
         }
+    }
+
+    @Test("probe run 134: a raw MenuItem keeps its role through the typed tree")
+    func menuItemThroughTheTree() throws {
+        let menu = raw(T.application, "Jarvis", full, [
+            raw(T.window, full, [
+                raw(T.collectionView, Rect(x: 20, y: 220, width: 312, height: 44), [
+                    raw(T.menuItem, "Replace…", Rect(x: 148, y: 220, width: 99, height: 44), [
+                        raw(T.staticText, "Replace…", Rect(x: 164, y: 233, width: 67, height: 18)),
+                    ]),
+                ]),
+            ]),
+        ])
+        let result = UiTreeBuilder.build(menu, screenSize: Size(width: 393, height: 852))
+        let item = try #require(result.root.children.first?.children.first?.children.first)
+        #expect(item.role == .other(name: "MenuItem"))
+        #expect(item.label == "Replace…")
+        #expect(UiTreeBuilder.roleName(item.role) == "Other(MenuItem)")
+        #expect(result.unmappedTypes["MenuItem"] == 1)
     }
 
     @Test("label falls back to title, empty strings become nil, unknown screen keeps every frame visible")

@@ -87,6 +87,14 @@ pub struct ScreenCues {
     /// Roles only, never screen text. The rendered line says so (`jarvis_observe::render`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub covered: Vec<CoveredControl>,
+    /// Probe run 134 (iOS 26.5): listed elements whose frame is not known in screen
+    /// coordinates — they sit inside another process's remote container (the share sheet's
+    /// `ShareSheet.RemoteContainerView`, whose rows report frames local to it), by ascending
+    /// element index. Listed so the model knows they are there; a tap, long press, typing,
+    /// clear or drag naming one is refused (`jarvis_safety::unplaced_target`), and the
+    /// rendered line says so (`jarvis_observe::UNPLACED_MARKER`): one decision.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unplaced: Vec<u32>,
 }
 
 impl ScreenCues {
@@ -97,6 +105,12 @@ impl ScreenCues {
             && self.page.is_none()
             && self.return_key.is_none()
             && self.covered.is_empty()
+            && self.unplaced.is_empty()
+    }
+
+    /// Whether element `index`'s position on screen is not known ([`Self::unplaced`]).
+    pub fn is_unplaced(&self, index: u32) -> bool {
+        self.unplaced.binary_search(&index).is_ok()
     }
 
     /// What covers element `index`, if a tap on it would be refused for cover.
@@ -172,6 +186,11 @@ pub struct RawNode {
     /// keyboard window's other nodes are not, nor (ninth review) a node of those subtrees
     /// reaching outside the subtree root's frame: that is ordinary content.
     pub keyboard: bool,
+    /// Probe run 134 (iOS 26.5): it is SpringBoard's notification banner, by the OS's
+    /// identifier (`NotificationShortLookView`; its raw type has no core role and its role
+    /// name says neither "banner" nor "notification").
+    #[serde(default)]
+    pub banner: bool,
 }
 
 /// A text input of the raw tree a compact screen was built from, listed or not (eighth

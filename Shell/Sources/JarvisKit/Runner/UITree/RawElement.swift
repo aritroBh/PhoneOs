@@ -194,9 +194,14 @@ public enum XCUIElementTypeCode {
     public static func role(_ raw: UInt) -> Role {
         switch raw {
         case button, radioButton, checkBox, popUpButton, menuButton, toolbarButton, disclosureTriangle,
-             incrementArrow, decrementArrow, icon, menuItem, stepper:
-            // Home-screen icons and menu items are pressed like buttons.
+             incrementArrow, decrementArrow, icon, stepper:
+            // Home-screen icons are pressed like buttons.
             return .button
+        case menuItem:
+            // Probe run 134 (iOS 26.5): the edit menu's items are raw `MenuItem`s with no menu
+            // or callout ancestor; the core recognises a menu item by this role alone (Rule P,
+            // the hand-off items). It is pressed like a button there (`Role::is_menu_item`).
+            return .other(name: "MenuItem")
         case link: return .link
         case textField, comboBox: return .textField
         case secureTextField: return .secureTextField

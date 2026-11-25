@@ -1,0 +1,51 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 134, fact
+# probe A_BannerOverAnotherApp (`fact-a-banner.01-tree.txt`), as the runner dumps it ("typed tree"):
+# SpringBoard with the notification-permission alert (not in the front app's snapshot): for the follow-up.
+# note: fact probe fact-a-banner, capture 01: notification permission alert up (SpringBoard)
+# note: app state 4, device orientation 0
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 1: com.apple.springboard
+screen 440x956 pt, keyboard hidden
+
+Application " " {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Alert "“Jarvis” Would Like to Send You Notifications" {{60, 385}, {320, 214}}
+        Other(Other) {{60, 385}, {320, 214}}
+          Other(Other) {{60, 385}, {320, 214}}
+            Other(Other) {{60, 385}, {320, 214}}
+            Other(Other) {{60, 385}, {320, 214}}
+              ScrollView {{60, 385}, {320, 134}}
+                Other(Other) {{60, 385}, {320, 134}}
+                  StaticText "“Jarvis” Would Like to Send You Notifications" {{90, 407}, {260, 42.3}}
+                  StaticText "Notifications may include alerts, sounds, and icon badges. These can be configured in Settings." {{90, 456.7}, {260, 58.0}}
+                Other(Other) {{60, 517}, {320, 2}}
+                Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{347, 385}, {30, 134}}
+                  Other(Other) {{374, 346}, {3, 36}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 486}, {320, 30}}
+                  Other(Other) {{21, 513}, {36, 3}}
+                Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{347, 385}, {30, 134}}
+                  Other(Other) {{374, 346}, {3, 36}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 486}, {320, 30}}
+                  Other(Other) {{21, 513}, {36, 3}}
+              ScrollView {{60, 519}, {320, 80}}
+                Other(Other) {{60, 519}, {320, 80}}
+                  Other(Other) {{76, 535}, {288, 48}}
+                    Button "Don’t Allow" {{76, 535}, {140, 48}}
+                    Button "Allow" {{224, 535}, {140, 48}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{347, 519}, {30, 80}}
+                  Other(Other) {{374, 609}, {3, 7}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 566}, {320, 30}}
+                  Other(Other) {{150, 593}, {7, 3}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{347, 519}, {30, 80}}
+                  Other(Other) {{374, 609}, {3, 7}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 566}, {320, 30}}
+                  Other(Other) {{150, 593}, {7, 3}}
+        Other(Other) {{60, 385}, {320, 214}}
+          Other(Other) {{60, 385}, {320, 214}}
+            Other(Other) {{60, 385}, {320, 214}}
+              Other(Other) {{60, 385}, {320, 214}}
+                Other(Other) {{60, 385}, {320, 214}}
+                  Other(Other) {{60, 385}, {440, 956}}
+              Other(Other) {{60, 385}, {320, 214}}
+                Other(Other) {{60, 385}, {440, 956}}

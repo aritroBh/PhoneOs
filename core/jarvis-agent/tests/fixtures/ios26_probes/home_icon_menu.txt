@@ -1,0 +1,57 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 134, fact
+# probe HomeScreenIconMenu (`fact-home-icon-menu.01-tree.txt`), as the runner dumps it ("typed tree"):
+# SpringBoard with the Settings icon's menu up (plain `Button`s in `Cell`s, no `MenuItem`).
+# note: fact probe fact-home-icon-menu, capture 01: Settings icon menu up
+# note: app state 4, device orientation 1
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 1: com.apple.springboard
+screen 440x956 pt, keyboard hidden
+
+Application " " {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) "Preview" {{332, 415}, {78.3, 78.3}}
+          Other(Other) {{332, 415}, {78.3, 78.3}}
+            Other(Other) {{332, 415}, {78.3, 78.3}}
+              Other(Other) {{332, 415}, {78.3, 78.3}}
+        Other(Other) {{160.3, 501.3}, {250, 272}}
+          Other(Other) {{160.3, 501.3}, {250, 272}}
+            Other(Other) {{160.3, 501.3}, {250, 272}}
+              Other(Other) {{160.3, 501.3}, {250, 272}}
+              CollectionView {{160.3, 501.3}, {250, 956}}
+                Cell {{160.3, 511.3}, {250, 42}}
+                  Button "Bluetooth" id=bluetooth {{160.3, 511.3}, {250, 42}}
+                    Image "Bluetooth" id=bluetooth {{192.0, 522.7}, {17, 19.7}}
+                Cell {{160.3, 553.3}, {250, 42}}
+                  Button "Wi-Fi" id=wifi {{160.3, 553.3}, {250, 42}}
+                    Image "Wi-Fi" id=wifi {{189.0, 566.7}, {22.7, 16}}
+                Cell {{160.3, 595.3}, {250, 42}}
+                  Button "Cellular" id=cellular {{160.3, 595.3}, {250, 42}}
+                    Image "cellular data" id=antenna.radiowaves.left.and.right {{190.3, 607.7}, {20.3, 17.7}}
+                Cell {{160.3, 637.3}, {250, 42}}
+                  Button "Battery" id=battery {{160.3, 637.3}, {250, 42}}
+                    Image "battery.100" id=battery.100 {{186.0, 652.0}, {28.7, 13.3}}
+                Cell {{160.3, 679.3}, {250, 42}}
+                  Button "Edit Home Screen" id=com.apple.springboardhome.application-shortcut-item.rearrange-icons {{160.3, 679.3}, {250, 42}}
+                    Image "Apps" id=apps.iphone {{191.7, 690.7}, {17.3, 19.7}}
+                Cell {{160.3, 721.3}, {250, 42}}
+                  Button "Remove App" id=com.apple.springboardhome.application-shortcut-item.remove-app {{160.3, 721.3}, {250, 42}}
+                    Image "remove" id=minus.circle {{190.7, 733.0}, {19.7, 19}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{377.3, 531.3}, {30, 212}}
+                  Other(Other) {{404.3, 534.3}, {3, 206}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{222.3, 710.3}, {188, 30}}
+                  Other(Other) {{225.3, 737.3}, {182, 3}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{377.3, 531.3}, {30, 212}}
+                  Other(Other) {{404.3, 534.3}, {3, 206}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{222.3, 710.3}, {188, 30}}
+                  Other(Other) {{225.3, 737.3}, {182, 3}}
+            Other(Other) {{160.3, 501.3}, {250, 272}}
+              Other(Other) {{160.3, 501.3}, {250, 272}}
+                Other(Other) {{160.3, 501.3}, {250, 272}}
+                  Other(Other) {{160.3, 501.3}, {250, 272}}
+                    Other(Other) {{160.3, 501.3}, {250, 272}}
+                      Other(Other) {{160.3, 501.3}, {250, 44}}
+                  Other(Other) {{160.3, 501.3}, {250, 272}}
+                    Other(Other) {{160.3, 501.3}, {250, 44}}

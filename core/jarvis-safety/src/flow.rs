@@ -70,7 +70,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use jarvis_proto::{Action, CompactScreen, Element, Point, RiskCategory, Role, Screen, UiNode};
 
-use crate::actuation::{actuation, Actuation};
+use crate::actuation::{self, actuation, Actuation};
 use crate::app::is_springboard;
 use crate::classify::type_target;
 use crate::evaluate::{ScreenSource, ScreenTree};
@@ -118,6 +118,47 @@ pub const SCREEN_PICTURE: &str =
 /// of the chrome walk), so its name as a source says so; as a destination it stays "the Home
 /// Screen". Jarvis's own words: never shortened, and holding neither `, ` nor ` and `.
 pub const HOME_SCREEN_READ: &str = "the Home Screen (notifications or search results shown on it)";
+
+/// Probe run 134 (fix 3): how a question names a screen whose tree does not describe what
+/// is on it ([`FlowContext::UnreadableScreen`]): [`UNREADABLE_SCREEN_PREFIX`], the app's
+/// name, [`UNREADABLE_SCREEN_SUFFIX`]. Jarvis's own words: never shortened (only the app's
+/// name between them is), and an app name imitating them is shown by its bundle id.
+pub const UNREADABLE_SCREEN_PREFIX: &str = "a screen in ";
+
+/// Probe run 134 (fix 3): the end of the name of [`FlowContext::UnreadableScreen`].
+pub const UNREADABLE_SCREEN_SUFFIX: &str =
+    " that Jarvis cannot read (it may show another party's page)";
+
+/// Fewer enabled interactive elements than this makes a tree "thin" ([`thin_tree`]): the
+/// session's vision fallback and Rule T's unreadable screen.
+pub const MIN_ACTIONABLE: usize = 2;
+
+/// The session's vision-fallback predicate: not SpringBoard, and fewer than
+/// [`MIN_ACTIONABLE`] enabled interactive elements (the model needs a screenshot to act).
+pub fn few_actionable(screen: &CompactScreen) -> bool {
+    let actionable = screen
+        .elements
+        .iter()
+        .filter(|e| e.enabled && e.role.is_interactive())
+        .count();
+    !is_springboard(&screen.app_bundle_id) && actionable < MIN_ACTIONABLE
+}
+
+/// Probe run 134 (fix 3): whether a screen's tree is too thin to describe what is on it:
+/// the vision-fallback predicate ([`few_actionable`]) on a tree whose listed elements, if
+/// any, carry no label and no value — the tree names nothing on the screen. The real tree of
+/// a host app showing `SFSafariViewController` (iOS 26.5 simulator) is the application, a
+/// window and nine unlabelled `Other` nodes: no web view, no host, no content, no button.
+/// Where the tree does not tell, the place on the screen cannot be told: every input there
+/// goes to [`FlowContext::UnreadableScreen`] ([`ScreenPlaces::destinations`]). Stated limit:
+/// a tree that names one control (a sheet with one "Done") describes something and is not
+/// treated as unreadable, even if the rest of the screen is another party's page.
+pub fn thin_tree(screen: &CompactScreen) -> bool {
+    few_actionable(screen)
+        && screen.elements.iter().all(|e| {
+            e.label.trim().is_empty() && e.value.as_deref().is_none_or(|v| v.trim().is_empty())
+        })
+}
 
 /// Nineteenth review: what the name of a covering embedded class
 /// ([`Confinement::is_ambiguous`]) starts with (`all web content in Mail (…)`).
@@ -181,6 +222,13 @@ pub enum FlowContext {
     /// notification banners, the Dynamic Island and Live Activities drawn over the app
     /// included. Never a destination; a source for input into every place.
     ScreenPicture,
+    /// Probe run 134 (fix 3): a screen of an app (lower-cased bundle id) whose tree is too
+    /// thin to describe it ([`thin_tree`]: `SFSafariViewController`'s real tree shows nine
+    /// unlabelled nodes and none of the page). It may show another party's page, so the
+    /// place an input reaches there cannot be told: like [`FlowContext::Unknown`], every
+    /// place read is a source for it, no approval is kept for it, and it is never read
+    /// itself (what is read there is the screen picture and the app's place, as before).
+    UnreadableScreen(String),
 }
 
 impl FlowContext {
@@ -197,11 +245,23 @@ impl FlowContext {
             | FlowContext::Site { app: a, .. }
             | FlowContext::Embedded { app: a, .. }
             | FlowContext::NestedWeb(a) => Some(a),
+            // Probe run 134: an unreadable screen may be another party's, not the app's.
             FlowContext::Tool(_)
             | FlowContext::Memory
             | FlowContext::Unknown
-            | FlowContext::ScreenPicture => None,
+            | FlowContext::ScreenPicture
+            | FlowContext::UnreadableScreen(_) => None,
         }
+    }
+
+    /// Probe run 134: whether the destination cannot be decided — [`FlowContext::Unknown`]
+    /// or [`FlowContext::UnreadableScreen`]: no approval is kept for it (each input there
+    /// asks again).
+    pub fn undecidable(&self) -> bool {
+        matches!(
+            self,
+            FlowContext::Unknown | FlowContext::UnreadableScreen(_)
+        )
     }
 
     /// Nineteenth review (R-B): whether this place is an embedded class Jarvis cannot tell
@@ -242,6 +302,7 @@ impl FlowContext {
             FlowContext::Unknown => "unknown".to_owned(),
             FlowContext::NestedWeb(a) => format!("nested:{a}"),
             FlowContext::ScreenPicture => "screen-picture".to_owned(),
+            FlowContext::UnreadableScreen(a) => format!("unreadable-screen:{a}"),
         }
     }
 
@@ -277,6 +338,12 @@ impl FlowContext {
             FlowContext::Unknown => "a place Jarvis cannot name".to_owned(),
             FlowContext::NestedWeb(b) => format!("nested web content in {}", app(b)),
             FlowContext::ScreenPicture => SCREEN_PICTURE.to_owned(),
+            FlowContext::UnreadableScreen(b) => {
+                format!(
+                    "{UNREADABLE_SCREEN_PREFIX}{}{UNREADABLE_SCREEN_SUFFIX}",
+                    app(b)
+                )
+            }
         }
     }
 
@@ -314,6 +381,9 @@ struct Chrome {
     outside_not_address: bool,
     /// Twentieth review (R20-B): a raw `Sheet` outside every web view, shown or not.
     sheet: bool,
+    /// Probe run 134: a shown `Cell` outside every web view (on SpringBoard: the rows of an
+    /// icon's menu, a notification list; the Home Screen of icons has none).
+    cell: bool,
     /// Twentieth review (R20-B): a raw `Sheet` outside every web view whose subtree holds the
     /// OS's "AirDrop" node — shown, hidden, scrolled away or wholly off the screen.
     share_sheet: bool,
@@ -321,6 +391,75 @@ struct Chrome {
     /// (an `Other`, [`minimized_address`]), to tell its listed element (which carries no
     /// identifier) from any other `Other` labelled as the address.
     minimized: Vec<jarvis_proto::Rect>,
+}
+
+/// Probe run 134 (iOS 26.5 simulator): the identifiers the OS gives the share (activity)
+/// sheet's own nodes (exact, OS-given): the list view, the remote container another process
+/// draws the rows in, and the rows' collection view. The simulator's share sheet has no
+/// "AirDrop" row and is a raw `Popover` (typed `Sheet`).
+pub const SHARE_SHEET_IDS: &[&str] = &[
+    "ActivityListView",
+    "ShareSheet.RemoteContainerView",
+    "activityCollectionView",
+];
+
+/// Probe run 134: whether a raw node carries one of [`SHARE_SHEET_IDS`].
+fn share_sheet_node(n: &UiNode) -> bool {
+    n.identifier
+        .as_deref()
+        .is_some_and(|i| SHARE_SHEET_IDS.contains(&i.trim()))
+}
+
+/// Probe run 134 (iOS 26.5 simulator, the share sheet): whether a raw node is another
+/// process's remote container, by the OS's identifier — one ending in `RemoteContainerView`
+/// (`ShareSheet.RemoteContainerView`). The frames of what it holds are local to it (the
+/// share sheet's "Reminders" row at `{24, 107}` while the sheet is at `{9, 565}`), so its
+/// descendants are listed with no known position (`ScreenCues::unplaced`, filled by
+/// `jarvis_observe::compact`).
+pub fn remote_container(n: &UiNode) -> bool {
+    n.identifier
+        .as_deref()
+        .is_some_and(|i| i.trim().ends_with("RemoteContainerView"))
+}
+
+/// Probe run 134 (iOS 26.5 simulator): whether a raw node is SpringBoard's notification
+/// banner, by the OS's identifier `NotificationShortLookView` (exact). Its raw type has no
+/// core role (`Other(Type83)`) and its role name says neither "banner" nor "notification".
+pub fn notification_banner(n: &UiNode) -> bool {
+    n.identifier.as_deref().map(str::trim) == Some("NotificationShortLookView")
+}
+
+/// Probe run 134: whether a raw node is alert-like content — by its role
+/// ([`alert_like_role`]) or as SpringBoard's notification banner by its identifier
+/// ([`notification_banner`]).
+fn alert_like(n: &UiNode) -> bool {
+    alert_like_role(&n.role) || notification_banner(n)
+}
+
+/// Probe run 134: the element `action` names whose position on screen is not known
+/// (`ScreenCues::unplaced`: inside another process's remote container), if any — a tap,
+/// long press, clear, typing (into its element, or the focused field it would go to) or a
+/// drag on it. Such an action is refused; the rendered line of the element carries
+/// `jarvis_observe::UNPLACED_MARKER` from the same cue (one decision).
+pub fn unplaced_target(action: &Action, screen: &CompactScreen) -> Option<u32> {
+    let named = match action {
+        Action::Tap { element } | Action::LongPress { element, .. } | Action::Clear { element } => {
+            Some(*element)
+        }
+        Action::Type { element, .. } => type_target(*element, screen).map(|e| e.index),
+        Action::Scroll { element, .. } | Action::Swipe { element, .. } => *element,
+        Action::TapPoint { .. }
+        | Action::PressHome
+        | Action::OpenApp { .. }
+        | Action::OpenUrl { .. }
+        | Action::CallTool { .. }
+        | Action::Wait { .. }
+        | Action::AskUser { .. }
+        | Action::Look
+        | Action::Done { .. }
+        | Action::Fail { .. } => None,
+    };
+    named.filter(|i| screen.cues.is_unplaced(*i))
 }
 
 /// Twentieth review (R20-B): whether a raw node is the share sheet's "AirDrop" row (whole
@@ -468,9 +607,14 @@ fn scan_chrome(root: &UiNode, bounds: &jarvis_proto::Rect) -> Chrome {
         if in_sheet && n.label.as_deref().is_some_and(airdrop_label) {
             out.share_sheet = true;
         }
+        // Probe run 134: the OS's own identifiers of the share sheet, on any node outside
+        // every web view (a page cannot give a native node an identifier), shown or not.
+        if share_sheet_node(n) {
+            out.share_sheet = true;
+        }
         // An alert, sheet or banner anywhere makes a home screen a read (unchanged, fail
-        // closed whether or not it is shown).
-        if alert_like_role(&n.role) {
+        // closed whether or not it is shown). Probe run 134: a banner by its identifier too.
+        if alert_like(n) {
             out.alert_like = true;
         }
         let shown = shown && !pruned(n);
@@ -478,6 +622,7 @@ fn scan_chrome(root: &UiNode, bounds: &jarvis_proto::Rect) -> Chrome {
         if !shown || off_screen(n, bounds) {
             continue;
         }
+        out.cell |= n.role == Role::Cell;
         let address = address_like(n);
         if !matches!(n.role, Role::Application | Role::Window)
             && (n.label.as_deref().is_some_and(|l| !l.trim().is_empty())
@@ -643,19 +788,40 @@ fn home_kept(n: &UiNode) -> bool {
 }
 
 fn home_node(n: &UiNode) -> UiNode {
-    if alert_like_role(&n.role) {
-        return n.clone();
-    }
-    if home_widget(n) || !home_kept(n) {
-        return home_stub(n);
+    home_node_holding(n).0
+}
+
+/// [`home_node`], and whether the subtree holds alert-like content ([`alert_like`]).
+/// Probe run 134: the real banner (`NotificationShortLookView`) sits under an `Other
+/// "Notification"` that the allowlist would stub with everything below it; a node holding
+/// alert-like content is kept as a bare container (no label, value, identifier or
+/// placeholder of its own) so that the alert-like subtree is kept unchanged and in full.
+fn home_node_holding(n: &UiNode) -> (UiNode, bool) {
+    if alert_like(n) {
+        return (n.clone(), true);
     }
     // The status bar is OS chrome whose labels (time, signal, battery) the model may read.
-    if matches!(&n.role, Role::Other(name) if name.to_lowercase().contains("statusbar")) {
-        return n.clone();
+    let status = matches!(&n.role, Role::Other(name) if name.to_lowercase().contains("statusbar"));
+    if status && !home_widget(n) && home_kept(n) {
+        return (n.clone(), false);
+    }
+    let kids: Vec<(UiNode, bool)> = n.children.iter().map(home_node_holding).collect();
+    let holds = kids.iter().any(|(_, a)| *a);
+    if home_widget(n) || !home_kept(n) {
+        if !holds {
+            return (home_stub(n), false);
+        }
+        let mut bare = n.clone();
+        bare.label = None;
+        bare.value = None;
+        bare.identifier = None;
+        bare.placeholder = None;
+        bare.children = kids.into_iter().map(|(k, _)| k).collect();
+        return (bare, true);
     }
     let mut out = n.clone();
-    out.children = n.children.iter().map(home_node).collect();
-    out
+    out.children = kids.into_iter().map(|(k, _)| k).collect();
+    (out, holds)
 }
 
 /// Rule T: the main place of an observation, or `None` when it is not something Jarvis
@@ -719,6 +885,9 @@ pub struct ScreenPlaces {
     /// Twentieth review (R20-B): the raw tree holds a `Sheet` outside every web view whose
     /// subtree holds the OS's "AirDrop" node, on screen or not.
     share_sheet: bool,
+    /// Probe run 134 (fix 3): the tree is thin ([`thin_tree`]): every input on the screen
+    /// goes to this [`FlowContext::UnreadableScreen`] instead of the place of its target.
+    unreadable: Option<FlowContext>,
 }
 
 impl Default for ScreenPlaces {
@@ -734,11 +903,24 @@ impl Default for ScreenPlaces {
             read: false,
             sheet: false,
             share_sheet: false,
+            unreadable: None,
         }
     }
 }
 
 impl ScreenPlaces {
+    /// Probe run 134 (fix 3): the unreadable screen every input here goes to, when the
+    /// tree is thin ([`thin_tree`]).
+    pub fn unreadable(&self) -> Option<&FlowContext> {
+        self.unreadable.as_ref()
+    }
+
+    /// Probe run 134: drops the unreadable screen (the session, for Jarvis's own app while
+    /// it is not driven: nothing is acted on there, and it is no party).
+    pub fn clear_unreadable(&mut self) {
+        self.unreadable = None;
+    }
+
     /// Twentieth review (R20-B): the raw tree holds a `Sheet` (outside every web view).
     pub fn shows_sheet(&self) -> bool {
         self.sheet
@@ -746,7 +928,8 @@ impl ScreenPlaces {
 
     /// Twentieth review (R20-B): the raw tree holds a share sheet — a `Sheet` (outside every
     /// web view) whose subtree holds the OS's "AirDrop" node, whether that node is on
-    /// screen, hidden or scrolled away. The session keeps it sticky
+    /// screen, hidden or scrolled away, or (probe run 134) a node with one of the OS's
+    /// share-sheet identifiers ([`SHARE_SHEET_IDS`]). The session keeps it sticky
     /// ([`share_sheet_control`]).
     pub fn share_sheet(&self) -> bool {
         self.share_sheet
@@ -802,6 +985,8 @@ impl ScreenPlaces {
     pub fn every(&self) -> Vec<FlowContext> {
         let mut out = vec![self.base.clone()];
         out.extend(self.embedded_places());
+        // Probe run 134 (fix 3): on a thin tree, the screen Jarvis cannot read too.
+        out.extend(self.unreadable.iter().cloned());
         out
     }
 
@@ -903,6 +1088,13 @@ impl ScreenPlaces {
         tree: Option<&ScreenTree<'_>>,
     ) -> Vec<FlowContext> {
         let mut out = Vec::new();
+        // Probe run 134 (fix 3): on a thin tree the place on the screen cannot be told:
+        // every input on it goes to the screen Jarvis cannot read, not to the app's place.
+        if let Some(u) = &self.unreadable {
+            if actuation::touches_screen(action) {
+                return vec![u.clone()];
+            }
+        }
         let element = |e: Option<&Element>, out: &mut Vec<FlowContext>| match e {
             Some(e) => self.of_element(e, tree, out),
             None => out.extend(self.every()),
@@ -973,6 +1165,12 @@ pub fn observed_places(
     let mut places = places_of(raw, compact, source, view, &chrome);
     places.sheet = chrome.sheet;
     places.share_sheet = chrome.share_sheet;
+    // Probe run 134 (fix 3): a tree too thin to describe the screen.
+    if thin_tree(compact) {
+        places.unreadable = Some(FlowContext::UnreadableScreen(
+            raw.app_bundle_id.trim().to_lowercase(),
+        ));
+    }
     places
 }
 
@@ -985,7 +1183,9 @@ fn places_of(
     chrome: &Chrome,
 ) -> ScreenPlaces {
     let app = raw.app_bundle_id.trim().to_lowercase();
-    if is_springboard(&app) && !chrome.alert_like && home_icons_only(compact) {
+    // Probe run 134: the real icon menu lists its rows as plain buttons (in cells): a cell
+    // on screen makes the Home Screen a read too (its quick actions are the app's text).
+    if is_springboard(&app) && !chrome.alert_like && !chrome.cell && home_icons_only(compact) {
         return ScreenPlaces {
             base: FlowContext::App(app),
             ..ScreenPlaces::default()
@@ -1110,6 +1310,7 @@ fn places_of(
         read: true,
         sheet: false,
         share_sheet: false,
+        unreadable: None,
     }
 }
 
@@ -1385,7 +1586,7 @@ impl Confinement {
         sources: &[FlowContext],
         kind: InputKind,
     ) {
-        for t in targets.iter().filter(|t| **t != FlowContext::Unknown) {
+        for t in targets.iter().filter(|t| !t.undecidable()) {
             let entry = self.granted.entry(t.clone()).or_default();
             for s in sources {
                 let g = entry.entry(s.clone()).or_insert(kind);
@@ -1453,6 +1654,145 @@ fn menu_item(el: &Element, tree: Option<&ScreenTree<'_>>) -> bool {
             .into_iter()
             .any(|a| crate::hit::raw_node(t, a).is_some_and(|n| menu_role(&n.role)))
     })
+}
+
+/// Probe run 134 (iOS 26.5 simulator, the edit menu): whether `el` is one of the edit menu's
+/// paging buttons — by its place in the real tree, not by its label alone: a control that is
+/// not itself a menu item, whose raw parent also holds a menu item (in the capture, `Button
+/// "Back"` and `Button "Forward"` are siblings of the container whose collection view holds
+/// the `MenuItem`s, in the menu's own window), and whose whole label is "Forward" or "Back".
+/// It pages the menu: a local action, not the send phrase "forward" (the gate reads it like
+/// "Back", as a browser's "Forward" beside "Back"). A "Forward" anywhere else is unchanged.
+pub(crate) fn menu_pager(el: &Element, tree: Option<&ScreenTree<'_>>) -> bool {
+    let words = label_words(&el.label);
+    if !matches!(words.as_slice(), [w] if w == "forward" || w == "back") || menu_role(&el.role) {
+        return false;
+    }
+    let Some(t) = tree.filter(|t| !t.nodes.is_empty()) else {
+        return false;
+    };
+    let (Some(own), Some(&parent)) = (t.source(el), t.ancestors(el).first()) else {
+        return false;
+    };
+    let own_end = usize::try_from(own)
+        .ok()
+        .and_then(|i| t.ends.get(i))
+        .copied()
+        .unwrap_or(own);
+    t.nodes.iter().any(|n| {
+        t.node_inside(n.node, parent) && !(n.node >= own && n.node < own_end) && menu_role(&n.role)
+    })
+}
+
+/// Probe run 134 (iOS 26.5 simulator, the Home Screen's icon menu): whether `action`
+/// presses a row of a menu SpringBoard shows (bundle id, an OS fact). The real icon menu's
+/// items are plain `Button`s in `Cell`s of a `CollectionView` (no `MenuItem`, no menu or
+/// callout ancestor), and the real Home Screen of icons holds no cell and no collection view
+/// (the `springboard_home` fixture). So on SpringBoard a control inside a `Cell` inside a
+/// `CollectionView` is treated as a menu item: an icon's quick actions launch an app with an
+/// action the model chose (twenty-sixth review, L1: an undecidable destination, whatever
+/// the label says). Over-asks a notification list's or App Library's rows (fail closed).
+pub fn home_menu_row(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> bool {
+    if !is_springboard(&screen.app_bundle_id) {
+        return false;
+    }
+    let Actuation::Press(el) = actuation(action, screen) else {
+        return false;
+    };
+    let Some(t) = tree.filter(|t| !t.nodes.is_empty() && t.source(el).is_some()) else {
+        return false;
+    };
+    let role = |i: u32| crate::hit::raw_node(t, i).map(|n| &n.role);
+    let mut chain: Vec<u32> = t.source(el).into_iter().collect();
+    chain.extend(t.ancestors(el));
+    let cell = chain.iter().position(|&i| role(i) == Some(&Role::Cell));
+    cell.is_some_and(|k| {
+        chain
+            .iter()
+            .skip(k + 1)
+            .any(|&i| role(i) == Some(&Role::CollectionView))
+    })
+}
+
+/// Probe run 135 (iOS 26.5 simulator): the edit menu's own words that tell its expanded list
+/// from any other list when no look showed its first page (whole label, exact, OS-given):
+/// a label rule on the OS's own words, like "AirDrop".
+pub const EDIT_MENU_OS_LABELS: &[&str] = &["Cut", "Copy", "Paste", "Select All", "Look Up"];
+
+/// Probe runs 134 and 135: what a raw tree shows of an edit menu, outside every web view.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EditMenuShape {
+    /// A raw `MenuItem` (the edit menu's first page: Cut, Copy, Replace…, AutoFill).
+    pub menu_items: bool,
+    /// A `CollectionView` holding `Cell > Button` rows: the shape of the edit menu's
+    /// expanded list (after its "Forward"), of a context menu and of the Home Screen's icon
+    /// menu alike.
+    pub list: bool,
+    /// One of those rows' buttons has one of [`EDIT_MENU_OS_LABELS`] as its whole label.
+    pub os_words: bool,
+}
+
+/// Whether raw node `b` is a list row's button: a `Button` that is a child of a `Cell` that
+/// is a child of a `CollectionView` (walked from the collection view).
+fn list_rows(cv: &UiNode) -> impl Iterator<Item = &UiNode> {
+    cv.children
+        .iter()
+        .filter(|c| c.role == Role::Cell)
+        .flat_map(|c| c.children.iter().filter(|b| b.role == Role::Button))
+}
+
+/// Probe runs 134 and 135: the edit menu's shape in `root` (outside every web view).
+pub fn edit_menu_shape(root: &UiNode) -> EditMenuShape {
+    let mut out = EditMenuShape::default();
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        if n.role == Role::WebView {
+            continue;
+        }
+        out.menu_items |= n.role.is_menu_item();
+        if n.role == Role::CollectionView {
+            for b in list_rows(n) {
+                out.list = true;
+                out.os_words |= b
+                    .label
+                    .as_deref()
+                    .is_some_and(|l| EDIT_MENU_OS_LABELS.contains(&l.trim()));
+            }
+        }
+        stack.extend(n.children.iter());
+    }
+    out
+}
+
+/// Probe run 135 (iOS 26.5 simulator): the edit menu's expanded list (what its "Forward"
+/// shows: Cut, Copy, Replace…, AutoFill, Look Up, Translate, Search Web, Share…) has no
+/// `MenuItem`: its items are plain `Button`s in `Cell`s of a `CollectionView`, the shape of
+/// any list. When the session knows the list is the edit menu, it reads `screen` with those
+/// rows' buttons as the menu items they are (`Role::Other("MenuItem")`, outside every web
+/// view), so Rule P and the hand-off items decide on them as on the first page.
+pub fn edit_menu_view(screen: &Screen) -> Screen {
+    fn walk(n: &mut UiNode) {
+        if n.role == Role::WebView {
+            return;
+        }
+        if n.role == Role::CollectionView {
+            for c in n.children.iter_mut().filter(|c| c.role == Role::Cell) {
+                for b in c.children.iter_mut().filter(|b| b.role == Role::Button) {
+                    b.role = Role::Other("MenuItem".to_owned());
+                }
+            }
+        }
+        for c in &mut n.children {
+            walk(c);
+        }
+    }
+    let mut out = screen.clone();
+    walk(&mut out.root);
+    out
 }
 
 /// Rule P: the category of an insert-content control's label — the edit menu's Paste
@@ -1545,9 +1885,10 @@ pub fn handoff_control(
 /// whose title the extension chooses ("Copy", "Close") — so a press there always asks,
 /// phone only, whatever its label (the hand-on items' rule, [`handoff_control`]).
 ///
-/// What a share sheet is rests on the roles the code knows, nothing else: a raw `Sheet`
-/// whose subtree holds a node whose whole label is "AirDrop" (the OS's row; the repository
-/// holds no real share-sheet tree, so this is an open device spike).
+/// What a share sheet is rests on OS facts only: a raw `Sheet` whose subtree holds a node
+/// whose whole label is "AirDrop" (the OS's row), or — probe run 134, the real iOS 26.5
+/// simulator tree, a raw `Popover` with no AirDrop row — a node carrying one of the OS's
+/// share-sheet identifiers ([`SHARE_SHEET_IDS`]).
 ///
 /// Twentieth review (R20-B): `share` is that fact decided from the raw tree by whoever holds
 /// it ([`ScreenPlaces::share_sheet`]: the AirDrop node counts whether it is on screen,

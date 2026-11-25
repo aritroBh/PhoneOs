@@ -44,6 +44,8 @@ pub fn role_name(role: &Role) -> &str {
         Role::WebView => "WebView",
         Role::Window => "Window",
         Role::Application => "Application",
+        // Probe run 134: an edit menu's item keeps its own name (it is pressed like a button).
+        r if r.is_menu_item() => "MenuItem",
         Role::Other(_) => "Other",
     }
 }
@@ -110,10 +112,19 @@ pub fn cover_marker(by: CoverKind) -> &'static str {
     }
 }
 
-/// `e`'s line, with the cover marker when the screen's cues say a tap on it is refused.
+/// Probe run 134: the marker after the line of an element whose position on screen is not
+/// known (`cues.unplaced`: inside another process's remote container, the share sheet's).
+/// A tap, long press, typing, clear or drag naming it is refused
+/// (`jarvis_safety::unplaced_target`, the same cue). Fixed text.
+pub const UNPLACED_MARKER: &str = " (position not known: cannot be tapped)";
+
+/// `e`'s line, with the cover marker when the screen's cues say a tap on it is refused, or
+/// the position marker when its position is not known.
 fn line_of(screen: &CompactScreen, e: &Element, cap: Option<usize>) -> String {
     let mut line = element_line(e, cap);
-    if let Some(by) = screen.cues.cover_of(e.index) {
+    if screen.cues.is_unplaced(e.index) {
+        line.push_str(UNPLACED_MARKER);
+    } else if let Some(by) = screen.cues.cover_of(e.index) {
         line.push_str(cover_marker(by));
     }
     line

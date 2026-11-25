@@ -195,7 +195,9 @@ pub(crate) fn covered_controls(screen: &CompactScreen, shape: &Shape<'_>) -> Vec
     let mut near: Vec<u32> = Vec::new();
     let mut subset: Vec<RawNode> = Vec::new();
     for (pos, e) in screen.elements.iter().enumerate() {
-        if !takes_taps(&e.role) {
+        // Probe run 134: an element with no known position is refused as such, never as
+        // covered (one marker, `cues.unplaced`).
+        if !takes_taps(&e.role) || screen.cues.is_unplaced(e.index) {
             continue;
         }
         let own = shape.sources.get(pos).copied();

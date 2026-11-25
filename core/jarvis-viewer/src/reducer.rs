@@ -1148,6 +1148,8 @@ pub fn kind(role: &p::Role) -> ElementKind {
         R::Button | R::Link | R::Cell | R::Switch | R::Slider | R::Picker | R::Tab | R::Key => {
             ElementKind::Control
         }
+        // Probe run 134: an edit menu's `MenuItem` is drawn as the control it is.
+        r if r.is_menu_item() => ElementKind::Control,
         R::TextField | R::SecureTextField | R::TextView | R::SearchField => ElementKind::Input,
         R::StaticText => ElementKind::Text,
         R::Image => ElementKind::Image,

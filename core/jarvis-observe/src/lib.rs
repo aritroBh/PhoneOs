@@ -28,5 +28,6 @@ pub use fingerprint::{fingerprint, fnv1a64, identity_key};
 pub use lookup::{find_by_fingerprint, marks, resolve, ResolveError};
 pub use render::{
     cover_marker, estimate_tokens, render, role_name, switch_state, MORE_ABOVE, MORE_BELOW,
+    UNPLACED_MARKER,
 };
 pub use runner_text::{parse_runner_text, ParseError, ParsedTree};

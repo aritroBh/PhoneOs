@@ -372,7 +372,13 @@ pub fn flow_note_kinds(
     let mut text = format!(". Jarvis has read {list} in this task; {MARK_FLOW}");
     let watched = |i: usize| observe.get(i).copied().unwrap_or(false);
     let mut named_dests = dests.len().min(1);
-    if dests.len() > 1 || (0..dests.len()).any(watched) {
+    // Probe run 134 (fix 3): a screen Jarvis cannot read is named, never "here" (its name
+    // is Jarvis's own words; an app name imitating them is shown by bundle id).
+    let unreadable = dests.iter().any(|d| {
+        d.starts_with(crate::flow::UNREADABLE_SCREEN_PREFIX)
+            && d.ends_with(crate::flow::UNREADABLE_SCREEN_SUFFIX)
+    });
+    if dests.len() > 1 || (0..dests.len()).any(watched) || unreadable {
         let (_, n) = fit_names(dests);
         named_dests = n;
         let own: Vec<String> = (0..n)
@@ -423,8 +429,20 @@ fn fit_names(places: &[String]) -> (String, usize) {
         // ambiguous embedded class are Jarvis's own words, never shortened (only the place's
         // own name before the suffix is).
         // Twenty-third review (F2): so is the Home Screen's name as a place read.
+        let unreadable = p
+            .strip_prefix(crate::flow::UNREADABLE_SCREEN_PREFIX)
+            .and_then(|r| r.strip_suffix(crate::flow::UNREADABLE_SCREEN_SUFFIX));
         let name = if p == crate::flow::SCREEN_PICTURE || p == crate::flow::HOME_SCREEN_READ {
             p.clone()
+        } else if let Some(app) = unreadable {
+            // Probe run 134 (fix 3): only the app's name inside the unreadable screen's
+            // name is shortened, never Jarvis's words around it.
+            format!(
+                "{}{}{}",
+                crate::flow::UNREADABLE_SCREEN_PREFIX,
+                clean_label(app, 40),
+                crate::flow::UNREADABLE_SCREEN_SUFFIX
+            )
         } else if let Some(head) = p.strip_suffix(crate::flow::COVERS_ALL) {
             let pre = crate::flow::COVERS_ALL_PREFIX;
             let (pre, head) = head.strip_prefix(pre).map_or(("", head), |h| (pre, h));
@@ -1332,11 +1350,12 @@ fn alert_of(
     let mut texts: Vec<String> = Vec::new();
     let mut found = false;
     if let Some(t) = tree.filter(|t| !t.nodes.is_empty()) {
-        if let Some(container) = t
-            .ancestors(target)
-            .into_iter()
-            .find(|a| crate::hit::raw_node(t, *a).is_some_and(|n| alert_role(&n.role, springboard)))
-        {
+        // Probe run 134: SpringBoard's notification banner by the OS's identifier too
+        // (`RawNode::banner`: its role name says neither "banner" nor "notification").
+        if let Some(container) = t.ancestors(target).into_iter().find(|a| {
+            crate::hit::raw_node(t, *a)
+                .is_some_and(|n| alert_role(&n.role, springboard) || (springboard && n.banner))
+        }) {
             found = true;
             let end = usize::try_from(container)
                 .ok()
@@ -1479,7 +1498,10 @@ fn browser_forward(
         && toks
             .iter()
             .all(|w| matches!(w.as_str(), "forward" | "go" | "page"));
-    (only_forward && crate::hit::in_bar_with_back(t, screen, tree)).then_some(t.index)
+    // Probe run 134: the edit menu's own paging "Forward" (by its place in the menu) too.
+    (only_forward
+        && (crate::hit::in_bar_with_back(t, screen, tree) || crate::flow::menu_pager(t, tree)))
+    .then_some(t.index)
 }
 
 /// `policy` with no app denied, for gating the way out of a denied app.

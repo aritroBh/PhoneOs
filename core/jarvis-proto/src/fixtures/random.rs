@@ -315,6 +315,7 @@ pub fn random_compact_screen(seed: u64) -> CompactScreen {
                 (*r.pick(&["return", "send", "go", "search", "done", "Return"])).to_owned()
             }),
             covered,
+            unplaced: Vec::new(),
         },
     }
 }

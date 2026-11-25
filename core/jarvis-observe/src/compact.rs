@@ -113,6 +113,8 @@ fn kind(node: &UiNode) -> Kind {
         Role::Button | Role::Link | Role::Switch | Role::Slider | Role::Picker | Role::Tab => {
             Kind::Control
         }
+        // Probe run 134: an edit menu's `MenuItem` is pressed like a button.
+        r if r.is_menu_item() => Kind::Control,
         Role::StaticText => Kind::Text,
         Role::Image => Kind::Image,
         Role::Cell => Kind::Mergeable,
@@ -866,10 +868,25 @@ pub fn compact_view(screen: &Screen) -> CompactView {
     let mut inputs = Vec::new();
     let mut input_marks = Vec::new();
     let mut webviews = Vec::new();
+    // Probe run 134: the raw subtree ranges of the remote containers (`remote_container`),
+    // disjoint once nested ones are folded into their outer one.
+    let mut remote: Vec<(u32, u32)> = Vec::new();
     layout.walk(&screen.root, |node, v| {
         let Some(&i) = index.by_addr.get(&addr(node)) else {
             return;
         };
+        if jarvis_safety::remote_container(node) && !remote.last().is_some_and(|&(_, e)| i < e) {
+            let end = usize::try_from(i)
+                .ok()
+                .and_then(|k| index.ends.get(k))
+                .copied()
+                .unwrap_or(i);
+            remote.push((i, end));
+        }
+        // Probe run 134: what a remote container holds is drawn by another process at
+        // positions the tree does not give in screen coordinates: it is never a drawn
+        // node a point could land on (it neither covers nor is covered).
+        let unplaced = remote.last().is_some_and(|&(a, e)| i > a && i < e);
         if node.role == Role::WebView {
             webviews.push((i, node.frame));
         }
@@ -893,7 +910,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
                 fingerprint: prints.get(&i).copied(),
             });
         }
-        if v.live {
+        if v.live && !unplaced {
             let drawn = layout
                 .on_screen(node.frame)
                 .and_then(|f| v.quiet_clip.map_or(Some(f), |c| f.intersection(&c)));
@@ -914,6 +931,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
                     label,
                     text,
                     keyboard: v.quiet != Quiet::No,
+                    banner: jarvis_safety::notification_banner(node),
                 });
             }
         }
@@ -1000,6 +1018,19 @@ pub fn compact_view(screen: &Screen) -> CompactView {
             ..cues(alert.unwrap_or(&screen.root), bounds, &layout)
         },
     };
+    // Probe run 134: the listed elements whose raw node lies inside a remote container have
+    // no known position on screen (ascending index: `elements` is in index order).
+    screen_out.cues.unplaced = screen_out
+        .elements
+        .iter()
+        .zip(&sources)
+        .filter(|(_, s)| {
+            let s = **s;
+            let k = remote.partition_point(|&(a, _)| a < s);
+            k > 0 && remote.get(k - 1).is_some_and(|&(a, e)| s > a && s < e)
+        })
+        .map(|(e, _)| e.index)
+        .collect();
     // Which listed controls a tap would be refused for (the tap path's own decision).
     screen_out.cues.covered = crate::cover::covered_controls(
         &screen_out,

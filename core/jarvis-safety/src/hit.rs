@@ -727,6 +727,8 @@ fn blocker_among<'n>(
                 && (e.enabled || rule != OccluderRule::V0)
                 && takes_taps(&e.role)
                 && e.frame.contains(p)
+                // Probe run 134: an element with no known position covers nothing.
+                && !screen.cues.is_unplaced(e.index)
                 && !related(target, e, tree)
                 && tree.is_none_or(|t| t.source(e).is_none_or(|n| yields(n, t)))
         })
@@ -856,7 +858,8 @@ pub fn control_at<'a>(
     let Some(smallest) = screen
         .elements
         .iter()
-        .filter(|e| takes_taps(&e.role) && e.frame.contains(p))
+        // Probe run 134: an element with no known position is never what a point lands on.
+        .filter(|e| takes_taps(&e.role) && e.frame.contains(p) && !screen.cues.is_unplaced(e.index))
         .filter(|e| over.is_none_or(|b| tree.is_some_and(|t| t.inside(e, b.node))))
         .min_by(|a, b| a.frame.area().total_cmp(&b.frame.area()))
     else {

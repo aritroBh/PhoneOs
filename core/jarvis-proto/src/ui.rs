@@ -140,9 +140,23 @@ impl Role {
         )
     }
 
-    /// True for roles a user can act on directly (tap, type, toggle, drag).
+    /// Probe run 134 (iOS 26.5): whether this is an item of an edit or context menu —
+    /// XCUITest's raw type `MenuItem`, which the shell keeps as `Role::Other("MenuItem")`
+    /// (it used to map it to [`Role::Button`], so the core never saw a menu item). A menu
+    /// item is pressed like a button: it is interactive, listed as a control and takes taps
+    /// everywhere a button does.
+    pub fn is_menu_item(&self) -> bool {
+        match self {
+            Role::Other(name) => normalize(name) == "menuitem",
+            _ => false,
+        }
+    }
+
+    /// True for roles a user can act on directly (tap, type, toggle, drag). A menu item
+    /// ([`Role::is_menu_item`]) is one.
     pub fn is_interactive(&self) -> bool {
         self.is_text_input()
+            || self.is_menu_item()
             || matches!(
                 self,
                 Role::Button

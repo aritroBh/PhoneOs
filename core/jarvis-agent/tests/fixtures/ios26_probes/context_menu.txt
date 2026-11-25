@@ -1,0 +1,103 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 134, fact
+# probe C_EditAndContextMenus (`fact-c-menus.04-tree.txt`), as the runner dumps it ("typed tree"):
+# a context menu up in Jarvis (plain `Button`s in `Cell`s of a `CollectionView`, an `Other "Preview"`).
+# note: fact probe fact-c-menus, capture 04: context menu up (Jarvis)
+# note: app state 4, device orientation 1
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 4: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) "Preview" {{20, 220}, {400, 110}}
+          Other(Other) {{20, 220}, {400, 110}}
+            Other(Other) {{-30, 220}, {500, 110}}
+          Other(Other) {{20, 220}, {400, 110}}
+            Other(Other) {{20, 220}, {400, 110}}
+              Other(Other) {{20, 220}, {400, 110}}
+                Other(Other) "Hold for the context menu" {{20, 220}, {400, 110}}
+        Other(Other) {{95, 350}, {250, 104}}
+          Other(Other) {{95, 350}, {250, 104}}
+            Other(Other) {{95, 350}, {250, 104}}
+              Other(Other) {{95, 350}, {250, 104}}
+              CollectionView {{95, 350}, {250, 956}}
+                Cell {{95, 360}, {250, 42}}
+                  Button "Probe first action" {{95, 360}, {250, 42}}
+                Cell {{95, 402}, {250, 42}}
+                  Button "Probe second action" {{95, 402}, {250, 42}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{312, 380}, {30, 44}}
+                  Other(Other) {{339, 383}, {3, 38}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{157, 391}, {188, 30}}
+                  Other(Other) {{160, 418}, {182, 3}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{312, 380}, {30, 44}}
+                  Other(Other) {{339, 383}, {3, 38}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{157, 391}, {188, 30}}
+                  Other(Other) {{160, 418}, {182, 3}}
+            Other(Other) {{95, 350}, {250, 104}}
+              Other(Other) {{95, 350}, {250, 104}}
+                Other(Other) {{95, 350}, {250, 104}}
+                  Other(Other) {{95, 350}, {250, 104}}
+                    Other(Other) {{95, 350}, {250, 104}}
+                      Other(Other) {{95, 350}, {250, 44}}
+                  Other(Other) {{95, 350}, {250, 104}}
+                    Other(Other) {{95, 350}, {250, 44}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 956}, {440, 318}} [hidden]
+        Other(Other) {{0, 956}, {440, 318}} [hidden]
+          Other(Other) {{0, 956}, {440, 318}} [hidden]
+            Other(Other) {{0, 956}, {440, 318}} [hidden]
+        Other(Other) {{0, 973}, {440, 243}} [hidden]
+          Keyboard {{0, 973}, {440, 243}} [hidden]
+            Other(Other) {{0, 973}, {440, 243}} [hidden]
+              Other(Other) id=UIKeyboardLayoutStar Preview {{0, 973}, {440, 243}} [hidden]
+                Key "Padding-Left" {{0, 973}, {0, 0}} [hidden]
+                Key "Padding-Right" {{0, 973}, {0, 0}} [hidden]
+                Key "Padding-Left" {{0, 973}, {0, 0}} [hidden]
+                Key "Padding-Right" {{0, 973}, {0, 0}} [hidden]
+                Key "Padding-Left" {{0, 973}, {0, 0}} [hidden]
+                Key "Padding-Right" {{0, 973}, {0, 0}} [hidden]
+                Key "q" {{4.7, 980}, {43, 56}} [hidden]
+                Key "w" {{47.7, 980}, {43.3, 56}} [hidden]
+                Key "e" {{91.0, 980}, {43.3, 56}} [hidden]
+                Key "r" {{134.3, 980}, {43.3, 56}} [hidden]
+                Key "t" {{177.7, 980}, {43.3, 56}} [hidden]
+                Key "y" {{221, 980}, {43.3, 56}} [hidden]
+                Key "u" {{264.3, 980}, {43.3, 56}} [hidden]
+                Key "i" {{307.7, 980}, {43.3, 56}} [hidden]
+                Key "o" {{351, 980}, {43.3, 56}} [hidden]
+                Key "p" {{394.3, 980}, {43.3, 56}} [hidden]
+                Key "a" {{26.0, 1036}, {43.3, 56}} [hidden]
+                Key "s" {{69.3, 1036}, {43.3, 56}} [hidden]
+                Key "d" {{112.7, 1036}, {43.3, 56}} [hidden]
+                Key "f" {{156, 1036}, {43.3, 56}} [hidden]
+                Key "g" {{199.3, 1036}, {43.3, 56}} [hidden]
+                Key "h" {{242.7, 1036}, {43.3, 56}} [hidden]
+                Key "j" {{286, 1036}, {43.3, 56}} [hidden]
+                Key "k" {{329.3, 1036}, {43.3, 56}} [hidden]
+                Key "l" {{372.7, 1036}, {43.3, 56}} [hidden]
+                Button "shift" id=shift {{4.7, 1092}, {56, 56}} [hidden]
+                Key "z" {{69.3, 1092}, {43.3, 56}} [hidden]
+                Key "x" {{112.7, 1092}, {43.3, 56}} [hidden]
+                Key "c" {{156, 1092}, {43.3, 56}} [hidden]
+                Key "v" {{199.3, 1092}, {43.3, 56}} [hidden]
+                Key "b" {{242.7, 1092}, {43.3, 56}} [hidden]
+                Key "n" {{286, 1092}, {43.3, 56}} [hidden]
+                Key "m" {{329.3, 1092}, {43.3, 56}} [hidden]
+                Key "delete" id=delete {{381.3, 1092}, {56.3, 56}} [hidden]
+                Key "numbers" id=more {{4.7, 1148}, {108, 56}} [hidden]
+                Key " " id=space {{112.7, 1148}, {216.7, 56}} [hidden]
+                Button "return" id=Return {{329.3, 1148}, {108.3, 56}} [hidden]
+        Other(Other) {{0, 973}, {440, 301}} [hidden]
+          Button "Emoji" {{2.5, 1205.7}, {80.1, 68.7}} [hidden]
+            StaticText {{2.5, 1205.7}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 1205.4}, {80.1, 68.7}} [hidden]
+            StaticText {{357.4, 1205.4}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 1205.4}, {80.1, 68.7}} [hidden]
+            StaticText {{357.4, 1205.4}, {0, 0}} [hidden]

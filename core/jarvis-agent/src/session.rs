@@ -133,7 +133,7 @@ use jarvis_safety::{
     verb_of, wait_level, widget_names_denied_app, Budget, BudgetVerdict, Confinement, Covered,
     CoveredBy, Decision, FlowContext, InputKind, PointError, ScreenPlaces, ScreenSource,
     ScreenTree, TypedText, Verdict, COVERS_ALL, COVERS_ALL_PREFIX, HOME_SCREEN_READ,
-    SCREEN_PICTURE,
+    SCREEN_PICTURE, UNREADABLE_SCREEN_PREFIX,
 };
 
 use crate::act::{Out, TypedState};
@@ -168,8 +168,6 @@ pub const MAX_STALE_LOOKS: u32 = MAX_REPLANS + 1;
 /// Stale-screen guard: how far (points, per edge) a target's or a node's frame may move
 /// between the planned-on and the fresh look and still be the same.
 const PLAN_FRAME_TOLERANCE: f64 = 2.0;
-/// Fewer enabled interactive elements than this makes the tree "useless" (vision fallback).
-const MIN_ACTIONABLE: usize = 2;
 /// Identical (screen, action) pairs that count as stuck.
 const STUCK_REPEATS: u32 = 3;
 /// The same for `wait`. Waiting is the one action whose point is that the screen has not
@@ -610,6 +608,11 @@ pub struct Session {
     /// Twentieth review (R20-B): the current look is a share sheet — its raw tree holds one,
     /// or it still shows a `Sheet` in the app of [`Self::share_sticky`].
     share_here: bool,
+    /// Probe run 135: the app (lower-cased bundle id) whose look last showed the edit menu's
+    /// first page (raw `MenuItem`s); kept while later looks in that app still show a
+    /// `CollectionView` of `Cell > Button` rows (the menu expanded to its list), cleared by a
+    /// look that shows neither.
+    edit_menu_sticky: Option<String>,
 }
 
 impl std::fmt::Debug for Session {
@@ -781,6 +784,7 @@ impl Session {
             prior_approval: None,
             action_allowed: Vec::new(),
             share_sticky: None,
+            edit_menu_sticky: None,
             share_here: false,
         }
     }
@@ -2343,11 +2347,15 @@ impl Session {
     /// observe-kind destinations ([`Self::observes`]).
     fn restricted(&self) -> bool {
         self.places.every().iter().any(|p| {
+            // Probe run 134: a pair the owner allowed for the action being taken (an approved
+            // `look` into a screen Jarvis cannot read, for which nothing is kept) does not
+            // restrict that action's own look.
             self.observes(p)
-                && !self
+                && self
                     .confine
                     .unallowed_kind(std::slice::from_ref(p), false, false, InputKind::Observe)
-                    .is_empty()
+                    .iter()
+                    .any(|c| !self.action_allowed.iter().any(|(d, a)| d == p && a == c))
         })
     }
 
@@ -2371,8 +2379,26 @@ impl Session {
         // everything below works on the tree without widget content (`home_view`; the
         // digest above is of the raw tree), and no screenshot is kept (a screenshot shows
         // the widgets).
-        let home = home_view(&obs.screen);
-        let raw = home.as_ref().unwrap_or(&obs.screen);
+        // Probe run 135: the edit menu's expanded list has no `MenuItem` (plain buttons in
+        // cells, the shape of any list). It is the edit menu while the menu's first page was
+        // seen in this app and every look since shows such a list (sticky, like the share
+        // sheet), or when its rows carry the OS's own edit-menu words
+        // (`jarvis_safety::EDIT_MENU_OS_LABELS`); then its rows are read as menu items. On
+        // SpringBoard such a list is the icon menu (`home_menu_row`).
+        let front_app = obs.screen.app_bundle_id.trim().to_lowercase();
+        let shape = jarvis_safety::edit_menu_shape(&obs.screen.root);
+        if shape.menu_items {
+            self.edit_menu_sticky = Some(front_app.clone());
+        } else if !(shape.list && self.edit_menu_sticky.as_deref() == Some(front_app.as_str())) {
+            self.edit_menu_sticky = None;
+        }
+        let list_is_menu = !is_springboard(&front_app)
+            && shape.list
+            && (self.edit_menu_sticky.as_deref() == Some(front_app.as_str()) || shape.os_words);
+        let menu = list_is_menu.then(|| jarvis_safety::edit_menu_view(&obs.screen));
+        let seen = menu.as_ref().unwrap_or(&obs.screen);
+        let home = home_view(seen);
+        let raw = home.as_ref().unwrap_or(seen);
         let at_home = home.is_some();
         let mut view = compact_view(raw);
         // Thirteenth review (H1): text that entered a field without `TypeText` sets the
@@ -2396,6 +2422,12 @@ impl Session {
             self.incoming_source,
             Some((&view.webviews, &view.ends, &view.sources)),
         );
+        // Probe run 134 (fix 3): Jarvis's own app while it is not driven is shown to the
+        // model as a stub and nothing is acted on there (the stub is "thin" by
+        // construction); it stays no party (twenty-sixth review, L2).
+        if self.own_hidden {
+            self.places.clear_unreadable();
+        }
         self.here = self.places.base().clone();
         // Twentieth review (R20-B): a share sheet is decided from the raw tree, and stays one
         // while a `Sheet` is up in the same app (cell reuse can drop its AirDrop row from the
@@ -2660,18 +2692,12 @@ impl Session {
 
     /// The tree is too thin to act on, the model can see, and this screen has not had a
     /// screenshot yet.
+    /// (`jarvis_safety::few_actionable`; probe run 134: such a tree that also lists no
+    /// content is `jarvis_safety::thin_tree`, whose inputs go to a screen Jarvis cannot read.)
     fn wants_vision(&self) -> bool {
-        let actionable = self
-            .current
-            .screen
-            .elements
-            .iter()
-            .filter(|e| e.enabled && e.role.is_interactive())
-            .count();
         self.config.model.supports_vision
             && !self.own_hidden
-            && !is_springboard(&self.current.screen.app_bundle_id)
-            && actionable < MIN_ACTIONABLE
+            && jarvis_safety::few_actionable(&self.current.screen)
             && self.vision_hash != Some(self.current.hash)
     }
 
@@ -3101,6 +3127,17 @@ impl Session {
         if uses_foreground_app(action) && self.own_hidden {
             return Err(Reject::NotDone(prompt::RESULT_OWN_APP.to_owned()));
         }
+        // Probe run 134 (fix 2): an element whose position on screen is not known (inside
+        // another process's remote container: the share sheet's rows report frames local to
+        // it) is never touched by coordinates computed from its frame. The same cue puts the
+        // marker on its line (`jarvis_observe::UNPLACED_MARKER`).
+        if let Some(i) = jarvis_safety::unplaced_target(action, screen) {
+            return Err(Reject::NotDone(format!(
+                "not done: Jarvis does not know where element {i} is on the screen (it is \
+                 drawn by another process, such as the share sheet, whose positions the \
+                 tree does not give), so it cannot be tapped, pressed, typed into or dragged"
+            )));
+        }
         // 1. Normalise: resolve app names, check tool calls, gate tap_point on vision.
         let mut tool: Option<&ToolSpec> = None;
         let normalized = match action {
@@ -3220,7 +3257,11 @@ impl Session {
         // one, which is undecidable too.)
         let home = if is_springboard(&screen.app_bundle_id) {
             let tree = self.tree();
-            if handoff_control(&gate, screen, Some(&tree)) {
+            // Probe run 134: the real icon menu's items are plain buttons in the cells of
+            // a collection view (no `MenuItem`): `home_menu_row`.
+            if handoff_control(&gate, screen, Some(&tree))
+                || jarvis_safety::home_menu_row(&gate, screen, Some(&tree))
+            {
                 Some(match home_launch(&gate, screen, &self.apps) {
                     Some(HomeLaunch::App { label, widget, .. }) => {
                         HomeLaunch::Unknown { label, widget }
@@ -3681,11 +3722,16 @@ impl Session {
             .any(|d| !d.sources.is_empty());
         sources = union(&named_dests);
         recent(&mut sources);
-        let (note, named, _) = if order.len() > 1 || watched.first().copied().unwrap_or(false) {
-            flow_note_kinds(&self.flow_names_read(&sources), &dest_names, &watched)
-        } else {
-            flow_note_into(&self.flow_names_read(&sources), &[])
-        };
+        // Probe run 134 (fix 3): a screen Jarvis cannot read is named, never "here".
+        let unreadable = order
+            .iter()
+            .any(|d| matches!(d.place, FlowContext::UnreadableScreen(_)));
+        let (note, named, _) =
+            if order.len() > 1 || watched.first().copied().unwrap_or(false) || unreadable {
+                flow_note_kinds(&self.flow_names_read(&sources), &dest_names, &watched)
+            } else {
+                flow_note_into(&self.flow_names_read(&sources), &[])
+            };
         let partial = named < sources.len() || rest_unallowed;
         sources.truncate(named);
         // Twentieth review (R20-A), twenty-third (R23): what an approval keeps, per named
@@ -3697,10 +3743,12 @@ impl Session {
         // destination, several own destinations).
         let own_count = own.len();
         let keep_for = |d: &Dest| match d.kind {
+            // Probe run 134: an undecidable place (a screen Jarvis cannot read is one even as
+            // an observe-kind destination of a wait or a look) keeps nothing beyond this
+            // action, of any kind.
+            _ if d.place.undecidable() => Keep::Action,
             InputKind::Observe => Keep::Observe,
-            _ if d.place == FlowContext::Unknown || own.contains(&FlowContext::Unknown) => {
-                Keep::Action
-            }
+            _ if own.iter().any(FlowContext::undecidable) => Keep::Action,
             InputKind::Scroll => Keep::Scroll,
             InputKind::Full if matches!(gate, Action::Swipe { .. }) || own_count > 1 => {
                 Keep::Action
@@ -5055,6 +5103,10 @@ fn name_reads_as_list(name: &str) -> bool {
         || n.contains(&words(
             HOME_SCREEN_READ.split_once('(').map_or("", |(_, rest)| rest),
         ))
+        // Probe run 134 (fix 3): nor as the name of a screen Jarvis cannot read.
+        || n.starts_with(UNREADABLE_SCREEN_PREFIX.trim())
+        || n.contains("cannot read")
+        || n.contains("another party")
 }
 
 fn place_key(places: &[FlowContext]) -> String {

@@ -778,7 +778,7 @@ pub(crate) const SIBLING_MAX_TOP_OFFSET: f64 = 2.0;
 
 /// Cells and buttons are one family here: App Store shelves mix cells and "Get" buttons.
 fn row_family(role: &Role) -> bool {
-    matches!(role, Role::Cell | Role::Button)
+    matches!(role, Role::Cell | Role::Button) || role.is_menu_item()
 }
 
 /// Whether `a` and `b` sit side by side as items of one carousel or grid: no horizontal
@@ -1162,7 +1162,9 @@ pub(crate) fn drag_target(
     let button_like = |el: &Element| {
         el.enabled
             && el.role != Role::Key
-            && (matches!(el.role, Role::Button | Role::Link) || is_adjustable(el))
+            && (matches!(el.role, Role::Button | Role::Link)
+                || el.role.is_menu_item()
+                || is_adjustable(el))
     };
     if let Some(el) = target {
         if button_like(el) || reacts_to_drag(el, finger, &r) {
@@ -1218,10 +1220,11 @@ fn tap_point_in<'a>(x: f64, y: f64, r: &Reader<'a>) -> (RiskCategory, Option<&'a
         return (r.context(None).risk, None);
     }
     let p = Point::new(x * screen.size.width, y * screen.size.height);
+    // Probe run 134: an element with no known position is never what a point lands on.
     let hits: Vec<&Element> = screen
         .elements
         .iter()
-        .filter(|e| e.frame.contains(p))
+        .filter(|e| e.frame.contains(p) && !screen.cues.is_unplaced(e.index))
         .collect();
     // Pressable elements first, smallest first (what a finger hits), then capped: texts
     // and containers under the point never use up the window.

@@ -69,6 +69,34 @@ private final class HomeScreenPhone: PhoneRunner {
     }
 }
 
+/// Probe run 134: the real edit menu's shape — raw `MenuItem`s in a collection view, no menu
+/// or callout ancestor — copied through `UiTreeBuilder` as the runner does.
+private final class EditMenuPhone: PhoneRunner {
+    func snapshot(includeScreenshot: Bool) async throws -> RunnerObservation {
+        let full = Rect(x: 0, y: 0, width: 393, height: 852)
+        func item(_ label: String, _ x: Double, _ w: Double) -> RawElement {
+            RawElement(elementType: XCUIElementTypeCode.menuItem, label: label, frame: Rect(x: x, y: 220, width: w, height: 44),
+                       children: [RawElement(elementType: XCUIElementTypeCode.staticText, label: label,
+                                             frame: Rect(x: x + 16, y: 233, width: w - 32, height: 18))])
+        }
+        let snapshot = RawElement(elementType: XCUIElementTypeCode.application, label: "Notes", frame: full, children: [
+            RawElement(elementType: XCUIElementTypeCode.window, frame: full, children: [
+                RawElement(elementType: XCUIElementTypeCode.staticText, label: "A note", frame: Rect(x: 20, y: 120, width: 200, height: 20)),
+            ]),
+            RawElement(elementType: XCUIElementTypeCode.window, frame: full, children: [
+                RawElement(elementType: XCUIElementTypeCode.collectionView, frame: Rect(x: 20, y: 220, width: 312, height: 44), children: [
+                    item("Copy", 24, 68), item("Replace…", 92, 99),
+                ]),
+            ]),
+        ])
+        let root = UiTreeBuilder.build(snapshot, screenSize: Size(width: 393, height: 852)).root
+        return RunnerObservation(root: root, appBundleId: "com.apple.mobilenotes", appName: "Notes",
+                                 screenSize: Size(width: 393, height: 852))
+    }
+
+    func perform(_ command: RunnerCommand) async throws -> RunnerResult { RunnerResult(ok: true, error: nil) }
+}
+
 @Suite("Contract with the core's prompt (real core, real prompts)", .timeLimit(.minutes(1)))
 struct ScreenContractTests {
     private func tap(_ query: ElementQuery, in request: ModelRequest) -> String {
@@ -202,5 +230,19 @@ struct ScreenContractTests {
         _ = try await drive(phone, model, task: "Open Settings", gate: gate, firstUse: true, knownApps: [AppInfo(bundleId: "com.apple.Preferences", name: "Settings")])
         #expect(gate.confirms.isEmpty, "\(gate.confirms)")
         #expect(phone.taps.withLock { $0 } == 1)
+    }
+
+    @Test("probe run 134: a raw MenuItem reaches the core as a menu item; its hand-off asks")
+    func menuItemThroughTheCore() async throws {
+        let model = FakeModel { request, call in
+            call == 1 ? self.tap(ElementQuery("Replace…", roles: ["MenuItem"]), in: request) : doneJSON
+        }
+        let gate = FakeGate(approve: false)
+        _ = try await drive(EditMenuPhone(), model, task: "Fix my note", gate: gate)
+        let prompt = model.requests[0].user
+        #expect(prompt.contains(#"MenuItem "Replace…""#), "\(prompt)")
+        let confirm = try #require(gate.confirms.first, "Replace… was tapped without a question")
+        #expect(confirm.phoneOnly)
+        #expect(confirm.summary.contains("may send the selected content to another app or service"), "\(confirm.summary)")
     }
 }
