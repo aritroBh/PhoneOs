@@ -76,6 +76,17 @@ targets:
         NSLocalNetworkUsageDescription: "Jarvis listens on your local network only when you turn on Remote control, so your paired devices can start and watch tasks."
         NSBonjourServices:
           - _jarvis-remote._tcp
+        # Probe round 3 (Playground fixture screens only, App/Jarvis/Playground/ProbeFixtures3.swift):
+        # the simulator probes raise each permission prompt once to record its tree. A request
+        # without its usage description crashes the app, so every permission asked has its key.
+        # Jarvis itself asks for none of these outside the Playground.
+        NSLocationWhenInUseUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
+        NSCameraUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
+        NSMicrophoneUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
+        NSContactsUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
+        NSPhotoLibraryUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
+        NSPhotoLibraryAddUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
+        NSUserTrackingUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.jarvis.app

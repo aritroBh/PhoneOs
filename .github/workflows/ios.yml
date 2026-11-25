@@ -30,7 +30,7 @@ jobs:
     # macos-26 is the arm64 image; Xcode 26.x is installed (default 26.6 when last checked).
     # Source: https://github.com/actions/runner-images#available-images
     runs-on: macos-26
-    timeout-minutes: 85
+    timeout-minutes: 105
     defaults:
       run:
         shell: bash
@@ -100,7 +100,7 @@ jobs:
       # Generates the project, builds for testing, runs the UI tests on a runtime-picked
       # simulator, exports attachments/summary to Shell/build/qa and writes the job summary.
       - name: Simulator QA (xcodegen, build-for-testing, test)
-        timeout-minutes: 55
+        timeout-minutes: 75
         run: Shell/scripts/sim-qa.sh --skip-bootstrap
 
       # Failures in the log itself: the planner reads job logs, not artifacts.
