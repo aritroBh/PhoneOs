@@ -69,6 +69,13 @@ pub const SPRINGBOARD_BUNDLE_ID: &str = "com.apple.springboard";
 /// Bundle id of Spotlight, the system search: its own process on iOS 26 (probe runs 134 and
 /// 135), shown over the Home Screen after a swipe down, with its own accessibility tree.
 pub const SPOTLIGHT_BUNDLE_ID: &str = "com.apple.Spotlight";
+/// Not a bundle id: what the shell's XCUITest runner reports as the top layer when an app
+/// is in front that it cannot identify (SpringBoard is the foreground reading, the phone is
+/// not locked, no SpringBoard alert or Spotlight is up, and SpringBoard does not show its
+/// Home Screen). Its observation holds the application node only. Never SpringBoard,
+/// Jarvis's own app, a known app or something to launch; its screen is one Jarvis cannot
+/// read (every input asks, nothing is kept), named by `jarvis_safety::UNIDENTIFIED_APP`.
+pub const UNIDENTIFIED_APP_BUNDLE_ID: &str = "unknown.front.app";
 
 /// How closely the owner supervises actions in apps without their own [`AppRule`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]

@@ -338,7 +338,8 @@ final class TopLayerRunnerTests: QATestCase {
     /// ~8 s, the end ~10 s: ~70-80 s. Worst case (every wait to its limit): launch 20 + probe
     /// screen 16 + alert 4 + status 8 + due within 25 s of the status, polled to 15 s after it
     /// (40, Settings' 15 s wait inside it) + checks 10 + banner gone 12 + end 12 = ~122 s,
-    /// inside the default 180 s allowance (`sim-qa.sh`).
+    /// inside the default 180 s allowance (`sim-qa.sh`); the recorded default-wait tap adds
+    /// at most 10 s (`BannerGate.maxWait`): ~132 s.
     @MainActor
     func testC_BannerCoversWhatIsUnderIt() async throws {
         // Every observed value reaches the attachment, also after a failed assertion.
@@ -394,7 +395,10 @@ final class TopLayerRunnerTests: QATestCase {
         let activated = Date()
         settings.activate()
         let inFront = settings.wait(for: .runningForeground, timeout: 15)
-        let planner = XCUITestPhoneRunner()
+        // The planner answers a gesture during a banner at once (no wait for the banner to
+        // go, `bannerWait` zero), so the banner is still up for the checks after each refusal;
+        // the default wait is recorded separately below.
+        let planner = XCUITestPhoneRunner(configuration: XCUITestPhoneRunner.Configuration(bannerWait: .zero))
         planner.noteActivated(Self.settingsId)
         let front = try await planner.frontBundleId()
         let remaining = due.earliest.timeIntervalSinceNow
@@ -549,14 +553,40 @@ final class TopLayerRunnerTests: QATestCase {
         let general = belowCandidates.first(where: { $0.identifier == "com.apple.settings.general" })
         let below = general ?? belowCandidates.min(by: { $0.frame.y < $1.frame.y })
         if let below {
+            // Run 138: XCUITest held this tap until the banner had gone (5.6 s) and then sent it.
+            // Now no event is sent while a banner is up, wherever the point: stale, with the
+            // banner-up reason, and the control is not activated.
             let point = Self.centre(below.frame)
+            let navigationBefore = settings.navigationBars.firstMatch.identifier
             let upBefore = bannerQuery.exists
-            let result = try await planner.perform(.tap(x: point.x, y: point.y), expect: CommandExpect(bundleId: Self.settingsId))
-            note("(iii) tap well below the banner on \(Self.describe(below)): ok \(result.ok), failure \(String(describing: result.failure)), \(result.error ?? ""); banner up before it \(upBefore)")
-            XCTAssertTrue(result.ok, "a tap well below the banner was refused: \(result.error ?? "")")
+            if upBefore {
+                let result = try await planner.perform(.tap(x: point.x, y: point.y), expect: CommandExpect(bundleId: Self.settingsId))
+                try await Task.sleep(for: .milliseconds(1_500))
+                let navigationAfter = settings.navigationBars.firstMatch.identifier
+                let general = settings.navigationBars["General"].exists
+                note("(iii) tap well below the banner on \(Self.describe(below)): ok \(result.ok), failure \(String(describing: result.failure)), \(result.error ?? ""); banner up before it \(upBefore); navigation bar before \"\(navigationBefore)\", after \"\(navigationAfter)\", General shown \(general)")
+                XCTAssertFalse(result.ok, "a tap well below the banner was carried out while the banner was up")
+                XCTAssertEqual(result.failure, RunnerFailure.stale)
+                XCTAssertTrue(result.error?.contains("a notification banner was up") ?? false, "not the banner-up refusal: \(result.error ?? "")")
+                XCTAssertFalse(general, "Settings navigated to General: the tap reached the control")
+                XCTAssertEqual(navigationBefore, navigationAfter, "Settings' screen changed after the refused tap")
+            } else {
+                unchecked.append("(iii) the banner went away before the tap well below it")
+                note("(iii) the banner went away before the tap well below it: not checked")
+            }
         } else {
             unchecked.append("(iii) no Settings control well below the banner in the look before it")
             note("(iii) no Settings control well below the banner in the look before it: not checked")
+        }
+
+        // Record only: the default runner waits (bounded, `BannerGate.maxWait`) for the banner
+        // to go, then answers stale either way; no event is sent.
+        if bannerQuery.exists {
+            let waiter = XCUITestPhoneRunner()
+            waiter.noteActivated(Self.settingsId)
+            let start = Date()
+            let result = try await waiter.perform(.tap(x: 220, y: Double(before.screenSize.height) * 0.6), expect: CommandExpect(bundleId: Self.settingsId))
+            note("(record) a tap with the default banner wait: \(Self.seconds(Date().timeIntervalSince(start))) s, ok \(result.ok), failure \(String(describing: result.failure)), \(result.error ?? ""); banner up after \(bannerQuery.exists), General shown \(settings.navigationBars["General"].exists)")
         }
 
         // (iv) Once the banner has gone, a fresh look has no covering node.
@@ -580,5 +610,176 @@ final class TopLayerRunnerTests: QATestCase {
         if !unchecked.isEmpty {
             throw XCTSkip("not every check could be made: " + unchecked.joined(separator: "; "))
         }
+    }
+
+    // MARK: - 4. An app that was never in the twelve-app list (the front-app rule)
+
+    /// Apps on the iOS 26.5 simulator that were never in `XCUITestPhoneRunner.defaultKnownApps`
+    /// (its Home Screen in run 137 shows Shortcuts, Fitness, Preview, Wallet, News, Watch),
+    /// tried in this order; the first that reaches the foreground is used.
+    private static let outsideTheOldList = [
+        "com.apple.shortcuts", "com.apple.Fitness", "com.apple.Preview", "com.apple.Passbook",
+        "com.apple.news", "com.apple.Bridge", "com.apple.tips", "com.apple.mobilemail",
+    ]
+
+    /// `body`, with any XCTest issue it raises recorded as data, not as a failure (a launch of
+    /// an app the simulator does not have).
+    @MainActor
+    private func tolerated(_ what: String, _ body: () -> Void) -> [String] {
+        var issues: [String] = []
+        let options = XCTExpectedFailure.Options()
+        options.isStrict = false
+        options.issueMatcher = { issue in
+            issues.append(issue.compactDescription)
+            return true
+        }
+        XCTExpectFailure("\(what) may fail on this simulator; recorded, not judged", options: options) {
+            body()
+        }
+        return issues
+    }
+
+    /// Launches the first app of `outsideTheOldList` the simulator has; `nil` when none
+    /// reached the foreground.
+    @MainActor
+    private func launchAnAppOutsideTheOldList() -> (id: String, app: XCUIApplication)? {
+        for id in Self.outsideTheOldList where !XCUITestPhoneRunner.defaultKnownApps.contains(id) {
+            let target = XCUIApplication(bundleIdentifier: id)
+            let start = Date()
+            let issues = tolerated("launching \(id)") { target.launch() }
+            let inFront = target.wait(for: .runningForeground, timeout: 15)
+            note("launch \(id): state \(target.state.rawValue) after \(Self.seconds(Date().timeIntervalSince(start))) s"
+                 + (issues.isEmpty ? "" : "; XCTest issues: \(issues.joined(separator: " | "))"))
+            if inFront { return (id, target) }
+        }
+        return nil
+    }
+
+    /// A short fingerprint of `app`'s screen (its labelled nodes and their frames), to tell
+    /// whether a refused gesture changed anything.
+    @MainActor
+    private func fingerprint(_ app: XCUIApplication) -> String {
+        guard let raw = (try? app.snapshot()).map({ SnapshotCopy.copy($0) }) else { return "no snapshot" }
+        var parts: [String] = []
+        var stack = [raw]
+        while let e = stack.popLast(), parts.count < 40 {
+            if !e.label.isEmpty { parts.append("\(e.label)@\(Self.rectText(e.frame))") }
+            stack.append(contentsOf: e.children.reversed())
+        }
+        return parts.joined(separator: "; ")
+    }
+
+    /// `frontBundleId()` timed over `n` calls, for the record.
+    @MainActor
+    private func timed(_ runner: XCUITestPhoneRunner, _ n: Int) async throws -> String {
+        var ms: [Double] = []
+        var ids: Set<String> = []
+        for _ in 0..<n {
+            let start = Date()
+            let id = try await runner.frontBundleId()
+            ms.append(Date().timeIntervalSince(start) * 1_000)
+            ids.insert(id ?? "nil")
+        }
+        let sorted = ms.sorted()
+        let mean = ms.reduce(0, +) / Double(max(ms.count, 1))
+        return String(format: "%ld calls: mean %.0f ms, min %.0f, median %.0f, max %.0f; answers %@",
+                      ms.count, mean, sorted.first ?? 0, sorted[sorted.count / 2], sorted.last ?? 0,
+                      ids.sorted().joined(separator: ", "))
+    }
+
+    /// The front-app rule on the simulator, strict: an app that was never in the twelve-app
+    /// list is identified with identification on (its own tree, with content); with it off
+    /// it is the unidentified app — an empty tree with the note, and a swipe planned on
+    /// SpringBoard is refused as stale with nothing synthesized; at the real Home Screen both
+    /// report SpringBoard and its icons. Record only: which path answered and how long
+    /// `frontBundleId()` took (10 calls per configuration, in the app and at the Home Screen).
+    ///
+    /// Timing (expected): Home Screen ~3 s, a first launch up to ~15 s (two candidates at
+    /// most on this simulator), the checks ~10 s, 40 timed calls ~5 s, the end ~10 s: ~45 s;
+    /// worst case (every candidate tried to its 15 s limit) ~150 s, inside the default 180 s.
+    @MainActor
+    func testD_AnAppOutsideTheOldListIsIdentifiedOrFailsClosed() async throws {
+        continueAfterFailure = true
+        started = Date()
+        await SystemAppAgentTests.startOnHomeScreen(terminating: Self.outsideTheOldList)
+        guard let (id, target) = launchAnAppOutsideTheOldList() else {
+            note("none of \(Self.outsideTheOldList.joined(separator: ", ")) reached the foreground")
+            await finish("front-app", terminating: Self.outsideTheOldList)
+            XCTFail("no app outside the old twelve-app list could be launched on this simulator")
+            return
+        }
+        note("in front: \(id) (not in the old list of \(XCUITestPhoneRunner.defaultKnownApps.count) apps)")
+        try await Task.sleep(for: .seconds(2))
+
+        // Identification on (the default): the app itself, its own tree.
+        let on = XCUITestPhoneRunner()
+        let onFront = try await on.frontBundleId()
+        note("identification on: frontBundleId() \(onFront ?? "nil"); path: \(on.frontAppPath)")
+        note("identification on: FrontProcess.lastPath \(FrontProcess.lastPath) (\(String(format: "%.0f", FrontProcess.lastMilliseconds)) ms)")
+        XCTAssertEqual(onFront, id, "the runner did not identify \(id) with identification on")
+        let onLook = try await on.snapshot(includeScreenshot: false)
+        let onNodes = onLook.root.map { Self.findAll($0) { _ in true }.count } ?? 0
+        let onLabelled = onLook.root.map { Self.findAll($0) { !($0.label ?? "").isEmpty } } ?? []
+        note("identification on: snapshot of \(onLook.appBundleId), \(onNodes) nodes, \(onLabelled.count) labelled (first: \(onLabelled.prefix(5).map { $0.label ?? "" }.joined(separator: " | "))); notes: \(onLook.notes.joined(separator: " | "))")
+        XCTAssertEqual(onLook.appBundleId, id, "the snapshot is not of \(id)")
+        XCTAssertGreaterThan(onNodes, 1, "the snapshot of \(id) holds no content")
+        XCTAssertFalse(onLabelled.isEmpty, "the snapshot of \(id) holds no labelled node")
+        let onTiming = try await timed(on, 10)
+        note("identification on, in \(id): " + onTiming)
+
+        // Identification off: part 1 alone. The app is the unidentified app: no content, the
+        // note; a swipe planned on SpringBoard is refused as stale and nothing is synthesized.
+        let off = XCUITestPhoneRunner(configuration: XCUITestPhoneRunner.Configuration(identifyFrontApp: false))
+        let offFront = try await off.frontBundleId()
+        note("identification off: frontBundleId() \(offFront ?? "nil"); path: \(off.frontAppPath)")
+        XCTAssertEqual(offFront, FrontApp.unidentified, "with identification off \(id) was not reported as the unidentified app")
+        let offLook = try await off.snapshot(includeScreenshot: false)
+        let offRoot = try XCTUnwrap(offLook.root, "the runner sent no typed tree")
+        note("identification off: snapshot of \(offLook.appBundleId), root \(Self.describe(offRoot)), \(offRoot.children.count) children; notes: \(offLook.notes.joined(separator: " | "))")
+        XCTAssertEqual(offLook.appBundleId, FrontApp.unidentified)
+        XCTAssertTrue(offRoot.children.isEmpty, "the unidentified app's tree has content")
+        XCTAssertNil(offRoot.label)
+        XCTAssertFalse(offLook.deviceLocked)
+        XCTAssertTrue(offLook.notes.contains(FrontApp.unidentifiedNote), "no note says an app Jarvis cannot identify is in front: \(offLook.notes)")
+        XCTAssertFalse(offLook.notes.contains { $0.contains("Home Screen") && !$0.contains("does not show") }, "\(offLook.notes)")
+        let before = fingerprint(target)
+        let width = offLook.screenSize.width, height = offLook.screenSize.height
+        let swipe = RunnerCommand.swipe(from: Point(x: width * 0.85, y: height * 0.5), to: Point(x: width * 0.15, y: height * 0.5), durationMs: 300)
+        var synthesized: [String] = []
+        off.onCommand = { command, result in synthesized.append("\(command): ok \(result.ok)") }
+        let stale = try await off.perform(swipe, expect: CommandExpect(bundleId: Self.springboardId))
+        off.onCommand = nil
+        try await Task.sleep(for: .seconds(1))
+        let after = fingerprint(target)
+        note("identification off: swipe planned on SpringBoard: ok \(stale.ok), failure \(String(describing: stale.failure)), \(stale.error ?? ""); commands reported: \(synthesized.joined(separator: " ; ")); \(id) unchanged \(before == after)")
+        XCTAssertFalse(stale.ok)
+        XCTAssertEqual(stale.failure, RunnerFailure.stale)
+        XCTAssertEqual(before, after, "\(id) changed after the refused swipe: a touch may have reached it")
+        XCTAssertEqual(target.state, .runningForeground, "\(id) is no longer in front after the refused swipe")
+        let offTiming = try await timed(off, 10)
+        note("identification off, in \(id): " + offTiming)
+
+        // The real Home Screen: both configurations report SpringBoard and return its icons.
+        await SystemAppAgentTests.startOnHomeScreen(terminating: [id])
+        for (name, runner) in [("on", XCUITestPhoneRunner()),
+                               ("off", XCUITestPhoneRunner(configuration: XCUITestPhoneRunner.Configuration(identifyFrontApp: false)))] {
+            var front = try await runner.frontBundleId()
+            let deadline = Date().addingTimeInterval(8)
+            while front != Self.springboardId, Date() < deadline {
+                try await Task.sleep(for: .milliseconds(300))
+                front = try await runner.frontBundleId()
+            }
+            note("Home Screen, identification \(name): frontBundleId() \(front ?? "nil"); path: \(runner.frontAppPath)")
+            XCTAssertEqual(front, Self.springboardId, "identification \(name): the Home Screen is not reported as SpringBoard")
+            let look = try await runner.snapshot(includeScreenshot: false)
+            let icons = look.root.map { Self.findAll($0) { $0.role == .button && !($0.label ?? "").isEmpty } } ?? []
+            note("Home Screen, identification \(name): snapshot of \(look.appBundleId), \(icons.count) labelled buttons (\(icons.prefix(8).map { $0.label ?? "" }.joined(separator: ", "))); notes: \(look.notes.joined(separator: " | "))")
+            XCTAssertEqual(look.appBundleId, Self.springboardId)
+            XCTAssertTrue(icons.contains { $0.label == "Settings" }, "identification \(name): the Home Screen look holds no Settings icon")
+            XCTAssertFalse(look.notes.contains(FrontApp.unidentifiedNote), "identification \(name): the Home Screen was read as an unidentified app")
+            let homeTiming = try await timed(runner, 10)
+            note("Home Screen, identification \(name): " + homeTiming)
+        }
+        await finish("front-app", terminating: [id])
     }
 }

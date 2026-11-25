@@ -127,13 +127,14 @@ use jarvis_safety::{
     approval_context, check_app, check_app_name, check_confinement, control_at, copy_control,
     egress_owned, evaluate_sheeted, first_use_app, first_use_request, flow_checked, flow_note_into,
     flow_note_kinds, handoff_control, handoff_note, home_view, in_alert, insert_control,
-    is_launcher, is_spotlight, is_springboard, label_names_denied_app, not_owner_note,
-    observed_places, paste_note, point_is_clear, question_noted, redact, redact_screen,
-    return_question_noted, sanitize_screen_text, search_names_denied_app, sensitive_note,
-    touches_screen, url_destination, verb_of, wait_level, widget_names_denied_app, Budget,
-    BudgetVerdict, Confinement, Covered, CoveredBy, Decision, FlowContext, InputKind, PointError,
-    ScreenPlaces, ScreenSource, ScreenTree, TypedText, Verdict, COVERS_ALL, COVERS_ALL_PREFIX,
-    HOME_SCREEN_READ, SCREEN_PICTURE, SPOTLIGHT, SYSTEM_ALERT, UNREADABLE_SCREEN_PREFIX,
+    is_launcher, is_spotlight, is_springboard, is_unidentified_app, label_names_denied_app,
+    not_owner_note, observed_places, paste_note, point_is_clear, question_noted, redact,
+    redact_screen, return_question_noted, sanitize_screen_text, search_names_denied_app,
+    sensitive_note, touches_screen, url_destination, verb_of, wait_level, widget_names_denied_app,
+    Budget, BudgetVerdict, Confinement, Covered, CoveredBy, Decision, FlowContext, InputKind,
+    PointError, ScreenPlaces, ScreenSource, ScreenTree, TypedText, Verdict, COVERS_ALL,
+    COVERS_ALL_PREFIX, HOME_SCREEN_READ, SCREEN_PICTURE, SPOTLIGHT, SYSTEM_ALERT, UNIDENTIFIED_APP,
+    UNREADABLE_SCREEN_PREFIX,
 };
 
 use crate::act::{Out, TypedState};
@@ -1272,7 +1273,12 @@ impl Session {
             Event::UserDecision { approved: true } => {
                 match approves_app {
                     Some(app) => {
-                        self.approved_apps.insert(app);
+                        // Front app: the first use of an app the runner cannot identify
+                        // covers this action only (the next unidentified app may be any
+                        // other); never kept for the task or in memory.
+                        if !is_unidentified_app(&app) {
+                            self.approved_apps.insert(app);
+                        }
                     }
                     // Sixteenth review (Rule T): the flow this question named is allowed
                     // for the rest of the task.
@@ -2380,7 +2386,12 @@ impl Session {
         }
     }
 
-    fn ingest(&mut self, obs: Observation) {
+    fn ingest(&mut self, mut obs: Observation) {
+        // Front app: an app the runner cannot identify is named so wherever its name is
+        // shown (the action line, the prompt), whatever name the observation carries.
+        if is_unidentified_app(&obs.screen.app_bundle_id) {
+            obs.screen.app_name = Some(UNIDENTIFIED_APP.to_owned());
+        }
         // The digest is taken from the raw tree before compaction cuts or drops anything.
         let digest = screen_digest(&obs.screen);
         // Sixteenth review (home screen rule): what a widget shows never reaches the model,
@@ -3055,6 +3066,10 @@ impl Session {
     /// Whether the owner approved acting in `app` (in memory or in this session), or it is
     /// the agent's own app.
     fn app_approved(&self, app: &str) -> bool {
+        // Front app: no approval ever covers an app the runner cannot identify.
+        if is_unidentified_app(app) {
+            return false;
+        }
         self.memory.is_app_approved(app)
             || self.approved_apps.contains(app)
             || self.is_agent_app(app)
@@ -3070,7 +3085,7 @@ impl Session {
         self.config
             .agent_bundle_ids
             .iter()
-            .any(|own| !own.is_empty() && own == app)
+            .any(|own| !own.is_empty() && own == app && !is_unidentified_app(app))
     }
 
     /// Whether the owner declined first-use approval for `app` in this session (bundle ids
@@ -3151,6 +3166,14 @@ impl Session {
         let mut tool: Option<&ToolSpec> = None;
         let normalized = match action {
             Action::OpenApp { app } => match resolve_app(app, &self.apps) {
+                // Front app: the runner's name for an app it cannot identify is no app.
+                AppTarget::Bundle(bundle_id) if is_unidentified_app(&bundle_id) => {
+                    return Err(Reject::NotDone(format!(
+                        "not done: {} is not an app (it is how Jarvis marks {UNIDENTIFIED_APP} \
+                         in front), so it cannot be opened",
+                        clean(&bundle_id, 80)
+                    )));
+                }
                 AppTarget::Bundle(bundle_id) => {
                     if check_app(policy, &bundle_id).is_denied()
                         || check_app_name(policy, &self.apps, app).is_denied()
@@ -3577,7 +3600,14 @@ impl Session {
                     clean(&app, 80)
                 )));
             }
-            let request = first_use_request(&app, self.app_name(&app).as_deref());
+            // Front app: an app the runner cannot identify is named so (its first use is
+            // never kept: `app_approved`, and the approval below).
+            let name = if is_unidentified_app(&app) {
+                Some(UNIDENTIFIED_APP.to_owned())
+            } else {
+                self.app_name(&app)
+            };
+            let request = first_use_request(&app, name.as_deref());
             let request = self.stamped(request, &gate, stage, &pending.exec);
             return Ok(Prepared::FirstUse {
                 pending,
@@ -4846,7 +4876,14 @@ fn category_name(c: RiskCategory) -> &'static str {
 /// `config.known_apps`, then each app rule that carries a display name and whose prefix is a
 /// whole bundle id (at least two dot-separated parts, no wildcard) and is not known yet.
 fn named_apps(config: &SessionConfig) -> Vec<AppInfo> {
-    let mut apps = config.known_apps.clone();
+    // Front app: the runner's synthetic id for an app it cannot identify is never a known
+    // app (no name, nothing to launch), whatever the shell passes.
+    let mut apps: Vec<AppInfo> = config
+        .known_apps
+        .iter()
+        .filter(|a| !is_unidentified_app(&a.bundle_id))
+        .cloned()
+        .collect();
     for rule in &config.policy.app_rules {
         let Some(name) = rule
             .name
@@ -5136,6 +5173,9 @@ fn name_reads_as_list(name: &str) -> bool {
         || n.starts_with(UNREADABLE_SCREEN_PREFIX.trim())
         || n.contains("cannot read")
         || n.contains("another party")
+        // Front app: nor as Jarvis's name for an app in front it cannot identify.
+        || n.contains(&words(UNIDENTIFIED_APP))
+        || n.contains("cannot identify")
 }
 
 /// Top layer: how a launch question names the launcher it is asked on: Spotlight, else the

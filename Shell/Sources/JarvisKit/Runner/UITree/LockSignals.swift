@@ -9,7 +9,10 @@ import Synchronization
 /// - `notify`: the Darwin notify state of `com.apple.springboard.lockstate` (`nil`: not
 ///   readable). It can stay stale in the simulator.
 /// - `lockScreen`: SpringBoard's tree matches `LockScreenSignature` (`nil`: not checked,
-///   for example because the snapshot failed, or an app is in front).
+///   for example because the snapshot failed, or an app is in front and the notify state
+///   does not say locked). The XCUITest runner checks SpringBoard's tree whenever
+///   SpringBoard is in front, and also with an app in front once the notify state says
+///   locked (audit C6).
 /// - `front`: what is in front.
 ///
 /// There used to be two rules over these (commands: either says locked; resume: unlocked as
@@ -80,11 +83,15 @@ public struct LockVerdict: Sendable, Equatable, CustomStringConvertible {
 /// can never disagree.
 ///
 /// - the lock screen is confirmed: locked;
-/// - the notify state says locked, the lock screen is not confirmed (not checked, or not
-///   shown; an app or SpringBoard in front): locked while the notify state has been true for
-///   less than `notifyStaleAfter`; after that, with the lock screen never confirmed in the
-///   stretch, it is declared stale (once, with a note) and the verdict is unlocked until the
-///   notify state reads false. A confirmed lock screen restarts the clock (it was real);
+/// - the notify state says locked and the lock screen was not checked (`nil`: the snapshot
+///   failed, or a runner that does not check): locked, however long it lasts — the notify
+///   state never goes stale on such a reading (audit C6, run 137: right after the lock the
+///   locked app still read as in front; a runner checks SpringBoard's tree then);
+/// - the notify state says locked and the check showed no lock screen (`false`; an app or
+///   SpringBoard in front): locked while the notify state has been true for less than
+///   `notifyStaleAfter`; after that, with the lock screen never confirmed in the stretch, it
+///   is declared stale (once, with a note) and such readings are unlocked until the notify
+///   state reads false. A confirmed lock screen restarts the clock (it was real);
 /// - the notify state says unlocked: unlocked;
 /// - no notify reading: the lock screen reading decides; neither: unknown.
 ///
@@ -120,6 +127,12 @@ public final class LockJudge: Sendable {
                 return LockVerdict(state: .locked, notifyTrueFor: .zero)
             }
             let held = max(.zero, now - (s.notifyTrueSince ?? now))
+            // Audit C6 (run 137): notify may go stale only on a reading whose lock screen
+            // check positively showed none. Unchecked (an app reads as in front, the
+            // snapshot failed) it stays locked however long it lasts: right after the lock
+            // the locked app kept reading as foreground for about 8 s on the simulator, and
+            // on a device (background audio, navigation) it can be longer than 12 s.
+            if signals.lockScreen == nil { return LockVerdict(state: .locked, notifyTrueFor: held) }
             if s.stale { return LockVerdict(state: .unlocked, notifyTrueFor: held) }
             if held >= notifyStaleAfter {
                 s.stale = true

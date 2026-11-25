@@ -34,8 +34,15 @@ struct RunnerObservationRecord {
 @MainActor
 final class XCUITestPhoneRunner: PhoneRunner {
     struct Configuration: Sendable {
-        /// Apps checked (in order) when the last activated app is no longer in front.
+        /// Apps checked (in order) when the last activated app is no longer in front and the
+        /// private path (`FrontProcess`) is off or does not tell: the public reading of
+        /// before, kept so that a broken private path degrades to it (any other app in front
+        /// is then the unidentified app, `FrontApp`).
         var knownBundleIds: [String]
+        /// Ask the test framework's accessibility client which app is in front
+        /// (`FrontProcess`, private API). Off: the public readings and the fail-closed rule
+        /// only (the tests of part 1).
+        var identifyFrontApp: Bool
         /// Pause after a command before the next snapshot (animations, keyboard).
         var settleAfterAction: Duration
         /// Longest wait for the software keyboard before typing.
@@ -45,19 +52,28 @@ final class XCUITestPhoneRunner: PhoneRunner {
         /// Put both raw lock readings in every observation's notes and in
         /// `lockSignalHistory` (the lock tests), not only when they change.
         var noteLockSignalsEveryObservation: Bool
+        /// How long a gesture asked for while a notification banner is up waits for it to go
+        /// before the stale answer (`BannerGate`; never more than `BannerGate.maxWait`). No
+        /// event is sent either way; zero answers at once (the banner test checks the banner
+        /// is still up after the refusal).
+        var bannerWait: Duration
 
         init(
             knownBundleIds: [String] = XCUITestPhoneRunner.defaultKnownApps,
+            identifyFrontApp: Bool = true,
             settleAfterAction: Duration = .milliseconds(700),
             keyboardWait: TimeInterval = 3,
             launchWait: TimeInterval = 15,
-            noteLockSignalsEveryObservation: Bool = false
+            noteLockSignalsEveryObservation: Bool = false,
+            bannerWait: Duration = BannerGate.maxWait
         ) {
             self.knownBundleIds = knownBundleIds
+            self.identifyFrontApp = identifyFrontApp
             self.settleAfterAction = settleAfterAction
             self.keyboardWait = keyboardWait
             self.launchWait = launchWait
             self.noteLockSignalsEveryObservation = noteLockSignalsEveryObservation
+            self.bannerWait = min(max(bannerWait, .zero), BannerGate.maxWait)
         }
     }
 
@@ -85,6 +101,11 @@ final class XCUITestPhoneRunner: PhoneRunner {
     private var notifyToken: Int32?
     private var lastLockEvidence: String?
     private var pendingLockNotes: [String] = []
+    /// Notes about the last commands for the next observation (a held gesture, `BannerGate`).
+    private var pendingCommandNotes: [String] = []
+    /// When the current command's XCUITest event call began (after the keyboard wait for
+    /// typing), for the held-gesture check (`BannerGate.heldNote`).
+    private var eventStarted = ContinuousClock.now
     private let started = Date()
     /// The one judge for commands and for resume (JarvisKit, Linux-tested): staleness of the
     /// notify reading is decided by time, here, nowhere else.
@@ -95,6 +116,14 @@ final class XCUITestPhoneRunner: PhoneRunner {
     /// Lock readings with the time since the runner was made: every change, and every
     /// reading with `noteLockSignalsEveryObservation` (for failure messages).
     private(set) var lockSignalHistory: [String] = []
+    /// How the last foreground reading was made: the last launched app still in front, the
+    /// private path (`FrontProcess.lastPath`), the known apps, or SpringBoard (for the notes
+    /// and the QA records).
+    private(set) var frontAppPath = "not read yet"
+    /// The `frontAppPath` last put in an observation's notes (each change is noted once).
+    private var notedFrontAppPath: String?
+    /// The screen's size from the last tree read (for an observation that reads no tree).
+    private var lastScreenSize: Size?
 
     init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
@@ -111,6 +140,12 @@ final class XCUITestPhoneRunner: PhoneRunner {
         if await takeSettle() {
             try await Task.sleep(for: configuration.settleAfterAction)
         }
+        let first = try await observe(includeScreenshot: includeScreenshot)
+        // An app Jarvis cannot identify, read right after a command, may be a transition (an
+        // app launching or closing while SpringBoard animates): look once more after a short
+        // pause (off the main actor) before reporting it. The second look decides.
+        guard FrontApp.isUnidentified(first.appBundleId) else { return first }
+        try await Task.sleep(for: .milliseconds(700))
         return try await observe(includeScreenshot: includeScreenshot)
     }
 
@@ -120,8 +155,10 @@ final class XCUITestPhoneRunner: PhoneRunner {
 
     /// Stale-screen guard (`FrontAppGuard`): the top layer, by the same decision the
     /// observations and the check next to a gesture use (`TopLayer`: a SpringBoard alert,
-    /// else Spotlight in front, else the last activated app while it is in front, else a
-    /// known app in front, else SpringBoard). No snapshot is taken.
+    /// else Spotlight in front, else the last activated app while it is in front, else the
+    /// app the private path names (`FrontProcess`), else a known app in front, else
+    /// SpringBoard while it shows its Home Screen or the lock screen, else
+    /// `FrontApp.unidentified`). No snapshot is taken (queries only).
     nonisolated func frontBundleId() async throws -> String? {
         await frontOnMain()
     }
@@ -147,7 +184,37 @@ final class XCUITestPhoneRunner: PhoneRunner {
             await noteRefusal(command)
             return .deviceLocked("the device is locked; \(Transcript.describe(command)) was not performed")
         }
+        // No event while a notification banner is up (`BannerGate`, run 138: XCUITest holds
+        // the event until the banner goes, up to 15 s, then sends it onto whatever is on the
+        // screen): wait for the banner to go (bounded, off the main actor), then answer stale
+        // either way; the caller looks again.
+        if BannerGate.synthesizesEvent(command), await bannerIsUp() {
+            let clock = ContinuousClock()
+            let start = clock.now
+            var left = false
+            while clock.now - start < configuration.bannerWait {
+                try await Task.sleep(for: BannerGate.pollInterval)
+                if !(await bannerIsUp()) {
+                    left = true
+                    break
+                }
+            }
+            let refusal = BannerGate.refusal(waited: clock.now - start, bannerLeft: left)
+            await noteCommand(command, refusal)
+            return refusal
+        }
         return await act(command, expect: expect)
+    }
+
+    /// Whether SpringBoard shows a notification banner now (`.exists` on the banner's
+    /// identifier query on SpringBoard; no snapshot).
+    private func bannerIsUp() -> Bool {
+        application(Self.springboard).descendants(matching: .any)
+            .matching(identifier: BannerCover.identifier).firstMatch.exists
+    }
+
+    private func noteCommand(_ command: RunnerCommand, _ result: RunnerResult) {
+        onCommand?(command, result)
     }
 
     /// After a command: the notify state alone (cheap, and it flips about 0.3 s before the
@@ -155,9 +222,14 @@ final class XCUITestPhoneRunner: PhoneRunner {
     /// reported as locked (`RunnerResult.checkedAfterCommand`), so the core re-observes
     /// after the unlock instead of trusting it.
     private func lockedAfterCommand() -> DeviceLockState {
-        // Same judge as everywhere else (a stale notify reading is not trusted here either);
-        // no lock screen reading is taken, which is what keeps this cheap.
-        let signals = LockSignals(notify: notifyLockState(), lockScreen: nil, front: .app(lastActivated ?? Self.springboard))
+        // Same judge as everywhere else. While the notify state says unlocked (or cannot be
+        // read) no lock screen reading is taken, which is what keeps this cheap; once it says
+        // locked, the full reading (with an app in front, SpringBoard's tree for the lock
+        // screen: an unchecked reading never lets the notify state go stale, so without it a
+        // stale notify state would report every command as locked).
+        let notify = notifyLockState()
+        if notify == true { return judgedLockState() }
+        let signals = LockSignals(notify: notify, lockScreen: nil, front: .app(lastActivated ?? Self.springboard))
         let verdict = lockJudge.judge(signals, at: lockClockNow())
         record(signals, verdict, everyTime: false)
         return verdict.state
@@ -173,23 +245,87 @@ final class XCUITestPhoneRunner: PhoneRunner {
     private func observe(includeScreenshot: Bool) throws -> RunnerObservation {
         var notes: [String] = []
         let foreground = foregroundBundleId(notes: &notes)
-        let top = topLayer(foreground: foreground)
+        noteFrontAppPath(&notes)
+        let alertUp = systemAlertUp()
+        let spotlightUp = !alertUp && spotlightInFront()
+        // SpringBoard's tree (the OS's process, not a look at any app), taken at most once per
+        // observation: the observation itself when SpringBoard is the top layer, the lock
+        // screen check, and whether it shows its Home Screen (`FrontApp`, part 1).
+        var board: RawElement?
+        var boardMs = 0
+        func springBoardTree() throws -> RawElement {
+            if let board { return board }
+            let start = Date()
+            let copy = SnapshotCopy.copy(try application(Self.springboard).snapshot())
+            boardMs = (Date().timeIntervalSince(start) * 1_000).clampedInt
+            board = copy
+            return copy
+        }
+
+        // 1. The lock readings keep their meaning: they are of the foreground reading (the app
+        // in front, else SpringBoard), whatever the top layer is. With SpringBoard the
+        // foreground reading, SpringBoard's tree is checked for the lock screen; with an app
+        // in front, also once the notify state says locked (audit C6: the locked app still
+        // reads as in front for seconds after the lock).
+        let notify = notifyLockState()
+        let lockScreen: Bool?
+        if foreground == Self.springboard || notify == true {
+            lockScreen = (try? springBoardTree()).map(LockScreenSignature.matches)
+        } else {
+            lockScreen = nil
+        }
+        let signals = LockSignals(
+            notify: notify,
+            lockScreen: lockScreen,
+            front: foreground == Self.springboard ? .springBoard : .app(foreground)
+        )
+        let verdict = lockJudge.judge(signals, at: lockClockNow())
+        record(signals, verdict, everyTime: configuration.noteLockSignalsEveryObservation)
+        // One verdict for commands and resume (`LockJudge`).
+        if verdict.state == .locked {
+            // Nothing behind the lock screen is read or passed on: no snapshot of the app, no
+            // tree, no pixels (the lock screen shows notifications).
+            notes.append("the phone is locked: no tree and no screenshot were taken (nothing behind the lock screen is read)")
+            return emptyObservation(bundleId: Self.springboard, screen: board?.frame, notes: notes, locked: true,
+                                    includeScreenshot: false)
+        }
+
+        // 2. The top layer (`TopLayer.decide`): with SpringBoard the foreground reading and
+        // neither an alert nor Spotlight up, SpringBoard must show its Home Screen; else an app
+        // Jarvis cannot identify is in front.
+        var shows = TopLayer.SpringBoardShows.other
+        if foreground == Self.springboard, !alertUp, !spotlightUp {
+            shows = FrontApp.homeScreenShowing(try springBoardTree()) ? .homeScreen : .other
+        }
+        let top = TopLayer.decide(systemAlertUp: alertUp, spotlightInFront: spotlightUp,
+                                  foreground: foreground, springBoard: shows)
         if let note = top.note { notes.append(note) }
         let bundleId = top.bundleId
-        let app = application(bundleId)
-        let start = Date()
-        let snapshot = try app.snapshot()
-        let raw = SnapshotCopy.copy(snapshot)
-        let snapshotMs = (Date().timeIntervalSince(start) * 1_000).clampedInt
+        if FrontApp.isUnidentified(bundleId) {
+            // Never SpringBoard's tree, never "the Home Screen": the application node only.
+            reportedBanners = []
+            return emptyObservation(bundleId: FrontApp.unidentified, screen: board?.frame, notes: notes,
+                                    locked: false, includeScreenshot: includeScreenshot)
+        }
+
+        // 3. The top layer's tree: SpringBoard's own snapshot reused when it is the top layer.
+        let raw: RawElement
+        let snapshotMs: Int
+        if bundleId == Self.springboard {
+            raw = try springBoardTree()
+            snapshotMs = boardMs
+        } else {
+            let start = Date()
+            raw = SnapshotCopy.copy(try application(bundleId).snapshot())
+            snapshotMs = (Date().timeIntervalSince(start) * 1_000).clampedInt
+        }
         let rootFrame = raw.frame.sanitized
         var size = Size(width: rootFrame.width, height: rootFrame.height)
         if size.width <= 0 || size.height <= 0 {
-            // Points from the screenshot (pixels / scale): UIScreen.main is deprecated.
-            let image = XCUIScreen.main.screenshot().image
-            size = Size(width: Double(image.size.width).finiteClamped(Rect.coordinateLimit),
-                        height: Double(image.size.height).finiteClamped(Rect.coordinateLimit))
+            size = screenshotSize()
             notes.append("the application element has no frame; screen size taken from a screenshot (\(size.width.compactText)x\(size.height.compactText))")
         }
+        lastScreenSize = size
         var built = UiTreeBuilder.build(raw, screenSize: size)
         // A notification banner over an app or Spotlight is SpringBoard's: one covering node
         // per banner, with no text (`BannerCover`). On SpringBoard the banner is in the tree.
@@ -202,31 +338,10 @@ final class XCUITestPhoneRunner: PhoneRunner {
                 notes.append("a notification banner (SpringBoard's) is up: \(banners.count) covering node(s) with no text added at its frame")
             }
         }
-        // The lock readings keep their meaning: they are of the foreground reading (the
-        // known app in front, else SpringBoard), whatever the top layer is. With SpringBoard
-        // the foreground reading, the lock screen check reads SpringBoard's tree: the one
-        // just taken, or (Spotlight on top) SpringBoard's own snapshot.
-        let lockScreen: Bool?
-        if foreground == Self.springboard {
-            if bundleId == Self.springboard {
-                lockScreen = LockScreenSignature.matches(raw)
-            } else {
-                lockScreen = (try? application(Self.springboard).snapshot()).map { LockScreenSignature.matches(SnapshotCopy.copy($0)) }
-            }
-        } else {
-            lockScreen = nil
-        }
-        let signals = LockSignals(
-            notify: notifyLockState(),
-            lockScreen: lockScreen,
-            front: foreground == Self.springboard ? .springBoard : .app(foreground)
-        )
-        let verdict = lockJudge.judge(signals, at: lockClockNow())
-        record(signals, verdict, everyTime: configuration.noteLockSignalsEveryObservation)
-        // One verdict for commands and resume (`LockJudge`).
-        let locked = verdict.state == .locked
         notes += pendingLockNotes
         pendingLockNotes = []
+        notes += pendingCommandNotes
+        pendingCommandNotes = []
         if built.sanitizedFrames > 0 {
             notes.append("\(built.sanitizedFrames) element frame(s) were non-finite, huge or negative and were sanitised (raw values in the tree dump)")
         }
@@ -235,21 +350,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
             notes.append("keyboard focus is not readable from snapshots on this iOS; focused flags are false")
         }
         let shot = XCUIScreen.main.screenshot()
-        var captured: CapturedScreenshot?
-        if includeScreenshot {
-            let image = shot.image
-            captured = CapturedScreenshot(
-                data: shot.pngRepresentation,
-                mimeType: "image/png",
-                pixelWidth: Double(image.size.width * image.scale).clampedUInt32,
-                pixelHeight: Double(image.size.height * image.scale).clampedUInt32,
-                scale: Double(image.scale)
-            )
-        }
-        let number = observationCounter.withLock { n -> Int in
-            n += 1
-            return n
-        }
+        let number = nextObservationNumber()
         onObservation?(RunnerObservationRecord(
             number: number, bundleId: bundleId, raw: raw, built: built, screenshot: shot,
             notes: notes, snapshotMs: snapshotMs
@@ -261,26 +362,122 @@ final class XCUITestPhoneRunner: PhoneRunner {
             screenSize: size,
             keyboardVisible: built.keyboardVisible,
             orientation: orientation(),
-            screenshot: captured,
+            screenshot: includeScreenshot ? captured(shot) : nil,
+            deviceLocked: false,
+            notes: notes
+        )
+    }
+
+    /// An observation that reads no app's tree: the application node only (`FrontApp.emptyRaw`)
+    /// at `screen` (SpringBoard's frame when it was read, else the last size seen, else a
+    /// screenshot's), for a locked phone or an app Jarvis cannot identify.
+    private func emptyObservation(bundleId: String, screen: Rect?, notes: [String], locked: Bool,
+                                  includeScreenshot: Bool) -> RunnerObservation {
+        var notes = notes
+        let size: Size
+        if let screen, screen.sanitized.width > 0, screen.sanitized.height > 0 {
+            size = Size(width: screen.sanitized.width, height: screen.sanitized.height)
+        } else if let last = lastScreenSize {
+            size = last
+        } else {
+            size = screenshotSize()
+        }
+        lastScreenSize = size
+        let raw = FrontApp.emptyRaw(screen: Rect(x: 0, y: 0, width: size.width, height: size.height))
+        let built = UiTreeBuilder.build(raw, screenSize: size)
+        notes += pendingLockNotes
+        pendingLockNotes = []
+        notes += pendingCommandNotes
+        pendingCommandNotes = []
+        let shot = includeScreenshot ? XCUIScreen.main.screenshot() : nil
+        let number = nextObservationNumber()
+        onObservation?(RunnerObservationRecord(
+            number: number, bundleId: bundleId, raw: raw, built: built, screenshot: shot,
+            notes: notes, snapshotMs: 0
+        ))
+        return RunnerObservation(
+            root: built.root,
+            appBundleId: bundleId,
+            appName: nil,
+            screenSize: size,
+            keyboardVisible: false,
+            orientation: orientation(),
+            screenshot: shot.map { captured($0) },
             deviceLocked: locked,
             notes: notes
         )
     }
 
-    /// The app in front: the last activated one while it is in front, else the first known
-    /// app in front, else SpringBoard (which counts as "in front" under every app, so it is
-    /// checked last).
+    private func nextObservationNumber() -> Int {
+        observationCounter.withLock { n -> Int in
+            n += 1
+            return n
+        }
+    }
+
+    private func captured(_ shot: XCUIScreenshot) -> CapturedScreenshot {
+        let image = shot.image
+        return CapturedScreenshot(
+            data: shot.pngRepresentation,
+            mimeType: "image/png",
+            pixelWidth: Double(image.size.width * image.scale).clampedUInt32,
+            pixelHeight: Double(image.size.height * image.scale).clampedUInt32,
+            scale: Double(image.scale)
+        )
+    }
+
+    /// The screen's size in points from a screenshot (pixels / scale; UIScreen.main is
+    /// deprecated): no app's code runs for it.
+    private func screenshotSize() -> Size {
+        let image = XCUIScreen.main.screenshot().image
+        return Size(width: Double(image.size.width).finiteClamped(Rect.coordinateLimit),
+                    height: Double(image.size.height).finiteClamped(Rect.coordinateLimit))
+    }
+
+    /// Puts `frontAppPath` in the notes when it changed since it was last noted.
+    private func noteFrontAppPath(_ notes: inout [String]) {
+        guard frontAppPath != notedFrontAppPath else { return }
+        notedFrontAppPath = frontAppPath
+        notes.append("front app: \(frontAppPath)")
+    }
+
+    /// The app in front: the last activated one while it is in front; else the private path
+    /// (`FrontProcess`, when `identifyFrontApp`); else the first known app in front; else
+    /// SpringBoard (which counts as "in front" under every app, so it is checked last — and
+    /// then must show its Home Screen, `TopLayer.decide`).
     private func foregroundBundleId(notes: inout [String]) -> String {
         if let id = lastActivated, application(id).state == .runningForeground {
+            frontAppPath = "the last launched app (\(id)) is in front (its application state)"
             return id
+        }
+        if configuration.identifyFrontApp {
+            let answer = FrontProcess.bundleId()
+            if let id = answer, !FrontApp.isUnidentified(id) {
+                frontAppPath = FrontProcess.lastPath
+                if TopLayer.isSpringBoard(id) {
+                    if let gone = lastActivated {
+                        notes.append("\(gone) is no longer in front; reading SpringBoard")
+                    }
+                    lastActivated = nil
+                    return Self.springboard
+                }
+                if let previous = lastActivated, previous != id { notes.append("foreground changed to \(id)") }
+                lastActivated = id
+                return id
+            }
+            frontAppPath = FrontProcess.lastPath + "; then the known apps"
+        } else {
+            frontAppPath = "identification off: the known apps"
         }
         for id in configuration.knownBundleIds where id != Self.springboard && id != lastActivated {
             if application(id).state == .runningForeground {
                 if lastActivated != nil { notes.append("foreground changed to \(id)") }
+                frontAppPath += " (\(id) is in front)"
                 lastActivated = id
                 return id
             }
         }
+        frontAppPath += " (none in front: SpringBoard, which must show its Home Screen)"
         if let id = lastActivated {
             notes.append("\(id) is no longer in front (state \(application(id).state.rawValue)); reading SpringBoard")
         }
@@ -288,25 +485,51 @@ final class XCUITestPhoneRunner: PhoneRunner {
         return Self.springboard
     }
 
+    /// The top layer now, read cheaply (queries on the OS's processes, no snapshot): what
+    /// `frontBundleId()` reports and what the check next to a gesture compares `expect` with.
     private func frontOnMain() -> String {
         var notes: [String] = []
-        return topLayer(foreground: foregroundBundleId(notes: &notes)).bundleId
+        let foreground = foregroundBundleId(notes: &notes)
+        let alertUp = systemAlertUp()
+        let spotlightUp = !alertUp && spotlightInFront()
+        var shows = TopLayer.SpringBoardShows.other
+        if foreground == Self.springboard, !alertUp, !spotlightUp {
+            shows = springBoardShowsByQuery()
+        }
+        return TopLayer.decide(systemAlertUp: alertUp, spotlightInFront: spotlightUp,
+                               foreground: foreground, springBoard: shows).bundleId
     }
 
-    /// The top layer (`TopLayer.decide`) from cheap queries on the OS's processes, never on
-    /// the front app's tree (R23): whether SpringBoard shows an alert (`.exists` on its
-    /// alerts query), and whether Spotlight runs in the foreground (its application state)
-    /// showing its search field (`.exists` on that field's query, made only while it is in
-    /// the foreground).
-    private func topLayer(foreground: String) -> TopLayer.Decision {
-        let alertUp = application(Self.springboard).alerts.firstMatch.exists
-        var spotlightUp = false
-        if !alertUp {
-            let spotlight = application(Self.spotlight)
-            spotlightUp = spotlight.state == .runningForeground
-                && spotlight.textFields[TopLayer.spotlightFieldIdentifier].firstMatch.exists
-        }
-        return TopLayer.decide(systemAlertUp: alertUp, spotlightInFront: spotlightUp, foreground: foreground)
+    /// Whether SpringBoard shows an alert (`.exists` on its alerts query).
+    private func systemAlertUp() -> Bool {
+        application(Self.springboard).alerts.firstMatch.exists
+    }
+
+    /// Whether Spotlight runs in the foreground showing its search field (its application
+    /// state, then `.exists` on the field's query, made only while it is in the foreground).
+    private func spotlightInFront() -> Bool {
+        let spotlight = application(Self.spotlight)
+        return spotlight.state == .runningForeground
+            && spotlight.textFields[TopLayer.spotlightFieldIdentifier].firstMatch.exists
+    }
+
+    /// What SpringBoard shows, by queries on SpringBoard (the same identifiers
+    /// `FrontApp.homeScreenShowing` and `LockScreenSignature` read from its tree): its Home
+    /// Screen; else the lock screen when the lock verdict (notify state and the lock screen
+    /// query, `LockJudge`) is locked; else neither (an app Jarvis cannot identify is in front).
+    private func springBoardShowsByQuery() -> TopLayer.SpringBoardShows {
+        let board = application(Self.springboard)
+        let home = NSPredicate(format: "identifier == %@ OR identifier BEGINSWITH %@",
+                               FrontApp.homeScreenIdentifier, FrontApp.homeScreenIdentifierPrefix)
+        if board.descendants(matching: .any).matching(home).firstMatch.exists { return .homeScreen }
+        let lockParts = LockScreenSignature.identifierFragments.map { NSPredicate(format: "identifier CONTAINS %@", $0) }
+            + LockScreenSignature.labels.map { NSPredicate(format: "label == %@", $0) }
+        let lock = NSCompoundPredicate(orPredicateWithSubpredicates: lockParts)
+        let lockScreen = board.descendants(matching: .any).matching(lock).firstMatch.exists
+        let signals = LockSignals(notify: notifyLockState(), lockScreen: lockScreen, front: .springBoard)
+        let verdict = lockJudge.judge(signals, at: lockClockNow())
+        record(signals, verdict, everyTime: false)
+        return verdict.state == .locked ? .lockScreen : .other
     }
 
     /// The frames (screen points) of the notification banners SpringBoard shows now: a query
@@ -336,7 +559,10 @@ final class XCUITestPhoneRunner: PhoneRunner {
     }
 
     private func keyboardIsUp() -> Bool {
-        application(frontOnMain()).keyboards.count > 0
+        let top = frontOnMain()
+        // An app Jarvis cannot identify has no application to ask (typing there is refused).
+        if FrontApp.isUnidentified(top) { return false }
+        return application(top).keyboards.count > 0
     }
 
     // MARK: - Lock state (main actor)
@@ -345,11 +571,14 @@ final class XCUITestPhoneRunner: PhoneRunner {
     // 1. Darwin notify state of "com.apple.springboard.lockstate" (non-zero = locked),
     //    looked up with dlsym so nothing here depends on how the SDK exposes notify.h;
     //    whether the simulator's notifyd publishes it to the test runner is [unverified].
-    // 2. SpringBoard in front showing the lock screen (`LockScreenSignature`, from the
-    //    run-16 probe trees).
-    // `LockJudge` turns them into ONE verdict (the notify reading counts as stale after 12 s
-    // without a confirmed lock screen), used for refusing commands, for `lockState()` (unlock
-    // polls and the lock watch) and for observations: the answers cannot contradict.
+    // 2. SpringBoard's tree showing the lock screen (`LockScreenSignature`, from the
+    //    run-16 probe trees): checked whenever SpringBoard is the foreground reading, and with
+    //    an app in front once the notify state says locked (audit C6, run 137: right after
+    //    the lock the locked app still read as in front for about 8 s).
+    // `LockJudge` turns them into ONE verdict (the notify reading counts as stale after 12 s,
+    // and only on readings whose check showed no lock screen), used for refusing commands,
+    // for `lockState()` (unlock polls and the lock watch) and for observations: the answers
+    // cannot contradict.
     // Every change of the readings goes into the next observation's notes.
 
     private func lockStateOnMain() -> DeviceLockState {
@@ -380,14 +609,14 @@ final class XCUITestPhoneRunner: PhoneRunner {
         var notes: [String] = []
         let front = foregroundBundleId(notes: &notes)
         let notify = notifyLockState()
-        let signals: LockSignals
-        if front == Self.springboard {
-            let lockScreen = (try? application(Self.springboard).snapshot()).map { LockScreenSignature.matches(SnapshotCopy.copy($0)) }
-            signals = LockSignals(notify: notify, lockScreen: lockScreen, front: .springBoard)
-        } else {
-            signals = LockSignals(notify: notify, lockScreen: nil, front: .app(front))
+        // SpringBoard's tree for the lock screen: with SpringBoard in front, and with an app in
+        // front once the notify state says locked (the OS's process, not a look at the app).
+        var lockScreen: Bool?
+        if front == Self.springboard || notify == true {
+            lockScreen = (try? application(Self.springboard).snapshot()).map { LockScreenSignature.matches(SnapshotCopy.copy($0)) }
         }
-        return signals
+        return LockSignals(notify: notify, lockScreen: lockScreen,
+                           front: front == Self.springboard ? .springBoard : .app(front))
     }
 
     private func record(_ signals: LockSignals, _ verdict: LockVerdict, everyTime: Bool) {
@@ -441,23 +670,69 @@ final class XCUITestPhoneRunner: PhoneRunner {
             onCommand?(command, refusal)
             return refusal
         }
-        // A banner that came up since the look and holds the point the command touches.
+        // Banners, in this same main-actor step as the event: read once (a query on
+        // SpringBoard, and its snapshot only when one is up) for a command that synthesizes
+        // an event.
+        let banners = BannerGate.synthesizesEvent(command) ? bannerFrames() : []
+        // A banner that came up since the look and holds the point the command touches (the
+        // special case, with its own message).
         if let expect, top != Self.springboard, let p = BannerCover.touchPoint(command),
-           BannerCover.refuses(x: p.x, y: p.y, banners: bannerFrames(), planned: reportedBanners) {
+           BannerCover.refuses(x: p.x, y: p.y, banners: banners, planned: reportedBanners) {
             let refusal = RunnerResult.staleBanner(expected: expect.bundleId)
             onCommand?(command, refusal)
             return refusal
         }
+        // Any banner up: no event at all (`BannerGate`; the wait was in `perform`, this is the
+        // check next to the event).
+        if !BannerGate.mayProceed(command, bannersUp: !banners.isEmpty) {
+            let refusal = BannerGate.refusal(waited: .zero, bannerLeft: false)
+            onCommand?(command, refusal)
+            return refusal
+        }
         settlePending = true
-        let result = execute(command, in: top).checkedAfterCommand(command, lockedAfter: lockedAfterCommand())
+        eventStarted = ContinuousClock.now
+        let executed = execute(command, in: top)
+        // The window XCUITest leaves open: a banner or an alert that came up after the checks
+        // above makes XCUITest hold the event; a call that took longer than a held event
+        // explains is said in the next observation's notes (the core looks again after every
+        // touch).
+        if executed.ok, let held = BannerGate.heldNote(command, elapsed: ContinuousClock.now - eventStarted) {
+            pendingCommandNotes.append("\(Transcript.describe(command)): \(held)")
+        }
+        let result = executed.checkedAfterCommand(command, lockedAfter: lockedAfterCommand())
         onCommand?(command, result)
         return result
+    }
+
+    /// The last check before XCUITest types into `app` (after the keyboard wait, which can
+    /// take seconds): no SpringBoard alert over it and no banner up, else no event.
+    private func typingBlocked(_ app: XCUIApplication) -> RunnerResult? {
+        if app !== application(Self.springboard), systemAlertUp() {
+            return RunnerResult(ok: false, error: "not carried out: a system alert (SpringBoard's) came up before typing; nothing was typed", failure: .stale)
+        }
+        if bannerIsUp() { return BannerGate.refusal(waited: .zero, bannerLeft: false) }
+        return nil
     }
 
     /// Carries out `command` on the top layer `bundleId` (the app whose coordinates and
     /// keyboard it uses: Spotlight's keyboard is in Spotlight's tree).
     private func execute(_ command: RunnerCommand, in bundleId: String) -> RunnerResult {
-        let app = application(bundleId)
+        // An app Jarvis cannot identify has no application of its own here: touches use
+        // SpringBoard's coordinate space (the screen's), typing and keys other than Home are
+        // refused (XCUITest types only into an application it can name).
+        let unidentified = FrontApp.isUnidentified(bundleId)
+        if unidentified {
+            switch command {
+            case .typeText:
+                return fail("not typed: an app Jarvis cannot identify is in front, and XCUITest types only into an app it can name")
+            case .pressKey(let key):
+                if case .home = key { break }
+                return fail("not typed: an app Jarvis cannot identify is in front, and XCUITest types only into an app it can name")
+            default:
+                break
+            }
+        }
+        let app = application(unidentified ? Self.springboard : bundleId)
         switch command {
         case .tap(let x, let y):
             point(app, x, y).tap()
@@ -472,6 +747,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
             return ok
         case .typeText(let text):
             if let refusal = typingRefusal(app) { return refusal }
+            eventStarted = ContinuousClock.now
             app.typeText(text)
             return ok
         case .pressKey(let key):
@@ -516,6 +792,7 @@ final class XCUITestPhoneRunner: PhoneRunner {
 
     private func typeKey(_ text: String, _ app: XCUIApplication) -> RunnerResult {
         if let refusal = typingRefusal(app) { return refusal }
+        eventStarted = ContinuousClock.now
         app.typeText(text)
         return ok
     }
@@ -524,12 +801,12 @@ final class XCUITestPhoneRunner: PhoneRunner {
     /// refuse when there is neither a keyboard nor a focused element. When focus cannot be
     /// read at all, typing is attempted (a hardware-keyboard simulator shows no keyboard).
     private func typingRefusal(_ app: XCUIApplication) -> RunnerResult? {
-        if app.keyboards.firstMatch.waitForExistence(timeout: configuration.keyboardWait) { return nil }
-        guard let snapshot = try? app.snapshot() else { return nil }
+        if app.keyboards.firstMatch.waitForExistence(timeout: configuration.keyboardWait) { return typingBlocked(app) }
+        guard let snapshot = try? app.snapshot() else { return typingBlocked(app) }
         let raw = SnapshotCopy.copy(snapshot)
         switch raw.subtreeFocus {
         case true?, nil:
-            return nil
+            return typingBlocked(app)
         case false?:
             return fail("no software keyboard and no focused element in \(app.identifierDescription); tap a text field first")
         }

@@ -50,28 +50,54 @@ public enum TopLayer {
             if bundleId == TopLayer.spotlight {
                 return "Spotlight (\(TopLayer.spotlight)) is in front: this observation is Spotlight's tree"
             }
+            if FrontApp.isUnidentified(bundleId) {
+                return FrontApp.unidentifiedNote
+            }
             return nil
         }
+    }
+
+    /// What SpringBoard shows when it is the foreground reading (asked of its tree only then,
+    /// and only when no alert and no Spotlight is up: `FrontApp`).
+    public enum SpringBoardShows: Sendable, Equatable {
+        /// Its Home Screen (`FrontApp.homeScreenShowing`).
+        case homeScreen
+        /// The phone is locked (the lock verdict, `LockJudge`): the lock screen.
+        case lockScreen
+        /// Neither: an app the runner cannot identify is in front.
+        case other
     }
 
     /// The top layer:
     /// 1. a SpringBoard alert is up → SpringBoard (the alert), over `foreground`;
     /// 2. else Spotlight is in front → `com.apple.Spotlight`;
-    /// 3. else `foreground` (the known app in front, else SpringBoard: the runner's reading).
+    /// 3. else, `foreground` being SpringBoard: SpringBoard while it shows its Home Screen or
+    ///    the lock screen, else `FrontApp.unidentified` (an app Jarvis cannot identify is in
+    ///    front: fail closed, never "the Home Screen");
+    /// 4. else `foreground` (the identified app in front).
     ///
     /// - Parameters:
     ///   - systemAlertUp: SpringBoard's tree holds an alert (a query on SpringBoard).
     ///   - spotlightInFront: Spotlight runs in the foreground and shows its search field
     ///     (queries on the Spotlight process).
     ///   - foreground: the runner's foreground reading (never empty; SpringBoard when no
-    ///     known app is in front).
-    public static func decide(systemAlertUp: Bool, spotlightInFront: Bool, foreground: String) -> Decision {
+    ///     app in front was identified).
+    ///   - springBoard: what SpringBoard shows; consulted only in case 3. A runner that did
+    ///     not read it passes `.other` (fail closed).
+    public static func decide(systemAlertUp: Bool, spotlightInFront: Bool, foreground: String,
+                              springBoard shows: SpringBoardShows) -> Decision {
         if systemAlertUp {
             let over = isSpringBoard(foreground) ? nil : foreground
             return Decision(bundleId: springBoard, alertOver: over, systemAlert: true)
         }
         if spotlightInFront {
             return Decision(bundleId: spotlight)
+        }
+        if isSpringBoard(foreground) {
+            switch shows {
+            case .homeScreen, .lockScreen: return Decision(bundleId: springBoard)
+            case .other: return Decision(bundleId: FrontApp.unidentified)
+            }
         }
         return Decision(bundleId: foreground)
     }
@@ -176,6 +202,92 @@ public enum BannerCover {
         let tolerance = 4.0
         return abs(a.x - b.x) <= tolerance && abs(a.y - b.y) <= tolerance
             && abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
+    }
+}
+
+/// No event while a notification banner is up (Mac run 138, banner test C): XCUITest holds
+/// every event it synthesizes while a banner is up — its interruption handling finds the
+/// banner (`NotificationShortLookView`, "BannerNotification"), waits up to 15 s for it to go
+/// ("Waiting 15.0s for … BannerNotification to not exist"), then synthesizes the event on
+/// whatever is on the screen by then (a tap sent at 47.32 s was synthesized at 52.96 s). The
+/// runner's check next to the touch would then be seconds older than the touch. So a command
+/// that synthesizes an event is never sent while a banner is up: the runner waits for the
+/// banner to go (at most `maxWait`, inside the server's command deadline) and answers stale
+/// either way (`refusal`), and the caller looks again. What cannot be closed from XCUITest: a
+/// banner (or an alert) that comes up between the runner's last check and XCUITest's own
+/// event; a call that took longer than a held event explains (`heldNote`) is reported in the
+/// next observation's notes.
+public enum BannerGate {
+    /// Longest wait for a banner to go before the stale answer: with the rest of a command's
+    /// work (the keyboard wait, the queries) inside `JarvisRunnerTiming.serverCommand` (16 s).
+    public static let maxWait: Duration = .seconds(10)
+    /// How often the runner checks whether the banner has gone.
+    public static let pollInterval: Duration = .milliseconds(300)
+
+    /// Whether `command` makes XCUITest synthesize an event on an element (tap, long press,
+    /// swipe, typing, a key typed into the app). Home is a device button
+    /// (`XCUIDevice.press(.home)`), launching is `activate()`, a URL is opened by the system,
+    /// a wait sends nothing: none of these is an element event.
+    public static func synthesizesEvent(_ command: RunnerCommand) -> Bool {
+        switch command {
+        case .tap, .longPress, .swipe, .typeText:
+            return true
+        case .pressKey(let key):
+            if case .home = key { return false }
+            return true
+        case .launchApp, .openUrl, .wait:
+            return false
+        }
+    }
+
+    /// Whether `command` may be sent now: never while a banner is up (`bannersUp`), whatever
+    /// the point; else yes. (The point-under-a-banner refusal, `BannerCover.refuses`, is the
+    /// special case kept for its message.)
+    public static func mayProceed(_ command: RunnerCommand, bannersUp: Bool) -> Bool {
+        !(bannersUp && synthesizesEvent(command))
+    }
+
+    /// The answer when a banner was up: stale, nothing carried out (whether or not the banner
+    /// left during the wait).
+    public static func refusal(waited: Duration, bannerLeft: Bool) -> RunnerResult {
+        RunnerResult(
+            ok: false,
+            error: "not carried out: a notification banner was up; the gesture was not carried out (waited "
+                + "\(LockVerdict.seconds(waited)) for it to go, \(bannerLeft ? "it went" : "it was still up"))",
+            failure: .stale
+        )
+    }
+
+    /// Fixed allowance (4 s) for one synthesized event: XCUITest's wait for the app to idle,
+    /// the event and the return (a tap took well under 1 s in run 138's log when nothing
+    /// interrupted it; the held one 5.6 s, and XCUITest waits up to 15 s for a banner, whose
+    /// own life is about 5 s).
+    public static let eventAllowance: Duration = .seconds(4)
+
+    /// How long `command` takes by itself beyond `eventAllowance`: a long press its
+    /// duration; a swipe its 0.05 s press plus 1 s for XCTest's drag; typing 0.2 s per
+    /// character.
+    public static func ownDuration(_ command: RunnerCommand) -> Duration {
+        switch command {
+        case .longPress(_, _, let ms):
+            return .milliseconds(Int(min(ms, 60_000)))
+        case .swipe:
+            return .milliseconds(1_050)
+        case .typeText(let text):
+            return .milliseconds(200 * min(text.count, 10_000))
+        default:
+            return .zero
+        }
+    }
+
+    /// The note for a synthesizing call that took `elapsed`, when that is longer than a held
+    /// event explains and a normal one does not (`eventAllowance` + `ownDuration`); `nil`
+    /// otherwise, and for commands that synthesize no event.
+    public static func heldNote(_ command: RunnerCommand, elapsed: Duration) -> String? {
+        guard synthesizesEvent(command) else { return nil }
+        let limit = eventAllowance + ownDuration(command)
+        guard elapsed > limit else { return nil }
+        return "the gesture was held \(LockVerdict.seconds(elapsed)) by the system (more than the \(LockVerdict.seconds(limit)) it takes); the screen may have changed before it landed"
     }
 }
 

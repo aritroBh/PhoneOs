@@ -386,6 +386,15 @@ pub fn is_spotlight(bundle_id: &str) -> bool {
         .eq_ignore_ascii_case(jarvis_proto::SPOTLIGHT_BUNDLE_ID)
 }
 
+/// Whether `bundle_id` is the shell's synthetic id for an app in front that the runner
+/// cannot identify ([`jarvis_proto::UNIDENTIFIED_APP_BUNDLE_ID`], case and surrounding
+/// spaces ignored): not SpringBoard, not a known app, nothing to launch.
+pub fn is_unidentified_app(bundle_id: &str) -> bool {
+    bundle_id
+        .trim()
+        .eq_ignore_ascii_case(jarvis_proto::UNIDENTIFIED_APP_BUNDLE_ID)
+}
+
 /// Whether `bundle_id` is one of the OS's launchers, where typing searches and Return opens
 /// the top hit: SpringBoard (the App Library's search) or Spotlight.
 pub fn is_launcher(bundle_id: &str) -> bool {

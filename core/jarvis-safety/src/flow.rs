@@ -71,7 +71,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use jarvis_proto::{Action, CompactScreen, Element, Point, RiskCategory, Role, Screen, UiNode};
 
 use crate::actuation::{self, actuation, Actuation};
-use crate::app::{is_spotlight, is_springboard};
+use crate::app::{is_spotlight, is_springboard, is_unidentified_app};
 use crate::classify::type_target;
 use crate::evaluate::{ScreenSource, ScreenTree};
 use crate::gestures::{drag_gesture, GestureKind};
@@ -135,6 +135,14 @@ pub const SPOTLIGHT: &str = "Spotlight";
 /// name, [`UNREADABLE_SCREEN_SUFFIX`]. Jarvis's own words: never shortened (only the app's
 /// name between them is), and an app name imitating them is shown by its bundle id.
 pub const UNREADABLE_SCREEN_PREFIX: &str = "a screen in ";
+
+/// Front app (audit of the twelve-app list): how a question names the app in front that
+/// the shell's runner cannot identify (`jarvis_proto::UNIDENTIFIED_APP_BUNDLE_ID`, the
+/// observation is the application node only): as an app, and inside the name of the screen
+/// Jarvis cannot read there ([`FlowContext::UnreadableScreen`]). Jarvis's own words: never
+/// shortened, holding neither `, ` nor ` and `; an app named like them is shown by its
+/// bundle id, and no known app's name ever replaces them.
+pub const UNIDENTIFIED_APP: &str = "an app Jarvis cannot identify";
 
 /// Probe run 134 (fix 3): the end of the name of [`FlowContext::UnreadableScreen`].
 pub const UNREADABLE_SCREEN_SUFFIX: &str =
@@ -330,7 +338,8 @@ impl FlowContext {
 
     /// How a question names this context: `app_name` gives an app's display name from its
     /// bundle id (the session's known apps); SpringBoard is "the Home Screen", Spotlight
-    /// [`SPOTLIGHT`], a SpringBoard alert [`SYSTEM_ALERT`]. A site is
+    /// [`SPOTLIGHT`], a SpringBoard alert [`SYSTEM_ALERT`], the runner's unidentified front
+    /// app [`UNIDENTIFIED_APP`]. A site is
     /// named by its host — in Safari by its host alone, in any other app (a third-party
     /// browser) as `<host> in <App>` (eighteenth review, E3: two places are never named
     /// alike) — a tool by its name, embedded content by where it is embedded.
@@ -340,6 +349,8 @@ impl FlowContext {
                 "the Home Screen".to_owned()
             } else if is_spotlight(b) {
                 SPOTLIGHT.to_owned()
+            } else if is_unidentified_app(b) {
+                UNIDENTIFIED_APP.to_owned()
             } else {
                 app_name(b).unwrap_or_else(|| b.to_owned())
             }

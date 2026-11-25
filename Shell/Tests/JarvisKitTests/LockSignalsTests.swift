@@ -39,13 +39,13 @@ struct LockSignalsTests {
         #expect(judge.judge(s(false, nil, app), at: .seconds(25.0)).state == .unlocked)
     }
 
-    @Test("notify stuck true with an app in front: stale after 12 s, one note, unlocked until notify reads false")
+    @Test("notify stuck true with an app in front, SpringBoard checked and showing no lock screen: stale after 12 s, one note, unlocked until notify reads false")
     func staleAfterTwelveSeconds() {
         let judge = LockJudge()
         var notes: [String] = []
         var states: [DeviceLockState] = []
         for t in stride(from: 0.0, through: 20.0, by: 1.0) {
-            let v = judge.judge(s(true, nil, app), at: .seconds(t))
+            let v = judge.judge(s(true, false, app), at: .seconds(t))
             states.append(v.state)
             if let n = v.staleNote { notes.append(n) }
         }
@@ -54,9 +54,9 @@ struct LockSignalsTests {
         #expect(notes == ["the lock notification has said locked for 12.0 s with no lock screen; treated as stale"])
         // Reads false: the stretch resets; a new true reading starts a new 12 s.
         #expect(judge.judge(s(false, nil, app), at: .seconds(21)).state == .unlocked)
-        #expect(judge.judge(s(true, nil, app), at: .seconds(22)).state == .locked)
-        #expect(judge.judge(s(true, nil, app), at: .seconds(33.9)).state == .locked)
-        #expect(judge.judge(s(true, nil, app), at: .seconds(34)).staleNote != nil)
+        #expect(judge.judge(s(true, false, app), at: .seconds(22)).state == .locked)
+        #expect(judge.judge(s(true, false, app), at: .seconds(33.9)).state == .locked)
+        #expect(judge.judge(s(true, false, app), at: .seconds(34)).staleNote != nil)
     }
 
     @Test("the stale time is configurable")
@@ -95,6 +95,117 @@ struct LockSignalsTests {
         let text = "\(s(true, false, .springBoard)) \(v)"
         #expect(text == "lock signals: notify(com.apple.springboard.lockstate)=true, lock screen=false, front=SpringBoard -> locked, notify true for 2.5 s")
         #expect(s(nil, nil, app).description.contains("notify(com.apple.springboard.lockstate)=unavailable, lock screen=not checked, front=dev.jarvis.app"))
+    }
+
+    @Test("audit C6: notify true and the lock screen not checked is locked however long it lasts (was: unlocked, stale, after 12 s)")
+    func uncheckedNeverStale() {
+        let judge = LockJudge()
+        for t in stride(from: 0.0, through: 60.0, by: 0.5) {
+            let v = judge.judge(s(true, nil, app), at: .seconds(t))
+            #expect(v.state == .locked, "t+\(t)s")
+            #expect(v.staleNote == nil, "t+\(t)s")
+        }
+        // Stale on checked readings, then an unchecked one: locked again (the check could not
+        // be made, so nothing positively shows the phone unlocked).
+        let other = LockJudge()
+        _ = other.judge(s(true, false, app), at: .zero)
+        #expect(other.judge(s(true, false, app), at: .seconds(12)).state == .unlocked)
+        #expect(other.judge(s(true, nil, app), at: .seconds(13)).state == .locked)
+        #expect(other.judge(s(true, false, app), at: .seconds(14)).state == .unlocked, "no second stale note needed")
+        #expect(other.judge(s(true, false, app), at: .seconds(14)).staleNote == nil)
+    }
+
+    /// The real lock signal lines of run 137 (`LockScreenProbeTests`, step 3a right after the
+    /// lock button and its unlock-wait polls, then step 3d about 8.7 s later; the lines as
+    /// the runner wrote them in the observation notes), parsed back into readings.
+    static let run137LockProbe: [(seconds: Double, line: String)] = [
+        (0.0, "lock signals: notify(com.apple.springboard.lockstate)=true, lock screen=not checked, front=dev.jarvis.app -> locked, notify true for 0.0 s"),
+        (0.8, "lock signals: notify(com.apple.springboard.lockstate)=true, lock screen=not checked, front=dev.jarvis.app"),
+        (1.4, "lock signals: notify(com.apple.springboard.lockstate)=true, lock screen=not checked, front=dev.jarvis.app"),
+        (2.0, "lock signals: notify(com.apple.springboard.lockstate)=true, lock screen=not checked, front=dev.jarvis.app"),
+        (2.6, "lock signals: notify(com.apple.springboard.lockstate)=true, lock screen=not checked, front=dev.jarvis.app"),
+        (8.7, "lock signals: notify(com.apple.springboard.lockstate)=true, lock screen=true, front=SpringBoard -> locked, notify true for 0.0 s"),
+    ]
+
+    /// The run-137 lock-mid-task lines (`LockedPhoneAgentTests`): unlocked, the lock, 3.9 s
+    /// later still locked, the unlock.
+    static let run137LockMidTask: [(seconds: Double, line: String)] = [
+        (0.0, "lock signals: notify(com.apple.springboard.lockstate)=false, lock screen=not checked, front=dev.jarvis.app -> unlocked"),
+        (10.0, "lock signals: notify(com.apple.springboard.lockstate)=true, lock screen=not checked, front=dev.jarvis.app -> locked, notify true for 0.0 s"),
+        (13.9, "lock signals: notify(com.apple.springboard.lockstate)=true, lock screen=not checked, front=dev.jarvis.app -> locked, notify true for 3.9 s"),
+        (20.0, "lock signals: notify(com.apple.springboard.lockstate)=false, lock screen=not checked, front=dev.jarvis.app -> unlocked"),
+    ]
+
+    /// A reading back from its line (`LockSignals.description`), and the verdict the line
+    /// recorded, if any.
+    static func reading(_ line: String) -> (LockSignals, DeviceLockState?)? {
+        func field(_ key: String) -> String? {
+            guard let r = line.range(of: key) else { return nil }
+            let rest = line[r.upperBound...]
+            let end = rest.firstIndex { $0 == "," || $0 == " " } ?? rest.endIndex
+            return String(rest[..<end])
+        }
+        func tri(_ v: String?) -> Bool?? {
+            switch v {
+            case "true": return .some(true)
+            case "false": return .some(false)
+            case "unavailable", "not": return .some(nil)
+            default: return nil
+            }
+        }
+        guard let notify = tri(field("notify(com.apple.springboard.lockstate)=")),
+              let lockScreen = tri(field("lock screen=")),
+              let front = field("front=") else { return nil }
+        let signals = LockSignals(notify: notify, lockScreen: lockScreen,
+                                  front: front == "SpringBoard" ? .springBoard : .app(front))
+        let verdict = line.range(of: "-> ").map { r in DeviceLockState(rawValue: String(line[r.upperBound...].prefix { $0 != "," })) } ?? nil
+        return (signals, verdict)
+    }
+
+    @Test("the run-137 lines parse back into the readings they print")
+    func linesRoundTrip() throws {
+        for (_, line) in Self.run137LockProbe + Self.run137LockMidTask {
+            let (signals, _) = try #require(Self.reading(line), "\(line)")
+            #expect(line.hasPrefix(signals.description), "\(line)")
+        }
+    }
+
+    @Test("run 137, the lock probe: locked from the lock button on, with the locked app reading as in front, and when the app keeps reading so past 12 s (a device: audio, navigation)")
+    func run137LockProbeSequence() throws {
+        let judge = LockJudge()
+        for (t, line) in Self.run137LockProbe {
+            let (signals, recorded) = try #require(Self.reading(line))
+            let v = judge.judge(signals, at: .seconds(t))
+            #expect(v.state == .locked, "t+\(t)s \(line)")
+            if let recorded { #expect(v.state == recorded, "t+\(t)s: the runner recorded \(recorded)") }
+        }
+        // The C6 case: the first reading (the app in front, the lock screen not checked)
+        // repeated well past the stale time. Old rule: unlocked at 12 s.
+        let longer = LockJudge()
+        let (first, _) = try #require(Self.reading(Self.run137LockProbe[0].line))
+        for t in stride(from: 0.0, through: 30.0, by: 0.6) {
+            #expect(longer.judge(first, at: .seconds(t)).state == .locked, "t+\(t)s")
+        }
+        // And with the check made (SpringBoard's tree read behind the app): it shows the
+        // lock screen, locked; it shows none for 12 s (a simulator whose notify state is
+        // stuck), stale, as before.
+        let checked = LockJudge()
+        let shown = LockSignals(notify: true, lockScreen: true, front: first.front)
+        let notShown = LockSignals(notify: true, lockScreen: false, front: first.front)
+        #expect(checked.judge(shown, at: .zero).state == .locked)
+        #expect(checked.judge(shown, at: .seconds(20)).state == .locked)
+        #expect(checked.judge(notShown, at: .seconds(31)).state == .locked)
+        #expect(checked.judge(notShown, at: .seconds(32)).state == .unlocked)
+    }
+
+    @Test("run 137, lock mid-task: unlocked, locked from the lock, still locked 3.9 s later, unlocked after")
+    func run137LockMidTaskSequence() throws {
+        let judge = LockJudge()
+        for (t, line) in Self.run137LockMidTask {
+            let (signals, recorded) = try #require(Self.reading(line))
+            let v = judge.judge(signals, at: .seconds(t))
+            #expect(v.state == recorded, "t+\(t)s \(line)")
+        }
     }
 
     @Test("one verdict: over random reading sequences a command is never refused while resume says unlocked")

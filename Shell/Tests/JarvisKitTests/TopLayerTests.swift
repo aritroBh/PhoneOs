@@ -32,21 +32,34 @@ struct TopLayerTests {
             (false, true, settings, D(bundleId: sp)),
         ]
         for (alert, spotlight, front, want) in rows {
-            let got = TopLayer.decide(systemAlertUp: alert, spotlightInFront: spotlight, foreground: front)
+            let got = TopLayer.decide(systemAlertUp: alert, spotlightInFront: spotlight, foreground: front, springBoard: .homeScreen)
             #expect(got == want, "alert \(alert), spotlight \(spotlight), foreground \(front)")
+            // What SpringBoard shows matters only for a SpringBoard reading with neither an
+            // alert nor Spotlight up (the front-app rule): every other row is the same.
+            if alert || spotlight || !TopLayer.isSpringBoard(front) {
+                for shows in [TopLayer.SpringBoardShows.lockScreen, .other] {
+                    #expect(TopLayer.decide(systemAlertUp: alert, spotlightInFront: spotlight, foreground: front, springBoard: shows) == want)
+                }
+            }
         }
+        // The front-app rule: SpringBoard is the top layer only while it shows its Home
+        // Screen or the lock screen; else an app Jarvis cannot identify is in front.
+        #expect(TopLayer.decide(systemAlertUp: false, spotlightInFront: false, foreground: sb, springBoard: .lockScreen) == D(bundleId: sb))
+        let unknown = TopLayer.decide(systemAlertUp: false, spotlightInFront: false, foreground: sb, springBoard: .other)
+        #expect(unknown == D(bundleId: FrontApp.unidentified))
+        #expect(unknown.note == FrontApp.unidentifiedNote)
     }
 
     @Test("the note says what the top layer is, and which app an alert is over")
     func notes() {
-        let over = TopLayer.decide(systemAlertUp: true, spotlightInFront: false, foreground: jarvis)
+        let over = TopLayer.decide(systemAlertUp: true, spotlightInFront: false, foreground: jarvis, springBoard: .homeScreen)
         #expect(over.note?.contains("over \(jarvis)") == true)
         #expect(over.note?.contains("SpringBoard") == true)
-        let home = TopLayer.decide(systemAlertUp: true, spotlightInFront: false, foreground: " COM.APPLE.springboard ")
+        let home = TopLayer.decide(systemAlertUp: true, spotlightInFront: false, foreground: " COM.APPLE.springboard ", springBoard: .homeScreen)
         #expect(home.alertOver == nil)
-        #expect(TopLayer.decide(systemAlertUp: false, spotlightInFront: true, foreground: TopLayer.springBoard).note?
+        #expect(TopLayer.decide(systemAlertUp: false, spotlightInFront: true, foreground: TopLayer.springBoard, springBoard: .homeScreen).note?
             .contains(TopLayer.spotlight) == true)
-        #expect(TopLayer.decide(systemAlertUp: false, spotlightInFront: false, foreground: jarvis).note == nil)
+        #expect(TopLayer.decide(systemAlertUp: false, spotlightInFront: false, foreground: jarvis, springBoard: .homeScreen).note == nil)
     }
 
     // MARK: - Banner frames: pixels to points
@@ -175,7 +188,7 @@ struct TopLayerTests {
 struct TopLayerGuardTests {
     @Test("a tap planned on the app while a system alert is on top: refused, nothing sent")
     func alertOverApp() async throws {
-        let top = TopLayer.decide(systemAlertUp: true, spotlightInFront: false, foreground: settingsBundle).bundleId
+        let top = TopLayer.decide(systemAlertUp: true, spotlightInFront: false, foreground: settingsBundle, springBoard: .homeScreen).bundleId
         let phone = FrontScriptedPhone([top])
         let out = try await FrontAppGuard().perform(.tap(x: 10, y: 20), expect: CommandExpect(bundleId: settingsBundle), on: phone)
         #expect(out.result.failure == .stale)
@@ -186,7 +199,7 @@ struct TopLayerGuardTests {
 
     @Test("a tap planned on the alert (SpringBoard) goes through")
     func tapOnAlert() async throws {
-        let top = TopLayer.decide(systemAlertUp: true, spotlightInFront: false, foreground: settingsBundle).bundleId
+        let top = TopLayer.decide(systemAlertUp: true, spotlightInFront: false, foreground: settingsBundle, springBoard: .homeScreen).bundleId
         let phone = FrontScriptedPhone([top])
         let out = try await FrontAppGuard().perform(.tap(x: 10, y: 20), expect: CommandExpect(bundleId: TopLayer.springBoard), on: phone)
         #expect(out.result.ok)
@@ -196,7 +209,7 @@ struct TopLayerGuardTests {
 
     @Test("Spotlight on top: a tap planned on the Home Screen is refused, one planned on Spotlight is not")
     func spotlight() {
-        let top = TopLayer.decide(systemAlertUp: false, spotlightInFront: true, foreground: TopLayer.springBoard).bundleId
+        let top = TopLayer.decide(systemAlertUp: false, spotlightInFront: true, foreground: TopLayer.springBoard, springBoard: .homeScreen).bundleId
         #expect(FrontAppGuard.refusalNextToGesture(CommandExpect(bundleId: TopLayer.springBoard), front: top)?.failure == .stale)
         #expect(FrontAppGuard.refusalNextToGesture(CommandExpect(bundleId: "com.apple.spotlight"), front: top) == nil)
     }

@@ -58,8 +58,8 @@ mod validate;
 pub use actuation::touches_screen;
 pub use app::{
     app_level, check_app, check_app_name, denied_app_names, is_launcher, is_spotlight,
-    is_springboard, label_names_denied_app, matching_rule, mode_level, search_names_denied_app,
-    widget_names_denied_app, Verdict,
+    is_springboard, is_unidentified_app, label_names_denied_app, matching_rule, mode_level,
+    search_names_denied_app, widget_names_denied_app, Verdict,
 };
 pub use approval::{approval_context, ApprovalContext};
 pub use budget::{Budget, BudgetVerdict};
@@ -84,8 +84,8 @@ pub use flow::{
     spotlight_app_icon, thin_tree, unplaced_target, url_destination, Confinement, EditMenuShape,
     FlowContext, InputKind, ScreenPlaces, BROWSERS, COVERS_ALL, COVERS_ALL_PREFIX,
     EDIT_MENU_OS_LABELS, HOME_SCREEN_READ, LOCAL_MENU_ITEMS, MIN_ACTIONABLE, SCREEN_PICTURE,
-    SHARE_SHEET_IDS, SPOTLIGHT, SYSTEM_ALERT, SYSTEM_BROWSER, UNREADABLE_SCREEN_PREFIX,
-    UNREADABLE_SCREEN_SUFFIX,
+    SHARE_SHEET_IDS, SPOTLIGHT, SYSTEM_ALERT, SYSTEM_BROWSER, UNIDENTIFIED_APP,
+    UNREADABLE_SCREEN_PREFIX, UNREADABLE_SCREEN_SUFFIX,
 };
 pub use gate::{changes_state, gate, gate_in, gate_on, gate_owned, Gate, TRUSTED_ALLOWED};
 pub use hit::{
