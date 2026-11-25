@@ -8,7 +8,8 @@
 //! its own and the relation is one-way; every model-chosen action but `wait`, `look` and the
 //! final text is an input (`confirm: []` changes nothing); a launch moves the question, it
 //! does not add one; a question names every place its approval allows (what does not fit is
-//! asked next); a recorded step stores its place; Jarvis's own id covers its extensions.
+//! asked next); a recorded step stores its place; Jarvis's own id is its exact id (twenty-fifth
+//! review; it covered ids extending it before).
 
 mod common;
 
@@ -698,18 +699,19 @@ fn recorded_steps_store_their_place() {
 
 // ---- Jarvis's own id is an OS fact -----------------------------------------------------------
 
-/// An extension of Jarvis's own app (its id plus a `.` suffix) is Jarvis's own app: a stub,
-/// and the progress says its screen is hidden; a look-alike id is not.
+/// Jarvis's own app (its exact id) is a stub, and the progress says its screen is hidden; a
+/// look-alike id is not. Twenty-fifth review: an id that extends Jarvis's with a `.` suffix
+/// and the id in another case are look-alikes too (the own ids are an exact list).
 #[test]
-fn own_app_extensions_are_own_app() {
+fn own_app_is_its_exact_id() {
     for (app, own) in [
         ("dev.jarvis.app", true),
-        ("dev.jarvis.app.widgets", true),
-        ("DEV.Jarvis.App", true),
+        ("dev.jarvis.app.widgets", false),
+        ("DEV.Jarvis.App", false),
         ("dev.jarvis.application", false),
     ] {
         let mut c = cfg();
-        c.agent_bundle_id = Some("dev.jarvis.app".into());
+        c.agent_bundle_ids = vec!["dev.jarvis.app".into()];
         let mut s = Session::new(c, TaskSpec::new("t", "x"), MemoryStore::new());
         let _ = s.step(TimedEvent::new(1, Event::Start));
         let e = s.step(TimedEvent::new(

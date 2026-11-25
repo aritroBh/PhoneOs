@@ -90,7 +90,7 @@ impl RunSetup {
                 supports_grammar: self.grammar,
             },
             known_apps: phone.known_apps(),
-            agent_bundle_id: None,
+            agent_bundle_ids: Vec::new(),
             drive_own_app: false,
             skill: None,
         }

@@ -1561,7 +1561,7 @@ impl From<p::SessionConfig> for SessionConfig {
             tools,
             model,
             known_apps,
-            agent_bundle_id,
+            agent_bundle_ids,
             drive_own_app,
             skill,
         } = v;
@@ -1570,7 +1570,7 @@ impl From<p::SessionConfig> for SessionConfig {
             tools: tools.into_iter().map(Into::into).collect(),
             model: model.into(),
             known_apps: known_apps.into_iter().map(Into::into).collect(),
-            agent_bundle_id,
+            agent_bundle_ids,
             drive_own_app,
             skill: skill.map(Into::into),
         }
@@ -1584,7 +1584,7 @@ impl From<SessionConfig> for p::SessionConfig {
             tools,
             model,
             known_apps,
-            agent_bundle_id,
+            agent_bundle_ids,
             drive_own_app,
             skill,
         } = v;
@@ -1593,7 +1593,7 @@ impl From<SessionConfig> for p::SessionConfig {
             tools: tools.into_iter().map(Into::into).collect(),
             model: model.into(),
             known_apps: known_apps.into_iter().map(Into::into).collect(),
-            agent_bundle_id,
+            agent_bundle_ids,
             drive_own_app,
             skill: skill.map(Into::into),
         }

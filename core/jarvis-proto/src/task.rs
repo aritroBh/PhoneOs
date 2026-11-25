@@ -81,10 +81,14 @@ pub struct SessionConfig {
     pub model: ModelProfile,
     /// Installed apps for name to bundle id resolution.
     pub known_apps: Vec<AppInfo>,
-    /// Bundle id of the Jarvis app itself, which never needs first-use approval. An OS
-    /// fact the shell passes (its own `Bundle.main.bundleIdentifier`).
-    pub agent_bundle_id: Option<String>,
-    /// Sixteenth review: whether this run drives Jarvis's own app (`agent_bundle_id`). Off
+    /// Bundle ids of Jarvis's own bundles (the app itself first, then its own test runner
+    /// apps), which never need first-use approval. Twenty-fifth review: an exact list,
+    /// matched exactly and case-sensitively — no prefix, suffix or wildcard rule, so an
+    /// app whose id merely extends Jarvis's (`dev.jarvis.app.evil`) is just another app.
+    /// Empty (the default): no app is Jarvis's own. The shell builds it from its own
+    /// bundle id as the OS reports it (`JarvisOwnBundles.ids(main:)`).
+    pub agent_bundle_ids: Vec<String>,
+    /// Sixteenth review: whether this run drives Jarvis's own app (`agent_bundle_ids`). Off
     /// (the default, also when absent from JSON): while Jarvis's own app is in front the
     /// model gets a fixed one-line stub instead of its screen (no labels, values or
     /// screenshot), nothing there can be acted on, and that screen is not something Jarvis

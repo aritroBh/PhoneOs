@@ -539,7 +539,7 @@ fn session_config_and_progress_round_trip() {
             supports_grammar: true,
         },
         known_apps: vec![AppInfo::new("com.apple.MobileSMS", "Messages")],
-        agent_bundle_id: Some("com.example.jarvis".into()),
+        agent_bundle_ids: vec!["com.example.jarvis".into()],
         drive_own_app: true,
         skill: None,
     };
@@ -682,7 +682,7 @@ fn policy_json_from_before_the_structural_controls_is_migrated() {
         r#"{{"policy": {old}, "tools": [], "known_apps": []}}"#
     ))
     .unwrap();
-    assert_eq!(cfg.agent_bundle_id, None);
+    assert!(cfg.agent_bundle_ids.is_empty());
     assert!(cfg.policy.confirm.contains(&RiskCategory::Unverified));
 }
 

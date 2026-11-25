@@ -308,7 +308,7 @@ fn exempt_apps_never_ask() {
     assert!(r.confirms.is_empty(), "{:?}", r.confirms);
     // The agent's own app.
     let mut c = first_use_config();
-    c.agent_bundle_id = Some(SHOP.into());
+    c.agent_bundle_ids = vec![SHOP.into()];
     let wish = tap_label(&product_screen(), "Add to wishlist");
     let r = run(
         c,

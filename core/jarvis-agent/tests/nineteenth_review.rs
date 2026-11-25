@@ -392,7 +392,7 @@ fn h2_own_app_gives_no_pixels() {
     );
     let mut c = cfg();
     c.model.supports_vision = true;
-    c.agent_bundle_id = Some("com.example.jarvis".into());
+    c.agent_bundle_ids = vec!["com.example.jarvis".into()];
     let r = run(
         c,
         "Do it",

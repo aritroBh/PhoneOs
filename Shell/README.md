@@ -140,7 +140,7 @@ decoding is on, the core puts both the GBNF grammar and the JSON schema in each
 runtimes (llama.cpp: GBNF, Foundation Models / LiteRT-LM: schema) implement the same
 protocol. They resolve the image from the shared `ScreenshotStore` by `ImageRef.id`.
 
-`SessionConfigBuilder.make(capabilities:tools:knownApps:agentBundleId:skill:adjustPolicy:)` starts from
+`SessionConfigBuilder.make(capabilities:tools:knownApps:agentBundleIds:skill:adjustPolicy:)` starts from
 `defaultSessionConfig()` and mutates it. JarvisKit never calls the memberwise initialiser
 of `Policy` or `SessionConfig`, so new core fields keep their defaults. `RunnerSnapshot`,
 `ToolSpec` and `ToolParam` have no core defaults. Each is built in exactly one place

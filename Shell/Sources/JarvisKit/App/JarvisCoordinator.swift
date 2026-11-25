@@ -136,8 +136,8 @@ public enum TaskRunOutcome: Sendable, Equatable {
 public final class JarvisCoordinator: Sendable {
     public let paths: JarvisPaths
     public let selection: BackendSelection
-    /// The app's own bundle id (never needs first-use approval).
-    public let agentBundleId: String
+    /// Jarvis's own bundle ids (never need first-use approval; matched exactly).
+    public let agentBundleIds: [String]
     private let tools: ToolRegistry
     private let configuration: DriverConfiguration
     private let demoDelay: Duration
@@ -162,13 +162,14 @@ public final class JarvisCoordinator: Sendable {
     public static let jarvisRunnerMissing =
         "Jarvis's own runner is chosen, but it is not set up on this phone (no runner key). Start the Jarvis runner once, or choose the text runner in Apps."
 
-    /// `agentBundleId`: Jarvis's own bundle id. The app passes `Bundle.main.bundleIdentifier`
-    /// (an OS fact; the core also treats ids extending it with a `.` suffix — its extensions
-    /// — as its own); the literal default serves tests only.
+    /// `agentBundleIds`: Jarvis's own bundle ids, an exact list (twenty-fifth review: the core
+    /// applies no prefix or suffix rule). The app passes
+    /// `JarvisOwnBundles.ids(main: Bundle.main.bundleIdentifier)` (an OS fact plus its own
+    /// runner apps); the literal default serves tests only.
     public convenience init(
         paths: JarvisPaths,
         selection: BackendSelection,
-        agentBundleId: String = "dev.jarvis.app",
+        agentBundleIds: [String] = JarvisOwnBundles.ids(main: "dev.jarvis.app"),
         tools: ToolRegistry? = nil,
         configuration: DriverConfiguration = DriverConfiguration(),
         demoDelay: Duration = .milliseconds(350),
@@ -179,7 +180,7 @@ public final class JarvisCoordinator: Sendable {
         jarvisRunner: (@Sendable () -> (any PhoneRunner)?)? = nil
     ) {
         self.init(
-            paths: paths, selection: selection, agentBundleId: agentBundleId, tools: tools, configuration: configuration,
+            paths: paths, selection: selection, agentBundleIds: agentBundleIds, tools: tools, configuration: configuration,
             demoDelay: demoDelay, demoLockedPolls: demoLockedPolls, maxLockedWaitOverrideMs: maxLockedWaitOverrideMs,
             viewerFrames: viewerFrames, approvalFrames: approvalFrames, demoRunner: nil, jarvisRunner: jarvisRunner
         )
@@ -189,7 +190,7 @@ public final class JarvisCoordinator: Sendable {
     init(
         paths: JarvisPaths,
         selection: BackendSelection,
-        agentBundleId: String,
+        agentBundleIds: [String],
         tools: ToolRegistry?,
         configuration: DriverConfiguration,
         demoDelay: Duration,
@@ -206,7 +207,7 @@ public final class JarvisCoordinator: Sendable {
         self.jarvisRunner = jarvisRunner
         self.viewerFrames = viewerFrames
         self.selection = selection
-        self.agentBundleId = agentBundleId
+        self.agentBundleIds = agentBundleIds
         self.configuration = configuration
         self.demoDelay = demoDelay
         self.demoLockedPolls = demoLockedPolls
@@ -311,7 +312,7 @@ public final class JarvisCoordinator: Sendable {
                 capabilities: model.capabilities,
                 tools: await tools.toolSpecs(),
                 knownApps: knownApps,
-                agentBundleId: agentBundleId,
+                agentBundleIds: agentBundleIds,
                 skill: skill,
                 adjustPolicy: { [maxLockedWaitOverrideMs] policy in
                     settings.apply(to: &policy)

@@ -248,7 +248,8 @@ final class AppModel: ObservableObject {
         self.coordinator = JarvisCoordinator(
             paths: paths, selection: launch.playground ? .demo : .live,
             // Seventeenth review: Jarvis's own bundle id is an OS fact, never a literal.
-            agentBundleId: Bundle.main.bundleIdentifier ?? "dev.jarvis.app",
+            // Twenty-fifth review: the exact list of Jarvis's own bundles built from it.
+            agentBundleIds: JarvisOwnBundles.ids(main: Bundle.main.bundleIdentifier ?? "dev.jarvis.app"),
             configuration: launch.playground
                 ? DriverConfiguration(humanTimeout: .seconds(120), unlockPollInterval: .milliseconds(500), lockWatchInterval: .seconds(1))
                 : DriverConfiguration(),

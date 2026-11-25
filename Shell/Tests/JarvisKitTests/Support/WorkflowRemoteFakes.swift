@@ -86,7 +86,7 @@ final class AppHarness {
         owner = ScriptedOwner(rules)
         let paths = JarvisPaths(directory: dir)
         coordinator = JarvisCoordinator(
-            paths: paths, selection: .demo, agentBundleId: "dev.jarvis.app", tools: nil, configuration: DriverConfiguration(),
+            paths: paths, selection: .demo, agentBundleIds: JarvisOwnBundles.ids(main: "dev.jarvis.app"), tools: nil, configuration: DriverConfiguration(),
             demoDelay: .zero, demoLockedPolls: 0, maxLockedWaitOverrideMs: nil, viewerFrames: ViewerFrameStore(),
             approvalFrames: ApprovalFrameStore(), demoRunner: demoRunner
         )

@@ -293,7 +293,7 @@ pub fn config() -> SessionConfig {
         tools: Vec::new(),
         model: ModelProfile::default(),
         known_apps: known_apps(),
-        agent_bundle_id: None,
+        agent_bundle_ids: Vec::new(),
         drive_own_app: false,
         skill: None,
     }

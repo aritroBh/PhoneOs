@@ -103,7 +103,7 @@ fn settle_wait() -> Effect {
 
 fn agent_config() -> SessionConfig {
     let mut c = config();
-    c.agent_bundle_id = Some(AGENT.to_owned());
+    c.agent_bundle_ids = vec![AGENT.to_owned()];
     c
 }
 

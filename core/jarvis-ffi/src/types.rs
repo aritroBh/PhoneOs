@@ -781,9 +781,12 @@ pub struct SessionConfig {
     pub tools: Vec<ToolSpec>,
     pub model: ModelProfile,
     pub known_apps: Vec<AppInfo>,
-    /// Bundle id of the Jarvis app itself (never needs first-use approval).
-    pub agent_bundle_id: Option<String>,
-    /// Sixteenth review: drive Jarvis's own app (`agentBundleId`). Off by default: the
+    /// Bundle ids of Jarvis's own bundles (never need first-use approval), matched
+    /// exactly and case-sensitively (twenty-fifth review: no prefix or suffix rule). Empty
+    /// (the default): no app is Jarvis's own. Swift builds it with `JarvisOwnBundles.ids(main:)`.
+    #[uniffi(default = [])]
+    pub agent_bundle_ids: Vec<String>,
+    /// Sixteenth review: drive Jarvis's own app (`agentBundleIds`). Off by default: the
     /// model then gets a one-line stub for Jarvis's own screens and cannot act there. The
     /// simulator UI tests turn it on for the Playground.
     #[uniffi(default = false)]

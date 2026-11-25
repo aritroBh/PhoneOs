@@ -172,7 +172,7 @@ final class QARun {
         let config = try SessionConfigBuilder.make(
             capabilities: model.capabilities,
             knownApps: knownApps,
-            agentBundleId: "dev.jarvis.app",
+            agentBundleIds: JarvisOwnBundles.ids(main: "dev.jarvis.app"),
             driveOwnApp: driveOwnApp,
             adjustPolicy: { policy in
                 policy.firstUseApproval = firstUseApproval

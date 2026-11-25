@@ -867,7 +867,7 @@ fn policy_task_and_config_round_trip() {
             p::AppInfo::new("com.apple.Preferences", "Settings"),
             p::AppInfo::new("com.apple.MobileSMS", "Messages"),
         ],
-        agent_bundle_id: Some("com.example.jarvis".to_owned()),
+        agent_bundle_ids: vec!["com.example.jarvis".to_owned()],
         drive_own_app: true,
         skill: Some(p::SkillContext {
             id: "text-someone".to_owned(),

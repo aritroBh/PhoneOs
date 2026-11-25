@@ -723,7 +723,7 @@ struct ApprovalPrivacyTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let frames = ApprovalFrameStore()
         let coordinator = JarvisCoordinator(
-            paths: JarvisPaths(directory: dir), selection: .demo, agentBundleId: "dev.jarvis.app", tools: nil,
+            paths: JarvisPaths(directory: dir), selection: .demo, agentBundleIds: JarvisOwnBundles.ids(main: "dev.jarvis.app"), tools: nil,
             configuration: DriverConfiguration(lockWatchInterval: nil), demoDelay: .zero, demoLockedPolls: 0,
             maxLockedWaitOverrideMs: nil, viewerFrames: ViewerFrameStore(), approvalFrames: frames,
             demoRunner: { _, _ in ApprovalPhone() }
@@ -754,7 +754,7 @@ struct ApprovalPrivacyTests {
         let offFrames = ApprovalFrameStore()
         let offPhone = ApprovalPhone()
         let offCoordinator = JarvisCoordinator(
-            paths: JarvisPaths(directory: dir), selection: .demo, agentBundleId: "dev.jarvis.app", tools: nil,
+            paths: JarvisPaths(directory: dir), selection: .demo, agentBundleIds: JarvisOwnBundles.ids(main: "dev.jarvis.app"), tools: nil,
             configuration: DriverConfiguration(lockWatchInterval: nil), demoDelay: .zero, demoLockedPolls: 0,
             maxLockedWaitOverrideMs: nil, viewerFrames: ViewerFrameStore(), approvalFrames: offFrames,
             demoRunner: { _, _ in offPhone }

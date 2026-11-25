@@ -3025,15 +3025,17 @@ impl Session {
             || self.is_agent_app(app)
     }
 
-    /// Whether `app` is the agent's own app (`SessionConfig::agent_bundle_id`, an OS fact the
-    /// shell passes) or one of its extensions (an id that extends it with a `.` suffix).
+    /// Whether `app` is one of the agent's own bundles (`SessionConfig::agent_bundle_ids`,
+    /// built by the shell from its own bundle id as the OS reports it). Twenty-fifth review:
+    /// an exact, case-sensitive match with one listed id — no prefix, suffix or wildcard
+    /// rule, so `dev.jarvis.app.evil` is not Jarvis's even when `dev.jarvis.app` is (the
+    /// App Store makes ids unique, not their prefixes). An empty list (or an empty entry)
+    /// makes no app Jarvis's own.
     fn is_agent_app(&self, app: &str) -> bool {
-        self.config.agent_bundle_id.as_deref().is_some_and(|own| {
-            let own = own.trim().to_ascii_lowercase();
-            let app = app.trim().to_ascii_lowercase();
-            !own.is_empty()
-                && (app == own || app.strip_prefix(&own).is_some_and(|r| r.starts_with('.')))
-        })
+        self.config
+            .agent_bundle_ids
+            .iter()
+            .any(|own| !own.is_empty() && own == app)
     }
 
     /// Whether the owner declined first-use approval for `app` in this session (bundle ids

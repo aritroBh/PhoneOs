@@ -866,7 +866,7 @@ fn own_app_is_a_stub_unless_driven() {
     let a = article("news.example");
     let next = index_of(&a, "Next");
     let mut c = cfg();
-    c.agent_bundle_id = Some(OWN.into());
+    c.agent_bundle_ids = vec![OWN.into()];
     let go = |c: SessionConfig| {
         run(
             c,

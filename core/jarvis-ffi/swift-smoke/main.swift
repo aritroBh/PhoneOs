@@ -452,8 +452,13 @@ do {
     // The new `skill` field defaults to nil, so the memberwise init without it compiles.
     let base = try defaultSessionConfig()
     let legacy = SessionConfig(policy: base.policy, tools: [], model: base.model,
-                               knownApps: [], agentBundleId: nil)
+                               knownApps: [])
     check("SessionConfig init without skill: defaults to nil", legacy.skill == nil && base.skill == nil)
+    // Twenty-fifth review: Jarvis's own ids are an exact list, empty by default.
+    check("SessionConfig agentBundleIds defaults to empty", legacy.agentBundleIds.isEmpty && base.agentBundleIds.isEmpty)
+    let own = SessionConfig(policy: base.policy, tools: [], model: base.model, knownApps: [],
+                            agentBundleIds: ["dev.jarvis.app", "dev.jarvis.app.runner.xctrunner"])
+    check("SessionConfig agentBundleIds round-trips", own.agentBundleIds == ["dev.jarvis.app", "dev.jarvis.app.runner.xctrunner"])
 
     let skills = try JarvisSkills(json: "")
     let wifi = Skill(id: "wifi-off", name: "Wi-Fi off", summary: "", kind: .written,
