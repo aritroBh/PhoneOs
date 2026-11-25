@@ -27,7 +27,7 @@ The core trusts a typed UI tree: roles, frames and flags. The safety gate decide
 | Simulator proof | `Shell/App/JarvisUITests/JarvisRunnerLoopbackTests.swift` | not run yet |
 | App wiring (key adoption, client, Apps picker, status) | `AppModel.swift`, `AppsView.swift` | not compiled here |
 
-## 3. Protocol (version 1)
+## 3. Protocol (version 2)
 
 ```text
 frame        = length (u32 BE, of body) || body           1 <= length <= limit
@@ -51,10 +51,15 @@ nonce = direction (0x43 c→s, 0x53 s→c) || 0 0 0 || counter     aad = "JRUN" 
   - after authentication: 256 KiB client→server and 16 MiB server→client.
   
   The body buffer grows only with bytes that actually arrive.
-- **Messages.** The plaintext of a data frame is `kind || request id (u64) || body`. A compact binary codec covers exactly the `PhoneRunner` surface over the `jarvis-proto` types:
+- **Messages.** The plaintext of a data frame is `kind || request id (u64) || not_after_ms (u64, requests only) || body`. A compact binary codec covers exactly the `PhoneRunner` surface over the `jarvis-proto` types:
   - requests: `hello(version)`, `snapshot(include_screenshot)`, `perform(RunnerCommand incl. expect)`, `lock_state`, `viewer_screenshot`, `front_bundle_id`;
   - replies: `hello(version, runner)`, `snapshot(typed tree, app, size, keyboard, orientation, locked, lock state, notes, screenshot bytes)`, `performed(RunnerResult)` (keeps `failure`: locked, stale, other), `lock_state`, `viewer_screenshot`, `front_bundle_id`, `error(message)`.
 - **Trees.** Trees are written and read iteratively in pre-order: each node, then its child count. No input can exhaust a stack. Limits: 100,000 nodes, depth 256, 256 notes, 15 MiB screenshot. Numbers must be finite, strings must be UTF-8, and no bytes may follow a message.
+- **Expiry (version 2).** Every request carries `not_after_ms`, under the AEAD: the last instant at which the runner may act on it, set by the client from its own deadline for that call (connecting included). The server channel is given `now_ms` with every `receive` and refuses a request received later (`RunnerError::Expired`, problem `expired`; the channel closes and nothing is surfaced). The boundary is inclusive (`now == not_after` is accepted). The server keeps the latest `now_ms` it was given, so a clock reading that goes backwards cannot make an expired request current again. The check is made on receipt; a runner call already under way is bounded by the server's own deadline, which is shorter than the client's. Version 1 peers are refused in the hello (no negotiation); a request grows by 8 bytes, every limit is unchanged.
+- **The clock.** Both processes run on one phone and read the same counter: `RunnerUptimeClock.nowMs()` = `clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) / 1e6` on Apple platforms, i.e. `mach_continuous_time`, one kernel-wide count since boot that never goes backwards and keeps counting in sleep (Linux tests: `clock_gettime(CLOCK_BOOTTIME)`). Rust reads no clock; the shell passes the values in, as it does for `jarvis-remote`'s hub.
+- **Deadlines** (`JarvisRunnerTiming`, derived from `DriverConfiguration()`; a test asserts the order): server 16 s < client 18 s < driver 20 s, for reads and for commands (a `wait` adds its own duration on both runner layers). The driver's deadlines are unchanged. Connecting takes at most 5 s, inside the client's deadline.
+- **Idle connections.** The server closes an authenticated connection with no request for 120 s (`serverIdle`), so a connection its app abandoned cannot hold the one slot for good. An active run talks to the runner every few seconds (lock watch every 3 s, unlock polls every 2 s), and the client replaces a connection it has not used for 100 s before using it, so the server's cut never meets a request in normal use; an idle or paused app simply connects again. A connect that completes after the client gave up closes its own stream at once. If a connection was closed by the runner anyway (its idle cut, a restart), the client retries once on a fresh connection (new channel, new entropy), within the same deadline and `not_after_ms`: any request when none of its bytes was sent (the stream already knew it was closed, or refused the write with `RunnerStreamClosed`, which promises nothing left); a read (snapshot, lock state, screenshot, front app) also after it was written, since reads have no effect. A `perform` any byte of which may have left is never sent again; its failure is reported. On the phone `NWRunnerStream` does not know a peer's close before writing (TCP accepts the write), so there an idle-cut `perform` fails once and is reported; the client's own 100 s retirement makes that rare. The server's idle check runs on its injected clock (`checkIdle()`), so tests move a clock instead of waiting.
+- **The stale-screen check at the runner.** `perform` carries the command's `expect`. The runner compares it with the app in front in the same step as the gesture (`XCUITestPhoneRunner`: the same main-actor hop) and answers `stale` (nothing done) when another app is in front or none can be read. A served runner that cannot check (`verifiesFrontApp` false) gets no command carrying an `expect`: `RunnerServer` answers `stale`. The driver's `FrontAppGuard` still reads the front app first; for a runner that `verifiesFrontApp` (Jarvis's client, the in-process XCUITest runner) a read that throws refuses the command instead of sending it unchecked.
 - **Typed only.** This protocol has no text-tree form.
 - **One request at a time.** A reply must carry the outstanding request's id and answer its kind, or be an error.
 - **Replies that cannot be sent.** A reply the server cannot encode, or one that is too large, is replaced by an `error` reply, so the client never waits for nothing.
@@ -73,7 +78,8 @@ nonce = direction (0x43 c→s, 0x53 s→c) || 0 0 0 || counter     aad = "JRUN" 
 - **Garbage.** Random bytes in random splits never panic, take bounded time and never yield a message.
   - Tests: `random_bytes_never_panic_and_never_yield_a_message` (Rust); `randomBytes` (Swift).
 - **Not defended.**
-  - **Denial of service.** A stranger can hold the single connection slot until the 5 s handshake deadline drops it, reconnect, or squat the port; Jarvis then reports the runner unreachable or unauthenticated.
+  - **Denial of service.** A stranger can hold the single connection slot until the 5 s handshake deadline drops it, reconnect, or squat the port; Jarvis then reports the runner unreachable or unauthenticated. Even a stranger cycling the slot between Jarvis's front-app read and its command cannot make an unchecked command: the read failing refuses the command, and the runner checks `expect` next to the gesture.
+  - **The fixed port reveals that a runner is present** (accepted, twenty-first review LOW-4): any app can see that something listens on 127.0.0.1:47831. It learns nothing more: it cannot complete the handshake.
   - **A stolen key.** Anyone who reads the key (a jailbroken phone, a debugger) can do what the app can.
   - **A compromised phone.**
   - **Traffic analysis.** Frame sizes are visible to nothing on loopback but the two processes and the kernel.
@@ -81,12 +87,29 @@ nonce = direction (0x43 c→s, 0x53 s→c) || 0 0 0 || counter     aad = "JRUN" 
   - There is no forward secrecy beyond the per-connection keys (no DH): a leaked key decrypts recorded loopback traffic. Recording loopback traffic needs privileges another app does not have.
   - The key lives in the app's Keychain (this device only, after first unlock) and in the runner's memory. It is never logged and never put in a URL, a file, an error or `Debug` output.
 
+## 4a. Twenty-first review (adversarial, 2026-11-24)
+
+Result: no HIGH, one MED, four LOW; all fixed or accepted here, the reviewer's 19 probes kept as regression tests (`core/jarvis-runner/tests/review.rs`, `core/jarvis-ffi/tests/runner_review.rs`; the version probe now also refuses version 1).
+
+- **MED-1, the stale-screen check failed open over this runner.** A failed front-app read counted as "cannot tell" and the command went out unchecked, and the client sent no `expect`. Fixed: `expect` travels with the command and the runner checks it next to the gesture; for a runner that `verifiesFrontApp` a failed read refuses the command.
+- **LOW-1, a leaked authenticated connection.** A connect completing after the client's deadline was never closed and held the only slot. Fixed: it closes itself; the server also closes idle authenticated connections (120 s).
+- **LOW-2, inverted timeout layering** (driver 20 s inside client 35/50 s inside server 30/45 s). Fixed: server 16 s < client 18 s < driver 20 s, from one place.
+- **LOW-3, requests had no expiry.** Fixed: `not_after_ms` (protocol version 2).
+- **LOW-4, the fixed port reveals a runner.** Accepted (section 4).
+
+The fixed port is also what keeps a relay out today: an app that bound the runner's port could only forward bytes it cannot read, and no other port carries Jarvis's traffic. A port chosen by the runner (and passed with the key) would let a stranger sit between the two processes and hold requests back; that must not land without the request expiry, which now exists.
+
+Unverified items the review listed (added as spikes R6 and R7 below):
+
+- whether `NWListener` with `requiredLocalEndpoint` = 127.0.0.1 binds loopback only on a device;
+- whether XCTest records `launchEnvironment`, and so the runner key, in Mac-side logs or the result bundle.
+
 ## 5. What is not proven, and the device spikes
 
 Proven here:
 
-- Rust: 33 new tests.
-- Shell, Swift Testing on Linux: 15 new tests over in-memory pipes with the real core channels.
+- Rust: 33 new tests, plus 19 review probes and 7 expiry tests (twenty-first review).
+- Shell, Swift Testing on Linux: 15 new tests over in-memory pipes with the real core channels, plus 11 for the twenty-first review (runner-side stale check, timeouts, leaked connections, idle timeout, expiry).
 - `cargo check` for `aarch64-apple-ios`.
 - The Swift smoke test of the bindings.
 
@@ -128,7 +151,9 @@ Device spikes, numbered R1 to R5 so they do not collide with PLAN.md's S1 to S8:
   - whether the listener can rebind after a crash;
   - whether a port collision with LoopCtrl (8300) or iCTRL (8200) is possible (no: different ports).
   
-  A squatter blocks the Jarvis runner but cannot fool it. Making that recoverable (a port list, or a port chosen by the runner and passed with the key) is follow-up work.
+  A squatter blocks the Jarvis runner but cannot fool it. Making that recoverable (a port list, or a port chosen by the runner and passed with the key) is follow-up work, and needs the request expiry (section 4a), which now exists.
+- **R6: loopback-only listener (device).** Check with a second device on the same Wi-Fi (and over USB networking) that nothing can connect to the runner's port from outside the phone, i.e. that `requiredLocalEndpoint` = `127.0.0.1` binds loopback only. The listener's `isLoopback` check stays as a second line either way.
+- **R7: the key in Mac-side records (Mac).** Run the `JarvisRunner` scheme from Xcode and from `xcodebuild test -resultBundlePath`, then search the result bundle, `~/Library/Developer/Xcode/DerivedData/*/Logs` and the console log for the base64 key. If XCTest records `launchEnvironment`, provisioning needs another path (R2's alternatives) or the key must be rotated after every Mac-started run.
 - **R5: simulator and CI.** Things to confirm:
   - `JarvisRunnerLoopbackTests` passes in `sim-qa.sh`;
   - the Jarvis scheme compiles `JarvisRunner` without running it (it is in the build list with `[test]` and absent from the test action);
