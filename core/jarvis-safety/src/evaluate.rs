@@ -4992,6 +4992,23 @@ fn largest_fitting(lo: usize, hi: usize, mut fits: impl FnMut(usize) -> bool) ->
     Some(ok)
 }
 
+/// The Return-alone form of slot 4 when no character of the value fits: that the field's
+/// whole content is sent and how many characters of it are not shown. Twenty-sixth review
+/// (P1): this statement is never cut — its length is the sends slot's floor (see
+/// `summarize_with`), which no scaling of the slots' minimums goes below.
+fn return_alone_fallback(sent: &Sent<'_>) -> String {
+    let left = sent.fields.first().map_or(0, |f| {
+        f.value
+            .as_deref()
+            .map_or(0, n_chars)
+            .saturating_add(f.beyond)
+    });
+    format!(
+        ", which sends the field's whole content ({left} character{} not shown)",
+        plural(left)
+    )
+}
+
 /// Slot 4 (ninth review): what is sent, within `budget` characters. `Sends:` for a
 /// sending action, `The form holds:` for any other; Return alone says `, which sends the
 /// field's whole content: "…"`. Each value is shown up to [`MAX_SENT_VALUE_CHARS`]; to fit,
@@ -5021,17 +5038,9 @@ fn sends_slot(sent: &Sent<'_>, above: &[bool], budget: usize) -> String {
         {
             return render(cap);
         }
-        // No room for any of the value: how long it is.
-        let left = fields.first().map_or(0, |f| {
-            f.value
-                .as_deref()
-                .map_or(0, n_chars)
-                .saturating_add(f.beyond)
-        });
-        return format!(
-            ", which sends the field's whole content ({left} character{} not shown)",
-            plural(left)
-        );
+        // No room for any of the value: how long it is. Twenty-sixth review (P1): its
+        // length is the slot's floor (see `summarize_with`), so this always fits.
+        return return_alone_fallback(sent);
     }
     let prefix = if sent.mode == SendMode::ReturnForm {
         ", which submits the form. "
@@ -5526,6 +5535,9 @@ const MAX_RECIPIENTS_MIN: usize = 190;
 const SLOT_SENDS: (usize, usize) = (76, usize::MAX);
 /// Slot 5, the other facts: their counts fit the minimum.
 const SLOT_OTHER: (usize, usize) = (48, 160);
+/// The least the action line keeps when the slots' minimums are scaled down (see
+/// `Slots::new`; twenty-sixth review: also a floor of the scaling).
+const ACTION_FLOOR: usize = 60;
 
 /// `raw` with every label, value and placeholder cut to [`MAX_READ_VALUE_CHARS`] (before
 /// redaction; ninth review).
@@ -6180,6 +6192,33 @@ fn summarize_with(
     } else {
         0
     };
+    // Twenty-sixth review (P1): what the amounts and what is sent need at their last level
+    // (the largest amount alone; the count of fields, or for Return alone that the field's
+    // whole content is sent and how many characters are not shown) and the recipients'
+    // minimum are floors no scaling of the minimums goes below, so these statements are
+    // never cut in any build. When notes leave less room than the floors and the action
+    // line's 60 need, the summary takes that much (as `noted` already gives it at least
+    // 120): it says less only by the slots' own stated cuts.
+    let floors = [
+        if present.iter().skip(1).any(|p| *p) {
+            ACTION_FLOOR
+        } else {
+            0
+        },
+        if present[1] {
+            n_chars(&amounts_slot(&facts.amounts, 0))
+        } else {
+            0
+        },
+        recipients_min,
+        if present[3] {
+            n_chars(&sends_slot(&sent, &vec![false; sent.fields.len()], 0))
+        } else {
+            0
+        },
+        0,
+    ];
+    let max = max.max(floors.iter().sum());
     let bounds = [
         (
             SLOT_ACTION.0 + n_chars(&title_part),
@@ -6187,10 +6226,10 @@ fn summarize_with(
         ),
         SLOT_AMOUNTS,
         (recipients_min, SLOT_RECIPIENTS.1),
-        SLOT_SENDS,
+        (SLOT_SENDS.0.max(floors[3]), SLOT_SENDS.1),
         SLOT_OTHER,
     ];
-    let slots = Slots::new(present, bounds, max);
+    let slots = Slots::new(present, bounds, floors, max);
     let mut room = max;
     // (1) The action.
     let a1 = slots.allot(0, room);
@@ -6282,8 +6321,16 @@ impl Slots {
     /// minimums of the present slots exceed `max` (never for the 480 bound; behind the
     /// runner-text warning, 379, since the eleventh review: 92 + 90 + 122 + 76 + 48 = 428)
     /// the other facts' reserve goes first, then the action line's down to 60, then all
-    /// are scaled down in proportion; the action alone may use the whole bound.
-    fn new(present: [bool; 5], bounds: [(usize, usize); 5], max: usize) -> Slots {
+    /// are scaled down in proportion — twenty-sixth review (P1): never below a slot's
+    /// `floors` entry (the part of a minimum that must stay whole; only what is above the
+    /// floors is scaled, while the floors fit the bound); the action alone may use the
+    /// whole bound.
+    fn new(
+        present: [bool; 5],
+        bounds: [(usize, usize); 5],
+        floors: [usize; 5],
+        max: usize,
+    ) -> Slots {
         let mut mins = [0usize; 5];
         let mut maxs = [0usize; 5];
         for (i, (p, (lo, hi))) in present.iter().zip(bounds).enumerate() {
@@ -6299,7 +6346,7 @@ impl Slots {
         for i in [4usize, 0] {
             if sum > max {
                 if let Some(m) = mins.get_mut(i) {
-                    let floor = if i == 0 { 60 } else { 0 };
+                    let floor = if i == 0 { ACTION_FLOOR } else { 0 };
                     let give = (sum - max).min(m.saturating_sub(floor));
                     *m -= give;
                     sum -= give;
@@ -6307,8 +6354,19 @@ impl Slots {
             }
         }
         if sum > max && sum > 0 {
-            for m in &mut mins {
-                *m = m.saturating_mul(max) / sum;
+            let mut floor = [0usize; 5];
+            for ((f, want), m) in floor.iter_mut().zip(floors).zip(&mins) {
+                *f = want.min(*m);
+            }
+            let kept: usize = floor.iter().sum();
+            if kept <= max && sum > kept {
+                for (m, f) in mins.iter_mut().zip(floor) {
+                    *m = f + (*m - f).saturating_mul(max - kept) / (sum - kept);
+                }
+            } else {
+                for m in &mut mins {
+                    *m = m.saturating_mul(max) / sum;
+                }
             }
         }
         if present.iter().skip(1).all(|p| !p) {

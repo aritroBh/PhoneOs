@@ -139,8 +139,8 @@ use jarvis_safety::{
 use crate::act::{Out, TypedState};
 use crate::changes::describe_change;
 use crate::commands::{
-    home_launch, is_widget, plan, resolve_app, should_change, AppTarget, HomeLaunch, PlanError,
-    MAX_CLEAR_DELETES,
+    home_launch, is_widget, launches, plan, resolve_app, should_change, AppTarget, HomeLaunch,
+    PlanError, MAX_CLEAR_DELETES,
 };
 use crate::history::{clean, describe, History, MAX_SHOWN};
 use crate::parser::{parse_model_output, ParseError};
@@ -3210,10 +3210,35 @@ impl Session {
         //     `open_app` gets, before the tap is sent (see `home_launch`).
         // Fifteenth review (R4b): a control inside an alert, a SpringBoard sheet or a
         // notification banner is never a home-screen launch: the gate asks it as what it is.
-        let home = if is_springboard(&screen.app_bundle_id)
-            && !in_alert(&gate, screen, Some(&self.tree()))
-        {
-            home_launch(&gate, screen, &self.apps)
+        // Twenty-sixth review (L1): an item of a menu on the Home Screen (an icon's quick
+        // actions) launches the app whose icon was long-pressed, with an action the model
+        // chose, whatever the item's label says and whatever holds the menu (a sheet
+        // included): it is never resolved as a launch of the app its label names, nor as
+        // an input into the Home Screen only — an undecidable destination. (On the Home
+        // Screen as the model sees it, `home_view`, a menu outside an alert or sheet is
+        // stubbed: its items are unlabelled and disabled, so only a `tap_point` reaches
+        // one, which is undecidable too.)
+        let home = if is_springboard(&screen.app_bundle_id) {
+            let tree = self.tree();
+            if handoff_control(&gate, screen, Some(&tree)) {
+                Some(match home_launch(&gate, screen, &self.apps) {
+                    Some(HomeLaunch::App { label, widget, .. }) => {
+                        HomeLaunch::Unknown { label, widget }
+                    }
+                    Some(h) => h,
+                    // An item labelled like SpringBoard's own UI ("Search") still launches.
+                    None => HomeLaunch::Unknown {
+                        label: action_target(&gate, screen)
+                            .map(|e| e.label.clone())
+                            .unwrap_or_default(),
+                        widget: false,
+                    },
+                })
+            } else if in_alert(&gate, screen, Some(&tree)) {
+                None
+            } else {
+                home_launch(&gate, screen, &self.apps)
+            }
         } else {
             None
         };
@@ -3254,6 +3279,13 @@ impl Session {
             }
             Some(HomeLaunch::Unknown { .. } | HomeLaunch::Search { .. }) | None => {}
         }
+        // Twenty-sixth review (L1): a long press on a known app's icon opens SpringBoard's
+        // icon menu and puts nothing into the app, so it is resolved above only for the deny
+        // and decline checks (its menu offers the app's quick actions). It is no launch: no
+        // launch exemption, and its input goes to the Home Screen like any other long press
+        // there. A tap on a quick action is the launch (see above). A long press on
+        // something Jarvis cannot name keeps its undecidable destination (and its question).
+        let home = home.filter(|h| launches(&gate) || !matches!(h, HomeLaunch::App { .. }));
         // 1b. Skill confinement: a skill with `confine_to_apps` keeps the session in its
         //     apps. It only narrows; every check below still applies.
         if let Verdict::Deny(reason) =
@@ -3520,9 +3552,11 @@ impl Session {
         }
         // Twenty-fourth review (F4): the Home Screen is the OS; a step it only sees (a wait,
         // a look or `press_home` there) is no input into it. A scroll or a full input into
-        // it keeps its rules.
+        // it keeps its rules. Twenty-sixth review (L2): the same holds for Jarvis's own app
+        // (no party, [`Self::observes`]): a wait in it, or `press_home` leaving it, names it
+        // as no destination.
         if InputKind::of(gate, &self.current.screen) == InputKind::Observe {
-            own.retain(|p| !matches!(p, FlowContext::App(a) if is_springboard(a)));
+            own.retain(|p| self.observes(p));
         }
         let pasting = insert_control(gate, &self.current.screen, Some(&self.tree())).is_some();
         // Twentieth review (R20-A): a scroll is allowed by a scroll grant too; any other

@@ -406,8 +406,9 @@ fn element_at(x: f64, y: f64, screen: &CompactScreen) -> Option<&jarvis_proto::E
 /// What `action` on the home screen `screen` may launch, so the agent can give it the
 /// checks `open_app` gets before anything is sent.
 ///
-/// A tap, long press (its menu offers the app's quick actions) or tap_point on an element
-/// is resolved by label: a known app's display name (the whole label, or the name and one of
+/// A tap, long press or tap_point on an element is resolved by label (a long press on a
+/// known app's icon only for the deny and decline checks — its menu offers the app's quick
+/// actions — and never as its launch, [`launches`]): a known app's display name (the whole label, or the name and one of
 /// the OS's words for an app, `known_app_named`) is [`HomeLaunch::App`]; the search pill and folders open
 /// SpringBoard's own UI and launch nothing (`None`); anything else, unlabeled included, is
 /// [`HomeLaunch::Unknown`]. A tap_point on no listed element, or in the keyboard's area
@@ -457,6 +458,15 @@ pub(crate) fn home_launch(
             widget,
         },
     })
+}
+
+/// Twenty-sixth review (L1): whether `action`, resolved by [`home_launch`] to a known app,
+/// launches it. A long press on an icon opens SpringBoard's icon menu and puts nothing into
+/// the app: it is an input into the Home Screen like any other long press there (the tap on
+/// one of the menu's quick actions is the launch). A long press on something Jarvis cannot
+/// name keeps its undecidable destination.
+pub(crate) fn launches(action: &Action) -> bool {
+    !matches!(action, Action::LongPress { .. })
 }
 
 /// Whether executing `action` on `screen` should visibly change something; when it should
