@@ -20,7 +20,7 @@
 //! [`jarvis_safety::control_at`]); one on a listed control acts as that control.
 //! | `press_home` | `PressKey Home` |
 //! | `open_app` | `LaunchApp` (the bundle id is resolved before safety runs) |
-//! | `open_url` / `wait` | `OpenUrl` / `Wait` |
+//! | `open_url` / `wait` | `OpenUrl` / `Wait` at [`jarvis_safety::wait_level`] of the asked duration (1 000, 3 000 or 10 000 ms; twenty-second review, R22-A) |
 
 use std::collections::VecDeque;
 
@@ -30,7 +30,7 @@ use jarvis_safety::gestures::{
     denormalize, drag_gesture, GestureError, GestureKind, KEYBOARD_SHARE,
 };
 use jarvis_safety::{
-    control_at, point_is_clear, tap_spot, Covered, CoveredBy, PointError, ScreenTree,
+    control_at, point_is_clear, tap_spot, wait_level, Covered, CoveredBy, PointError, ScreenTree,
 };
 
 /// Most Delete presses a `clear` sends.
@@ -259,7 +259,12 @@ pub(crate) fn plan(
             bundle_id: app.clone(),
         }),
         Action::OpenUrl { url } => q.push_back(RunnerCommand::OpenUrl { url: url.clone() }),
-        Action::Wait { ms } => q.push_back(RunnerCommand::Wait { ms: *ms }),
+        // Twenty-second review (R22-A): a wait is sent at one of three fixed levels, never
+        // with the duration asked (the session levels the action itself first, so what it
+        // shows and records is what is sent; this is the point every wait passes).
+        Action::Wait { ms } => q.push_back(RunnerCommand::Wait {
+            ms: wait_level(*ms),
+        }),
         Action::CallTool { .. }
         | Action::AskUser { .. }
         | Action::Look

@@ -1,7 +1,7 @@
 //! Risk classification: what could go wrong if an action ran unattended.
 
 use std::cell::OnceCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use jarvis_proto::{
     Action, CompactScreen, Direction, Element, Point, RiskCategory, Role, Tier, ToolSpec,
@@ -369,6 +369,7 @@ pub(crate) struct Reader<'a> {
     tables: Vec<&'static [Phrase]>,
     tally: OnceCell<Tally>,
     beside: OnceCell<BTreeSet<u32>>,
+    stacked: OnceCell<HashMap<CardKey, bool>>,
 }
 
 impl<'a> Reader<'a> {
@@ -378,6 +379,7 @@ impl<'a> Reader<'a> {
             tables: context_tables(screen),
             tally: OnceCell::new(),
             beside: OnceCell::new(),
+            stacked: OnceCell::new(),
         }
     }
 
@@ -427,6 +429,20 @@ impl<'a> Reader<'a> {
         self.beside
             .get_or_init(|| beside_siblings(self.screen))
             .contains(&el.index)
+    }
+
+    /// Whether `el` (a page-shaped element, [`page_shaped`]) has an element of its family
+    /// stacked above or below it ([`stacks_with`]). Worked out for every page-shaped element
+    /// of the screen at once ([`stacked_cards`], twenty-second review F2: was a scan of the
+    /// whole screen per element, quadratic on a screen of stacked tall cards).
+    fn is_stacked(&self, el: &Element) -> bool {
+        let known = self
+            .stacked
+            .get_or_init(|| stacked_cards(self.screen))
+            .get(&card_key(el))
+            .copied();
+        // An element not of this screen (never, in practice): the direct scan.
+        known.unwrap_or_else(|| self.screen.elements.iter().any(|o| stacks_with(el, o)))
     }
 }
 
@@ -843,42 +859,185 @@ fn beside_siblings(screen: &CompactScreen) -> BTreeSet<u32> {
 /// sibling rules apply.
 fn is_list_row(el: &Element, r: &Reader<'_>) -> bool {
     row_family(&el.role)
-        && !is_page(el, r.screen)
+        && !is_page(el, r)
         && !in_app(&r.screen.app_bundle_id, SPRINGBOARD_BUNDLE_ID)
         && !r.is_beside_sibling(el)
 }
 
 /// Whether `el` is a lone full-width tall card, see [`is_list_row`].
-fn is_page(el: &Element, screen: &CompactScreen) -> bool {
+fn is_page(el: &Element, r: &Reader<'_>) -> bool {
+    page_shaped(el, r.screen) && !r.is_stacked(el)
+}
+
+/// Whether `el` is full-width and taller than a row on a screen of known size: the shape of
+/// a page, before the elements stacked with it are looked at ([`is_list_row`]).
+fn page_shaped(el: &Element, screen: &CompactScreen) -> bool {
     let (w, h) = (screen.size.width, screen.size.height);
     let known = w.is_finite() && w > 0.0 && h.is_finite() && h > 0.0;
-    if !known
+    !(!known
         || el.frame.height <= h * MAX_LIST_ROW_SHARE
-        || el.frame.width < w * PAGE_MIN_WIDTH_SHARE
-    {
-        return false;
+        || el.frame.width < w * PAGE_MIN_WIDTH_SHARE)
+}
+
+/// Whether `o` is an element of `el`'s family stacked above or below it at a similar width
+/// (see [`is_list_row`]).
+fn stacks_with(el: &Element, o: &Element) -> bool {
+    let ratio = {
+        let (lo, hi) = (
+            o.frame.width.min(el.frame.width),
+            o.frame.width.max(el.frame.width),
+        );
+        if hi > 0.0 {
+            lo / hi
+        } else {
+            0.0
+        }
+    };
+    o.index != el.index
+        && row_family(&o.role)
+        && !o.frame.is_empty()
+        && ratio >= STACK_MIN_WIDTH_RATIO
+        && o.frame.x < el.frame.max_x()
+        && el.frame.x < o.frame.max_x()
+        && (o.frame.max_y() <= el.frame.y + STACK_OVERLAP_TOLERANCE
+            || el.frame.max_y() <= o.frame.y + STACK_OVERLAP_TOLERANCE)
+}
+
+/// What [`stacked_cards`] keys an element by: its index and frame, all [`stacks_with`]
+/// reads of it.
+type CardKey = (u32, [u64; 4]);
+
+fn card_key(el: &Element) -> CardKey {
+    let f = el.frame;
+    (
+        el.index,
+        [
+            f.x.to_bits(),
+            f.y.to_bits(),
+            f.width.to_bits(),
+            f.height.to_bits(),
+        ],
+    )
+}
+
+/// For every page-shaped element of `screen` ([`page_shaped`]), whether an element stacks
+/// with it ([`stacks_with`]), in O(n log n) for any layout where the elements of a similar
+/// width overlap horizontally (on-screen ones do). Two sweeps, one per side: the
+/// candidates in the order of the edge a partner must clear, the possible partners in the
+/// order of their own edge, each admitted once and kept by width; a candidate then checks
+/// only the admitted ones of a width that can be within [`STACK_MIN_WIDTH_RATIO`] of its
+/// own, with the exact [`stacks_with`]. A partner of a width that is not finite never
+/// stacks (`x < x + NaN` is false; a ratio against an infinite width is 0 or `NaN`), nor
+/// does a candidate of such a width: both are left out. The differential test holds it to
+/// the scan it replaced.
+fn stacked_cards(screen: &CompactScreen) -> HashMap<CardKey, bool> {
+    let mut out: HashMap<CardKey, bool> = HashMap::new();
+    let cards: Vec<&Element> = screen
+        .elements
+        .iter()
+        .filter(|e| page_shaped(e, screen))
+        .collect();
+    if cards.is_empty() {
+        return out;
     }
-    !screen.elements.iter().any(|o| {
-        let ratio = {
-            let (lo, hi) = (
-                o.frame.width.min(el.frame.width),
-                o.frame.width.max(el.frame.width),
-            );
-            if hi > 0.0 {
-                lo / hi
-            } else {
-                0.0
+    for c in &cards {
+        out.insert(card_key(c), false);
+    }
+    let partners: Vec<&Element> = screen
+        .elements
+        .iter()
+        .filter(|o| row_family(&o.role) && !o.frame.is_empty() && o.frame.width.is_finite())
+        .collect();
+    let finite: Vec<&Element> = cards
+        .into_iter()
+        .filter(|c| c.frame.width.is_finite())
+        .collect();
+    // Above: `o.max_y <= c.y + tolerance`.
+    sweep(
+        &finite,
+        &partners,
+        |c| c.frame.y + STACK_OVERLAP_TOLERANCE,
+        |o| o.frame.max_y(),
+        false,
+        &mut out,
+    );
+    // Below: `c.max_y <= o.y + tolerance`.
+    sweep(
+        &finite,
+        &partners,
+        |c| c.frame.max_y(),
+        |o| o.frame.y + STACK_OVERLAP_TOLERANCE,
+        true,
+        &mut out,
+    );
+    out
+}
+
+/// One side of [`stacked_cards`]: a partner `o` is on that side of card `c` when
+/// `edge(o) <= bound(c)` (`below` false) or `edge(o) >= bound(c)` (`below` true). A `NaN`
+/// on either side never compares, so it is left out.
+fn sweep(
+    cards: &[&Element],
+    partners: &[&Element],
+    bound: impl Fn(&Element) -> f64,
+    edge: impl Fn(&Element) -> f64,
+    below: bool,
+    out: &mut HashMap<CardKey, bool>,
+) {
+    let order = |a: &f64, b: &f64| {
+        if below {
+            b.total_cmp(a)
+        } else {
+            a.total_cmp(b)
+        }
+    };
+    let mut cs: Vec<(f64, &Element)> = cards
+        .iter()
+        .map(|c| (bound(c), *c))
+        .filter(|(b, _)| !b.is_nan())
+        .collect();
+    cs.sort_by(|a, b| order(&a.0, &b.0));
+    let mut ps: Vec<(f64, &Element)> = partners
+        .iter()
+        .map(|o| (edge(o), *o))
+        .filter(|(e, _)| !e.is_nan())
+        .collect();
+    ps.sort_by(|a, b| order(&a.0, &b.0));
+    let admits = |e: f64, b: f64| if below { e >= b } else { e <= b };
+    // Admitted partners by width (finite and positive: the bit order is the numeric order).
+    let mut by_width: BTreeMap<u64, Vec<&Element>> = BTreeMap::new();
+    let mut next = 0usize;
+    for (b, c) in cs {
+        while let Some((e, o)) = ps.get(next) {
+            if !admits(*e, b) {
+                break;
             }
+            by_width
+                .entry(o.frame.width.to_bits())
+                .or_default()
+                .push(*o);
+            next += 1;
+        }
+        let key = card_key(c);
+        if out.get(&key).copied().unwrap_or(false) {
+            continue;
+        }
+        let w = c.frame.width;
+        // A superset of the widths within the ratio (rounding included); a width too close
+        // to the ends of the float range checks every admitted partner.
+        let (lo, hi) = if (1e-300..=1e300).contains(&w) {
+            (w * 0.8, w / 0.8)
+        } else {
+            (0.0, f64::INFINITY)
         };
-        o.index != el.index
-            && row_family(&o.role)
-            && !o.frame.is_empty()
-            && ratio >= STACK_MIN_WIDTH_RATIO
-            && o.frame.x < el.frame.max_x()
-            && el.frame.x < o.frame.max_x()
-            && (o.frame.max_y() <= el.frame.y + STACK_OVERLAP_TOLERANCE
-                || el.frame.max_y() <= o.frame.y + STACK_OVERLAP_TOLERANCE)
-    })
+        let hit = by_width
+            .range(lo.to_bits()..=hi.to_bits())
+            .flat_map(|(_, os)| os.iter())
+            .any(|o| stacks_with(c, o));
+        if hit {
+            out.insert(key, true);
+        }
+    }
 }
 
 /// Tallest share of the screen height a lone full-width card may take and still be a row
@@ -1188,5 +1347,131 @@ mod differential {
             }
         }
         assert!(found > 10_000, "{found}");
+    }
+
+    /// `is_page` as it was before the twenty-second review (F2): a scan of the whole screen
+    /// for each element. The oracle of [`stacked_cards`].
+    fn reference_is_page(el: &Element, screen: &CompactScreen) -> bool {
+        let (w, h) = (screen.size.width, screen.size.height);
+        let known = w.is_finite() && w > 0.0 && h.is_finite() && h > 0.0;
+        if !known
+            || el.frame.height <= h * MAX_LIST_ROW_SHARE
+            || el.frame.width < w * PAGE_MIN_WIDTH_SHARE
+        {
+            return false;
+        }
+        !screen.elements.iter().any(|o| {
+            let ratio = {
+                let (lo, hi) = (
+                    o.frame.width.min(el.frame.width),
+                    o.frame.width.max(el.frame.width),
+                );
+                if hi > 0.0 {
+                    lo / hi
+                } else {
+                    0.0
+                }
+            };
+            o.index != el.index
+                && row_family(&o.role)
+                && !o.frame.is_empty()
+                && ratio >= STACK_MIN_WIDTH_RATIO
+                && o.frame.x < el.frame.max_x()
+                && el.frame.x < o.frame.max_x()
+                && (o.frame.max_y() <= el.frame.y + STACK_OVERLAP_TOLERANCE
+                    || el.frame.max_y() <= o.frame.y + STACK_OVERLAP_TOLERANCE)
+        })
+    }
+
+    /// Tall cards and rows near the page shape: widths around the screen's and the ratio's
+    /// edge, stacked, overlapping, side by side, off screen, with odd screen sizes, roles
+    /// outside the family, `NaN`, infinite and empty frames, and duplicate indices.
+    fn cards(seed: u64) -> CompactScreen {
+        let mut screen = random_compact_screen(seed);
+        let mut r = Rng::new(seed ^ 0xF2_CA4D);
+        if r.chance(15) {
+            screen.size = *r.pick(&[
+                jarvis_proto::Size::new(f64::NAN, 852.0),
+                jarvis_proto::Size::new(393.0, f64::INFINITY),
+                jarvis_proto::Size::new(3.0, 2.0),
+                jarvis_proto::Size::new(1e-310, 1e-310),
+                jarvis_proto::Size::new(1e301, 1e301),
+            ]);
+        }
+        let (sw, sh) = (screen.size.width, screen.size.height);
+        let (sw, sh) = if sw.is_finite() && sh.is_finite() {
+            (sw, sh)
+        } else {
+            (393.0, 852.0)
+        };
+        let n = 1 + r.below(60);
+        let mut index = 500u32;
+        for _ in 0..n {
+            let mut e = random_element(&mut r, index, screen.size);
+            e.role = r
+                .pick(&[
+                    Role::Cell,
+                    Role::Cell,
+                    Role::Button,
+                    Role::Button,
+                    Role::StaticText,
+                ])
+                .clone();
+            let width = sw * r.f(0.7, 1.2);
+            let height = if r.chance(70) {
+                sh * r.f(0.2, 0.6)
+            } else {
+                sh * r.f(0.0, 0.3)
+            };
+            let x = match r.below(6) {
+                0 => sw * r.f(-1.5, 1.5),
+                1 => sw * r.below(3) as f64,
+                _ => r.f(-4.0, 4.0),
+            };
+            let y = if r.chance(40) {
+                // On a shared line so tops and bottoms meet within the tolerance.
+                (sh * 0.25) * r.below(4) as f64 + r.f(-1.5, 1.5)
+            } else {
+                r.f(-sh, 2.0 * sh)
+            };
+            e.frame = Rect::new(x, y, width, height);
+            if r.chance(3) {
+                let odd = *r.pick(&[f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0, 0.0]);
+                match r.below(4) {
+                    0 => e.frame.x = odd,
+                    1 => e.frame.y = odd,
+                    2 => e.frame.width = odd,
+                    _ => e.frame.height = odd,
+                }
+            }
+            if r.chance(5) {
+                e.frame.width = sw * 0.9;
+            }
+            screen.elements.push(e);
+            index += if r.chance(10) { 0 } else { 1 };
+        }
+        screen
+    }
+
+    /// F2: the cached decision equals the scan it replaced on every element of thousands of
+    /// random screens, and both outcomes occur.
+    #[test]
+    fn stacked_cards_match_the_reference() {
+        let (mut pages, mut stacked) = (0usize, 0usize);
+        for seed in 0..4_000u64 {
+            for screen in [random_compact_screen(seed), cards(seed)] {
+                let r = Reader::new(&screen);
+                for el in &screen.elements {
+                    let old = reference_is_page(el, &screen);
+                    assert_eq!(is_page(el, &r), old, "seed {seed}: {el:?}");
+                    if old {
+                        pages += 1;
+                    } else if page_shaped(el, &screen) {
+                        stacked += 1;
+                    }
+                }
+            }
+        }
+        assert!(pages > 1_000 && stacked > 1_000, "{pages} {stacked}");
     }
 }

@@ -29,6 +29,23 @@ pub const ALLOWED_URL_SCHEMES: &[&str] = &[
 pub const MAX_TYPE_CHARS: usize = 2_000;
 /// Longest `Wait`, in milliseconds.
 pub const MAX_WAIT_MS: u64 = 10_000;
+/// The only durations a `Wait` the model or a learned flow asks for is sent with
+/// (twenty-second review, R22-A): [`wait_level`].
+pub const WAIT_LEVELS_MS: [u64; 3] = [1_000, 3_000, MAX_WAIT_MS];
+
+/// The duration a `Wait` of `ms` is sent with (twenty-second review, R22-A): the smallest of
+/// [`WAIT_LEVELS_MS`] not below `ms`. A duration above [`MAX_WAIT_MS`] is returned
+/// unchanged ([`validate_action`] refuses it). Under a kept scroll-only approval the scrolls
+/// after the first are not asked, so the gaps between them are a channel to the page: the
+/// model picks one of three levels, not a number of milliseconds. The core's own waits
+/// (typing settle, approval settle) are not leveled.
+pub fn wait_level(ms: u64) -> u64 {
+    WAIT_LEVELS_MS
+        .iter()
+        .copied()
+        .find(|level| ms <= *level)
+        .unwrap_or(ms)
+}
 /// Longest `LongPress`, in milliseconds.
 pub const MAX_LONG_PRESS_MS: u64 = 5_000;
 /// Longest URL `OpenUrl` accepts, in bytes.

@@ -112,6 +112,6 @@ pub use sanitize::{
 };
 pub use text::{label_is_foreign, label_is_unreadable, FOREIGN_UI_WORDS};
 pub use validate::{
-    url_scheme, validate_action, ActionError, ALLOWED_URL_SCHEMES, MAX_LONG_PRESS_MS,
-    MAX_TYPE_CHARS, MAX_URL_LEN, MAX_WAIT_MS,
+    url_scheme, validate_action, wait_level, ActionError, ALLOWED_URL_SCHEMES, MAX_LONG_PRESS_MS,
+    MAX_TYPE_CHARS, MAX_URL_LEN, MAX_WAIT_MS, WAIT_LEVELS_MS,
 };

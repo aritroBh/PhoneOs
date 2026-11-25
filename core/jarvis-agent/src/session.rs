@@ -129,7 +129,7 @@ use jarvis_safety::{
     handoff_control, handoff_note, home_view, in_alert, insert_control, is_springboard,
     label_names_denied_app, not_owner_note, observed_places, paste_note, point_is_clear,
     question_noted, redact, redact_screen, return_question_noted, sanitize_screen_text,
-    search_names_denied_app, sensitive_note, touches_screen, url_destination, verb_of,
+    search_names_denied_app, sensitive_note, touches_screen, url_destination, verb_of, wait_level,
     widget_names_denied_app, Budget, BudgetVerdict, Confinement, Covered, CoveredBy, Decision,
     FlowContext, InputKind, PointError, ScreenPlaces, ScreenSource, ScreenTree, TypedText, Verdict,
     COVERS_ALL, COVERS_ALL_PREFIX, SCREEN_PICTURE,
@@ -2560,6 +2560,16 @@ impl Session {
     /// Takes one decided action (model or flow) through budget, stuck detection, safety and
     /// into execution. Every action counts one step first.
     fn propose(&mut self, now: u64, action: Action, source: Source) -> Out {
+        // Twenty-second review (R22-A): a wait the model (or a learned flow, whose recorded
+        // waits were the model's) asks for is carried at its level from here on — the
+        // history, notes, log, recorded flow and runner command all show the duration sent.
+        // The stuck count still keys on the action as asked (unchanged by this rule: waits
+        // of different asked durations count apart, as before).
+        let asked = serde_json::to_string(&action).unwrap_or_default();
+        let action = match action {
+            Action::Wait { ms } => Action::Wait { ms: wait_level(ms) },
+            other => other,
+        };
         self.action_allowed.clear();
         self.budget.record_step(now);
         self.last_action = Some(action.clone());
@@ -2611,10 +2621,7 @@ impl Session {
         }
         self.last_repeat_key = None;
         if action.is_ui() || matches!(action, Action::Look) {
-            let key = (
-                self.current.hash,
-                serde_json::to_string(&action).unwrap_or_default(),
-            );
+            let key = (self.current.hash, asked);
             self.last_repeat_key = Some(key.clone());
             let count = self.repeats.entry(key).or_insert(0);
             *count = count.saturating_add(1);

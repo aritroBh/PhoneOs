@@ -407,7 +407,8 @@ fn no_visible_change_counts_as_failure_and_is_told() {
         "{u}"
     );
     assert!(
-        u.contains("wait 500ms -> ok"),
+        // Twenty-second review (R22-A): the 500 ms asked is sent, and shown, as 1000 ms.
+        u.contains("wait 1000ms -> ok"),
         "wait never counts as a failure: {u}"
     );
 }
