@@ -1,0 +1,214 @@
+# Real XCUITest tree (iOS 26.5 simulator, CI run 122, system-safari-form), observation 01,
+# the typed-tree section of the runner's dump.
+observation 1: com.apple.springboard
+screen 440x956 pt, keyboard hidden
+
+Application " " {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 100}}
+      Other(Other) id=Home screen icons {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{440, 0}, {440, 956}} [hidden]
+            Button {{0, 0}, {0, 0}} [hidden]
+              Button "Maps" id=Maps {{0, 0}, {0, 0}} [hidden]
+              Button "Calendar" id=Calendar {{0, 0}, {0, 0}} [hidden]
+              Button "Calendar" value="Tuesday, November 24" id=Calendar {{0, 0}, {0, 0}} [hidden]
+              Button "Photos" id=Photos {{0, 0}, {0, 0}} [hidden]
+              Button "Reminders" id=Reminders {{0, 0}, {0, 0}} [hidden]
+              Button "News" id=News {{0, 0}, {0, 0}} [hidden]
+              Button "Maps" id=Maps {{0, 0}, {0, 0}} [hidden]
+              Button "Health" id=Health {{0, 0}, {0, 0}} [hidden]
+              Button "Wallet" id=Wallet {{0, 0}, {0, 0}} [hidden]
+              Button "Settings" id=Settings {{0, 0}, {0, 0}} [hidden]
+            Button {{0, 0}, {0, 0}} [hidden]
+              Button "Fitness" id=Fitness {{33, 92}, {72, 94.7}}
+                Other(Other) {{35, 94}, {68, 82}}
+                  Other(Other) {{35, 94}, {68, 68}}
+                    Other(Other) {{35, 94}, {68, 68}}
+                      Other(Other) {{35, 94}, {68, 68}}
+                  Other(Other) id=label-view {{40, 165}, {57.7, 19.7}}
+                    Other(Other) {{40, 165}, {57.7, 19.7}}
+                      Image {{23.4, 146.4}, {91.7, 55.7}}
+                      Image {{40, 165}, {57.7, 19.7}}
+              Button "Watch" id=Watch {{133.7, 92}, {72, 94.7}}
+                Other(Other) {{135.7, 94}, {68, 82}}
+                  Other(Other) {{135.7, 94}, {68, 68}}
+                    Other(Other) {{135.7, 94}, {68, 68}}
+                      Other(Other) {{135.7, 94}, {68, 68}}
+                  Other(Other) id=label-view {{143, 165}, {52.7, 19.7}}
+                    Other(Other) {{143, 165}, {52.7, 19.7}}
+                      Image {{126.4, 146.4}, {86.7, 55.7}}
+                      Image {{143, 165}, {52.7, 19.7}}
+              Button "Contacts" id=Contacts {{234, 92}, {72.3, 94.7}}
+                Other(Other) {{236.3, 94}, {68, 82}}
+                  Other(Other) {{236.3, 94}, {68, 68}}
+                    Other(Other) {{236.3, 94}, {68, 68}}
+                      Other(Other) {{236.3, 94}, {68, 68}}
+                  Other(Other) id=label-view {{236, 165}, {68.3, 19.7}}
+                    Other(Other) {{236, 165}, {68.3, 19.7}}
+                      Image {{219.4, 146.4}, {102.3, 55.7}}
+                      Image {{236, 165}, {68.3, 19.7}}
+              Button "Files" id=Files {{335, 92}, {72, 94.7}}
+                Other(Other) {{337, 94}, {68, 82}}
+                  Other(Other) {{337, 94}, {68, 68}}
+                    Other(Other) {{337, 94}, {68, 68}}
+                      Other(Other) {{337, 94}, {68, 68}}
+                  Other(Other) id=label-view {{349.3, 165}, {42.7, 19.7}}
+                    Other(Other) {{349.3, 165}, {42.7, 19.7}}
+                      Image {{332.7, 146.4}, {76.7, 55.7}}
+                      Image {{349.3, 165}, {42.7, 19.7}}
+              Button "Preview" id=Preview {{33, 200.7}, {72, 94.7}}
+                Other(Other) {{35, 202.7}, {68, 82.0}}
+                  Other(Other) {{35, 202.7}, {68, 68.0}}
+                    Other(Other) {{35, 202.7}, {68, 68.0}}
+                      Other(Other) {{35, 202.7}, {68, 68.0}}
+                  Other(Other) id=label-view {{38, 273.7}, {61.7, 19.7}}
+                    Other(Other) {{38, 273.7}, {61.7, 19.7}}
+                      Image {{21.4, 255.1}, {95.7, 55.7}}
+                      Image {{38, 273.7}, {61.7, 19.7}}
+              Button "Utilities folder" value="2 apps" id=Utilities {{133.7, 200.7}, {72, 94.7}}
+                Button "Shortcuts" id=Shortcuts {{0, 0}, {0, 0}} [hidden]
+                Button "Passwords" id=Passwords {{0, 0}, {0, 0}} [hidden]
+              Button "JarvisUITests-Runner" id=JarvisUITests-Runner {{216, 200.7}, {109, 98.0}}
+                Other(Other) {{236.3, 202.7}, {68, 82.0}}
+                  Other(Other) {{236.3, 202.7}, {68, 68.0}}
+                    Other(Other) {{236.3, 202.7}, {68, 68.0}}
+                      Other(Other) {{236.3, 202.7}, {68, 68.0}}
+                  Other(Other) id=label-view {{218, 270.7}, {105, 26}}
+                    Other(Other) {{218, 270.7}, {105, 26}}
+                      Image {{201.1, 251.9}, {139, 62}}
+                      Image {{218, 270.7}, {105, 26}}
+              Button "Jarvis" id=Jarvis {{335, 200.7}, {72, 94.7}}
+                Other(Other) {{337, 202.7}, {68, 82.0}}
+                  Other(Other) {{337, 202.7}, {68, 68.0}}
+                    Other(Other) {{337, 202.7}, {68, 68.0}}
+                      Other(Other) {{337, 202.7}, {68, 68.0}}
+                  Other(Other) id=label-view {{345.3, 273.7}, {50.7, 19.7}}
+                    Other(Other) {{345.3, 273.7}, {50.7, 19.7}}
+                      Image {{328.7, 255.1}, {84.7, 55.7}}
+                      Image {{345.3, 273.7}, {50.7, 19.7}}
+            Other(Other) "Search" value="Page 2 of 2" id=spotlight-pill {{181, 763.7}, {78, 30}}
+              Other(PageIndicator) value="Page 2 of 2" id=Page control {{181, 763.7}, {78, 35}}
+              Other(Other) id=spotlight-pill {{181, 763.7}, {78, 30}}
+                Other(Other) {{181, 763.7}, {78, 30}}
+                  Image "Search" id=magnifyingglass {{192.7, 773}, {11.3, 10.7}}
+                  StaticText "Search" {{207, 771.3}, {40.3, 14.3}}
+            Other(Other) {{0, 821.7}, {440, 134.3}}
+              Other(Other) {{17, 821.7}, {406, 117.3}}
+                Other(Other) "Dock" {{0, 821.7}, {440, 117.3}}
+                  Other(Other) {{0, 821.7}, {440, 117.3}}
+                  Button "Safari" id=Safari {{136, 844.3}, {72, 72}}
+                    Other(Other) {{138, 846.3}, {68, 68}}
+                      Other(Other) {{138, 846.3}, {68, 68}}
+                        Other(Other) {{138, 846.3}, {68, 68}}
+                          Other(Other) {{138, 846.3}, {68, 68}}
+                  Button "Messages" id=Messages {{232, 844.3}, {72, 72}}
+                    Other(Other) {{234, 846.3}, {68, 68}}
+                      Other(Other) {{234, 846.3}, {68, 68}}
+                        Other(Other) {{234, 846.3}, {68, 68}}
+                          Other(Other) {{234, 846.3}, {68, 68}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{158.3, 15.0}, {123.3, 34.7}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{158, 14.7}, {124, 35.3}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) id=jindo-container-view:1 {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{147.3, 10}, {145.3, 52}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+                Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+        Other(Other) {{237, 28}, {9, 9}}
+  Window {{0, 0}, {1320, 2868}}
+    Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+  Window {{0, 0}, {1320, 2868}}
+    Other(Other) {{0, 0}, {1320, 2868}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(StatusBar) {{0, 0}, {440, 54}}
+      Other(Other) {{0, 0}, {440, 54}}
+        Other(Other) {{0, 0}, {440, 54}}
+          StaticText "10:49 PM" {{59.3, 22}, {48.7, 21.7}}
+          Other(Other) "Cellular" value="No signal" {{312.3, 25.3}, {21.7, 13.7}}
+          Other(Other) value="SSID, 3 of 3 Wi-Fi bars" id=3 of 3 Wi-Fi bars {{341.3, 25}, {19.7, 14}}
+          Other(Other) "100% battery power" value="Not charging" {{368.3, 25.0}, {31.3, 14.3}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}

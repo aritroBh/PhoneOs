@@ -288,6 +288,49 @@ fn safari_start_page_lists_the_page_and_the_bottom_bar_without_scroll_bars() {
     assert_eq!(address.value.as_deref(), Some("\u{200e}127.0.0.1"));
 }
 
+/// Run 122: the keyboard-up tree of a loaded Safari page (kept in `fixtures/ios26_extra/`,
+/// outside the sweeps and the bench inputs). Safari minimizes its bar: the address is listed
+/// as an `Other "Address"` with the host as its value, and the bar's buttons are gone.
+const SAFARI_FORM_KEYBOARD: &str = "../ios26_extra/safari_form_keyboard";
+
+#[test]
+fn safari_form_with_keyboard_lists_the_minimized_address_bar() {
+    let c = compact_fixture(SAFARI_FORM_KEYBOARD);
+    assert!(c.keyboard_visible);
+    assert_eq!(
+        labels(&c),
+        vec![
+            "Contact form",
+            "Full name",
+            "Full name",
+            "Email address",
+            "Email address",
+            "Send form",
+            "Address",
+            "Previous",
+            "Next",
+            "Done",
+        ]
+    );
+    let address = by_label(&c, "Address");
+    assert_eq!(address.role, Role::Other("Other".into()));
+    assert_eq!(address.value.as_deref(), Some("\u{200e}127.0.0.1"));
+    assert!(!address.focused);
+    assert_frame(address, 195.3, 547.0, 49.3, 14.3);
+    for gone in ["Page Menu", "refresh", "Back", "More"] {
+        assert_eq!(count_label(&c, gone), 0, "{gone}");
+    }
+    // Token ceiling, measured when the fixture was added (96), as in
+    // `token_estimates_stay_close_to_the_known_numbers`.
+    let t = tokens(&c);
+    println!("safari_form_keyboard: {t} tokens");
+    assert!(t <= 96, "safari_form_keyboard: {t} tokens (ceiling 96)");
+    assert!(
+        t >= 96 * 9 / 10,
+        "safari_form_keyboard: {t} tokens, suspiciously few"
+    );
+}
+
 #[test]
 fn settings_rows_keep_their_labels_and_values() {
     let g = compact_fixture("settings_general");

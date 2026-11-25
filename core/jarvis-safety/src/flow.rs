@@ -297,6 +297,10 @@ struct Chrome {
     /// Twentieth review (R20-B): a raw `Sheet` outside every web view whose subtree holds the
     /// OS's "AirDrop" node — shown, hidden, scrolled away or wholly off the screen.
     share_sheet: bool,
+    /// Run 122: the frame of each address field on screen that is Safari's minimized bar
+    /// (an `Other`, [`minimized_address`]), to tell its listed element (which carries no
+    /// identifier) from any other `Other` labelled as the address.
+    minimized: Vec<jarvis_proto::Rect>,
 }
 
 /// Twentieth review (R20-B): whether a raw node is the share sheet's "AirDrop" row (whole
@@ -334,15 +338,29 @@ fn address_like(n: &UiNode) -> bool {
 /// what decides: an identifier alone (`TabBarItemTitle`, on some layouts a tab's title,
 /// page-controlled text) or a static text (Safari's address before the page loads:
 /// `StaticText "127.0.0.1"` with no label) is not one.
+///
+/// Run 122 (iOS 26.5): while the keyboard is up Safari minimizes its bar and the same node
+/// becomes a plain `Other "Address" value="‎127.0.0.1" id=TabBarItemTitle` (the real
+/// `safari_form_keyboard` tree), so an `Other` is the address field too, but only with that
+/// exact identifier ([`minimized_address`]) **and** an address label of its own; the
+/// unlabelled pre-load `Other id=TabBarItemTitle` stays unreadable.
 fn address_field(n: &UiNode) -> bool {
     let label = n
         .label
         .as_deref()
         .map(|l| l.trim().to_lowercase())
         .unwrap_or_default();
-    matches!(n.role, Role::TextField | Role::Button)
+    (matches!(n.role, Role::TextField | Role::Button) || minimized_address(n))
         && !n.focused
         && ADDRESS_LABELS.contains(&label.as_str())
+}
+
+/// Run 122: whether a raw node has the role and identifier of Safari's minimized address
+/// bar — raw XCUITest type `Other` and the identifier exactly `TabBarItemTitle` (its label
+/// is checked by [`address_field`]).
+fn minimized_address(n: &UiNode) -> bool {
+    matches!(&n.role, Role::Other(name) if name == "Other")
+        && n.identifier.as_deref() == Some("TabBarItemTitle")
 }
 
 /// Whether a raw node is positively hidden (flagged invisible with a real frame):
@@ -449,8 +467,12 @@ fn scan_chrome(root: &UiNode, bounds: &jarvis_proto::Rect) -> Chrome {
             out.outside_not_address |= !address;
         }
         if address {
+            let field = address_field(n);
+            if field && minimized_address(n) {
+                out.minimized.push(n.frame);
+            }
             out.addresses.push(
-                address_field(n)
+                field
                     .then(|| n.value.as_deref().and_then(host_of))
                     .flatten(),
             );
@@ -982,10 +1004,23 @@ fn places_of(
     // holds (by the listed elements when the tree is known, else by the chrome walk). In a
     // listed browser whose host is read, its one address field showing that host is the
     // page's own name, not content of the chrome (nineteenth review, R-C).
+    // Run 122: Safari's minimized bar lists the same field as an `Other` (a listed element
+    // carries no identifier): it is the page's name only when the one address field read is
+    // that `Other` node (the same frame, up to compaction's float rounding); any other
+    // `Other` labelled as the address is content.
+    let same_frame = |a: &jarvis_proto::Rect, b: &jarvis_proto::Rect| {
+        let near = |p: f64, q: f64| (p - q).abs() <= 0.5;
+        near(a.x, b.x) && near(a.y, b.y) && near(a.width, b.width) && near(a.height, b.height)
+    };
     let is_address = |e: &Element| {
-        host.is_some()
-            && matches!(e.role, Role::TextField | Role::Button)
-            && ADDRESS_LABELS.contains(&e.label.trim().to_lowercase().as_str())
+        let role = match &e.role {
+            Role::TextField | Role::Button => true,
+            Role::Other(name) => {
+                name == "Other" && chrome.minimized.iter().any(|f| same_frame(f, &e.frame))
+            }
+            _ => false,
+        };
+        host.is_some() && role && ADDRESS_LABELS.contains(&e.label.trim().to_lowercase().as_str())
     };
     let base_read = if view.is_some() && !tops.is_empty() {
         sources.iter().zip(&compact.elements).any(|(&s, e)| {
@@ -1514,6 +1549,53 @@ mod tests {
             host_of(" \u{200E}bank.example ").as_deref(),
             Some("bank.example")
         );
+    }
+
+    /// Run 122: Safari's minimized bar is an `Other "Address" id=TabBarItemTitle`; an
+    /// `Other` is the address field only with that exact identifier and a label of its own.
+    #[test]
+    fn the_minimized_bar_is_an_address_field_only_with_its_identifier_and_label() {
+        let frame = jarvis_proto::Rect::new(195.3, 547.0, 49.3, 14.3);
+        let other = || UiNode::new(Role::Other("Other".into()), frame);
+        let minimized = other()
+            .with_label("Address")
+            .with_value("\u{200E}127.0.0.1")
+            .with_identifier("TabBarItemTitle");
+        assert!(address_field(&minimized));
+        // Not without the identifier, with another identifier, or with another role name.
+        assert!(!address_field(
+            &other()
+                .with_label("Address")
+                .with_value("\u{200E}127.0.0.1")
+        ));
+        assert!(!address_field(
+            &other()
+                .with_label("Address")
+                .with_value("bank.example")
+                .with_identifier("URL")
+        ));
+        assert!(!address_field(
+            &UiNode::new(Role::Other("Group".into()), frame)
+                .with_label("Address")
+                .with_value("bank.example")
+                .with_identifier("TabBarItemTitle")
+        ));
+        // Not the pre-load node (no label of its own), nor a tab title, nor while focused.
+        assert!(!address_field(&other().with_identifier("TabBarItemTitle")));
+        assert!(!address_field(
+            &other()
+                .with_label("bank.example")
+                .with_value("bank.example")
+                .with_identifier("TabBarItemTitle")
+        ));
+        assert!(!address_field(&minimized.clone().focused(true)));
+        // The existing carriers are unchanged.
+        assert!(address_field(
+            &UiNode::new(Role::TextField, frame).with_label("Address")
+        ));
+        assert!(!address_field(
+            &UiNode::new(Role::StaticText, frame).with_label("Address")
+        ));
     }
 
     #[test]

@@ -1,0 +1,74 @@
+# Real XCUITest tree (iOS 26.5 simulator, CI run 122, system-safari-form), observation 03,
+# the typed-tree section of the runner's dump.
+observation 3: com.apple.mobilesafari
+screen 440x956 pt, keyboard hidden
+
+Application "Safari" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) id=SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=802868A6-A66B-4E74-8183-C75F2608E733&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=true {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 0}, {440, 49}}
+                            Other(Other) {{0, 0}, {440, 49}}
+                            Other(Other) {{0, 0}, {440, 49}}
+                          Other(Other) {{0, 0}, {440, 62}}
+                          ScrollView {{0, 0}, {440, 956}}
+                            Other(Other) id=TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=2B2DA8CA-1327-46EB-854C-A8704278F25C&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=45360 {{0, 0}, {440, 956}}
+                              Other(Other) id=WebView {{0, 0}, {440, 956}}
+                                WebView {{0, 0}, {440, 956}}
+                                  Other(Other) {{0, 0}, {440, 956}}
+                                  Other(Other) {{0, 0}, {440, 956}}
+                                  TextView {{0, 62}, {440, 796}} [focused]
+                                  Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 62}, {30, 832}}
+                                    Other(Other) {{434, 65}, {3, 826}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                                    Other(Other) {{65, 950}, {310, 3}}
+                                  Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 62}, {30, 832}}
+                                    Other(Other) {{434, 65}, {3, 826}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                                    Other(Other) {{65, 950}, {310, 3}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(Other) {{59, 950}, {322, 3}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(Other) {{59, 950}, {322, 3}}
+                      Other(Other) id=CapsuleViewController {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 858}, {440, 98}}
+                          Other(Other) {{0, 858}, {440, 98}}
+                            Other(Other) {{0, 858}, {440, 98}}
+                              Other(Other) {{0, 858}, {440, 98}}
+                                Other(Other) {{0, 858}, {440, 98}}
+                                  Other(Other) {{0, 858}, {440, 98}}
+                                    Other(Other) {{0, 858}, {440, 98}}
+                                Other(Other) {{0, 858}, {440, 98}}
+                                  Other(Other) {{0, 858}, {440, 98}}
+                          Other(Other) {{34, 874}, {48, 48}}
+                            Other(Other) {{34, 874}, {48, 48}}
+                              Button "Back" id=BackButton {{34, 874}, {48, 48}} [disabled]
+                          Other(Other) {{90, 874}, {260, 48}}
+                            Other(Other) {{90, 874}, {260, 48}}
+                              Other(Other) {{90, 874}, {260, 48}}
+                                Other(Other) id=CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false {{90, 874}, {260, 48}} [selected]
+                                  Button id=PageFormatMenuButton {{94, 878}, {40, 40}}
+                                    StaticText {{94, 878}, {0, 0}} [hidden]
+                                  Other(Other) id=TabBarItemTitle {{187, 888}, {66, 20.3}}
+                                    Other(Other) "‎127.0.0.1" {{187, 888}, {66, 20.3}}
+                                      StaticText "‎127.0.0.1" {{187, 888}, {66, 20.3}}
+                                  Button "refresh" id=ReloadButton {{319.3, 887.7}, {17.7, 21}}
+                          Other(Other) {{358, 874}, {48, 48}}
+                            Other(Other) {{358, 874}, {48, 48}}
+                              Button "More" id=MoreMenuButton {{358, 874}, {48, 48}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}

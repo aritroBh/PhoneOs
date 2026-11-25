@@ -1,0 +1,148 @@
+# Real XCUITest tree (iOS 26.5 simulator, CI run 122, system-safari-form), observation 02,
+# the typed-tree section of the runner's dump.
+observation 2: com.apple.mobilesafari
+screen 440x956 pt, keyboard hidden
+
+Application "Safari" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) id=SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=802868A6-A66B-4E74-8183-C75F2608E733&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=true {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 0}, {440, 49}}
+                            Other(Other) {{0, 0}, {440, 49}}
+                            Other(Other) {{0, 0}, {440, 49}}
+                          Other(Other) {{0, 0}, {440, 62}}
+                          ScrollView {{0, 0}, {440, 956}}
+                            Other(Other) id=TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=2B2DA8CA-1327-46EB-854C-A8704278F25C&IsPrivate=false&IsPageLoaded=false&WebViewProcessID=0 {{0, 0}, {440, 956}}
+                              Other(Other) id=WebView {{0, 0}, {440, 956}}
+                                WebView {{0, 0}, {440, 956}}
+                                  TextView {{0, 62}, {440, 956}} [focused]
+                                  Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 62}, {30, 832}}
+                                    Other(Other) {{434, 861}, {3, 42.7}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                                    Other(Other) {{380.7, 950}, {7, 3}}
+                                  Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 62}, {30, 832}}
+                                    Other(Other) {{434, 861}, {3, 42.7}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                                    Other(Other) {{380.7, 950}, {7, 3}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(Other) {{59, 950}, {322, 3}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(Other) {{59, 950}, {322, 3}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  Other(Other) {{0, 0}, {440, 956}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                      Other(Other) {{0, 0}, {440, 956}}
+                                      CollectionView id=StartPageCollectionView {{0, 0}, {440, 956}}
+                                        Other(Other) {{0, 0}, {440, 956}}
+                                        Other(Other) {{0, 0}, {440, 956}}
+                                        Cell id=onboardingItemIdentifierContent-CustomizeStartPage {{20, 82}, {400, 298.7}}
+                                          Other(Other) {{20, 82}, {400, 298.7}}
+                                            Other(Other) {{20, 82}, {400, 298.7}}
+                                          Other(Other) {{20, 82}, {400, 298.7}}
+                                            Other(Other) {{40, 102}, {360, 258.7}}
+                                              StaticText "Start Page" {{178.3, 102}, {83.7, 20.3}}
+                                              Other(Other) {{50, 134.3}, {340, 130.0}}
+                                                Image id=SafariOnboardingCustomizeStartPage {{50, 134.3}, {340, 130.0}}
+                                              StaticText "Customize your wallpaper and sections that appear when creating new tabs." {{40, 276.3}, {360, 38}}
+                                              Button "Customize Start Page" id=onboardingButton-CustomizeStartPage {{40, 326.3}, {360, 34.3}}
+                                                StaticText "Customize Start Page" {{133.7, 333.3}, {172.3, 20.3}}
+                                            Button "close" {{381, 98}, {23, 23}}
+                                        Other(Other) id=favoritesItemIdentifierHeader {{20, 410.7}, {400, 36.3}}
+                                          Other(Other) {{20, 410.7}, {122.7, 26.3}}
+                                            StaticText " Favorites" {{20, 410.7}, {122.7, 26.3}}
+                                        Cell id=favoritesItemIdentifierContent {{20, 447}, {72, 94.3}}
+                                          Other(Other) {{20, 447}, {72, 94.3}}
+                                            Other(Other) {{20, 447}, {72, 72}}
+                                              Other(Other) {{20, 447}, {72, 72}}
+                                              StaticText "A" id=MonogramLabel {{28, 455}, {56, 56}}
+                                            StaticText "Apple" {{14.7, 527}, {82.7, 14.3}}
+                                        Cell id=favoritesItemIdentifierContent {{129.3, 447}, {72, 94.3}}
+                                          Other(Other) {{129.3, 447}, {72, 94.3}}
+                                            Other(Other) {{129.3, 447}, {72, 72}}
+                                              Other(Other) {{129.3, 447}, {72, 72}}
+                                              StaticText "B" id=MonogramLabel {{137.3, 455}, {56, 56}}
+                                            StaticText "Bing" {{124, 527}, {82.7, 14.3}}
+                                        Cell id=favoritesItemIdentifierContent {{238.7, 447}, {72, 94.3}}
+                                          Other(Other) {{238.7, 447}, {72, 94.3}}
+                                            Other(Other) {{238.7, 447}, {72, 72}}
+                                              Other(Other) {{238.7, 447}, {72, 72}}
+                                              StaticText "G" id=MonogramLabel {{246.7, 455}, {56, 56}}
+                                            StaticText "Google" {{233.3, 527}, {82.7, 14.3}}
+                                        Cell id=favoritesItemIdentifierContent {{348, 447}, {72, 94.3}}
+                                          Other(Other) {{348, 447}, {72, 94.3}}
+                                            Other(Other) {{348, 447}, {72, 72}}
+                                              Other(Other) {{348, 447}, {72, 72}}
+                                              StaticText "Y" id=MonogramLabel {{356, 455}, {56, 56}}
+                                            StaticText "Yahoo" {{342.7, 527}, {82.7, 14.3}}
+                                        Other(Other) id=privacyReportIdentifierHeader {{20, 571.3}, {400, 36.3}}
+                                          Other(Other) {{20, 571.3}, {150.7, 26.3}}
+                                            StaticText "Privacy Report" {{20, 571.3}, {150.7, 26.3}}
+                                        Cell id=privacyReportIdentifierContent {{20, 607.7}, {400, 78}}
+                                          Other(Other) {{20, 607.7}, {400, 78}}
+                                            Other(Other) {{20, 607.7}, {400, 78}}
+                                          Other(Other) {{20, 607.7}, {400, 78}}
+                                            StaticText {{40, 627.7}, {21, 38}}
+                                            StaticText "In the last seven days, Safari has prevented 0 trackers from profiling you." id=TrackersPreventedCount?TrackingPreventionDataExists=false {{81, 627.7}, {319, 38}}
+                                        Cell id=com.apple.mobilesafari.framework-customization-sectionContent {{20, 715.7}, {400, 50.3}}
+                                          Other(Other) {{20, 715.7}, {400, 50.3}}
+                                            Other(Other) {{184.7, 723.7}, {71, 34.3}}
+                                            Button "Edit" id=customizationsSheetButton {{184.7, 723.7}, {71, 34.3}}
+                                              StaticText "Edit" {{204.7, 730.7}, {31, 20.3}}
+                                        Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 62}, {30, 796}}
+                                          Other(Other) {{434, 821}, {3, 34}}
+                                        Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 825}, {316, 30}}
+                                          Other(Other) {{65, 852}, {310, 3}}
+                                        Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 62}, {30, 796}}
+                                          Other(Other) {{434, 821}, {3, 34}}
+                                        Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 825}, {316, 30}}
+                                          Other(Other) {{65, 852}, {310, 3}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) id=CapsuleViewController {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 858}, {440, 98}}
+                          Other(Other) {{0, 858}, {440, 98}}
+                            Other(Other) {{0, 858}, {440, 98}}
+                              Other(Other) {{0, 858}, {440, 98}}
+                                Other(Other) {{0, 858}, {440, 98}}
+                                  Other(Other) {{0, 858}, {440, 98}}
+                                    Other(Other) {{0, 858}, {440, 98}}
+                                Other(Other) {{0, 858}, {440, 98}}
+                                  Other(Other) {{0, 858}, {440, 98}}
+                          Other(Other) {{34, 874}, {48, 48}}
+                            Other(Other) {{34, 874}, {48, 48}}
+                              Button "Back" id=BackButton {{34, 874}, {48, 48}} [disabled]
+                          Other(Other) {{90, 874}, {260, 48}}
+                            Other(Other) {{90, 874}, {260, 48}}
+                              Other(Other) {{90, 874}, {260, 48}}
+                                Other(Other) id=CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false {{90, 874}, {260, 48}} [selected]
+                                  Other(Other) {{90, 874}, {260, 48}}
+                                    Other(Other) {{90, 919.3}, {31.2, 2.7}}
+                                      Other(Other) id=FluidProgressView {{90, 919.3}, {260, 48}}
+                                  Button id=PageFormatMenuButton {{94, 878}, {40, 40}}
+                                    StaticText {{94, 878}, {0, 0}} [hidden]
+                                  Other(Other) id=TabBarItemTitle {{187, 888}, {66, 20.3}}
+                                    Other(Other) "‎127.0.0.1" {{187, 888}, {66, 20.3}}
+                                      StaticText "‎127.0.0.1" {{187, 888}, {66, 20.3}}
+                                  Button "Close" id=StopButton {{319.3, 888}, {17.7, 20.3}}
+                          Other(Other) {{358, 874}, {48, 48}}
+                            Other(Other) {{358, 874}, {48, 48}}
+                              Button "More" id=MoreMenuButton {{358, 874}, {48, 48}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
