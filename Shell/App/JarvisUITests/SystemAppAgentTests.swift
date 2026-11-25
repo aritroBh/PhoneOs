@@ -84,6 +84,8 @@ final class SystemAppAgentTests: QATestCase {
 
     private let settingsId = "com.apple.Preferences"
     private let safariId = "com.apple.mobilesafari"
+    private static let settingsBundleId = "com.apple.Preferences"
+    private static let safariBundleId = "com.apple.mobilesafari"
 
     /// Starts a run on the home screen: Safari and Settings (whatever an earlier test left
     /// in front) and the apps named are terminated, Home is pressed, and this waits until
@@ -92,10 +94,10 @@ final class SystemAppAgentTests: QATestCase {
     /// `XCUITestPhoneRunner.foregroundBundleId` decides the front app by — then settles for
     /// about a second. Nothing is launched. (Run 45141298374: the first observation was
     /// taken while Jarvis was still in front, and the Settings test started on the Safari
-    /// the Safari test had left in front.)
+    /// the Safari test had left in front.) Also used by the tree fact probes.
     @MainActor
-    private func startOnHomeScreen(terminating ids: [String]) async {
-        let all = Array(Set(ids + [settingsId, safariId])).sorted()
+    static func startOnHomeScreen(terminating ids: [String]) async {
+        let all = Array(Set(ids + [settingsBundleId, safariBundleId])).sorted()
         for id in all { XCUIApplication(bundleIdentifier: id).terminate() }
         XCUIDevice.shared.press(.home)
         let own = XCUIApplication()
@@ -111,7 +113,7 @@ final class SystemAppAgentTests: QATestCase {
 
     @MainActor
     func testSettingsGeneralAbout() async throws {
-        await startOnHomeScreen(terminating: [settingsId])
+        await Self.startOnHomeScreen(terminating: [settingsId])
         let run = makeRun("system-settings-about")
         let model = ScriptedModel(
             steps: [
@@ -143,7 +145,7 @@ final class SystemAppAgentTests: QATestCase {
     /// instead of being approved silently.
     @MainActor
     func testSpringboardOpensAnApp() async throws {
-        await startOnHomeScreen(terminating: [settingsId])
+        await Self.startOnHomeScreen(terminating: [settingsId])
         let run = makeRun("system-springboard-open")
         let model = ScriptedModel(
             steps: [
@@ -169,7 +171,7 @@ final class SystemAppAgentTests: QATestCase {
     /// was asked and how the sheet words it.
     @MainActor
     func testSpringboardUnknownIconAsksOnce() async throws {
-        await startOnHomeScreen(terminating: [settingsId])
+        await Self.startOnHomeScreen(terminating: [settingsId])
         let run = makeRun("system-springboard-unknown-icon")
         let model = ScriptedModel(
             steps: [
@@ -208,7 +210,7 @@ final class SystemAppAgentTests: QATestCase {
     func testSafariFillsAndSubmitsAForm() async throws {
         let server = try FormCaptureServer()
         defer { server.stop() }
-        await startOnHomeScreen(terminating: [safariId])
+        await Self.startOnHomeScreen(terminating: [safariId])
         let run = makeRun("system-safari-form")
         let url = server.baseURL.absoluteString + "/"
         let model = ScriptedModel(

@@ -221,6 +221,17 @@ final class QARun {
     private func observed(_ record: RunnerObservationRecord) {
         observationNumbers.append(record.number)
         let n = String(format: "%02d", record.number)
+        attach(XCTAttachment(string: Self.treeText(record)), "\(name).\(n)-tree.txt")
+        if let shot = record.screenshot {
+            attach(XCTAttachment(screenshot: shot), "\(name).\(n).png")
+        }
+        transcript.record("observation", "#\(record.number) \(record.bundleId), \(record.built.nodeCount) nodes, \(record.snapshotMs) ms", record.notes.isEmpty ? nil : record.notes.joined(separator: "\n"))
+    }
+
+    /// The text of an `NN-tree.txt` artifact: a header (app, screen size, node count, timing,
+    /// unmapped types, notes), the typed tree as the core receives it, then the raw XCUITest
+    /// snapshot. Shared with the tree fact probes (`TreeFactProbeTests`).
+    static func treeText(_ record: RunnerObservationRecord) -> String {
         var header = [
             "observation \(record.number): \(record.bundleId)",
             "screen \(record.raw.frame.width.compactText)x\(record.raw.frame.height.compactText) pt, keyboard \(record.built.keyboardVisible ? "visible" : "hidden")",
@@ -230,14 +241,9 @@ final class QARun {
             header.append("types without a core role: " + record.built.unmappedTypes.sorted { $0.key < $1.key }.map { "\($0.key)×\($0.value)" }.joined(separator: ", "))
         }
         header += record.notes.map { "note: \($0)" }
-        let text = header.joined(separator: "\n")
+        return header.joined(separator: "\n")
             + "\n\n== typed tree (what the core receives) ==\n" + UiTreeBuilder.dump(record.built.root)
             + "\n\n== raw XCUITest snapshot (type name and raw number) ==\n" + UiTreeBuilder.dump(record.raw) + "\n"
-        attach(XCTAttachment(string: text), "\(name).\(n)-tree.txt")
-        if let shot = record.screenshot {
-            attach(XCTAttachment(screenshot: shot), "\(name).\(n).png")
-        }
-        transcript.record("observation", "#\(record.number) \(record.bundleId), \(record.built.nodeCount) nodes, \(record.snapshotMs) ms", record.notes.isEmpty ? nil : record.notes.joined(separator: "\n"))
     }
 
     private func attachScreens() {
@@ -297,11 +303,12 @@ class QATestCase: XCTestCase {
         }
     }
 
-    /// Launches the Jarvis app on the Playground fixtures with fresh state.
+    /// Launches the Jarvis app on the Playground fixtures with fresh state. `extraArguments`
+    /// follow the two fixed ones (the tree fact probes pass `-jarvis-probe-url <url>`).
     @MainActor
-    func launchPlayground() -> XCUIApplication {
+    func launchPlayground(extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-jarvis-playground", "-jarvis-reset"]
+        app.launchArguments = ["-jarvis-playground", "-jarvis-reset"] + extraArguments
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20), "the Jarvis app did not reach the foreground (state \(app.state.rawValue))")
         return app

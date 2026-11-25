@@ -7,6 +7,8 @@ struct PlaygroundView: View {
     enum Route: Hashable {
         case login, toggles, list, danger, alerts
         case item(Int)
+        /// The tree fact probes' screens (`ProbeFixtures.swift`), behind one row at the end.
+        case probes, probeNotify, probeSheets, probeMenus, probeShare, probeControls, probeCounter
     }
 
     @State private var path: [Route] = []
@@ -19,6 +21,7 @@ struct PlaygroundView: View {
                 fixture("Long list", .list, "playground.list")
                 fixture("Danger zone", .danger, "playground.danger")
                 fixture("Alerts", .alerts, "playground.alerts")
+                fixture("Fact probes", .probes, "playground.probes")
             }
             .navigationTitle("Playground")
             .navigationDestination(for: Route.self) { route in
@@ -29,6 +32,13 @@ struct PlaygroundView: View {
                 case .danger: DangerFixture()
                 case .alerts: AlertFixture()
                 case .item(let n): ItemDetail(number: n)
+                case .probes: ProbesIndex()
+                case .probeNotify: ProbeNotifyFixture()
+                case .probeSheets: ProbeSheetsFixture()
+                case .probeMenus: ProbeMenusFixture()
+                case .probeShare: ProbeShareFixture()
+                case .probeControls: ProbeControlsFixture()
+                case .probeCounter: ProbeCounterFixture()
                 }
             }
         }
