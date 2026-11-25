@@ -1033,6 +1033,26 @@ pub(crate) fn sf_symbol_risk(label: &str) -> Option<RiskCategory> {
     Some(best.map_or(RiskCategory::None, |(_, c)| *c))
 }
 
+/// Audit of real trees (C2): the risk a raw node's **identifier** names as an SF Symbol.
+/// Real iOS 26.5 trees give a symbol image its localizable description as the label and its
+/// name as the identifier (`Image "Share" id=square.and.arrow.up`, `Image "remove"
+/// id=minus.circle`, `Button "Close" id=xmark.circle.fill`); only a symbol without a
+/// description shows its name as the label (`Image "hand.tap.fill" id=hand.tap.fill`). The
+/// identifier is read through [`SF_SYMBOLS`] as a label is (`sf_symbol_risk`), and a
+/// dot-less identifier that is a whole entry (`trash`, `paperplane`, `creditcard`) counts
+/// too. `None` unless the entry names a risk: an app can set any identifier, so this only
+/// ever raises a control's risk and never exempts or explains anything.
+pub fn identifier_symbol_risk(n: &jarvis_proto::UiNode) -> Option<RiskCategory> {
+    let id = n.identifier.as_deref()?.trim();
+    let cat = sf_symbol_risk(id).or_else(|| {
+        SF_SYMBOLS
+            .iter()
+            .find(|(name, _)| *name == id)
+            .map(|(_, c)| *c)
+    })?;
+    (cat != RiskCategory::None).then_some(cat)
+}
+
 /// Direction words: a symbol entry ending in one names that direction only.
 const SYMBOL_DIRECTIONS: &[&str] = &["up", "down", "left", "right", "forward", "backward"];
 /// Style components that keep a symbol's meaning (`arrow.up.circle.fill`).

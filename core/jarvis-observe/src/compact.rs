@@ -689,7 +689,8 @@ impl<'a> Walker<'a> {
 /// Longest Return-key label kept, in characters (real ones are one or two words).
 const MAX_RETURN_KEY_CHARS: usize = 24;
 
-/// Labels iOS gives the keyboard's Return key (`UIReturnKeyType`, English), lowercased.
+/// Labels iOS gives the keyboard's Return key (`UIReturnKeyType`, English), lowercased: the
+/// second way to find the key (a tree whose key carries no type identifier).
 const RETURN_KEY_LABELS: &[&str] = &[
     "return",
     "go",
@@ -705,26 +706,73 @@ const RETURN_KEY_LABELS: &[&str] = &[
     "continue",
 ];
 
-/// The label of `keyboard`'s Return key: the key or button whose identifier is `Return`
-/// (what UIKit reports), else the one whose whole label is a known Return-key label. Hidden
-/// and area-less keys are ignored; whitespace is collapsed and the label bounded. Keys stay
-/// out of the element list either way: this is a fact about the screen, not a control.
-pub(crate) fn return_key_label(keyboard: &UiNode) -> Option<String> {
+/// Audit of real trees (C1): the identifiers iOS gives the Return key — the
+/// `UIReturnKeyType` case names, compared whole and case-insensitively — and the type word
+/// each stands for (`ScreenCues::return_key_type`). iOS 26.5 trees show `Return`
+/// (`login_keyboard`), `Go` (Safari's form, Spotlight) and `Search` (Spotlight, run 137);
+/// the others are UIKit's names, not yet seen in a real tree.
+const RETURN_KEY_TYPES: &[(&str, &str)] = &[
+    ("return", "return"),
+    ("go", "go"),
+    ("google", "google"),
+    ("join", "join"),
+    ("next", "next"),
+    ("route", "route"),
+    ("search", "search"),
+    ("send", "send"),
+    ("yahoo", "yahoo"),
+    ("done", "done"),
+    ("continue", "continue"),
+    ("emergencycall", "emergency call"),
+];
+
+/// The Return-key type an identifier names ([`RETURN_KEY_TYPES`]), if any.
+fn return_key_type_of(identifier: &str) -> Option<&'static str> {
+    let id = identifier.trim().to_ascii_lowercase();
+    RETURN_KEY_TYPES
+        .iter()
+        .find(|(name, _)| *name == id)
+        .map(|(_, word)| *word)
+}
+
+/// The keyboard's Return key as compaction reads it: its label (bounded) and its type by
+/// identifier.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ReturnKey {
+    /// The key's label, whitespace collapsed, at most [`MAX_RETURN_KEY_CHARS`] characters.
+    pub label: Option<String>,
+    /// The type its identifier names ([`RETURN_KEY_TYPES`]).
+    pub kind: Option<&'static str>,
+}
+
+/// `keyboard`'s Return key: the key or button **inside the `Keyboard` subtree** whose
+/// identifier names a Return-key type (audit C1: what UIKit reports, whatever the system
+/// language), else the one whose whole label is a known Return-key label (no type then).
+/// Hidden and area-less keys are ignored; whitespace is collapsed and the label bounded.
+/// Keys stay out of the element list either way: this is a fact about the screen, not a
+/// control. A button with such an identifier outside the keyboard is never read here.
+pub(crate) fn return_key(keyboard: &UiNode) -> Option<ReturnKey> {
     let mut by_label = None;
     let mut stack: Vec<(&UiNode, usize)> = vec![(keyboard, 0)];
     while let Some((n, depth)) = stack.pop() {
         if is_pruned(n) || depth > MAX_DEPTH {
             continue;
         }
-        let keyish = matches!(n.role, Role::Key | Role::Button) && !n.frame.is_empty();
-        let label = clean_opt(&n.label);
-        if keyish && !label.is_empty() {
-            let id = clean_opt(&n.identifier);
-            if id.eq_ignore_ascii_case("return") {
-                return Some(label.chars().take(MAX_RETURN_KEY_CHARS).collect());
+        if matches!(n.role, Role::Key | Role::Button) && !n.frame.is_empty() {
+            let label = clean_opt(&n.label);
+            let label: Option<String> =
+                (!label.is_empty()).then(|| label.chars().take(MAX_RETURN_KEY_CHARS).collect());
+            if let Some(kind) = return_key_type_of(&clean_opt(&n.identifier)) {
+                return Some(ReturnKey {
+                    label,
+                    kind: Some(kind),
+                });
             }
-            if by_label.is_none() && RETURN_KEY_LABELS.contains(&label.to_lowercase().as_str()) {
-                by_label = Some(label.chars().take(MAX_RETURN_KEY_CHARS).collect());
+            let known = label
+                .as_deref()
+                .is_some_and(|l| RETURN_KEY_LABELS.contains(&l.to_lowercase().as_str()));
+            if by_label.is_none() && known {
+                by_label = Some(ReturnKey { label, kind: None });
             }
         }
         stack.extend(n.children.iter().rev().map(|c| (c, depth + 1)));
@@ -822,7 +870,9 @@ fn input_mark(node: &UiNode) -> Option<u64> {
 ///   is listed with the wrapper's label and value and the inner control's frame.
 /// * While an Alert/Sheet is up only its subtree is listed.
 /// * Keyboard keys are never listed; `keyboard_visible` is set instead, and the Return
-///   key's label goes to `cues.return_key` (it says whether Return sends, searches or goes).
+///   key's label goes to `cues.return_key` (it says whether Return sends, searches or goes)
+///   and the type its identifier names to `cues.return_key_type` (audit C1: the identifier
+///   is the `UIReturnKeyType` name in every language).
 /// * Cells (and hittable `Other` rows) take their label from child static texts, and those
 ///   texts are not listed again. A row holding controls is not listed; its controls are.
 /// * Secure fields never carry a value; a value equal to the placeholder is dropped.
@@ -911,9 +961,15 @@ pub fn compact_view(screen: &Screen) -> CompactView {
             });
         }
         if v.live && !unplaced {
-            let drawn = layout
-                .on_screen(node.frame)
-                .and_then(|f| v.quiet_clip.map_or(Some(f), |c| f.intersection(&c)));
+            // Audit C4: the first shown keyboard is drawn over its whole area (the input
+            // host, the row under its keys), so a point there is on the keyboard.
+            let drawn = if layout.is_keyboard(node) {
+                layout.keyboard_area.and_then(|a| layout.on_screen(a))
+            } else {
+                layout
+                    .on_screen(node.frame)
+                    .and_then(|f| v.quiet_clip.map_or(Some(f), |c| f.intersection(&c)))
+            };
             if let Some(frame) = drawn {
                 let label = if v.quiet == Quiet::No {
                     non_empty(&node.label)
@@ -933,6 +989,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
                     keyboard: v.quiet != Quiet::No,
                     banner: jarvis_safety::notification_banner(node),
                     grid_cell: jarvis_safety::grid_cell(node),
+                    symbol: jarvis_safety::identifier_symbol_risk(node),
                 });
             }
         }
@@ -958,7 +1015,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
     });
 
     let bounds = screen.bounds();
-    let return_key = layout.keyboard.and_then(return_key_label);
+    let return_key = layout.keyboard.and_then(return_key).unwrap_or_default();
     let mut kept: Vec<(Cand, Rect)> = walker
         .cands
         .into_iter()
@@ -1015,7 +1072,8 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         keyboard_visible: screen.keyboard_visible || layout.keyboard.is_some(),
         elements,
         cues: ScreenCues {
-            return_key,
+            return_key: return_key.label,
+            return_key_type: return_key.kind.map(str::to_owned),
             ..cues(alert.unwrap_or(&screen.root), bounds, &layout)
         },
     };

@@ -30,6 +30,13 @@
 //! of subtree are the keyboard for the tap-point rule (`CompactView::nodes`); the keyboard
 //! window's other nodes (its full-screen containers) are not.
 //!
+//! **The keyboard's area (audit of real trees, C4)** is larger than the `Keyboard` node:
+//! real trees draw the Emoji and Dictate buttons below it, inside the input host
+//! (`inputView`). The first shown keyboard's area (`keyboard_area`: the node, the strip from
+//! its top to the screen's bottom, every input host holding it) is what occludes listing,
+//! and the `Keyboard` node's drawn frame in `CompactView::nodes`, so a point anywhere in it
+//! is the keyboard for the tap-point rule.
+//!
 //! **Only inside the root's frame (ninth review).** The reduced hashing covers a node of
 //! such a subtree only when its frame lies inside the subtree root's own frame (1 pt
 //! tolerance; only the part of its frame on screen counts, so a node with nothing on screen
@@ -267,6 +274,74 @@ fn quiet_nodes(
     out
 }
 
+/// Audit of real trees (C4): the identifier iOS gives the keyboard window's input host,
+/// which holds the keys, the row under them (`Button "Emoji"`, `Button "Dictate"
+/// id=dictation`, outside the `Keyboard` node) and the prediction bar: in every real
+/// keyboard capture of iOS 26.5 (`login_keyboard`, Safari's form, Spotlight, the edit
+/// menus).
+pub(crate) const INPUT_HOST_ID: &str = "inputView";
+
+/// How far (points) the input host's frame may fall short of the keyboard's and still hold
+/// it.
+const HOST_TOLERANCE: f64 = 1.0;
+
+/// The smallest rectangle holding `a` and `b`.
+fn bounding(a: Rect, b: Rect) -> Rect {
+    let x = a.x.min(b.x);
+    let y = a.y.min(b.y);
+    Rect::new(
+        x,
+        y,
+        a.max_x().max(b.max_x()) - x,
+        a.max_y().max(b.max_y()) - y,
+    )
+}
+
+/// Audit of real trees (C4): where the keyboard `k` takes touches. Real trees put the
+/// keys' bottom row outside the `Keyboard` node (`Keyboard {{0, 655}, {440, 243}}` ends at
+/// y 898; Emoji and Dictate sit at y 887–956 in a sibling), inside the input host
+/// (`Other id=inputView {{0, 611}, {440, 345}}`). The area is the smallest rectangle holding
+/// the `Keyboard` node's frame, the strip from its top to the screen's bottom (full width),
+/// and every drawn input host ([`INPUT_HOST_ID`], not excluded) whose frame holds the
+/// keyboard's — clipped to the screen. The identifier only ever enlarges the area (an app
+/// can set any identifier: at worst more of its screen counts as keyboard, fail closed).
+fn keyboard_area(screen: &Screen, k: &UiNode, excluded: &HashSet<usize>) -> Rect {
+    let kb = k.frame;
+    let bounds = screen.bounds();
+    let mut area = kb;
+    if !bounds.is_empty() && kb.y < bounds.max_y() {
+        let top = kb.y.max(bounds.y);
+        area = bounding(
+            area,
+            Rect::new(bounds.x, top, bounds.width, bounds.max_y() - top),
+        );
+    }
+    let holds = |f: &Rect| {
+        f.x <= kb.x + HOST_TOLERANCE
+            && f.y <= kb.y + HOST_TOLERANCE
+            && f.max_x() >= kb.max_x() - HOST_TOLERANCE
+            && f.max_y() >= kb.max_y() - HOST_TOLERANCE
+    };
+    let mut stack: Vec<(&UiNode, usize)> = vec![(&screen.root, 0)];
+    while let Some((n, depth)) = stack.pop() {
+        if is_pruned(n) || depth > MAX_DEPTH || excluded.contains(&addr(n)) {
+            continue;
+        }
+        if n.identifier.as_deref().map(str::trim) == Some(INPUT_HOST_ID)
+            && !n.frame.is_empty()
+            && holds(&n.frame)
+        {
+            area = bounding(area, n.frame);
+        }
+        stack.extend(n.children.iter().map(|c| (c, depth + 1)));
+    }
+    if bounds.is_empty() {
+        area
+    } else {
+        area.intersection(&bounds).unwrap_or(area)
+    }
+}
+
 /// One screen as both the digest and compaction read it (see the module docs).
 pub(crate) struct Layout<'a> {
     excluded: HashSet<usize>,
@@ -277,8 +352,11 @@ pub(crate) struct Layout<'a> {
     quiet_nodes: HashMap<usize, Quiet>,
     /// The topmost shown Alert/Sheet (last in document order), outside excluded subtrees.
     pub alert: Option<&'a UiNode>,
-    /// The first shown keyboard: its frame occludes, its Return key is a cue.
+    /// The first shown keyboard: its area occludes, its Return key is a cue.
     pub keyboard: Option<&'a UiNode>,
+    /// Audit of real trees (C4): where the keyboard takes touches — larger than the
+    /// `Keyboard` node (see [`keyboard_area`]).
+    pub keyboard_area: Option<Rect>,
     bounds: Rect,
     occluder: Option<Rect>,
 }
@@ -305,11 +383,8 @@ impl<'a> Layout<'a> {
             }
             stack.extend(n.children.iter().rev().map(|c| (c, out)));
         }
-        let occluder = if alert.is_some() {
-            None
-        } else {
-            keyboard.map(|k| k.frame)
-        };
+        let keyboard_area = keyboard.map(|k| keyboard_area(screen, k, &excluded));
+        let occluder = if alert.is_some() { None } else { keyboard_area };
         let quiet = keyboard_parts(screen, &excluded);
         let quiet_nodes = quiet_nodes(screen, &quiet, &excluded);
         Layout {
@@ -318,9 +393,16 @@ impl<'a> Layout<'a> {
             quiet_nodes,
             alert,
             keyboard,
+            keyboard_area,
             bounds: screen.bounds(),
             occluder,
         }
+    }
+
+    /// Whether `node` is the first shown keyboard ([`Layout::keyboard`]), whose drawn frame
+    /// is the keyboard's whole area ([`Layout::keyboard_area`]).
+    pub fn is_keyboard(&self, node: &UiNode) -> bool {
+        self.keyboard.is_some_and(|k| std::ptr::eq(k, node))
     }
 
     /// Whether `node` (and so its whole subtree) is excluded.

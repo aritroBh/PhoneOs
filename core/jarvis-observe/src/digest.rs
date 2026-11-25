@@ -131,7 +131,7 @@ use std::fmt;
 use jarvis_proto::{Rect, Role, Screen, UiNode, SPRINGBOARD_BUNDLE_ID};
 use sha2::{Digest, Sha256};
 
-use crate::compact::return_key_label;
+use crate::compact::return_key;
 use crate::layout::{addr, Layout, Quiet};
 
 /// The version tag the digest input starts with. v6 (CI run of df4a416): order-free runs of
@@ -458,7 +458,10 @@ fn feed(screen: &Screen, sink: &mut impl Sink) {
                 // Structure and geometry only, plus the Return key's label (a cue).
                 sink.put(b"K");
                 if node.role == Role::Keyboard {
-                    put_opt(sink, return_key_label(node).as_deref());
+                    // Audit C1: its type by identifier too.
+                    let key = return_key(node).unwrap_or_default();
+                    put_opt(sink, key.label.as_deref());
+                    put_opt(sink, key.kind);
                 }
                 sink.put(&[u8::from(node.visible), u8::from(v.shown)]);
                 return true;

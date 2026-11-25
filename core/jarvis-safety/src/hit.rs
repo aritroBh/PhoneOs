@@ -31,7 +31,10 @@
 //! 2. it is part of the **keyboard**: the `Keyboard` node or its subtree, or the input
 //!    assistant's (prediction bar) subtree, each clipped to its subtree root's frame, in
 //!    either order; not the keyboard window's containers; a node of those subtrees reaching
-//!    outside the root's frame is ordinary content (ninth review) and contests by (1) or (3);
+//!    outside the root's frame is ordinary content (ninth review) and contests by (1) or (3).
+//!    Audit of real trees (C4): the `Keyboard` node's drawn frame is the keyboard's whole
+//!    area (`jarvis_proto::RawNode::frame`: the input host and the strip to the screen's
+//!    bottom, where the Emoji and Dictate buttons sit), so every point there is the keyboard;
 //! 3. it is **labelled content drawn later**: not a control, with a non-empty label or
 //!    value, after the target's subtree in document order, not inside the target, and not
 //!    a container role (window, application, scroll, table, collection and web views, bars,

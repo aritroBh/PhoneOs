@@ -804,8 +804,8 @@ fn home_icons_only(screen: &CompactScreen) -> bool {
 /// real `springboard_home` fixture) and the Today view's scroll view (identifier
 /// `left-of-home…`). Everything else on the screen that is not classified above fails
 /// closed: it is treated as widget content. A dropped node is replaced by a **stub**: the
-/// same frame and drawing flags, no label, value, identifier, placeholder or children, role
-/// `Other`. The stub is not listed (it has no label) and cannot be tapped, but it still
+/// same frame and drawing flags, no label, value, identifier (audit C2: one naming a risky
+/// SF Symbol excepted), placeholder or children, role `Other`. The stub is not listed (it has no label) and cannot be tapped, but it still
 /// covers what lies under it, so an icon under a widget is refused as covered as before.
 /// There is no marker line: nothing from a widget, not even its name, reaches the prompt.
 ///
@@ -822,17 +822,23 @@ pub fn home_view(screen: &Screen) -> Option<Screen> {
 
 /// A dropped node: its frame and drawing flags only.
 fn home_stub(n: &UiNode) -> UiNode {
+    // Audit C2: an image's identifier naming a risky SF Symbol is kept, and the image stays
+    // an (unlabelled) image (`Image "remove" id=minus.circle` in the icon menu's "Remove
+    // App" row): it only raises the risk of the control holding it, and is never shown.
+    let symbol = crate::phrases::identifier_symbol_risk(n).is_some();
     UiNode {
         // A control stays a (disabled, unlabelled) control, so it still takes touches from
         // what lies under it as a cover; anything else is a plain node.
         role: if takes_taps(&n.role) {
             Role::Button
+        } else if symbol && n.role == Role::Image {
+            Role::Image
         } else {
             Role::Other("Other".to_owned())
         },
         label: None,
         value: None,
-        identifier: None,
+        identifier: n.identifier.clone().filter(|_| symbol),
         placeholder: None,
         frame: n.frame,
         enabled: false,

@@ -1,0 +1,213 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 137,
+# LockScreenProbeTests (`lock-probe-3d-after-locked-tap.01-tree.txt`), as the runner dumps it ("typed tree"):
+# SpringBoard's lock screen (`SBCoverSheetWindow`): a notification row `Button id=ListCell` wrapping the banner `Other(Type83) id=NotificationShortLookView`.
+# note: lock signals: notify(com.apple.springboard.lockstate)=true, lock screen=true, front=SpringBoard -> locked, notify true for 0.0 s
+# note: 2 element frame(s) were non-finite, huge or negative and were sanitised (raw values in the tree dump)
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 1: com.apple.springboard
+screen 440x956 pt, keyboard hidden
+
+Application " " {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{158.3, 15.0}, {123.3, 34.7}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{158, 14.7}, {124, 35.3}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) id=jindo-container-view:1,client-identifier:com.apple.springboard,element-identifier:systemApertureElementIdentifierLock {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{147.3, 10}, {145.3, 52}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+                Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+                  Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+                    Other(Other) "Swipe up to unlock" id=regular.view {{157.3, 14.0}, {125.3, 36.7}}
+                      Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+                        Other(Other) "Swipe up to unlock" id=proud-lock {{157.3, 24.8}, {12, 15}}
+                          Other(Other) {{157.3, 24.8}, {12, 15}}
+                            Other(Other) {{156.6, 23.9}, {13.6, 16.9}}
+                              Other(Other) {{-100000, -100000}, {100000, 100000}} [hidden]
+                                Other(Other) "Locked" {{-100000, -100000}, {100000, 100000}} [hidden]
+                        Other(Other) {{270.7, 24.8}, {12, 15}}
+                          Other(Other) {{270.7, 24.8}, {12, 15}}
+                      Other(Other) {{169.3, 25.0}, {12, 15.0}}
+                        Other(Other) {{169.3, 25.0}, {12, 15.0}}
+                      Other(Other) {{169.3, 25.0}, {0, 15.0}} [hidden]
+                        Other(Other) {{169.3, 25.0}, {0, 15.0}} [hidden]
+                      Other(Other) {{270.7, 25.0}, {0, 15.0}} [hidden]
+                        Other(Other) {{270.7, 25.0}, {0, 15.0}} [hidden]
+        Other(Other) {{237, 28}, {9, 9}}
+  Window {{0, 0}, {1320, 2868}}
+    Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+  Window {{0, 0}, {1320, 2868}}
+    Other(Other) {{0, 0}, {1320, 2868}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window id=SBCoverSheetWindow {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 1912}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 100}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 1912}}
+                  Other(Other) id=lockscreen-date-view {{6.6, 14.3}, {426.8, 927.3}}
+                    StaticText "Wednesday, November 25" {{45.0, 72}, {350.3, 36.3}}
+                    StaticText "11:10 AM" {{64, 86.7}, {310.3, 155.3}}
+                    Other(Other) {{40.5, 225.8}, {358.9, 73.7}}
+                      Other(Other) {{40.5, 225.8}, {358.9, 73.7}}
+                        Other(Other) {{40.5, 225.8}, {358.9, 73.7}}
+                          Other(Other) {{21.1, 206.4}, {397.7, 112.5}}
+                            Other(Other) {{21.1, 206.4}, {397.7, 112.5}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{330.1, 47.4}, {51.7, 2.3}}
+                    Other(Other) {{329.3, 75.8}, {53.3, 2.3}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{160, 894.7}, {120, 17.3}}
+              Other(Other) {{6.6, 14.3}, {426.8, 927.3}}
+                ScrollView {{6.6, 14.3}, {426.8, 927.3}}
+                  Other(Other) {{6.6, 14.3}, {426.8, 927.3}}
+                    Other(Other) {{6.6, 14.3}, {426.8, 927.3}}
+                      Other(Other) {{6.6, 14.3}, {426.8, 927.3}}
+                        Other(Other) {{6.6, 14.3}, {426.8, 927.3}}
+                          ScrollView {{6.6, 14.3}, {426.8, 927.3}}
+                            ScrollView {{20.2, 14.5}, {399.6, 219.5}}
+                              ScrollView {{20.2, 14.7}, {399.6, 219.5}}
+                                Button id=ListCell {{20.2, 14.7}, {399.6, 219.2}}
+                                  Other(Other) id=ListCell.ContentView {{20.2, 14.7}, {399.6, 219.2}}
+                                    Other(Other) {{20.2, 14.7}, {399.6, 219.2}}
+                                      Other(Other) {{20.2, 14.7}, {399.6, 219.2}}
+                                        Other(Other) {{20.2, 14.7}, {399.6, 219.2}}
+                                        Other(Other) {{20.2, 14.7}, {399.6, 219.2}}
+                                        Other(Other) {{20.2, 14.7}, {399.6, 219.2}}
+                                          Other(Other) {{20.2, 14.7}, {399.6, 219.2}}
+                                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387.8, 61.2}, {29.1, 173.0}}
+                                  Other(Other) {{414, 64.5}, {2.9, 166.8}}
+                                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387.8, 61.2}, {29.1, 173.0}}
+                                  Other(Other) {{414, 64.5}, {2.9, 166.8}}
+                              Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387.8, 61.1}, {29.1, 173.0}}
+                                Other(Other) {{414, 64.0}, {2.9, 167.2}}
+                              Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387.8, 61.1}, {29.1, 173.0}}
+                                Other(Other) {{414, 64.0}, {2.9, 167.2}}
+                            ScrollView {{20.2, 733.4}, {399.6, 76.3}}
+                              ScrollView {{20.2, 733.4}, {399.6, 76.3}}
+                                Button "10 minutes ago, Ready for Apple Intelligence, Time to experience the new personal intelligence system." id=ListCell {{20.2, 733.4}, {399.6, 76.3}}
+                                  Other(Other) id=ListCell.ContentView {{20.2, 733.4}, {399.6, 76.3}}
+                                    Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                      Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                        Other(Type83) "10 minutes ago, Ready for Apple Intelligence, Time to experience the new personal intelligence system." id=NotificationShortLookView {{20.2, 733.4}, {399.6, 76.3}}
+                                          Other(Other) id=ShortLook.Platter {{20.2, 733.4}, {399.6, 76.3}}
+                                            Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                            Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                            Other(Other) id=ShortLook.Platter.Content {{20.2, 733.4}, {399.6, 76.3}}
+                                              Button "10 minutes ago, Ready for Apple Intelligence, Time to experience the new personal intelligence system." id=ShortLook.Platter.Content.Seamless {{20.2, 733.4}, {399.6, 76.3}}
+                                                Other(Other) id=ShortLook.Platter.Content.Seamless.CrossFade {{20.2, 733.4}, {399.6, 76.3}}
+                                                  StaticText "Ready for Apple Intelligence" id=NotificationTitle {{82.3, 744.4}, {261.6, 17.5}}
+                                                  Other(Other) id=NotificationBody.TopAligned.originalMessage {{82.3, 761.9}, {321.1, 34.9}}
+                                                    StaticText "Time to experience the new personal intelligence system." id=TextContent.Primary {{82.3, 761.9}, {321.1, 34.9}}
+                                              Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                                Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                                  Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                                    Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                                      Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                                        Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                                    Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                                      Other(Other) {{20.2, 733.4}, {399.6, 76.3}}
+                                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387.8, 733.4}, {29.1, 76.3}}
+                                  Other(Other) {{414, 736.3}, {2.9, 70.5}}
+                                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387.8, 733.4}, {29.1, 76.3}}
+                                  Other(Other) {{414, 736.3}, {2.9, 70.5}}
+                              Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387.8, 733.4}, {29.1, 76.3}}
+                                Other(Other) {{414, 736.3}, {2.9, 70.5}}
+                              Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387.8, 733.4}, {29.1, 76.3}}
+                                Other(Other) {{414, 736.3}, {2.9, 70.5}}
+                            ScrollView {{20.2, 817.7}, {399.6, 8.7}}
+                              Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387.8, 817.7}, {29.1, 8.7}}
+                                Other(Other) {{414, 788.6}, {2.9, 34.9}}
+                              Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387.8, 817.7}, {29.1, 8.7}}
+                                Other(Other) {{414, 788.6}, {2.9, 34.9}}
+                          Other(Other) {{6.6, 14.3}, {426.8, 927.3}}
+                  Other(Other) "Vertical scroll bar, 1 page" value="0%" {{401.4, 29.9}, {29.1, 895.6}}
+                    Other(Other) {{427.6, 32.8}, {2.9, 889.8}}
+                  Other(Other) "Vertical scroll bar, 1 page" value="0%" {{401.4, 29.9}, {29.1, 895.6}}
+                    Other(Other) {{427.6, 32.8}, {2.9, 889.8}}
+              Other(Other) {{6.6, 14.3}, {426.8, 927.3}}
+                Other(StatusBar) {{6.6, 14.3}, {426.8, 52.4}}
+  Window {{0, 0}, {440, 956}}
+    Other(StatusBar) {{0, 0}, {440, 54}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}

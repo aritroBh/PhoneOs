@@ -380,10 +380,12 @@ fn spotlight(row: &str) -> Screen {
     )
 }
 
-/// R-E: a Spotlight row is the Settings app only when its whole label is the app's name or
-/// the name and the OS's word for an app result; anything else (a website titled like the
-/// app, a URL, any extra part) is a launch Jarvis cannot name, which keeps the home screen
-/// (read: its banner) as a source — asked, whatever the policy relaxes.
+/// R-E: a Spotlight row is the Settings app only when its whole label is the app's name;
+/// anything else (a website titled like the app, a URL, any extra part) is a launch Jarvis
+/// cannot name, which keeps the home screen (read: its banner) as a source — asked,
+/// whatever the policy relaxes. Audit of real trees (C8): "<Name>, App" — the OS's word for
+/// an app result in the first model — is in no real tree (Spotlight's app row is decided by
+/// its identifiers), so it asks too now.
 #[test]
 fn spotlight_rows_are_app_launches_only_when_exactly_that() {
     let launches = |label: &str| {
@@ -399,12 +401,14 @@ fn spotlight_rows_are_app_launches_only_when_exactly_that() {
             Script::model(&[&tap(row), DONE]).decisions(&[false, false]),
         )
     };
-    for label in ["Settings", "settings", "Settings, App", "SETTINGS, app"] {
+    for label in ["Settings", "settings"] {
         let r = launches(label);
         assert!(flows(&r).is_empty(), "{label:?}: {:?}", r.confirms);
         assert_eq!(taps_sent(&r), 1, "{label:?}");
     }
     for label in [
+        "Settings, App",
+        "SETTINGS, app",
         "Settings, Website, settings-help.example",
         "Settings, Website",
         "Settings, settings-help.example",

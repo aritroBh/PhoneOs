@@ -275,8 +275,10 @@ pub(crate) fn plan(
 }
 
 /// Whether `p` lies on the keyboard (fourteenth review, Rule H): inside a drawn keyboard
-/// node of the raw tree (its keys, its prediction bar), or, while a keyboard is up and the
-/// tree shows none, in the bottom [`KEYBOARD_SHARE`] of the screen.
+/// node of the raw tree (its keys, its prediction bar; audit C4: the `Keyboard` node is
+/// drawn over the keyboard's whole area, the Emoji and Dictate row under the keys
+/// included), or, while a keyboard is up and the tree shows none, in the bottom
+/// [`KEYBOARD_SHARE`] of the screen.
 fn on_keyboard(p: Point, screen: &CompactScreen, tree: Option<&ScreenTree<'_>>) -> bool {
     let mut drawn = tree
         .map(|t| t.nodes)
@@ -353,44 +355,25 @@ fn opens_springboard_ui(label: &str) -> bool {
     matches!(l.as_str(), "search" | "spotlight search") || l.ends_with(" folder")
 }
 
-/// Nineteenth review (R-E): whether the part of a home-screen label after the app's name
-/// and a comma is one of the OS's own words for an app (a closed list, compared whole,
-/// trimmed, case-insensitive): Spotlight's app result `<Name>, App` (as in the repository's
-/// tests of the denied-app check) and an icon's badge `<n> unread`, `<n> notification(s)`
-/// (as in the tests of the badge rule). Anything else — `Website, <host>`, a URL, any other
-/// part — is not an app.
-fn app_suffix(rest: &str) -> bool {
-    let r = rest.trim().to_lowercase();
-    let words: Vec<&str> = r.split_whitespace().collect();
-    match words.as_slice() {
-        ["app"] => true,
-        [n, "unread" | "notification" | "notifications"] => {
-            !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())
-        }
-        _ => false,
-    }
-}
-
-/// The known app a home-screen label names, by display name (case-insensitive, trimmed):
-/// the whole label, or the name followed by `, ` and one of the OS's words for an app
-/// ([`app_suffix`]: "Passwords, App", "Messages, 2 unread"). Nineteenth review (R-E): the
-/// first comma-separated part alone no longer names an app ("Settings, Website,
-/// settings-help.example" is a website row a site titled "Settings").
+/// The known app a home-screen label names, by display name (case-insensitive, trimmed): the
+/// whole label only. Nineteenth review (R-E): the first comma-separated part alone does not
+/// name an app ("Settings, Website, settings-help.example" is a website row a site titled
+/// "Settings"). Audit of real trees (C8): the suffixes once accepted after the name — `,
+/// App` (a Spotlight app result) and an icon's badge `, <n> unread` / `, <n>
+/// notification(s)` — occur in no real tree: Spotlight's app row is `Cell
+/// id=Identifier:GridCell` holding `Icon "Settings"` (decided by identifiers,
+/// [`spotlight_launch`]), and a real Home Screen icon keeps its label the app's name and
+/// puts what it shows in its value (`Button "Calendar" value="Sunday, November 22"`). A
+/// label with any suffix is an unknown launch (it asks). The denied-app checks keep their
+/// own, broader name rule (`jarvis_safety::label_names_denied_app`).
 fn known_app_named<'a>(label: &str, known_apps: &'a [AppInfo]) -> Option<&'a AppInfo> {
-    let named = |want: &str| {
-        let want = want.trim();
-        (!want.is_empty())
-            .then(|| {
-                known_apps
-                    .iter()
-                    .find(|a| a.name.trim().eq_ignore_ascii_case(want))
-            })
-            .flatten()
-    };
-    named(label).or_else(|| {
-        let (name, rest) = label.split_once(',')?;
-        app_suffix(rest).then(|| named(name)).flatten()
-    })
+    let want = label.trim();
+    if want.is_empty() {
+        return None;
+    }
+    known_apps
+        .iter()
+        .find(|a| a.name.trim().eq_ignore_ascii_case(want))
 }
 
 /// The element a normalized point lands on: the smallest one containing it.
@@ -408,8 +391,8 @@ fn element_at(x: f64, y: f64, screen: &CompactScreen) -> Option<&jarvis_proto::E
 ///
 /// A tap, long press or tap_point on an element is resolved by label (a long press on a
 /// known app's icon only for the deny and decline checks — its menu offers the app's quick
-/// actions — and never as its launch, [`launches`]): a known app's display name (the whole label, or the name and one of
-/// the OS's words for an app, `known_app_named`) is [`HomeLaunch::App`]; the search pill and folders open
+/// actions — and never as its launch, [`launches`]): a known app's display name (the whole
+/// label, `known_app_named`) is [`HomeLaunch::App`]; the search pill and folders open
 /// SpringBoard's own UI and launch nothing (`None`); anything else, unlabeled included, is
 /// [`HomeLaunch::Unknown`]. A tap_point on no listed element, or in the keyboard's area
 /// while a keyboard is up, is [`HomeLaunch::Unresolved`]. Return in a search field (`type`
@@ -473,7 +456,7 @@ pub(crate) fn home_launch(
 /// undecidable destination). A `tap_point` on no listed element or in the keyboard's area is
 /// [`HomeLaunch::Unresolved`]; Return in the field (`type` with `submit`) is
 /// [`HomeLaunch::Search`]. The label rule of the Home Screen ([`home_launch`]:
-/// `known_app_named`, the `, App` suffix) is not used here.
+/// `known_app_named`) is not used here.
 pub(crate) fn spotlight_launch(
     action: &Action,
     screen: &CompactScreen,

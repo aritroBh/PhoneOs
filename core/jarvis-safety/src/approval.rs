@@ -52,7 +52,8 @@ struct Fact {
 #[derive(Clone, PartialEq)]
 pub struct ApprovalContext {
     app: String,
-    return_key: Option<String>,
+    /// The Return key's label and type (audit C1: the type by identifier is a fact too).
+    return_key: (Option<String>, Option<String>),
     springboard: bool,
     facts: Vec<Fact>,
     target: Option<u32>,
@@ -279,7 +280,10 @@ fn record(action: &Action, screen: &CompactScreen) -> ApprovalContext {
         .collect();
     ApprovalContext {
         app: screen.app_bundle_id.clone(),
-        return_key: screen.cues.return_key.clone(),
+        return_key: (
+            screen.cues.return_key.clone(),
+            screen.cues.return_key_type.clone(),
+        ),
         springboard: is_springboard(&screen.app_bundle_id),
         facts,
         target: target.map(|t| t.index),

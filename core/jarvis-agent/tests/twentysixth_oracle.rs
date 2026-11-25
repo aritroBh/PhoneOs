@@ -622,23 +622,12 @@ fn known_app_label(label: &str) -> Option<String> {
         (MAIL, "mail"),
         ("com.apple.preferences", "settings"),
     ];
-    for (b, n) in apps {
-        if l == n || l == format!("{n}, app") {
-            return Some(b.into());
-        }
-        if let Some(rest) = l.strip_prefix(&format!("{n}, ")) {
-            let mut it = rest.split(' ');
-            let num = it.next().unwrap_or("");
-            let word = it.collect::<Vec<_>>().join(" ");
-            if !num.is_empty()
-                && num.chars().all(|c| c.is_ascii_digit())
-                && matches!(word.as_str(), "unread" | "notification" | "notifications")
-            {
-                return Some(b.into());
-            }
-        }
-    }
-    None
+    // Audit of real trees (C8): only the whole label names an app; the `, App` and badge
+    // suffixes occur in no real tree (a real icon keeps its name as the label), so such a
+    // label is a launch Jarvis cannot name (stricter than the oracle's first model).
+    apps.into_iter()
+        .find(|(_, n)| l == *n)
+        .map(|(b, _)| b.into())
 }
 
 fn url_host(u: &str) -> Option<String> {

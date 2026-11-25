@@ -655,16 +655,17 @@ const SUBMIT_RETURN_LABELS: &[&str] = &[
 /// nothing to a submit.
 const PLAIN_RETURN_LABELS: &[&str] = &["return", "search", "next", "enter", "route"];
 
-/// Risk announced by the keyboard's Return key: its label as compacted into
-/// `screen.cues.return_key` (or, on a hand-built screen that still lists keys, the `Key`
-/// elements). A label that is an action word asks under its category ("send" is
+/// Risk announced by the keyboard's Return key: its type by identifier and its label as
+/// compacted into `screen.cues` (audit C1: `ScreenCues::return_key_words`, so a localized
+/// label cannot hide a `Send` key), or, on a hand-built screen that still lists keys, the
+/// `Key` elements. A label that is an action word asks under its category ("send" is
 /// `SendMessage`, "pay" `Payment`, "post" `PublicPost`, "call" `Call`); a generic
 /// confirmation ("go", "done", "join", "continue") means what the screen around it means,
 /// so it takes the screen's context risk (a "done" key on a checkout pays). Plain labels
 /// ("return", "search", "next") and the backspace key add nothing.
 fn return_key_risk(target: Option<&Element>, r: &Reader<'_>) -> RiskCategory {
     let screen = r.screen;
-    let cue = screen.cues.return_key.as_deref();
+    let cue = screen.cues.return_key_words();
     let keys = screen
         .elements
         .iter()
@@ -673,7 +674,7 @@ fn return_key_risk(target: Option<&Element>, r: &Reader<'_>) -> RiskCategory {
     let tables = action_tables(&screen.app_bundle_id);
     let mut risk = RiskCategory::None;
     let mut generic = false;
-    for label in cue.into_iter().chain(keys) {
+    for label in cue.iter().map(String::as_str).chain(keys) {
         let plain = PLAIN_RETURN_LABELS.contains(&tokens(label).join(" ").as_str());
         let lr = match_label(label, &tables);
         match lr.category {
@@ -709,13 +710,14 @@ fn submit_risk(target: Option<&Element>, text: &str, r: &Reader<'_>) -> RiskCate
         )
     });
     // In a multi-line text view a Return key that is not a submit label inserts a line
-    // break: the typed text is content there, not a command (a note "buy milk").
+    // break: the typed text is content there, not a command (a note "buy milk"). Audit C1:
+    // neither its type by identifier nor its label may be a submit.
     let line_break = target.is_some_and(|t| t.role == Role::TextView)
         && r.screen
             .cues
-            .return_key
-            .as_deref()
-            .is_none_or(|k| !SUBMIT_RETURN_LABELS.contains(&tokens(k).join(" ").as_str()));
+            .return_key_words()
+            .iter()
+            .all(|k| !SUBMIT_RETURN_LABELS.contains(&tokens(k).join(" ").as_str()));
     let typed = if target.is_some_and(|t| t.role == Role::SearchField) || line_break {
         RiskCategory::None
     } else {

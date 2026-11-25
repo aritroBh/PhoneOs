@@ -661,6 +661,10 @@ pub fn evaluate_sheeted(
         }
         None => classify_from(action, screen, tool, source),
     };
+    // Audit of real trees (C2): an SF Symbol named by the identifier of the pressed control
+    // or of an image inside it raises the category, whatever its label says or in which
+    // language (risk only: never an exemption).
+    category = crate::phrases::max_risk(category, symbol_identifier_risk(action, screen, tree));
     // Fourteenth review (Rule C): how the category was established. A category the
     // control's own words or role gave (`read`) is READ; one the gate guessed — a presumed
     // submit, a send-by-label whose form may hold an amount, a link the owner did not give —
@@ -1218,11 +1222,13 @@ fn own_category(action: &Action, screen: &CompactScreen) -> RiskCategory {
     let own = |text: &str| crate::phrases::match_label(text, &tables).category;
     match actuation(action, screen) {
         Actuation::Press(t) | Actuation::Drag(t) => own(&crate::classify::element_text(t)),
+        // Audit C1: the key's type by identifier and its label, the riskier.
         Actuation::Return(_) => screen
             .cues
-            .return_key
-            .as_deref()
-            .map_or(RiskCategory::None, own),
+            .return_key_words()
+            .iter()
+            .map(|k| own(k))
+            .fold(RiskCategory::None, crate::phrases::max_risk),
         Actuation::PressUnknown | Actuation::Navigation | Actuation::NoEffect => RiskCategory::None,
     }
 }
@@ -1330,6 +1336,43 @@ fn alert_role(role: &Role, springboard: bool) -> bool {
     }
 }
 
+/// Audit of real trees (C2): the riskiest category the SF Symbol identifiers
+/// (`RawNode::symbol`, [`crate::identifier_symbol_risk`]) of the control `action` presses or
+/// drags give — its own raw node's and those of the images inside it (an icon-only
+/// button's image child: `Button id=… > Image "Löschen" id=trash`). `None` without the raw
+/// tree, for any other action, and when no identifier names a risky symbol. One pass over
+/// the control's subtree's drawn nodes (in node order), only when a decision is made.
+fn symbol_identifier_risk(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> RiskCategory {
+    let Some(t) = tree.filter(|t| !t.nodes.is_empty()) else {
+        return RiskCategory::None;
+    };
+    let el = match actuation(action, screen) {
+        Actuation::Press(e) | Actuation::Drag(e) => e,
+        _ => return RiskCategory::None,
+    };
+    let Some(own) = t.source(el) else {
+        return RiskCategory::None;
+    };
+    let end = usize::try_from(own)
+        .ok()
+        .and_then(|i| t.ends.get(i))
+        .copied()
+        .unwrap_or(own);
+    let start = t.nodes.partition_point(|n| n.node < own);
+    t.nodes
+        .get(start..)
+        .unwrap_or_default()
+        .iter()
+        .take_while(|n| n.node == own || n.node < end)
+        .filter(|n| n.node == own || n.role == Role::Image)
+        .filter_map(|n| n.symbol)
+        .fold(RiskCategory::None, crate::phrases::max_risk)
+}
+
 /// Fifteenth review (R4): the alert (or SpringBoard sheet or banner) the control `action`
 /// presses sits in — by the raw tree's ancestors' roles (facts from the OS), else a listed
 /// alert whose frame holds the control.
@@ -1352,10 +1395,35 @@ fn alert_of(
     if let Some(t) = tree.filter(|t| !t.nodes.is_empty()) {
         // Probe run 134: SpringBoard's notification banner by the OS's identifier too
         // (`RawNode::banner`: its role name says neither "banner" nor "notification").
-        if let Some(container) = t.ancestors(target).into_iter().find(|a| {
+        let above = t.ancestors(target).into_iter().find(|a| {
             crate::hit::raw_node(t, *a)
                 .is_some_and(|n| alert_role(&n.role, springboard) || (springboard && n.banner))
-        }) {
+        });
+        // Audit of real trees (C7): a row of SpringBoard's notification list is a `Button
+        // id=ListCell` **wrapping** the banner (`NotificationShortLookView`, lock screen,
+        // run 137): a SpringBoard control whose subtree holds a banner is a tap on that
+        // notification, read like a control inside it.
+        let below = || {
+            springboard
+                .then(|| t.source(target))
+                .flatten()
+                .and_then(|own| {
+                    let end = usize::try_from(own)
+                        .ok()
+                        .and_then(|i| t.ends.get(i))
+                        .copied()
+                        .unwrap_or(own);
+                    let start = t.nodes.partition_point(|n| n.node <= own);
+                    t.nodes
+                        .get(start..)
+                        .unwrap_or_default()
+                        .iter()
+                        .take_while(|n| n.node < end)
+                        .find(|n| n.banner)
+                        .map(|n| n.node)
+                })
+        };
+        if let Some(container) = above.or_else(below) {
             found = true;
             let end = usize::try_from(container)
                 .ok()
@@ -2813,7 +2881,24 @@ fn has_total_words(text: &str) -> bool {
 /// keys excepted), each once, ranked: options that carry an amount or sit in the row band
 /// of an amount or of the target first; then options of a group (radio-like: buttons,
 /// cells, segments) before switches and checkboxes; then screen order.
-fn selected_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<String> {
+///
+/// Audit of real trees (C3): iOS 26.5 types a tab bar's items as `Button`s (`TabBar "Tab
+/// Bar" > … > Button "Playground" [selected]`), never `Tab`; with the raw tree, a control
+/// inside a system `TabBar` ([`ScreenTree::bars`]: shown, outside every web, scroll, table
+/// and collection view) is a tab here too, so the selected tab is not shown to the owner as
+/// "the selection" (`Selected: Playground` on a "Delete account" question).
+fn selected_facts(
+    screen: &CompactScreen,
+    target: Option<&Element>,
+    tree: Option<&ScreenTree<'_>>,
+) -> Vec<String> {
+    let in_tab_bar = |e: &Element| {
+        tree.is_some_and(|t| {
+            t.bars
+                .iter()
+                .any(|b| b.role == Role::TabBar && t.inside(e, b.node))
+        })
+    };
     let amount_rows: Vec<jarvis_proto::Rect> = screen
         .elements
         .iter()
@@ -2830,6 +2915,7 @@ fn selected_facts(screen: &CompactScreen, target: Option<&Element>) -> Vec<Strin
             && !e.secure
             && !matches!(e.role, Role::Tab | Role::Key)
             && !target.is_some_and(|t| t.index == e.index)
+            && !in_tab_bar(e)
     }) {
         let t = fact_text(e).trim().to_owned();
         if t.is_empty() || ranked.iter().any(|(_, _, x)| *x == t) {
@@ -4733,15 +4819,17 @@ struct Sent<'a> {
 }
 
 /// Whether Return in `field` submits (eighth review): a single-line field's Return may
-/// always submit; a multi-line text view's only with a submit-labelled key.
+/// always submit; a multi-line text view's only with a submit key — by its type
+/// (identifier, audit C1) or its label.
 fn submit_return(field: &Element, screen: &CompactScreen) -> bool {
     if field.role != Role::TextView {
         return true;
     }
-    screen.cues.return_key.as_deref().is_some_and(|k| {
-        let k = k.trim().to_lowercase();
-        SUBMIT_RETURN_KEYS.contains(&k.as_str())
-    })
+    screen
+        .cues
+        .return_key_words()
+        .iter()
+        .any(|k| SUBMIT_RETURN_KEYS.contains(&k.as_str()))
 }
 
 /// Whether the raw input `r` holds what Jarvis typed during the task: its fingerprint is a
@@ -6036,7 +6124,7 @@ fn summarize_with(
             } else {
                 Vec::new()
             },
-            selected: selected_facts(screen, target),
+            selected: selected_facts(screen, target, tree),
             fields,
             fields_more,
             note: match (capped, target) {
@@ -6789,10 +6877,12 @@ fn action_line(
                 |t| describe_with(t, label),
             );
             if return_only {
+                // The key's own label (in the owner's language); its type without one.
                 let key = screen
                     .cues
                     .return_key
                     .as_deref()
+                    .or(screen.cues.return_key_type.as_deref())
                     .map(|k| clean(k, 24))
                     .filter(|k| !k.is_empty())
                     .map(|k| format!(" (\"{k}\")"))

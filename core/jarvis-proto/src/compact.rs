@@ -82,6 +82,15 @@ pub struct ScreenCues {
     /// it reaches a prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_key: Option<String>,
+    /// Audit of real trees (C1): the Return key's **type**, read from the key's identifier,
+    /// which iOS sets to the `UIReturnKeyType` name whatever the system language (`Button
+    /// "go" id=Go`, `Button "search" id=Search`, `Button "return" id=Return` on iOS 26.5):
+    /// the type word, lowercased (`"send"`, `"go"`, `"emergency call"`). `None` when the
+    /// key's identifier names no type (a hand-built screen, an older tree): the rules then
+    /// read [`Self::return_key`]'s label only. A fact about the screen, never screen text
+    /// (only words of `jarvis_observe`'s fixed list are set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_key_type: Option<String>,
     /// Listed controls a tap would be refused for because something covers them (no free
     /// tap spot: `jarvis_safety::tap_spot` returns `Err`), by ascending element index.
     /// Roles only, never screen text. The rendered line says so (`jarvis_observe::render`).
@@ -104,8 +113,23 @@ impl ScreenCues {
             && !self.more_below
             && self.page.is_none()
             && self.return_key.is_none()
+            && self.return_key_type.is_none()
             && self.covered.is_empty()
             && self.unplaced.is_empty()
+    }
+
+    /// The words the rules read for the Return key (audit C1): its type by identifier
+    /// ([`Self::return_key_type`]) first, then its label ([`Self::return_key`]), each
+    /// trimmed and lowercased; empty when no keyboard Return key is known. A rule that
+    /// reasons about what Return does reads every word (the type cannot be lost to a
+    /// localized label, and a label naming more than the type still counts).
+    pub fn return_key_words(&self) -> Vec<String> {
+        self.return_key_type
+            .iter()
+            .chain(self.return_key.iter())
+            .map(|k| k.trim().to_lowercase())
+            .filter(|k| !k.is_empty())
+            .collect()
     }
 
     /// Whether element `index`'s position on screen is not known ([`Self::unplaced`]).
@@ -173,7 +197,10 @@ pub struct RawNode {
     pub node: u32,
     /// Its role.
     pub role: Role,
-    /// The part of its frame on screen.
+    /// The part of its frame on screen. Audit of real trees (C4): for the first shown
+    /// `Keyboard` node, the keyboard's whole area instead (the input host `inputView` and
+    /// the strip from the keys' top to the screen's bottom: real trees draw the Emoji and
+    /// Dictate buttons below the `Keyboard` node's frame).
     pub frame: Rect,
     /// Its label, when it has one and its text is hashed (never inside the keyboard or the
     /// input assistant): how a refusal names it.
@@ -197,6 +224,14 @@ pub struct RawNode {
     /// identifier; read only on a Spotlight screen (`jarvis_safety::spotlight_app_row`).
     #[serde(default)]
     pub grid_cell: bool,
+    /// Audit of real trees (C2): the risk its **identifier** names as an SF Symbol
+    /// (`jarvis_safety::identifier_symbol_risk`: `trash`, `paperplane.fill`,
+    /// `creditcard`); real trees give a symbol its localizable description as the label and
+    /// its name as the identifier (`Image "Share" id=square.and.arrow.up`). Only a risk
+    /// (`None` for a symbol that names none): an app can set any identifier, so it never
+    /// exempts anything. Kept inside the keyboard too (no text of it is listed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<crate::RiskCategory>,
 }
 
 /// A text input of the raw tree a compact screen was built from, listed or not (eighth
