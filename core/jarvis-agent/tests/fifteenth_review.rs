@@ -687,9 +687,10 @@ fn r4_a_banner_action_on_the_home_screen_asks() {
     assert!(r.acts.is_empty(), "{:?}", r.acts);
 }
 
-/// R1 with the stale-screen guard: an old plan's `type` of words not in the request goes
-/// through the fresh look and then the same gate (`propose` on the fresh screen): it still
-/// asks before anything is typed.
+/// R1 with the stale-screen guard: an old plan's `type` of words not in the request still
+/// asks before anything is typed. Twenty-fourth review (R24): a step that asks is decided on
+/// the screen the model planned on, with no fresh look before its question (the look after
+/// an approval re-checks the screen); was: a fresh look, then the same question.
 #[test]
 fn r1_an_old_plans_typing_still_asks_after_the_fresh_look() {
     let mut c = config();
@@ -715,10 +716,10 @@ fn r1_an_old_plans_typing_still_asks_after_the_fresh_look() {
         .position(|e| matches!(e, Effect::Confirm(_)))
         .expect("the old plan's typing was not asked");
     assert!(
-        r.effects[infer..ask]
+        !r.effects[infer..ask]
             .iter()
             .any(|e| matches!(e, Effect::Observe { .. })),
-        "no fresh look between the plan and the question: {:?}",
+        "a fresh look between the plan and its question: {:?}",
         r.effects
     );
     assert!(r.confirms[0]

@@ -211,10 +211,11 @@ fn a_lock_during_a_pending_confirmation_asks_again_after_the_unlock() {
     let faults = Faults {
         // Effects: observe, infer, observe (fresh look: the 2 s plan is older than the
         // limit), act (tap Mom), observe, infer, observe (fresh look), act (focus), observe
-        // (where the focus went), act (type), observe, infer, observe (fresh look), confirm
-        // (Send) <- index 13 with the app already approved.
+        // (where the focus went), act (type), observe, infer, confirm (Send) <- index 12 with
+        // the app already approved (twenty-fourth review: a step that asks gets no fresh look
+        // before its question; was 13).
         locks: vec![LockSpec {
-            at_effect: Some(13),
+            at_effect: Some(12),
             unlock_after_ms: Some(45_000),
             ..LockSpec::default()
         }],

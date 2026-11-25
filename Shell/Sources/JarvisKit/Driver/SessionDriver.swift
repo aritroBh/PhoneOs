@@ -117,8 +117,9 @@ public actor SessionDriver {
     /// A failed Live view capture was reported (`.note`, once per run).
     private var viewerFailureNoted = false
     /// The last observation the core was given, with the number of the effect that took
-    /// it: what a confirmation is computed from (memory only; replaced by the next one).
-    private var lastObservation: (number: Int, observation: RunnerObservation)?
+    /// it and whether the core asked pixels with it: what a confirmation is computed from
+    /// (memory only; replaced by the next one).
+    private var lastObservation: (number: Int, observation: RunnerObservation, coreAsked: Bool)?
     /// Stale-screen guard, layer 2: every command's `expect` is checked against the
     /// runner's front app before it is sent.
     private let frontGuard = FrontAppGuard()
@@ -274,7 +275,7 @@ public actor SessionDriver {
                 for note in observation.notes { emit(.note(note)) }
                 let ref = screenshot ? observation.screenshot.map { deps.screenshots.store($0) } : nil
                 let event = observation.event(screenshot: ref)
-                lastObservation = (currentEffectNumber, observation)
+                lastObservation = (currentEffectNumber, observation, screenshot)
                 if forViewer {
                     await captureViewerFrame(of: observation, coreAsked: screenshot)
                 }
@@ -356,10 +357,16 @@ public actor SessionDriver {
     /// a lock, cancellation), the frame is removed before the core hears the answer. The
     /// store names the open question (the evaluated observation, no pixels) for as long, so
     /// the sheet never shows a picture computed for another question.
+    ///
+    /// Twenty-fourth review (F2): nothing between the question and the owner's decision
+    /// reads the app in front — no snapshot, no screenshot (a look is something the place
+    /// looked at can see, and the moment of a question is the model's). The only runner call
+    /// while the question is open is the lock watch (`lockWatchInterval`, `lockState()`),
+    /// which reads no app's tree (docs/ARCHITECTURE.md, *Swift shell*).
     private func confirm(_ request: ConfirmRequest) async -> Event {
         let question = lastObservation.map { ViewerFrameKey(taskId: task.id, observation: $0.number) }
         if let question { deps.approvalFrames?.beginQuestion(question) }
-        let held = await captureApprovalFrame()
+        let held = holdApprovalFrame()
         let event = await askToConfirm(request)
         if let question { deps.approvalFrames?.endQuestion(question) }
         if let held { deps.approvalFrames?.remove(held) }
@@ -533,52 +540,22 @@ public actor SessionDriver {
         return store
     }
 
-    /// Puts a frame of the observation the confirmation was computed from into the approval
-    /// store, best effort; returns its key when one was kept. Never changes the event the
-    /// core gets, never retried, its own deadline (`viewerScreenshotTimeout`), every error
-    /// ignored. Fail closed: only after an observation the runner reported unlocked, never
-    /// in an unlock wait. Captured whichever app is in front (the store's `accepts` does not
-    /// depend on Jarvis being active: the target app is in front when Jarvis asks).
-    ///
-    /// Which pixels are tree-checked (preview review):
-    /// - The observation's **own screenshot** (the core asked for it) was captured by the
-    ///   runner in the same snapshot call as the evaluated tree: kept as is, no re-read.
-    /// - **Any other pixels** were taken after that tree read: the Live view's frame of the
-    ///   observation (captured right after it, before the core even decided) and a fresh
-    ///   capture alike. They are kept only when one tree read made after them, inside the
-    ///   same deadline, equals the evaluated tree (same tree, app, size, keyboard and
-    ///   orientation: stricter than the core's digest) and reports the phone unlocked.
-    ///   Content outside the tree (images, canvas, video) is not checked by this.
-    private func captureApprovalFrame() async -> ViewerFrameKey? {
+    /// Puts the real-screen frame of the observation the confirmation was computed from into
+    /// the approval store when there is one; returns its key when one was kept. Twenty-fourth
+    /// review (F2): only pixels that same observation already carried because the core asked
+    /// for them (captured by the runner in the same snapshot call as the evaluated tree) — no
+    /// runner call here, no capture or tree read at question time, and no Live view frame
+    /// (taken after that tree read). Otherwise the sheet shows the wireframe drawn from the
+    /// evaluated observation's tree (`JarvisViewer.approvalTarget()`), labelled as such; what
+    /// protects the action is the core's look after the approval (digest, target and gate
+    /// re-checked), not the picture. Fail closed: only after an observation the runner
+    /// reported unlocked, never in an unlock wait.
+    private func holdApprovalFrame() -> ViewerFrameKey? {
         guard let store = activeApprovalFrames, !waitingForUnlock, let last = lastObservation,
-              last.observation.isKnownUnlocked else { return nil }
+              last.observation.isKnownUnlocked, last.coreAsked,
+              let own = last.observation.screenshot else { return nil }
         let key = ViewerFrameKey(taskId: task.id, observation: last.number)
-        if let own = last.observation.screenshot {
-            return store.put(own, for: key) ? key : nil
-        }
-        let runner = deps.runner
-        let evaluated = last.observation
-        let liveFrame: CapturedScreenshot? = deps.viewerFrames?.frame(for: key)
-        do {
-            let frame = try await io(.viewerScreenshot, configuration.viewerScreenshotTimeout) { () -> CapturedScreenshot? in
-                let taken: CapturedScreenshot
-                if let liveFrame {
-                    taken = liveFrame
-                } else {
-                    guard let fresh = try await runner.viewerScreenshot() else { return nil }
-                    taken = fresh
-                }
-                // The screen must not have moved on since it was evaluated, and the phone
-                // must still be unlocked: otherwise nothing is kept.
-                let now = try await runner.snapshot(includeScreenshot: false)
-                guard now.isKnownUnlocked, now.showsSameScreen(as: evaluated) else { return nil }
-                return taken
-            }
-            guard let frame else { return nil }
-            return store.put(frame, for: key) ? key : nil
-        } catch {
-            return nil
-        }
+        return store.put(own, for: key) ? key : nil
     }
 
     private func endUnlockWait() async {
@@ -707,15 +684,5 @@ public actor SessionDriver {
 
     private func describe(_ error: any Error) -> String {
         String(describing: error)
-    }
-}
-
-extension RunnerObservation {
-    /// The same screen as `other`: the same tree, app, size, keyboard and orientation, both
-    /// unlocked (stricter than the core's approval digest; anything that moved fails).
-    func showsSameScreen(as other: RunnerObservation) -> Bool {
-        !deviceLocked && !other.deviceLocked && ui == other.ui && appBundleId == other.appBundleId
-            && screenSize == other.screenSize && keyboardVisible == other.keyboardVisible
-            && orientation == other.orientation
     }
 }

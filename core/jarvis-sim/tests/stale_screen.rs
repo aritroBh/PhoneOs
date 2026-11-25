@@ -197,7 +197,10 @@ fn nothing_changing_costs_one_look_per_slow_step_and_nothing_per_fast_one() {
         assert_eq!(taps(r).len(), 2);
         assert_eq!(r.counts.stale_plans, 0);
     }
-    assert_eq!(slow.counts.fresh_looks, 2, "{}", slow.transcript());
+    // Twenty-fourth review (R24): only a slow step that would be sent unasked gets the fresh
+    // look (the Wi-Fi row); the switch asks (a system setting) on the screen it was planned
+    // on, and the look after its approval re-checks the screen (was: 2 fresh looks).
+    assert_eq!(slow.counts.fresh_looks, 1, "{}", slow.transcript());
     assert_eq!(fast.counts.fresh_looks, 0);
-    assert_eq!(slow.counts.observes, fast.counts.observes + 2);
+    assert_eq!(slow.counts.observes, fast.counts.observes + 1);
 }

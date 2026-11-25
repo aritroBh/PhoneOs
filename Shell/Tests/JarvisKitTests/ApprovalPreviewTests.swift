@@ -149,6 +149,28 @@ private final class ApprovalGate: HumanGate {
     func answer(_ question: String) async throws -> String { "" }
 }
 
+/// Twenty-fourth review (F2): a model that asks for a `look` first (a vision model: the
+/// core takes a screenshot with the tree), then plays the script. The question that follows
+/// is computed from that observation, which carries the core's pixels — the only pixels the
+/// approval sheet may show.
+private final class LookFirstModel: ModelProvider {
+    let inner: ScriptedModel
+    private let looked = Mutex(false)
+
+    init(_ inner: ScriptedModel) { self.inner = inner }
+
+    var capabilities: ModelCapabilities { inner.capabilities }
+
+    func generate(_ request: ModelRequest) async throws -> String {
+        let first = looked.withLock { l -> Bool in
+            defer { l = true }
+            return !l
+        }
+        if first { return #"{"thought":"look","action":"look"}"# }
+        return try await inner.generate(request)
+    }
+}
+
 private struct ApprovalRun {
     var result: RunResult
     var updates: [DriverUpdate]
@@ -191,10 +213,12 @@ private struct ApprovalRun {
 private func driveApproval(
     _ phone: any PhoneRunner, gate: ApprovalGate, store: ApprovalFrameStore?, option: Bool = true,
     timeout: Duration = .seconds(1), humanTimeout: Duration? = .seconds(600), lockWatch: Duration? = nil,
-    viewerFrames: ViewerFrameStore? = nil, vision: Bool = false, cancelAfter: Duration? = nil
+    viewerFrames: ViewerFrameStore? = nil, vision: Bool = false, cancelAfter: Duration? = nil,
+    lookFirst: Bool = false
 ) async throws -> ApprovalRun {
-    let model = ScriptedModel(steps: DemoPhone.deleteAccountScript,
-                              capabilities: ModelCapabilities(contextTokens: 8_192, supportsVision: vision))
+    let scripted = ScriptedModel(steps: DemoPhone.deleteAccountScript,
+                                 capabilities: ModelCapabilities(contextTokens: 8_192, supportsVision: vision || lookFirst))
+    let model: any ModelProvider = lookFirst ? LookFirstModel(scripted) : scripted
     let config = try SessionConfigBuilder.make(capabilities: model.capabilities, knownApps: DemoPhone.knownApps,
                                                adjustPolicy: { $0.firstUseApproval = false; $0.maxSteps = 40 })
     let deps = DriverDependencies(runner: phone, model: model, tools: ToolRegistry(), human: gate, memory: RecordingMemory(),
@@ -226,15 +250,19 @@ private func driveApproval(
 struct ApprovalCaptureTests {
     @Test("the frame is of the observation the confirmation was computed from, held while asked, gone after")
     func boundToTheEvaluatedObservation() async throws {
+        // Twenty-fourth review (F2): the frame is the pixels the core asked for with the
+        // evaluated observation (a `look` before the question); was: a capture at question
+        // time.
         let store = ApprovalFrameStore()
         let phone = ApprovalPhone()
         let gate = ApprovalGate([.decline], store: store)
-        let run = try await driveApproval(phone, gate: gate, store: store)
+        let run = try await driveApproval(phone, gate: gate, store: store, lookFirst: true)
         let evaluated = try #require(run.evaluated.first)
         #expect(gate.asked.count == 1)
         #expect(gate.asked.first?.key == ViewerFrameKey(taskId: "ask", observation: evaluated))
-        #expect(gate.asked.first?.frame == approvalPixels)
-        #expect(phone.captures == 1, "one capture, only for the question")
+        #expect(gate.asked.first?.frame == corePixels)
+        #expect(phone.captures == 0, "no capture for the question")
+        #expect(phone.snapshots == run.observationCount, "only the core's observations")
         #expect(store.count == 0, "dropped once answered")
 
         // The core's picture names the same observation: the preview shows the real screen
@@ -269,18 +297,58 @@ struct ApprovalCaptureTests {
         #expect(!real.isLive(pending: nil))
     }
 
-    @Test("the screen moved on after it was evaluated: no frame, the layout is shown")
+    @Test("twenty-fourth review (F2): no tree read and no capture between a question and its answer, option on or off")
+    func nothingReadWhileAsked() async throws {
+        for option in [true, false] {
+            for lookFirst in [false, true] {
+                for reply: ApprovalGate.Reply in [.approve, .decline] {
+                    let store = ApprovalFrameStore()
+                    let phone = ApprovalPhone()
+                    let gate = ApprovalGate([reply], store: store)
+                    let run = try await driveApproval(phone, gate: gate, store: store, option: option,
+                                                      lockWatch: .milliseconds(20), lookFirst: lookFirst)
+                    let what = "option \(option), look first \(lookFirst), \(reply)"
+                    #expect(gate.asked.count == 1, "\(what)")
+                    // Every tree read is one of the core's observations: none at question time.
+                    #expect(phone.snapshots == run.observationCount, "\(what)")
+                    #expect(phone.captures == 0, "\(what)")
+                    let pixels: CapturedScreenshot? = option && lookFirst ? corePixels : nil
+                    #expect(gate.asked.first?.frame == pixels, "\(what)")
+                    #expect(store.count == 0, "\(what)")
+                    // The preview still has its wireframe, from the observation the core decided on.
+                    let viewer = LiveViewModel()
+                    for e in run.events {
+                        viewer.apply(e)
+                        if case .update(.confirmationPending) = e { break }
+                    }
+                    let target = try #require(viewer.approvalTarget, "\(what)")
+                    let evaluated = try #require(run.evaluated.first)
+                    #expect(ViewerFrameKey(target.frameKey) == ViewerFrameKey(taskId: "ask", observation: evaluated), "\(what)")
+                    let preview = try #require(ApprovalPreview.make(prompt: .confirm(id: 1, request: target.request),
+                                                                    target: target, frames: ApprovalFrameStore(),
+                                                                    appActive: true), "\(what)")
+                    #expect(preview.backdrop == .layout, "\(what)")
+                    let screen = try #require(viewer.screen(id: preview.screenId), "\(what)")
+                    #expect(!screen.elements.isEmpty, "\(what): the wireframe of the evaluated observation")
+                }
+            }
+        }
+    }
+
+    @Test("a screen that moves on after it was evaluated is not read again: the frame is the evaluated observation's own")
     func movedOn() async throws {
+        // Twenty-fourth review (F2): was "no frame" after a re-read showed the moved screen;
+        // nothing is re-read now, and the core's look after an approval protects the action.
         let store = ApprovalFrameStore()
         let phone = ApprovalPhone(moveOnAfterCapture: true)
         let gate = ApprovalGate([.decline], store: store)
-        _ = try await driveApproval(phone, gate: gate, store: store)
-        #expect(phone.captures == 1)
-        #expect(gate.asked.count == 1 && gate.asked.first?.key == nil && gate.asked.first?.frame == nil)
+        let run = try await driveApproval(phone, gate: gate, store: store, lookFirst: true)
+        #expect(phone.captures == 0 && phone.snapshots == run.observationCount)
+        #expect(gate.asked.count == 1 && gate.asked.first?.frame == corePixels)
         #expect(store.count == 0)
     }
 
-    @Test("pixels of that very observation are reused: the core's, or the Live view's frame of it")
+    @Test("only pixels the core asked for with that very observation; never the Live view's frame of it")
     func reused() async throws {
         let store = ApprovalFrameStore()
         let phone = ApprovalPhone()
@@ -288,42 +356,25 @@ struct ApprovalCaptureTests {
         let run = try await driveApproval(phone, gate: gate, store: store, vision: true)
         let evaluated = try #require(run.evaluated.first)
         // Whether the core asked pixels of the evaluated observation.
-        var number = 0
         var asked = false
         for u in run.updates {
-            if case .effect(let effect, let n) = u {
-                number = n
-                if n == evaluated, case .observe(let s) = effect { asked = s }
-            }
+            if case .effect(let effect, let n) = u, n == evaluated, case .observe(let s) = effect { asked = s }
         }
-        _ = number
-        if asked {
-            #expect(gate.asked.first?.frame == corePixels, "the core's pixels of the evaluated screen")
-            #expect(phone.captures == 0, "no second capture")
-        } else {
-            #expect(gate.asked.first?.frame == approvalPixels)
-            #expect(phone.captures == 1)
-        }
+        #expect(gate.asked.first?.frame == (asked ? corePixels : nil), "the core's pixels of the evaluated screen, or none")
+        #expect(phone.captures == 0, "no capture for the question")
 
+        // Twenty-fourth review (F2): the Live view's frame (taken after the evaluated tree
+        // read) is not shown (was: shown after one more tree read equalled the evaluated tree).
+        // The Live view's own best-effort captures are unchanged: one per observation.
         let frames = ViewerFrameStore()
         let livePhone = ApprovalPhone()
         let liveGate = ApprovalGate([.decline], store: store)
         let liveRun = try await driveApproval(livePhone, gate: liveGate, store: store, viewerFrames: frames)
-        let liveEvaluated = try #require(liveRun.evaluated.first)
-        #expect(liveGate.asked.first?.key == ViewerFrameKey(taskId: "ask", observation: liveEvaluated))
-        #expect(liveGate.asked.first?.frame == approvalPixels)
+        #expect(liveRun.evaluated.count == 1)
+        #expect(liveGate.asked.first?.key == nil && liveGate.asked.first?.frame == nil, "no frame held")
         #expect(livePhone.captures == liveRun.observationCount, "the Live view's captures only, none for the question")
-        // Preview review: the Live view's frame was taken after the evaluated tree read, so
-        // it is kept only after one more tree read equals the evaluated tree.
-        #expect(livePhone.snapshots == liveRun.observationCount + liveRun.evaluated.count, "one tree re-read per question")
+        #expect(livePhone.snapshots == liveRun.observationCount, "no tree re-read for the question")
         #expect(store.count == 0)
-
-        // The Live view's frame of a screen that moved on after it: not kept.
-        let movedStore = ApprovalFrameStore()
-        let movedPhone = ApprovalPhone(moveOnAfterCapture: true)
-        let movedGate = ApprovalGate([.decline], store: movedStore)
-        _ = try await driveApproval(movedPhone, gate: movedGate, store: movedStore, viewerFrames: ViewerFrameStore())
-        #expect(movedGate.asked.first?.frame == nil)
     }
 
     @Test("dropped on every resolution: approved, declined, failed, timed out, cancelled, a lock")
@@ -331,33 +382,39 @@ struct ApprovalCaptureTests {
         for reply: ApprovalGate.Reply in [.approve, .decline, .fail] {
             let store = ApprovalFrameStore()
             let gate = ApprovalGate([reply], store: store)
-            _ = try await driveApproval(ApprovalPhone(), gate: gate, store: store)
-            #expect(gate.asked.first?.frame == approvalPixels, "\(reply)")
+            _ = try await driveApproval(ApprovalPhone(), gate: gate, store: store, lookFirst: true)
+            #expect(gate.asked.first?.frame == corePixels, "\(reply)")
             #expect(store.count == 0, "\(reply)")
         }
         // Timed out.
         let timedStore = ApprovalFrameStore()
         let timedGate = ApprovalGate([.hang], store: timedStore)
-        _ = try await driveApproval(ApprovalPhone(), gate: timedGate, store: timedStore, humanTimeout: .milliseconds(80))
-        #expect(timedGate.asked.first?.frame == approvalPixels)
+        _ = try await driveApproval(ApprovalPhone(), gate: timedGate, store: timedStore, humanTimeout: .milliseconds(80),
+                                    lookFirst: true)
+        #expect(timedGate.asked.first?.frame == corePixels)
         #expect(timedStore.count == 0)
         // The run cancelled while the owner is asked.
         let cancelStore = ApprovalFrameStore()
         let cancelGate = ApprovalGate([.hang], store: cancelStore)
-        let cancelled = try await driveApproval(ApprovalPhone(), gate: cancelGate, store: cancelStore, cancelAfter: .milliseconds(300))
+        let cancelled = try await driveApproval(ApprovalPhone(), gate: cancelGate, store: cancelStore,
+                                                cancelAfter: .milliseconds(300), lookFirst: true)
         #expect(cancelled.result.endReason == .cancelled)
-        #expect(cancelGate.asked.count == 1 && cancelGate.asked.first?.frame == approvalPixels)
+        #expect(cancelGate.asked.count == 1 && cancelGate.asked.first?.frame == corePixels)
         #expect(cancelStore.count == 0)
         // The phone locks while the owner is asked: the question is abandoned, then asked
-        // again after the unlock with a fresh frame, and that one is dropped too.
+        // again after the unlock, and its frame is dropped too. Twenty-fourth review: the
+        // question asked again is computed from the observation after the unlock, which
+        // carries no pixels the core asked for: no frame (was: a fresh capture).
         let lockStore = ApprovalFrameStore()
         let lockPhone = ApprovalPhone()
         let lockGate = ApprovalGate([.hang, .decline], store: lockStore, onAsk: { n in if n == 1 { lockPhone.lock(forChecks: 2) } })
-        let locked = try await driveApproval(lockPhone, gate: lockGate, store: lockStore, lockWatch: .milliseconds(20))
+        let locked = try await driveApproval(lockPhone, gate: lockGate, store: lockStore, lockWatch: .milliseconds(20),
+                                             lookFirst: true)
         #expect(locked.updates.contains { if case .lockDetected(.confirm) = $0 { true } else { false } })
         #expect(lockGate.asked.count == 2)
-        #expect(lockGate.asked.allSatisfy { $0.frame == approvalPixels })
-        #expect(lockPhone.capturesWhileLocked == 0, "never captured while the phone is locked")
+        #expect(lockGate.asked.first?.frame == corePixels)
+        #expect(lockGate.asked.last?.frame == nil)
+        #expect(lockPhone.captures == 0, "never captured")
         #expect(lockStore.count == 0)
         // Preview review (new rule): the phone locked (protected data unavailable) while the
         // sheet was up drops the frame and refuses new ones; Jarvis merely being in the
@@ -375,40 +432,33 @@ struct ApprovalCaptureTests {
         #expect(appStore.count == 0)
     }
 
-    @Test("never captured unless the phone is known unlocked; a lock seen after the capture keeps nothing")
+    @Test("never kept unless the evaluated observation was known unlocked")
     func lockRules() async throws {
         let unknownStore = ApprovalFrameStore()
         let unknownPhone = ApprovalPhone(reportedLock: .unknown)
         let unknownGate = ApprovalGate([.decline], store: unknownStore)
-        let unknown = try await driveApproval(unknownPhone, gate: unknownGate, store: unknownStore)
+        let unknown = try await driveApproval(unknownPhone, gate: unknownGate, store: unknownStore, lookFirst: true)
         #expect(unknownPhone.captures == 0, "a runner that cannot tell its lock state gets no capture")
         #expect(unknownPhone.snapshots == unknown.observationCount, "and no extra tree read")
-        #expect(unknownGate.asked.first?.frame == nil)
-
-        let lockingStore = ApprovalFrameStore()
-        let lockingPhone = ApprovalPhone(lockAfterCapture: true)
-        let lockingGate = ApprovalGate([.decline], store: lockingStore)
-        _ = try await driveApproval(lockingPhone, gate: lockingGate, store: lockingStore)
-        #expect(lockingPhone.captures == 1)
-        #expect(lockingGate.asked.first?.frame == nil)
-        #expect(lockingStore.count == 0)
+        #expect(unknownGate.asked.first?.frame == nil, "the core's pixels of a screen not known unlocked are not kept")
     }
 
     @Test("a run that starts locked: nothing is captured during the unlock wait; the question gets the later screen")
     func unlockWait() async throws {
         // Starts locked; the driver waits for the unlock (no capture then), observes again,
-        // and the question gets a frame of that later, unlocked observation.
+        // and the question gets the frame of that later, unlocked observation (the core's
+        // `look` pixels, twenty-fourth review).
         let store = ApprovalFrameStore()
         let phone = ApprovalPhone()
         phone.lock(forChecks: 3)
         let gate = ApprovalGate([.decline], store: store)
-        let run = try await driveApproval(phone, gate: gate, store: store)
+        let run = try await driveApproval(phone, gate: gate, store: store, lookFirst: true)
         #expect(run.updates.contains { if case .awaitingUnlock = $0 { true } else { false } })
         #expect(phone.capturesWhileLocked == 0)
         let evaluated = try #require(run.evaluated.first)
         #expect(gate.asked.first?.key == ViewerFrameKey(taskId: "ask", observation: evaluated))
-        #expect(gate.asked.first?.frame == approvalPixels)
-        #expect(phone.captures == 1)
+        #expect(gate.asked.first?.frame == corePixels)
+        #expect(phone.captures == 0)
         #expect(store.count == 0)
     }
 
@@ -418,7 +468,7 @@ struct ApprovalCaptureTests {
         for (option, used) in [(false, store as ApprovalFrameStore?), (true, nil)] {
             let phone = ApprovalPhone()
             let gate = ApprovalGate([.decline], store: store)
-            let run = try await driveApproval(phone, gate: gate, store: used, option: option)
+            let run = try await driveApproval(phone, gate: gate, store: used, option: option, lookFirst: true)
             #expect(phone.captures == 0)
             #expect(phone.snapshots == run.observationCount, "only the core's observations")
             #expect(gate.asked.first?.frame == nil)
@@ -426,11 +476,11 @@ struct ApprovalCaptureTests {
         let off = ApprovalFrameStore()
         off.isEnabled = false
         let phone = ApprovalPhone()
-        let run = try await driveApproval(phone, gate: ApprovalGate([.decline], store: off), store: off)
+        let run = try await driveApproval(phone, gate: ApprovalGate([.decline], store: off), store: off, lookFirst: true)
         #expect(phone.captures == 0 && phone.snapshots == run.observationCount)
         // Preview review (new rule): the phone locked (protected data unavailable) refuses
-        // captures; that was `isAppActive = false`, which no longer exists: whether Jarvis is
-        // in front does not matter for capturing (the target app is in front when it asks).
+        // frames; that was `isAppActive = false`, which no longer exists: whether Jarvis is
+        // in front does not matter (the target app is in front when it asks).
         let locked = ApprovalFrameStore()
         locked.isPhoneUnlocked = false
         let background = ApprovalPhone()
@@ -438,7 +488,7 @@ struct ApprovalCaptureTests {
         #expect(background.captures == 0 && background.snapshots == backgroundRun.observationCount)
     }
 
-    @Test("a capture that hangs ends at its deadline: the question is not held up and the run is the same")
+    @Test("a runner whose capture would hang is never asked for one: the question is not held up and the run is the same")
     func hangingCapture() async throws {
         for reply: ApprovalGate.Reply in [.approve, .decline] {
             let store = ApprovalFrameStore()
@@ -449,8 +499,9 @@ struct ApprovalCaptureTests {
             let on = try await driveApproval(phone, gate: gate, store: store, timeout: .milliseconds(60))
             #expect(clock.now - start < .seconds(10))
             let asked = try #require(gate.askedAt.first)
-            #expect(asked - start < .seconds(5), "the question went out at the capture's deadline")
+            #expect(asked - start < .seconds(5), "the question went out at once")
             #expect(gate.asked.first?.frame == nil)
+            #expect(phone.captures == 0)
 
             let offPhone = ApprovalPhone(.hangs)
             let off = try await driveApproval(offPhone, gate: ApprovalGate([reply], store: nil), store: nil, option: false)
@@ -460,12 +511,13 @@ struct ApprovalCaptureTests {
             #expect(!on.updates.contains { if case .ioFailed = $0 { true } else { false } })
             #expect(on.updates.count == off.updates.count, "no extra update, note or failure")
         }
-        // A capture that works changes nothing either.
+        // A frame kept changes nothing either.
         let store = ApprovalFrameStore()
         let phone = ApprovalPhone()
-        let on = try await driveApproval(phone, gate: ApprovalGate([.approve], store: store), store: store)
+        let on = try await driveApproval(phone, gate: ApprovalGate([.approve], store: store), store: store, lookFirst: true)
         let offPhone = ApprovalPhone()
-        let off = try await driveApproval(offPhone, gate: ApprovalGate([.approve], store: nil), store: nil, option: false)
+        let off = try await driveApproval(offPhone, gate: ApprovalGate([.approve], store: nil), store: nil, option: false,
+                                          lookFirst: true)
         #expect(on.result.outcome.status == .success)
         #expect(phone.commands == offPhone.commands)
         #expect(on.result.effectCount == off.result.effectCount)
@@ -647,8 +699,8 @@ struct ApprovalPrivacyTests {
         let store = ApprovalFrameStore()
         let phone = ApprovalPhone()
         let gate = ApprovalGate([.approve], store: store)
-        let run = try await driveApproval(phone, gate: gate, store: store)
-        #expect(gate.asked.first?.frame == approvalPixels, "a frame was held while asked")
+        let run = try await driveApproval(phone, gate: gate, store: store, lookFirst: true)
+        #expect(gate.asked.first?.frame == corePixels, "a frame was held while asked")
         let viewer = LiveViewModel(framesEnabled: true)
         var whileAsked: Data?
         var caption = ""
@@ -661,7 +713,7 @@ struct ApprovalPrivacyTests {
         }
         #expect(!caption.isEmpty)
         for bytes in [try #require(whileAsked), try #require(viewer.encode())] {
-            #expect(!Self.contains(bytes, approvalPixels.data))
+            #expect(!Self.contains(bytes, corePixels.data))
             #expect(!Self.contains(bytes, Data(caption.utf8)))
             #expect(!Self.contains(bytes, Data("Outlined".utf8)))
         }
@@ -685,7 +737,9 @@ struct ApprovalPrivacyTests {
             Issue.record("\(outcome)")
             return
         }
-        #expect(coordinatorGate.asked.first?.frame == approvalPixels)
+        // Twenty-fourth review (F2): the demo's question follows an observation without the
+        // core's pixels: no frame (was: a capture at question time).
+        #expect(coordinatorGate.asked.first?.frame == nil)
         #expect(frames.count == 0, "nothing held once the run ended")
         let history = try Data(contentsOf: coordinator.paths.history)
         #expect(!Self.contains(history, approvalPixels.data))
@@ -726,8 +780,10 @@ struct ApprovalPrivacyTests {
             if case .confirmPending(_, .delete, _, _) = m { return true }
             return false
         }
-        // The phone's own sheet has the frame while the question is open.
-        #expect(r.base.coordinator.approvalFrames.frame(for: try #require(r.base.coordinator.approvalFrames.key)) == approvalPixels)
+        // The phone's own sheet names the open question; twenty-fourth review (F2): no frame
+        // is captured for it (the demo's observation carries no pixels the core asked for).
+        #expect(r.base.coordinator.approvalFrames.questionKey != nil)
+        #expect(r.base.coordinator.approvalFrames.count == 0)
         guard case .confirmPending(let requestId, _, _, _) = pending else { return }
         try remote.send(.decision(requestId: requestId, approved: false))
         _ = try await remote.waitForMessage(after: mark) { m in

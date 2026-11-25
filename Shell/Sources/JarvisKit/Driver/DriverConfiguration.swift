@@ -45,26 +45,22 @@ public struct DriverConfiguration: Sendable, Equatable {
     /// unlock wait. Frames are kept in `viewerFrames` (memory only). Without
     /// `viewerFrames` this does nothing.
     public var viewerScreenshots: Bool
-    /// Deadline for one Live view capture (the screenshot plus the lock check after it),
-    /// and for one approval capture (`approvalScreenshots`).
+    /// Deadline for one Live view capture (the screenshot plus the lock check after it).
     public var viewerScreenshotTimeout: Duration
     /// The approval sheet's real-screen option ("Show the real screen when Jarvis asks";
     /// the app's setting is on by default, this driver default is off so a driver built
-    /// without it captures nothing). It never changes the run: when the core asks the owner
-    /// to confirm (`Effect.confirm`), and only then, the driver makes one best-effort
-    /// capture of the screen the confirmation was computed from, bounded by
-    /// `viewerScreenshotTimeout`, before the question goes out. The frame is bound to that
-    /// observation (`ViewerFrameKey`): the observation's own pixels when the core asked for
-    /// them (captured with the tree, kept as is); otherwise the Live view's frame of it or
-    /// `PhoneRunner.viewerScreenshot()`, either kept only when a tree read after it shows
-    /// the very screen evaluated (same tree, app, size, keyboard and orientation) and
-    /// reports the phone unlocked; a screen that moved on keeps nothing. Captured whichever
-    /// app is in front. Fail closed on the lock: only after an observation the runner
-    /// reported unlocked, never in an unlock wait. Errors and timeouts are ignored (no note,
-    /// no IO failure, never retried). The frame goes to `DriverDependencies.approvalFrames`
-    /// (memory only) and is removed as soon as the question is resolved, whatever resolved
-    /// it. Without `approvalFrames`, or while it does not accept frames, nothing is
-    /// captured at all.
+    /// without it keeps nothing). It never changes the run and makes no runner call: when
+    /// the core asks the owner to confirm (`Effect.confirm`), the frame shown is the pixels
+    /// the observation the confirmation was computed from already carried because the core
+    /// asked for them (captured with the tree, kept as is), bound to that observation
+    /// (`ViewerFrameKey`). Twenty-fourth review (F2): nothing is captured or re-read at
+    /// question time (no snapshot, no screenshot: the app in front would see a read at a
+    /// moment the model chose), and the Live view's frame is not reused; without such pixels
+    /// the sheet shows the wireframe of the evaluated observation. Fail closed on the lock:
+    /// only after an observation the runner reported unlocked, never in an unlock wait. The
+    /// frame goes to `DriverDependencies.approvalFrames` (memory only) and is removed as soon
+    /// as the question is resolved, whatever resolved it. Without `approvalFrames`, or while
+    /// it does not accept frames, nothing is kept.
     public var approvalScreenshots: Bool
 
     /// The defaults, each overridable.

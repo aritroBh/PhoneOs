@@ -74,6 +74,13 @@
 //!   is asked again; a look's screenshot and a model wait are checked like any input (observe
 //!   kind, into every place on the screen).
 //!
+//! - (twenty-fourth review, R24) while a place on the current screen has a source not
+//!   allowed into it at the observe kind, every observation directly follows a sent runner
+//!   command (or a tool call), an owner's approval or answer, or an unlock. Half the cases
+//!   reply slowly at random (plans older than `max_plan_age_ms`: the stale-screen guard), and
+//!   half show a changing screen (the "Next" button moves at every other look, so an old
+//!   plan on it does not hold).
+//!
 //! `FLOW_CASES` sets the number of cases (default 400), `FLOW_SEED` runs one seed.
 
 mod common;
@@ -663,15 +670,48 @@ impl Oracle {
 }
 
 /// Twenty-third review: the step's own destinations at `kind`, and every other place on
-/// `current` at the observe kind.
+/// `current` at the observe kind. Twenty-fourth review (F4): the Home Screen (SpringBoard,
+/// the OS) is never an observe-kind destination.
 fn with_observers(own: Vec<Ctx>, kind: Kind, current: &Screen) -> Vec<(Ctx, Kind)> {
-    let mut out: Vec<(Ctx, Kind)> = own.iter().map(|d| (d.clone(), kind)).collect();
+    let home = Ctx::App(HOME.to_owned());
+    let mut out: Vec<(Ctx, Kind)> = own
+        .iter()
+        .filter(|d| !(kind == Kind::Observe && **d == home))
+        .map(|d| (d.clone(), kind))
+        .collect();
     for p in every_of(current) {
-        if !own.contains(&p) {
+        if !own.contains(&p) && p != home {
             out.push((p, Kind::Observe));
         }
     }
     out
+}
+
+/// Twenty-fourth review (R24): `s` as the phone shows it at look `tick` of a changing screen:
+/// the "Next" button 6 points lower at every other look (the stale-screen guard's plan on it
+/// does not hold; its place and element number do not change).
+fn jiggle(s: &Screen, tick: u32) -> Screen {
+    fn walk(n: &mut UiNode) {
+        if n.label.as_deref() == Some("Next") {
+            n.frame.y += 6.0;
+        }
+        for c in &mut n.children {
+            walk(c);
+        }
+    }
+    let mut s = s.clone();
+    if tick % 2 == 1 {
+        walk(&mut s.root);
+    }
+    s
+}
+
+/// Twenty-fourth review (R24): a place on `current` still has a source not allowed into it
+/// at the observe kind (the Home Screen is no observe-kind destination).
+fn restricted(oracle: &Oracle, current: &Screen) -> bool {
+    !oracle
+        .check(&with_observers(every_of(current), Kind::Observe, current))
+        .is_empty()
 }
 
 /// The oracle's kind of the model's action `json` on `current`.
@@ -802,6 +842,13 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
     }
     config.model.supports_vision = rng.below(2) == 0;
     let spotlight_home = rng.below(2) == 0;
+    // Twenty-fourth review: slow replies and a changing screen.
+    let slow = rng.below(2) == 0;
+    let changing = rng.below(2) == 0;
+    let mut ticks = 0u32;
+    // The previous effect allows a look in the restricted state (R24 (a), (b)); the first
+    // look of a task reads nothing before it.
+    let mut look_owed = true;
     for a in APPS {
         config.known_apps.push(AppInfo::new(a, a));
     }
@@ -852,6 +899,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
     for _ in 0..4_000 {
         let effect = session.step(TimedEvent::new(now, event));
         now += 50;
+        let owed_before = std::mem::replace(&mut look_owed, false);
         if matches!(
             effect,
             Effect::Observe { .. } | Effect::Act(_) | Effect::CallTool(_)
@@ -874,14 +922,29 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                         "seed {seed}: a look's screenshot while {bad:?} not allowed"
                     );
                 }
+                // Twenty-fourth review (R24): no look the model's timing chose while a place on
+                // the screen may not see one.
+                assert!(
+                    owed_before || !restricted(&oracle, &current),
+                    "seed {seed}: an observation (screenshot {screenshot}) after {last_action} \
+                     while a place on the screen may not see it (read {:?}, granted {:?})",
+                    oracle.read,
+                    oracle.granted
+                );
                 approved_unlooked = false;
                 observed.extend(places_of(&current));
                 let f = Ctx::Frame(HOSTS[TWO_FRAMES].to_owned());
                 if places_of(&current).contains(&f) {
                     oracle.ambiguous.insert(f);
                 }
+                ticks += 1;
+                let shown = if changing {
+                    jiggle(&current, ticks)
+                } else {
+                    current.clone()
+                };
                 Event::Observed(Observation {
-                    screen: current.clone(),
+                    screen: shown,
                     screenshot: screenshot.then(|| ImageRef {
                         id: "shot".into(),
                         width: 1179,
@@ -902,6 +965,11 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                 approved_unlooked = false;
                 since_proposal = 0;
                 answered = false;
+                // Twenty-fourth review: a slow reply (older than `max_plan_age_ms`) half the
+                // time in the slow cases.
+                if slow && rng.below(2) == 0 {
+                    now += 1_500;
+                }
                 match model.pop_front() {
                     Some(text) => {
                         last_action = text.clone();
@@ -937,10 +1005,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                     _ => Kind::Full,
                 };
                 let checked = if model_wait {
-                    every_of(&current)
-                        .into_iter()
-                        .map(|d| (d, Kind::Observe))
-                        .collect()
+                    with_observers(every_of(&current), Kind::Observe, &current)
                 } else if dests.is_empty() {
                     Vec::new()
                 } else {
@@ -968,6 +1033,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                     }
                     _ => {}
                 }
+                look_owed = true;
                 Event::ActResult(RunnerResult::ok())
             }
             Effect::CallTool(call) => {
@@ -983,6 +1049,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                     call.name
                 );
                 observed.insert(dest);
+                look_owed = true;
                 Event::ToolResult(ToolResult {
                     ok: true,
                     output: "result".into(),
@@ -1152,12 +1219,19 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                     }
                 }
                 approved_unlooked |= approve;
+                look_owed = approve;
                 Event::UserDecision { approved: approve }
             }
-            Effect::AskUser { .. } => Event::UserAnswer {
-                text: String::new(),
-            },
-            Effect::AwaitUnlock { .. } => Event::DeviceUnlocked,
+            Effect::AskUser { .. } => {
+                look_owed = true;
+                Event::UserAnswer {
+                    text: String::new(),
+                }
+            }
+            Effect::AwaitUnlock { .. } => {
+                look_owed = true;
+                Event::DeviceUnlocked
+            }
             Effect::Finished(_) => return (asked, declined, sent),
         };
     }

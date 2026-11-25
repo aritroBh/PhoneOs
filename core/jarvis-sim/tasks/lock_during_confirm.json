@@ -12,7 +12,7 @@
   "max_steps": 12,
   "faults": {
     "locks": [
-      { "at_effect": 15, "unlock_after_ms": 90000 }
+      { "at_effect": 13, "unlock_after_ms": 90000 }
     ]
   },
   "script": [
@@ -26,7 +26,7 @@
     "expect_confirm_count": 5,
     "faults": {
       "locks": [
-        { "at_effect": 18, "unlock_after_ms": 90000 }
+        { "at_effect": 15, "unlock_after_ms": 90000 }
       ]
     }
   }

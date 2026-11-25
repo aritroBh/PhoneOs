@@ -91,15 +91,17 @@ private func drive(_ phone: any PhoneRunner, store: ApprovalFrameStore, gate: Re
 
 @Suite("Review probes: approval preview", .timeLimit(.minutes(2)), .serialized)
 struct ReviewProbePreviewTests {
-    /// Baseline (holds): the fresh capture of a screen that moved on is refused.
+    /// Baseline (holds): no pixels of a screen that moved on are shown. Twenty-fourth review
+    /// (F2): nothing is captured at question time at all (was: one fresh capture, dropped
+    /// by a tree re-read).
     @Test("baseline: the fresh capture of a screen that moved on keeps nothing")
     func freshCaptureOfAMovedScreenIsRefused() async throws {
         let store = ApprovalFrameStore()
         let phone = MovingPhone()
         let gate = RecordingGate(store: store)
         _ = try await drive(phone, store: store, gate: gate, viewerFrames: nil)
-        #expect(phone.captures == 1)
-        #expect(gate.asked.first?.frame == nil, "the fresh path re-reads the tree and drops the frame")
+        #expect(phone.captures == 0, "no capture at question time")
+        #expect(gate.asked.first?.frame == nil)
     }
 
     /// P2: with the Live view option on, the Live view's frame of the evaluated observation

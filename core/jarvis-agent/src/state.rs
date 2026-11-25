@@ -248,6 +248,56 @@ pub(crate) enum Late {
     },
 }
 
+/// Twenty-fourth review (R24): why the session looks at the screen. Every observation the
+/// session asks for names its reason (`Session::start_look`, the one place an
+/// `Effect::Observe` is built).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Why {
+    /// A look the session owes: never refused.
+    Owed(Owed),
+    /// A look the session chooses: refused while a place on the current screen has a
+    /// source not allowed into it at the observe kind (`Session::restricted`).
+    Chosen(Chosen),
+}
+
+/// R24 (a) and (b): the looks that are never refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Owed {
+    /// The first look of a task (nothing has been read: no source exists).
+    FirstLook,
+    /// (a) The one look after a runner command the session sent: what the command did (the
+    /// look after an action's last command, after a focusing tap, after a failed or refused
+    /// command, after the activation or settle wait of the look after an approval, after a
+    /// typing check's settle wait).
+    AfterCommand,
+    /// The look after a tool's result (the tool call, like a command, was sent).
+    AfterTool,
+    /// (b) The look after the owner answered an `ask_user` question.
+    AfterAnswer,
+    /// (b) The look after an unlock.
+    AfterUnlock,
+    /// (b) The look after an owner's approval (it re-checks digest, target and gate).
+    AfterApproval,
+}
+
+/// R24: the looks the session chooses, each with its no-look path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Chosen {
+    /// The stale-screen guard's fresh look before an old plan that would be sent unasked.
+    /// Refused: the step is not sent (a failed step).
+    StaleGuard,
+    /// The thin-tree vision fallback's screenshot. Refused: the model is asked without one.
+    VisionFallback,
+    /// A model-chosen `look` that Rule T lets through. Refused: not looked (told).
+    ModelLook,
+    /// One more look at the home screen's search results before a held-back Return.
+    /// Refused: Return is not pressed.
+    SearchSettle,
+    /// The verify look of an action whose plan sent nothing (cannot happen for validated
+    /// actions). Refused: a failed step.
+    NothingSent,
+}
+
 /// Why the session is waiting for an observation.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ObservePurpose {

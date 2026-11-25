@@ -222,9 +222,10 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     public var liveViewScreenshots: Bool
     /// "Show the real screen when Jarvis asks": the approval sheet shows the real screen
     /// Jarvis evaluated (one frame, memory only, held only while the question is open)
-    /// with the target outlined; off, an outline of the screen only. On by default; a
-    /// value that cannot be decoded reads as on (the default). Separate from
-    /// `liveViewScreenshots`.
+    /// with the target outlined when that observation carried pixels the core asked for
+    /// (twenty-fourth review: nothing is captured at question time); otherwise, and off, an
+    /// outline of the screen only. On by default; a value that cannot be decoded reads as on
+    /// (the default). Separate from `liveViewScreenshots`.
     public var approvalScreenshots: Bool
 
     public static let defaultAppTrust: [AppTrust] = [

@@ -145,8 +145,10 @@ public final class ApprovalFrameStore: Sendable {
 /// only draws it.
 ///
 /// What is checked, and what is not: the outline is computed from the same tree and indices
-/// the core used; pixels are shown only when they are the observation's own screenshot or a
-/// tree read after them equals the evaluated tree (`SessionDriver`); the core re-checks the
+/// the core used; pixels are shown only when they are the evaluated observation's own
+/// screenshot, which the core asked for (`SessionDriver`; twenty-fourth review: nothing is
+/// captured or re-read at question time, so the picture is of the observation the core
+/// decided on, as such, never a fresher one); the core re-checks the
 /// tree digest before it acts, never pixels. Content outside the accessibility tree (images,
 /// canvas, video) can differ or change. The picture is a display aid, not proof.
 ///

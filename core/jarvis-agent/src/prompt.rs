@@ -231,6 +231,15 @@ pub(crate) fn screen_changed_note(why: &str) -> String {
 pub(crate) fn screen_changed_failed(why: &str) -> String {
     format!("not done: the screen kept changing before the action ({why}); check the screen and choose again")
 }
+/// Twenty-fourth review (R24): an old plan that would be sent unasked, when the session does
+/// not look again (the stale-screen guard's looks for this stretch are used up, or a place on
+/// the screen may not see one): a failed step, nothing sent.
+pub(crate) const RESULT_PLAN_TOO_OLD: &str =
+    "not done: the screen was read too long before this action and kept changing, and Jarvis does not read it again for it; nothing was sent. Choose an action that does not depend on what changed, wait, or ask the owner";
+/// Twenty-fourth review (R24): a look the session would choose was not taken (a place on
+/// the screen may not see one): nothing was sent.
+pub(crate) const RESULT_NOT_LOOKED: &str =
+    "not done: Jarvis did not read the screen again for this; nothing was sent";
 /// Stale-screen guard: the runner refused the action's first command because another app
 /// was in front (`RunnerFailure::Stale`): nothing happened, it will be decided again.
 pub(crate) const RESULT_STALE_NOT_DONE: &str =

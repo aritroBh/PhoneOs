@@ -150,8 +150,8 @@ use crate::profile::{
 use crate::prompt::{self, PromptParts, ACTION_MAX_TOKENS};
 use crate::schema::{action_gbnf, action_json_schema};
 use crate::state::{
-    ApprovalLook, Exec, FlowAsk, FlowGrant, FocusCheck, Keep, Late, ObservePurpose, Pending,
-    PlanBasis, Resume, Settle, Source, Stage, State, TypeCheck,
+    ApprovalLook, Chosen, Exec, FlowAsk, FlowGrant, FocusCheck, Keep, Late, ObservePurpose, Owed,
+    Pending, PlanBasis, Resume, Settle, Source, Stage, State, TypeCheck, Why,
 };
 use crate::tools::{check_call, relevant, signature, MAX_TOOLS};
 use crate::typing::{check_typed, correction_deletes, TypedVerdict};
@@ -160,6 +160,11 @@ use crate::typing::{check_typed, correction_deletes, TypedVerdict};
 /// decide again because the screen changed before its action; the next change is a failed
 /// step (so the failure budget and the stuck guard apply).
 pub const MAX_REPLANS: u32 = 2;
+/// Twenty-fourth review (R24, backstop): the stale-screen guard's fresh looks in one stretch
+/// without a sent runner command (a sent command is progress and starts a new stretch).
+/// Past it an old plan that would be sent unasked is a failed step without a look; an
+/// owner's answer does not start a new stretch.
+pub const MAX_STALE_LOOKS: u32 = MAX_REPLANS + 1;
 /// Stale-screen guard: how far (points, per edge) a target's or a node's frame may move
 /// between the planned-on and the fresh look and still be the same.
 const PLAN_FRAME_TOLERANCE: f64 = 2.0;
@@ -558,6 +563,17 @@ pub struct Session {
     fresh_looks: u32,
     /// Stale-screen guard: plans not carried out because the screen changed (`Progress`).
     stale_plans: u32,
+    /// Twenty-fourth review (R24): the stale-screen guard's fresh looks since the last sent
+    /// runner command (see [`MAX_STALE_LOOKS`]); reset only by [`Self::emit`].
+    stale_looks: u32,
+    /// Twenty-fourth review (R24): old plans failed because the screen changed (or a fresh
+    /// look was not allowed) since the last sent runner command; at
+    /// `Policy::max_consecutive_failures` the task ends. Reset only by [`Self::emit`] (an
+    /// owner's answer, which resets the failure budget, does not reset it).
+    stale_failures: u32,
+    /// Twenty-fourth review (R24): why the outstanding (or latest) observation was asked for
+    /// (a retry after `ObserveFailed` repeats it).
+    last_look: Why,
     /// Sixteenth review (Rule T): what this task read, what the clipboard may hold, the
     /// flows the owner allowed or declined.
     confine: Confinement,
@@ -753,6 +769,9 @@ impl Session {
             replans: 0,
             fresh_looks: 0,
             stale_plans: 0,
+            stale_looks: 0,
+            stale_failures: 0,
+            last_look: Why::Owed(Owed::FirstLook),
             confine: Confinement::new(),
             exposed: BTreeSet::new(),
             here: FlowContext::App(String::new()),
@@ -1024,7 +1043,7 @@ impl Session {
                     self.replayed_flow = Some(flow.id.clone());
                     self.replay = Some(Replayer::new(flow, bindings));
                 }
-                self.observe(ObservePurpose::Decide, false)
+                self.observe(Owed::FirstLook, ObservePurpose::Decide)
             }
             other => self.protocol_error(now, &other, state),
         }
@@ -1081,8 +1100,11 @@ impl Session {
             );
             return self.finish(now, OutcomeStatus::Failed, &summary);
         }
+        // Twenty-fourth review (R24): the same look again, for the same reason (the runner's
+        // reply, not a moment the model chose; nothing was read in between).
         let screenshot = matches!(purpose, ObservePurpose::Vision);
-        self.observe(purpose, screenshot)
+        let why = self.last_look;
+        self.start_look(why, purpose, screenshot)
     }
 
     fn on_model(&mut self, now: u64, kind: RequestKind, event: Event, state: &str) -> Out {
@@ -1173,7 +1195,7 @@ impl Session {
                 Some(next) if fresh && types_after_focus_tap(&pending.action, &next) => {
                     queue.push_front(next);
                     let check = FocusCheck { queue, pending };
-                    self.observe(ObservePurpose::Focus(Box::new(check)), false)
+                    self.observe(Owed::AfterCommand, ObservePurpose::Focus(Box::new(check)))
                 }
                 Some(next) => {
                     let effect = self.emit(next, Some(&pending));
@@ -1184,7 +1206,7 @@ impl Session {
                     };
                     effect
                 }
-                None => self.observe(ObservePurpose::Verify(pending), false),
+                None => self.observe(Owed::AfterCommand, ObservePurpose::Verify(pending)),
             };
         }
         // A failed command aborts the rest of this action's commands.
@@ -1194,7 +1216,7 @@ impl Session {
             .unwrap_or("the runner could not do it");
         let msg = format!("failed: {}", clean(error, 120));
         self.record_failure(&pending, &msg);
-        self.observe(ObservePurpose::Decide, false)
+        self.observe(Owed::AfterCommand, ObservePurpose::Decide)
     }
 
     fn on_tool(&mut self, now: u64, pending: Box<Pending>, event: Event, state: &str) -> Out {
@@ -1202,7 +1224,7 @@ impl Session {
             return self.protocol_error(now, &event, state);
         };
         self.record_tool(&pending, &result);
-        self.observe(ObservePurpose::Decide, false)
+        self.observe(Owed::AfterTool, ObservePurpose::Decide)
     }
 
     /// Records a tool's result in the history, budget, log and recording.
@@ -1303,7 +1325,7 @@ impl Session {
                                 let source = pending.source;
                                 let prepared = match self.prepare(&action, source) {
                                     Ok(Prepared::Execute(next)) => {
-                                        return self.look_then_act(next, None);
+                                        return self.look_then_act(now, next, None);
                                     }
                                     other => other,
                                 };
@@ -1329,7 +1351,7 @@ impl Session {
                             Some(prior) if request.category == RiskCategory::FirstUse => prior,
                             _ => request,
                         };
-                        self.after_approval(*pending, request)
+                        self.after_approval(now, *pending, request)
                     }
                 }
             }
@@ -1349,7 +1371,8 @@ impl Session {
                     pending.stage,
                     flow.as_deref(),
                 );
-                self.decide(now)
+                // Twenty-fourth review (F3): decided on the screen in hand, no screenshot.
+                self.decide_with(now, false)
             }
             other => self.protocol_error(now, &other, state),
         }
@@ -1413,7 +1436,7 @@ impl Session {
             return self.protocol_error(now, &event, state);
         };
         self.record_answer(described, &text);
-        self.observe(ObservePurpose::Decide, false)
+        self.observe(Owed::AfterAnswer, ObservePurpose::Decide)
     }
 
     /// Records the owner's answer to a question.
@@ -1663,8 +1686,10 @@ impl Session {
     /// After an unlock: observe before anything else.
     fn resume_observe(&mut self, resume: Resume) -> Out {
         match resume {
-            Resume::Decide => self.observe(ObservePurpose::Decide, false),
-            Resume::Reconsider(pending) => self.observe(ObservePurpose::Reconsider(pending), false),
+            Resume::Decide => self.observe(Owed::AfterUnlock, ObservePurpose::Decide),
+            Resume::Reconsider(pending) => {
+                self.observe(Owed::AfterUnlock, ObservePurpose::Reconsider(pending))
+            }
         }
     }
 
@@ -1712,9 +1737,9 @@ impl Session {
     /// long after the question, so nothing planned on the screen it was asked about is sent
     /// blind: tools (which do not use the screen) run now, runner actions look at the screen
     /// once more first ([`Self::act_approved`]).
-    fn after_approval(&mut self, pending: Pending, request: ConfirmRequest) -> Out {
+    fn after_approval(&mut self, now: u64, pending: Pending, request: ConfirmRequest) -> Out {
         let approved = (request.category != RiskCategory::FirstUse).then_some(request);
-        self.look_then_act(pending, approved)
+        self.look_then_act(now, pending, approved)
     }
 
     /// The look after an approval ([`Self::after_approval`]) for `pending`, whose fresh
@@ -1722,9 +1747,14 @@ impl Session {
     /// review (F2b): also the path of an action decided again after a partial approval
     /// that needs no further question (the last approval was the partial one): it is sent
     /// only if a fresh look equals the screen it was asked on and the gate there allows it.
-    fn look_then_act(&mut self, pending: Pending, approved: Option<ConfirmRequest>) -> Out {
+    fn look_then_act(
+        &mut self,
+        now: u64,
+        pending: Pending,
+        approved: Option<ConfirmRequest>,
+    ) -> Out {
         if matches!(pending.exec, Exec::Tool(_)) {
-            return self.execute(pending);
+            return self.execute(now, pending);
         }
         let look = ApprovalLook {
             pending: Box::new(pending),
@@ -1732,7 +1762,10 @@ impl Session {
             activated: false,
             settled: false,
         };
-        self.observe(ObservePurpose::Approved(Box::new(look)), false)
+        self.observe(
+            Owed::AfterApproval,
+            ObservePurpose::Approved(Box::new(look)),
+        )
     }
 
     /// A fresh look after an approval: run the approved action when the screen's record
@@ -1757,7 +1790,7 @@ impl Session {
             if matches!(fresh.action, Action::Look) {
                 return self.look_now(now, &fresh.action);
             }
-            return self.execute(fresh);
+            return self.execute(now, fresh);
         }
         let asked = look.pending.bound.app_bundle_id.trim().to_owned();
         let front = self.current.screen.app_bundle_id.trim().to_owned();
@@ -1807,7 +1840,7 @@ impl Session {
             let state = State::AwaitingRelook { look };
             return self.interrupt(now, state, LockSignal::Reply, false);
         }
-        self.observe(ObservePurpose::Approved(look), false)
+        self.observe(Owed::AfterCommand, ObservePurpose::Approved(look))
     }
 
     /// An approved action not carried out because the screen changed after the approval:
@@ -2018,22 +2051,94 @@ impl Session {
 
     /// Layer 1: an action that touches the page (`jarvis_safety::touches_screen`), chosen on
     /// an observation older than `Policy::max_plan_age_ms` (the model took that long), is
-    /// not sent at once: the session looks again first ([`Self::on_fresh_look`]). Anything
-    /// else, and every plan younger than the limit, is proposed as before: on that path the
-    /// guard costs one comparison of the session clock.
+    /// not sent at once. Twenty-fourth review (R24): it is first decided (Rule T and the
+    /// gate, [`Self::prepare`]) on the screen the model planned on; when that would ask, be
+    /// refused or end the task, that outcome is dispatched there, with no fresh look (the look
+    /// after an approval re-checks digest, target and gate). Only a step that would be sent
+    /// unasked gets the guard's fresh look ([`Self::on_fresh_look`]), at most
+    /// [`MAX_STALE_LOOKS`] per stretch without a sent command and never while the screen is
+    /// [`Self::restricted`]; past that it is a failed step, nothing sent
+    /// ([`Self::plan_too_old`]). Anything else, and every plan younger than the limit, is
+    /// proposed as before: on that path the guard costs one comparison of the session clock.
     fn act_on_reply(&mut self, now: u64, action: Action, source: Source) -> Out {
         if now.saturating_sub(self.current.at_ms) <= self.config.policy.max_plan_age_ms
             || !touches_screen(&action)
         {
             return self.propose(now, action, source);
         }
-        self.fresh_looks = self.fresh_looks.saturating_add(1);
+        // The pairs an approval allowed for the previous action only are not this one's
+        // (`propose` clears them too).
+        self.action_allowed.clear();
+        if !matches!(self.prepare(&action, source), Ok(Prepared::Execute(_))) {
+            return self.propose(now, action, source);
+        }
+        if self.stale_looks >= MAX_STALE_LOOKS {
+            return self.plan_too_old(now, action, source);
+        }
         let basis = PlanBasis {
-            action,
+            action: action.clone(),
             source,
             seen: self.current.clone(),
         };
-        self.observe(ObservePurpose::Replan(Box::new(basis)), false)
+        match self.look_chosen(
+            Chosen::StaleGuard,
+            ObservePurpose::Replan(Box::new(basis)),
+            false,
+        ) {
+            Some(out) => {
+                self.fresh_looks = self.fresh_looks.saturating_add(1);
+                self.stale_looks = self.stale_looks.saturating_add(1);
+                out
+            }
+            None => self.plan_too_old(now, action, source),
+        }
+    }
+
+    /// Twenty-fourth review (R24): an old plan that would be sent unasked, with no fresh
+    /// look for it: a failed step, nothing sent; after `Policy::max_consecutive_failures` of
+    /// these (and of [`Self::screen_changed`]'s) since the last sent command, the task ends.
+    fn plan_too_old(&mut self, now: u64, action: Action, source: Source) -> Out {
+        self.stale_plans = self.stale_plans.saturating_add(1);
+        let described = describe(&action, &self.current.safe);
+        self.stale_failed(
+            now,
+            action,
+            source,
+            described,
+            prompt::RESULT_PLAN_TOO_OLD.to_owned(),
+        )
+    }
+
+    /// An old plan recorded as a failed step (counted, not sent): the stale failures of
+    /// this stretch end the task at the failure budget, whatever answers came between.
+    fn stale_failed(
+        &mut self,
+        now: u64,
+        action: Action,
+        source: Source,
+        described: String,
+        result: String,
+    ) -> Out {
+        self.budget.record_step(now);
+        self.last_action = Some(action.clone());
+        self.repeat = None;
+        self.last_failed = Some(format!("{described} -> {}", clean(&result, 120)));
+        self.history
+            .push(described, result, source == Source::Replay);
+        self.budget.record_failure();
+        self.log_step(&action, false);
+        if source == Source::Replay {
+            self.diverge("the screen kept changing before a saved step");
+        }
+        self.stale_failures = self.stale_failures.saturating_add(1);
+        if self.stale_failures >= self.config.policy.max_consecutive_failures.max(1) {
+            let summary = format!(
+                "Gave up: the screen kept changing before {} actions, and nothing was sent in between.",
+                self.stale_failures
+            );
+            return self.finish(now, OutcomeStatus::Failed, &summary);
+        }
+        self.decide(now)
     }
 
     /// The fresh look before acting on an old plan: when the plan still holds on it
@@ -2113,26 +2218,17 @@ impl Session {
             self.notes.push(prompt::screen_changed_note(why));
             return self.decide(now);
         }
-        self.replans = 0;
+        // Twenty-fourth review (R24): `replans` is not reset here (only a step that worked
+        // or failed after being sent resets it), so the cycle does not restart without
+        // progress; the looks themselves are bounded by `MAX_STALE_LOOKS`.
         let PlanBasis {
             action,
             source,
             seen,
         } = basis;
-        self.budget.record_step(now);
-        self.last_action = Some(action.clone());
         let described = describe(&action, &seen.safe);
         let result = prompt::screen_changed_failed(why);
-        self.repeat = None;
-        self.last_failed = Some(format!("{described} -> {}", clean(&result, 120)));
-        self.history
-            .push(described, result, source == Source::Replay);
-        self.budget.record_failure();
-        self.log_step(&action, false);
-        if source == Source::Replay {
-            self.diverge("the screen kept changing before a saved step");
-        }
-        self.decide(now)
+        self.stale_failed(now, action, source, described, result)
     }
 
     /// Layer 2: the runner refused a command because another app was in front
@@ -2156,7 +2252,7 @@ impl Session {
                 &prompt::screen_changed_failed("another app came to the front"),
             );
         }
-        self.observe(ObservePurpose::Decide, false)
+        self.observe(Owed::AfterCommand, ObservePurpose::Decide)
     }
 
     /// Fifteenth review (F5): the look after a typing's (or a clear's) focusing tap, before
@@ -2169,7 +2265,7 @@ impl Session {
     fn after_focus_tap(&mut self, now: u64, check: FocusCheck) -> Out {
         let FocusCheck { queue, pending } = check;
         if self.focus_holds(&pending) {
-            return self.continue_act(queue, *pending);
+            return self.continue_act(now, queue, *pending);
         }
         self.stale_plans = self.stale_plans.saturating_add(1);
         if self.replans < MAX_REPLANS {
@@ -2210,9 +2306,61 @@ impl Session {
     // The loop: decide → propose → gate → execute → verify.
     // ---------------------------------------------------------------------------------
 
-    fn observe(&mut self, purpose: ObservePurpose, screenshot: bool) -> Out {
+    /// Twenty-fourth review (R24), the choke point: the one place an `Effect::Observe` is
+    /// built. Every look names why it is taken ([`Why`]); a look the session chooses gets
+    /// here only through [`Self::look_chosen`], which refuses it in the restricted state.
+    fn start_look(&mut self, why: Why, purpose: ObservePurpose, screenshot: bool) -> Out {
+        self.last_look = why;
         self.state = State::AwaitingObservation { purpose };
         Out::observe(screenshot)
+    }
+
+    /// A look the session owes (R24 (a) and (b), and the first look of a task): never
+    /// refused, never a screenshot.
+    fn observe(&mut self, why: Owed, purpose: ObservePurpose) -> Out {
+        self.start_look(Why::Owed(why), purpose, false)
+    }
+
+    /// A look the session chooses (R24): `None` — the caller takes its no-look path (it
+    /// asks, fails the step or ends; it never acts on the screen in hand as if it were
+    /// fresh) — while the current screen is [`Self::restricted`].
+    fn look_chosen(
+        &mut self,
+        why: Chosen,
+        purpose: ObservePurpose,
+        screenshot: bool,
+    ) -> Option<Out> {
+        if self.restricted() {
+            return None;
+        }
+        Some(self.start_look(Why::Chosen(why), purpose, screenshot))
+    }
+
+    /// Twenty-fourth review (R24): a place on the current screen still has a source not
+    /// allowed into it at the observe kind. A look is something the place looked at can see,
+    /// so while this holds the session looks again only after a command it sent, an owner's
+    /// answer or approval, or an unlock ([`Owed`]). The places are those Rule T treats as
+    /// observe-kind destinations ([`Self::observes`]).
+    fn restricted(&self) -> bool {
+        self.places.every().iter().any(|p| {
+            self.observes(p)
+                && !self
+                    .confine
+                    .unallowed_kind(std::slice::from_ref(p), false, false, InputKind::Observe)
+                    .is_empty()
+        })
+    }
+
+    /// Whether `place` is a party that can see a step decided on its screen (an observe-kind
+    /// destination): every place but Jarvis's own app (the agent's bundle id, an OS fact the
+    /// shell passes) and, twenty-fourth review (F4), the Home Screen itself (SpringBoard is
+    /// the OS: it learns nothing from a step it does not already see). The Home Screen stays
+    /// a source, and a full or scroll input into it keeps its rules.
+    fn observes(&self, place: &FlowContext) -> bool {
+        match place {
+            FlowContext::App(a) if is_springboard(a) => false,
+            p => !p.bundle().is_some_and(|b| self.is_agent_app(b)),
+        }
     }
 
     fn ingest(&mut self, obs: Observation) {
@@ -2478,6 +2626,13 @@ impl Session {
 
     /// Chooses the next action on the current screen: learned flow, vision, or the model.
     fn decide(&mut self, now: u64) -> Out {
+        self.decide_with(now, true)
+    }
+
+    /// [`Self::decide`]; with `vision` false the thin-tree fallback's screenshot is not
+    /// taken (twenty-fourth review, F3: after a decline — the owner's answer is no reason to
+    /// look).
+    fn decide_with(&mut self, now: u64, vision: bool) -> Out {
         if let Some(stop) = self.budget_stop(now) {
             return stop;
         }
@@ -2490,9 +2645,15 @@ impl Session {
                 Next::Diverged { reason } => self.diverge(&reason.to_string()),
             }
         }
-        if self.wants_vision() {
-            self.vision_hash = Some(self.current.hash);
-            return self.observe(ObservePurpose::Vision, true);
+        // Twenty-fourth review (F3): the fallback's screenshot is a look the session chooses
+        // (refused while the screen is restricted: the model is asked on the element list).
+        if vision && self.wants_vision() {
+            if let Some(out) =
+                self.look_chosen(Chosen::VisionFallback, ObservePurpose::Vision, true)
+            {
+                self.vision_hash = Some(self.current.hash);
+                return out;
+            }
         }
         self.infer(RequestKind::Text)
     }
@@ -2726,7 +2887,7 @@ impl Session {
         prepared: Result<Prepared, Reject>,
     ) -> Out {
         match prepared {
-            Ok(Prepared::Execute(pending)) => self.execute(pending),
+            Ok(Prepared::Execute(pending)) => self.execute(now, pending),
             Ok(Prepared::Confirm(pending, request)) => {
                 self.ask_confirm(now, pending, request, None, None)
             }
@@ -2792,9 +2953,20 @@ impl Session {
     fn look_now(&mut self, now: u64, action: &Action) -> Out {
         let described = describe(action, &self.current.safe);
         if self.config.model.supports_vision {
-            self.history.push(described, prompt::RESULT_LOOKED, false);
-            self.vision_hash = Some(self.current.hash);
-            self.observe(ObservePurpose::Vision, true)
+            // Twenty-fourth review (R24): through the choke point (Rule T let it through, so
+            // it is not refused; if it were, the model is told it was not taken).
+            match self.look_chosen(Chosen::ModelLook, ObservePurpose::Vision, true) {
+                Some(out) => {
+                    self.history.push(described, prompt::RESULT_LOOKED, false);
+                    self.vision_hash = Some(self.current.hash);
+                    out
+                }
+                None => {
+                    self.history
+                        .push(described, prompt::RESULT_NOT_LOOKED, false);
+                    self.decide_with(now, false)
+                }
+            }
         } else {
             self.history
                 .push(described, prompt::RESULT_NO_VISION, false);
@@ -3340,9 +3512,15 @@ impl Session {
         if !flow_checked(gate) {
             return Ok(None);
         }
-        let (own, self_source) = self.flow_targets(gate, tool, home);
+        let (mut own, self_source) = self.flow_targets(gate, tool, home);
         if self.replay_exempt(source, &own) {
             return Ok(None);
+        }
+        // Twenty-fourth review (F4): the Home Screen is the OS; a step it only sees (a wait,
+        // a look or `press_home` there) is no input into it. A scroll or a full input into
+        // it keeps its rules.
+        if InputKind::of(gate, &self.current.screen) == InputKind::Observe {
+            own.retain(|p| !matches!(p, FlowContext::App(a) if is_springboard(a)));
         }
         let pasting = insert_control(gate, &self.current.screen, Some(&self.tree())).is_some();
         // Twentieth review (R20-A): a scroll is allowed by a scroll grant too; any other
@@ -3369,7 +3547,7 @@ impl Session {
             self.places
                 .observers(&own)
                 .into_iter()
-                .filter(|p| !p.bundle().is_some_and(|b| self.is_agent_app(b)))
+                .filter(|p| self.observes(p))
                 .collect()
         };
         // Per destination, its kind and the sources not yet allowed into it at that kind —
@@ -3688,7 +3866,7 @@ impl Session {
     }
 
     /// Sends the first command (or the tool call) of an approved action.
-    fn execute(&mut self, mut pending: Pending) -> Out {
+    fn execute(&mut self, now: u64, mut pending: Pending) -> Out {
         // Sixteenth review (Rule P): Copy or Cut here puts this context on the clipboard; a
         // later Paste names it (and Rule T counts it as a source of the paste).
         // Nineteenth review: the selection may be in any place on the screen (a page's text
@@ -3719,14 +3897,19 @@ impl Session {
                         effect
                     }
                     // Nothing to send (cannot happen for validated actions): verify anyway.
-                    None => self.observe(ObservePurpose::Verify(Box::new(pending)), false),
+                    None => self.verify_nothing_sent(now, pending),
                 }
             }
         }
     }
 
     /// Sends the follow-up commands of an action already under way.
-    fn continue_act(&mut self, mut queue: VecDeque<RunnerCommand>, pending: Pending) -> Out {
+    fn continue_act(
+        &mut self,
+        now: u64,
+        mut queue: VecDeque<RunnerCommand>,
+        pending: Pending,
+    ) -> Out {
         match queue.pop_front() {
             Some(first) => {
                 let effect = self.emit(first, Some(&pending));
@@ -3737,7 +3920,20 @@ impl Session {
                 };
                 effect
             }
-            None => self.observe(ObservePurpose::Verify(Box::new(pending)), false),
+            None => self.verify_nothing_sent(now, pending),
+        }
+    }
+
+    /// The verify look of an action none of whose commands is left to send (cannot happen
+    /// for validated actions): a look the session chooses (R24); refused, a failed step.
+    fn verify_nothing_sent(&mut self, now: u64, pending: Pending) -> Out {
+        let purpose = ObservePurpose::Verify(Box::new(pending.clone()));
+        match self.look_chosen(Chosen::NothingSent, purpose, false) {
+            Some(out) => out,
+            None => {
+                self.record_failure(&pending, prompt::RESULT_NOT_LOOKED);
+                self.decide(now)
+            }
         }
     }
 
@@ -3799,15 +3995,21 @@ impl Session {
                     // so results that load late are seen; Return is then gated while no
                     // denied app is among them.
                     let labels = self.result_labels();
-                    return self.observe(
-                        ObservePurpose::Settle(Box::new(Settle {
-                            pending: Box::new(pending),
-                            field: field_fp,
-                            labels,
-                            looks: 1,
-                        })),
-                        false,
-                    );
+                    let purpose = ObservePurpose::Settle(Box::new(Settle {
+                        pending: Box::new(pending.clone()),
+                        field: field_fp,
+                        labels,
+                        looks: 1,
+                    }));
+                    // Twenty-fourth review (R24): a look after a look, chosen by the session;
+                    // refused, Return is not pressed.
+                    return match self.look_chosen(Chosen::SearchSettle, purpose, false) {
+                        Some(out) => out,
+                        None => {
+                            self.record_failure(&pending, prompt::RESULT_RETURN_HELD);
+                            self.decide(now)
+                        }
+                    };
                 }
                 return self.gate_return(now, pending, field_fp);
             }
@@ -3860,7 +4062,7 @@ impl Session {
                 check.last = None;
                 check.looks = 0;
                 pending.check = Some(check);
-                return self.continue_act(queue, pending);
+                return self.continue_act(now, queue, pending);
             }
         }
         let shown = match &pending.action {
@@ -3910,7 +4112,7 @@ impl Session {
             let state = State::AwaitingTypeWait { pending };
             return self.interrupt(now, state, LockSignal::Reply, false);
         }
-        self.observe(ObservePurpose::Verify(pending), false)
+        self.observe(Owed::AfterCommand, ObservePurpose::Verify(pending))
     }
 
     /// Whether the home-screen label `label` is a denied app's app result or icon (see
@@ -4146,14 +4348,18 @@ impl Session {
         }
         match risk {
             Some(request) => self.ask_confirm(now, pending, request, None, None),
-            None if approved => self.look_then_act(pending, None),
-            None => self.execute(pending),
+            None if approved => self.look_then_act(now, pending, None),
+            None => self.execute(now, pending),
         }
     }
 
     /// Sends a runner command through [`TypedState::emit`], the one place one leaves the
     /// session (twelfth review; thirteenth review: enforced by [`Out`], see `crate::act`).
     fn emit(&mut self, cmd: RunnerCommand, pending: Option<&Pending>) -> Out {
+        // Twenty-fourth review (R24): a sent command is progress — a new stretch for the
+        // stale-screen guard's looks and failures.
+        self.stale_looks = 0;
+        self.stale_failures = 0;
         self.act
             .emit(cmd, pending, &self.current.screen.app_bundle_id)
     }
@@ -4250,15 +4456,19 @@ impl Session {
             self.record_failure(&pending, msg);
             return self.decide(now);
         }
-        self.observe(
-            ObservePurpose::Settle(Box::new(Settle {
-                pending,
-                field,
-                labels: fresh,
-                looks: looks.saturating_add(1),
-            })),
-            false,
-        )
+        let purpose = ObservePurpose::Settle(Box::new(Settle {
+            pending: pending.clone(),
+            field,
+            labels: fresh,
+            looks: looks.saturating_add(1),
+        }));
+        match self.look_chosen(Chosen::SearchSettle, purpose, false) {
+            Some(out) => out,
+            None => {
+                self.record_failure(&pending, prompt::RESULT_RETURN_HELD);
+                self.decide(now)
+            }
+        }
     }
 
     /// Compares the screen after an action with the one before it.
