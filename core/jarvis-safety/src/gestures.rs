@@ -75,6 +75,13 @@ pub enum GestureError {
         "the drag crosses a list row too narrow to swipe safely: a swipe long enough to register could trigger the row's full-swipe action (such as delete); nothing was sent, use the row's own buttons instead"
     )]
     RowTooNarrow,
+    /// Mac run 161 (P13e): the drag crosses a list row whose swipe actions are already
+    /// showing and moves the way the row was pulled: a second swipe the same way deleted
+    /// rows at 0.30 to 0.45 of their width, inside [`ROW_SWIPE_SHARE`]. Nothing is sent.
+    #[error(
+        "a list row's swipe actions are showing and this drag would pull that row further, which can trigger its full-swipe action (such as delete); nothing was sent: tap the action you mean, or tap the row to close it"
+    )]
+    RowActionsShowing,
 }
 
 /// Share of the screen height, from the bottom, that an element-less drag leaves to the
@@ -170,6 +177,24 @@ pub const MAX_SIDEWAYS_SHARE: f64 = 240.0 / 440.0;
 /// ([`GestureError::RowTooNarrow`]); the 200-pt column gets 90 pt. No real list row in the
 /// 305 trees captured by run 154 is narrower than 0.8 of its list (inset SwiftUI rows are
 /// 0.91); rows are `Cell`s directly under a `CollectionView` or a `Table`.
+///
+/// **These shares hold for a row at rest only.** Mac run 161 (P13e to P13g, same simulator):
+/// after a first drag of 0.30 of the row revealed its actions, a second drag the same way
+/// deleted the row at
+///
+/// | row (actions showing) | its cell shifted | second drag deleted at | shorter only kept it revealed |
+/// |---|---|---|---|
+/// | 400-pt inset row, one trailing action | -107 pt | 0.45 | yes |
+/// | 440-pt edge-to-edge row, one trailing action | -107 pt | 0.45 | yes |
+/// | 400-pt inset row, two trailing actions | -205 pt | 0.30 | yes |
+/// | 440-pt row, one leading action | +116 pt | 0.40 | yes |
+///
+/// and Jarvis's own bounded swipe made twice deleted the row in every kind tried (180 then
+/// 177 pt on a 400-pt row; a second runner swipe of 119 pt on the two-action row). A drag the
+/// other way closed it. So a drag through the band of a row whose actions show, the way it
+/// was pulled, is refused at any length ([`GestureError::RowActionsShowing`],
+/// `jarvis_safety::planned_drag`); the other way keeps this bound, which can carry the row
+/// at most `bound - shift` past closed (91 pt, 0.21 of the row, at worst).
 pub const ROW_SWIPE_SHARE: f64 = 0.45;
 
 /// Review pass 33 (F1): the longest travel across an **inset** row (a row narrower than 0.8

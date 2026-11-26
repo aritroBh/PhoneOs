@@ -1,0 +1,500 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 161, probe round 3 p13c-swipe-columns (`probe3-p13c-swipe-columns-02-revealed-1-tree.txt`), verbatim below this line.
+Q: After 66 % of the row (XCUITest drag, 200 ms) on Left row 1: the revealed actions (role, label, identifier, frame)
+capture 02 (revealed-1): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 2: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 243, XCUITest snapshot 373 ms
+types without a core role: Other×180
+note: probe round 3 p13c-swipe-columns, capture 02: revealed-1
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Swipe variants {{0, 62}, {440, 106}}
+                            Button "Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText "Swipe variants" {{20.0, 119.7}, {232.3, 40.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  StaticText "No swipe action yet" id=probe3.swipevariant.status {{145.3, 176}, {149.3, 20.3}}
+                                  CollectionView {{16, 204.3}, {200, 751.7}}
+                                    Other(Other) {{16, -1299}, {200, 3630.7}}
+                                    Cell {{-164, 204.3}, {200, 52}}
+                                      Other(Other) {{-164, 204.3}, {200, 52}}
+                                      Other(Other) {{-164, 204.3}, {200, 52}}
+                                        Other(Other) {{-164, 204.3}, {200, 52}}
+                                      Other(Other) {{-164, 204.3}, {200, 52}}
+                                        Other(Other) {{-164, 204.3}, {200, 52}}
+                                          Other(Other) {{-164, 204.3}, {200, 52}}
+                                            StaticText "Left row 1" {{-164, 204.3}, {200, 52}}
+                                    Other(Other) {{16, 204.3}, {200, 52}}
+                                      Other(Other) {{36, 204.3}, {180, 52}}
+                                        Other(Other) {{36, 204.3}, {180, 52}}
+                                          Other(Other) {{46.0, 204.3}, {68.3, 52}}
+                                            Button "Flag" id=flag {{45.8, 208.3}, {68.3, 44}}
+                                              StaticText "Flag" {{76.5, 222.3}, {25.7, 15.7}}
+                                          Other(Other) {{124.3, 204.3}, {81.7, 52}}
+                                            Button "Delete" id=trash {{124.0, 208.3}, {81.7, 44}}
+                                              StaticText "Delete" {{154.3, 222.3}, {39.3, 15.7}}
+                                    Other(Other) {{16, 204.3}, {200, 751.7}}
+                                      Other(Other) {{16, 808.2}, {200, 147.8}}
+                                    Other(Other) {{16, 204.3}, {200, 751.7}}
+                                    Cell {{16, 256.3}, {200, 52}}
+                                      Other(Other) {{16, 256.3}, {200, 52}}
+                                        Other(Other) {{16, 256.3}, {200, 52}}
+                                      Other(Other) {{16, 256.3}, {200, 52}}
+                                        Other(Other) {{16, 256.3}, {200, 52}}
+                                          Other(Other) {{16, 256.3}, {200, 52}}
+                                            StaticText "Left row 2" {{16, 256.3}, {200, 52}}
+                                    Cell {{16, 308.3}, {200, 52}}
+                                      Other(Other) {{16, 308.3}, {200, 52}}
+                                        Other(Other) {{16, 308.3}, {200, 52}}
+                                      Other(Other) {{16, 308.3}, {200, 52}}
+                                        Other(Other) {{16, 308.3}, {200, 52}}
+                                          Other(Other) {{16, 308.3}, {200, 52}}
+                                            StaticText "Left row 3" {{16, 308.3}, {200, 52}}
+                                    Other(Other) {{32, 307.3}, {168, 1}}
+                                    Cell {{16, 360.3}, {200, 52}}
+                                      Other(Other) {{16, 360.3}, {200, 52}}
+                                        Other(Other) {{16, 360.3}, {200, 52}}
+                                      Other(Other) {{16, 360.3}, {200, 52}}
+                                        Other(Other) {{16, 360.3}, {200, 52}}
+                                          Other(Other) {{16, 360.3}, {200, 52}}
+                                            StaticText "Left row 4" {{16, 360.3}, {200, 52}}
+                                    Other(Other) {{32, 359.3}, {168, 1}}
+                                    Cell {{16, 412.3}, {200, 52}}
+                                      Other(Other) {{16, 412.3}, {200, 52}}
+                                        Other(Other) {{16, 412.3}, {200, 52}}
+                                      Other(Other) {{16, 412.3}, {200, 52}}
+                                        Other(Other) {{16, 412.3}, {200, 52}}
+                                          Other(Other) {{16, 412.3}, {200, 52}}
+                                            StaticText "Left row 5" {{16, 412.3}, {200, 52}}
+                                    Other(Other) {{32, 411.3}, {168, 1}}
+                                    Cell {{16, 464.3}, {200, 52.0}}
+                                      Other(Other) {{16, 464.3}, {200, 52.0}}
+                                        Other(Other) {{16, 464.3}, {200, 52.0}}
+                                      Other(Other) {{16, 464.3}, {200, 52.0}}
+                                        Other(Other) {{16, 464.3}, {200, 52.0}}
+                                          Other(Other) {{16, 464.3}, {200, 52.0}}
+                                            StaticText "Left row 6" {{16, 464.3}, {200, 52.0}}
+                                    Other(Other) {{32, 463.3}, {168, 1}}
+                                    Cell {{16, 516.3}, {200, 52}}
+                                      Other(Other) {{16, 516.3}, {200, 52}}
+                                        Other(Other) {{16, 516.3}, {200, 52}}
+                                      Other(Other) {{16, 516.3}, {200, 52}}
+                                        Other(Other) {{16, 516.3}, {200, 52}}
+                                          Other(Other) {{16, 516.3}, {200, 52}}
+                                            StaticText "Left row 7" {{16, 516.3}, {200, 52}}
+                                    Other(Other) {{32, 515.3}, {168, 1}}
+                                    Cell {{16, 568.3}, {200, 52}}
+                                      Other(Other) {{16, 568.3}, {200, 52}}
+                                        Other(Other) {{16, 568.3}, {200, 52}}
+                                      Other(Other) {{16, 568.3}, {200, 52}}
+                                        Other(Other) {{16, 568.3}, {200, 52}}
+                                          Other(Other) {{16, 568.3}, {200, 52}}
+                                            StaticText "Left row 8" {{16, 568.3}, {200, 52}}
+                                    Other(Other) {{32, 567.3}, {168, 1}}
+                                    Cell {{16, 620.3}, {200, 52}}
+                                      Other(Other) {{16, 620.3}, {200, 52}}
+                                        Other(Other) {{16, 620.3}, {200, 52}}
+                                      Other(Other) {{16, 620.3}, {200, 52}}
+                                        Other(Other) {{16, 620.3}, {200, 52}}
+                                          Other(Other) {{16, 620.3}, {200, 52}}
+                                            StaticText "Left row 9" {{16, 620.3}, {200, 52}}
+                                    Other(Other) {{32, 619.3}, {168, 1}}
+                                    Cell {{16, 672.3}, {200, 52}}
+                                      Other(Other) {{16, 672.3}, {200, 52}}
+                                        Other(Other) {{16, 672.3}, {200, 52}}
+                                      Other(Other) {{16, 672.3}, {200, 52}}
+                                        Other(Other) {{16, 672.3}, {200, 52}}
+                                          Other(Other) {{16, 672.3}, {200, 52}}
+                                            StaticText "Left row 10" {{16, 672.3}, {200, 52}}
+                                    Other(Other) {{32, 671.3}, {168, 1}}
+                                    Cell {{16, 724.3}, {200, 52}}
+                                      Other(Other) {{16, 724.3}, {200, 52}}
+                                        Other(Other) {{16, 724.3}, {200, 52}}
+                                      Other(Other) {{16, 724.3}, {200, 52}}
+                                        Other(Other) {{16, 724.3}, {200, 52}}
+                                          Other(Other) {{16, 724.3}, {200, 52}}
+                                            StaticText "Left row 11" {{16, 724.3}, {200, 52}}
+                                    Other(Other) {{32, 723.3}, {168, 1}}
+                                    Cell {{16, 776.3}, {200, 52}}
+                                      Other(Other) {{16, 776.3}, {200, 52}}
+                                        Other(Other) {{16, 776.3}, {200, 52}}
+                                      Other(Other) {{16, 776.3}, {200, 52}}
+                                        Other(Other) {{16, 776.3}, {200, 52}}
+                                          Other(Other) {{16, 776.3}, {200, 52}}
+                                            StaticText "Left row 12" {{16, 776.3}, {200, 52}}
+                                    Other(Other) {{32, 775.3}, {168, 1}}
+                                    Other(Other) {{32, 827.3}, {168, 1}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{183, 204.3}, {30, 668.7}}
+                                      Other(Other) {{210, 252.0}, {3, 618}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{183, 204.3}, {30, 668.7}}
+                                      Other(Other) {{210, 252.0}, {3, 618}}
+                                  CollectionView {{224, 204.3}, {200, 751.7}}
+                                    Other(Other) {{224, -1299}, {200, 3422.7}}
+                                    Cell {{224, 204.3}, {200, 52}}
+                                      Other(Other) {{224, 204.3}, {200, 52}}
+                                        Other(Other) {{224, 204.3}, {200, 52}}
+                                      Other(Other) {{224, 204.3}, {200, 52}}
+                                        Other(Other) {{224, 204.3}, {200, 52}}
+                                          Other(Other) {{224, 204.3}, {200, 52}}
+                                            StaticText "Right row 1" {{224, 204.3}, {200, 52}}
+                                    Other(Other) {{224, 204.3}, {200, 751.7}}
+                                      Other(Other) {{224, 808.2}, {200, 147.8}}
+                                    Other(Other) {{224, 204.3}, {200, 751.7}}
+                                    Cell {{224, 256.3}, {200, 52}}
+                                      Other(Other) {{224, 256.3}, {200, 52}}
+                                        Other(Other) {{224, 256.3}, {200, 52}}
+                                      Other(Other) {{224, 256.3}, {200, 52}}
+                                        Other(Other) {{224, 256.3}, {200, 52}}
+                                          Other(Other) {{224, 256.3}, {200, 52}}
+                                            StaticText "Right row 2" {{224, 256.3}, {200, 52}}
+                                    Other(Other) {{240, 255.3}, {168, 1}}
+                                    Cell {{224, 308.3}, {200, 52}}
+                                      Other(Other) {{224, 308.3}, {200, 52}}
+                                        Other(Other) {{224, 308.3}, {200, 52}}
+                                      Other(Other) {{224, 308.3}, {200, 52}}
+                                        Other(Other) {{224, 308.3}, {200, 52}}
+                                          Other(Other) {{224, 308.3}, {200, 52}}
+                                            StaticText "Right row 3" {{224, 308.3}, {200, 52}}
+                                    Other(Other) {{240, 307.3}, {168, 1}}
+                                    Cell {{224, 360.3}, {200, 52}}
+                                      Other(Other) {{224, 360.3}, {200, 52}}
+                                        Other(Other) {{224, 360.3}, {200, 52}}
+                                      Other(Other) {{224, 360.3}, {200, 52}}
+                                        Other(Other) {{224, 360.3}, {200, 52}}
+                                          Other(Other) {{224, 360.3}, {200, 52}}
+                                            StaticText "Right row 4" {{224, 360.3}, {200, 52}}
+                                    Other(Other) {{240, 359.3}, {168, 1}}
+                                    Cell {{224, 412.3}, {200, 52}}
+                                      Other(Other) {{224, 412.3}, {200, 52}}
+                                        Other(Other) {{224, 412.3}, {200, 52}}
+                                      Other(Other) {{224, 412.3}, {200, 52}}
+                                        Other(Other) {{224, 412.3}, {200, 52}}
+                                          Other(Other) {{224, 412.3}, {200, 52}}
+                                            StaticText "Right row 5" {{224, 412.3}, {200, 52}}
+                                    Other(Other) {{240, 411.3}, {168, 1}}
+                                    Cell {{224, 464.3}, {200, 52.0}}
+                                      Other(Other) {{224, 464.3}, {200, 52.0}}
+                                        Other(Other) {{224, 464.3}, {200, 52.0}}
+                                      Other(Other) {{224, 464.3}, {200, 52.0}}
+                                        Other(Other) {{224, 464.3}, {200, 52.0}}
+                                          Other(Other) {{224, 464.3}, {200, 52.0}}
+                                            StaticText "Right row 6" {{224, 464.3}, {200, 52.0}}
+                                    Other(Other) {{240, 463.3}, {168, 1}}
+                                    Cell {{224, 516.3}, {200, 52}}
+                                      Other(Other) {{224, 516.3}, {200, 52}}
+                                        Other(Other) {{224, 516.3}, {200, 52}}
+                                      Other(Other) {{224, 516.3}, {200, 52}}
+                                        Other(Other) {{224, 516.3}, {200, 52}}
+                                          Other(Other) {{224, 516.3}, {200, 52}}
+                                            StaticText "Right row 7" {{224, 516.3}, {200, 52}}
+                                    Other(Other) {{240, 515.3}, {168, 1}}
+                                    Cell {{224, 568.3}, {200, 52}}
+                                      Other(Other) {{224, 568.3}, {200, 52}}
+                                        Other(Other) {{224, 568.3}, {200, 52}}
+                                      Other(Other) {{224, 568.3}, {200, 52}}
+                                        Other(Other) {{224, 568.3}, {200, 52}}
+                                          Other(Other) {{224, 568.3}, {200, 52}}
+                                            StaticText "Right row 8" {{224, 568.3}, {200, 52}}
+                                    Other(Other) {{240, 567.3}, {168, 1}}
+                                    Other(Other) {{240, 619.3}, {168, 1}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{391, 204.3}, {30, 668.7}}
+                                      Other(Other) {{418, 863}, {3, 7}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{391, 204.3}, {30, 668.7}}
+                                      Other(Other) {{418, 863}, {3, 7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image "sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button "Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 0}, {440, 956}}
+                          NavigationBar(21) id=Swipe variants {{0, 62}, {440, 106}}
+                            Button(9) label="Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText(48) label="Swipe variants" {{20.0, 119.7}, {232.3, 40.7}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+                              Other(1) {{0, 0}, {440, 956}}
+                                Other(1) {{0, 0}, {440, 956}}
+                                  StaticText(48) label="No swipe action yet" id=probe3.swipevariant.status {{145.3, 176}, {149.3, 20.3}}
+                                  CollectionView(32) {{16, 204.3}, {200, 751.7}}
+                                    Other(1) {{16, -1299}, {200, 3630.7}}
+                                    Cell(75) {{-164, 204.3}, {200, 52}}
+                                      Other(1) {{-164, 204.3}, {200, 52}}
+                                      Other(1) {{-164, 204.3}, {200, 52}}
+                                        Other(1) {{-164, 204.3}, {200, 52}}
+                                      Other(1) {{-164, 204.3}, {200, 52}}
+                                        Other(1) {{-164, 204.3}, {200, 52}}
+                                          Other(1) {{-164, 204.3}, {200, 52}}
+                                            StaticText(48) label="Left row 1" {{-164, 204.3}, {200, 52}}
+                                    Other(1) {{16, 204.3}, {200, 52}}
+                                      Other(1) {{36, 204.3}, {180, 52}}
+                                        Other(1) {{36, 204.3}, {180, 52}}
+                                          Other(1) {{46.0, 204.3}, {68.3, 52}}
+                                            Button(9) label="Flag" id=flag {{45.8, 208.3}, {68.3, 44}}
+                                              StaticText(48) label="Flag" {{76.5, 222.3}, {25.7, 15.7}}
+                                          Other(1) {{124.3, 204.3}, {81.7, 52}}
+                                            Button(9) label="Delete" id=trash {{124.0, 208.3}, {81.7, 44}}
+                                              StaticText(48) label="Delete" {{154.3, 222.3}, {39.3, 15.7}}
+                                    Other(1) {{16, 204.3}, {200, 751.7}}
+                                      Other(1) {{16, 808.2}, {200, 147.8}}
+                                    Other(1) {{16, 204.3}, {200, 751.7}}
+                                    Cell(75) {{16, 256.3}, {200, 52}}
+                                      Other(1) {{16, 256.3}, {200, 52}}
+                                        Other(1) {{16, 256.3}, {200, 52}}
+                                      Other(1) {{16, 256.3}, {200, 52}}
+                                        Other(1) {{16, 256.3}, {200, 52}}
+                                          Other(1) {{16, 256.3}, {200, 52}}
+                                            StaticText(48) label="Left row 2" {{16, 256.3}, {200, 52}}
+                                    Cell(75) {{16, 308.3}, {200, 52}}
+                                      Other(1) {{16, 308.3}, {200, 52}}
+                                        Other(1) {{16, 308.3}, {200, 52}}
+                                      Other(1) {{16, 308.3}, {200, 52}}
+                                        Other(1) {{16, 308.3}, {200, 52}}
+                                          Other(1) {{16, 308.3}, {200, 52}}
+                                            StaticText(48) label="Left row 3" {{16, 308.3}, {200, 52}}
+                                    Other(1) {{32, 307.3}, {168, 1}}
+                                    Cell(75) {{16, 360.3}, {200, 52}}
+                                      Other(1) {{16, 360.3}, {200, 52}}
+                                        Other(1) {{16, 360.3}, {200, 52}}
+                                      Other(1) {{16, 360.3}, {200, 52}}
+                                        Other(1) {{16, 360.3}, {200, 52}}
+                                          Other(1) {{16, 360.3}, {200, 52}}
+                                            StaticText(48) label="Left row 4" {{16, 360.3}, {200, 52}}
+                                    Other(1) {{32, 359.3}, {168, 1}}
+                                    Cell(75) {{16, 412.3}, {200, 52}}
+                                      Other(1) {{16, 412.3}, {200, 52}}
+                                        Other(1) {{16, 412.3}, {200, 52}}
+                                      Other(1) {{16, 412.3}, {200, 52}}
+                                        Other(1) {{16, 412.3}, {200, 52}}
+                                          Other(1) {{16, 412.3}, {200, 52}}
+                                            StaticText(48) label="Left row 5" {{16, 412.3}, {200, 52}}
+                                    Other(1) {{32, 411.3}, {168, 1}}
+                                    Cell(75) {{16, 464.3}, {200, 52.0}}
+                                      Other(1) {{16, 464.3}, {200, 52.0}}
+                                        Other(1) {{16, 464.3}, {200, 52.0}}
+                                      Other(1) {{16, 464.3}, {200, 52.0}}
+                                        Other(1) {{16, 464.3}, {200, 52.0}}
+                                          Other(1) {{16, 464.3}, {200, 52.0}}
+                                            StaticText(48) label="Left row 6" {{16, 464.3}, {200, 52.0}}
+                                    Other(1) {{32, 463.3}, {168, 1}}
+                                    Cell(75) {{16, 516.3}, {200, 52}}
+                                      Other(1) {{16, 516.3}, {200, 52}}
+                                        Other(1) {{16, 516.3}, {200, 52}}
+                                      Other(1) {{16, 516.3}, {200, 52}}
+                                        Other(1) {{16, 516.3}, {200, 52}}
+                                          Other(1) {{16, 516.3}, {200, 52}}
+                                            StaticText(48) label="Left row 7" {{16, 516.3}, {200, 52}}
+                                    Other(1) {{32, 515.3}, {168, 1}}
+                                    Cell(75) {{16, 568.3}, {200, 52}}
+                                      Other(1) {{16, 568.3}, {200, 52}}
+                                        Other(1) {{16, 568.3}, {200, 52}}
+                                      Other(1) {{16, 568.3}, {200, 52}}
+                                        Other(1) {{16, 568.3}, {200, 52}}
+                                          Other(1) {{16, 568.3}, {200, 52}}
+                                            StaticText(48) label="Left row 8" {{16, 568.3}, {200, 52}}
+                                    Other(1) {{32, 567.3}, {168, 1}}
+                                    Cell(75) {{16, 620.3}, {200, 52}}
+                                      Other(1) {{16, 620.3}, {200, 52}}
+                                        Other(1) {{16, 620.3}, {200, 52}}
+                                      Other(1) {{16, 620.3}, {200, 52}}
+                                        Other(1) {{16, 620.3}, {200, 52}}
+                                          Other(1) {{16, 620.3}, {200, 52}}
+                                            StaticText(48) label="Left row 9" {{16, 620.3}, {200, 52}}
+                                    Other(1) {{32, 619.3}, {168, 1}}
+                                    Cell(75) {{16, 672.3}, {200, 52}}
+                                      Other(1) {{16, 672.3}, {200, 52}}
+                                        Other(1) {{16, 672.3}, {200, 52}}
+                                      Other(1) {{16, 672.3}, {200, 52}}
+                                        Other(1) {{16, 672.3}, {200, 52}}
+                                          Other(1) {{16, 672.3}, {200, 52}}
+                                            StaticText(48) label="Left row 10" {{16, 672.3}, {200, 52}}
+                                    Other(1) {{32, 671.3}, {168, 1}}
+                                    Cell(75) {{16, 724.3}, {200, 52}}
+                                      Other(1) {{16, 724.3}, {200, 52}}
+                                        Other(1) {{16, 724.3}, {200, 52}}
+                                      Other(1) {{16, 724.3}, {200, 52}}
+                                        Other(1) {{16, 724.3}, {200, 52}}
+                                          Other(1) {{16, 724.3}, {200, 52}}
+                                            StaticText(48) label="Left row 11" {{16, 724.3}, {200, 52}}
+                                    Other(1) {{32, 723.3}, {168, 1}}
+                                    Cell(75) {{16, 776.3}, {200, 52}}
+                                      Other(1) {{16, 776.3}, {200, 52}}
+                                        Other(1) {{16, 776.3}, {200, 52}}
+                                      Other(1) {{16, 776.3}, {200, 52}}
+                                        Other(1) {{16, 776.3}, {200, 52}}
+                                          Other(1) {{16, 776.3}, {200, 52}}
+                                            StaticText(48) label="Left row 12" {{16, 776.3}, {200, 52}}
+                                    Other(1) {{32, 775.3}, {168, 1}}
+                                    Other(1) {{32, 827.3}, {168, 1}}
+                                    Other(1) label="Vertical scroll bar, 1 page" value="0%" {{183, 204.3}, {30, 668.7}}
+                                      Other(1) {{210, 252.0}, {3, 618}}
+                                    Other(1) label="Vertical scroll bar, 1 page" value="0%" {{183, 204.3}, {30, 668.7}}
+                                      Other(1) {{210, 252.0}, {3, 618}}
+                                  CollectionView(32) {{224, 204.3}, {200, 751.7}}
+                                    Other(1) {{224, -1299}, {200, 3422.7}}
+                                    Cell(75) {{224, 204.3}, {200, 52}}
+                                      Other(1) {{224, 204.3}, {200, 52}}
+                                        Other(1) {{224, 204.3}, {200, 52}}
+                                      Other(1) {{224, 204.3}, {200, 52}}
+                                        Other(1) {{224, 204.3}, {200, 52}}
+                                          Other(1) {{224, 204.3}, {200, 52}}
+                                            StaticText(48) label="Right row 1" {{224, 204.3}, {200, 52}}
+                                    Other(1) {{224, 204.3}, {200, 751.7}}
+                                      Other(1) {{224, 808.2}, {200, 147.8}}
+                                    Other(1) {{224, 204.3}, {200, 751.7}}
+                                    Cell(75) {{224, 256.3}, {200, 52}}
+                                      Other(1) {{224, 256.3}, {200, 52}}
+                                        Other(1) {{224, 256.3}, {200, 52}}
+                                      Other(1) {{224, 256.3}, {200, 52}}
+                                        Other(1) {{224, 256.3}, {200, 52}}
+                                          Other(1) {{224, 256.3}, {200, 52}}
+                                            StaticText(48) label="Right row 2" {{224, 256.3}, {200, 52}}
+                                    Other(1) {{240, 255.3}, {168, 1}}
+                                    Cell(75) {{224, 308.3}, {200, 52}}
+                                      Other(1) {{224, 308.3}, {200, 52}}
+                                        Other(1) {{224, 308.3}, {200, 52}}
+                                      Other(1) {{224, 308.3}, {200, 52}}
+                                        Other(1) {{224, 308.3}, {200, 52}}
+                                          Other(1) {{224, 308.3}, {200, 52}}
+                                            StaticText(48) label="Right row 3" {{224, 308.3}, {200, 52}}
+                                    Other(1) {{240, 307.3}, {168, 1}}
+                                    Cell(75) {{224, 360.3}, {200, 52}}
+                                      Other(1) {{224, 360.3}, {200, 52}}
+                                        Other(1) {{224, 360.3}, {200, 52}}
+                                      Other(1) {{224, 360.3}, {200, 52}}
+                                        Other(1) {{224, 360.3}, {200, 52}}
+                                          Other(1) {{224, 360.3}, {200, 52}}
+                                            StaticText(48) label="Right row 4" {{224, 360.3}, {200, 52}}
+                                    Other(1) {{240, 359.3}, {168, 1}}
+                                    Cell(75) {{224, 412.3}, {200, 52}}
+                                      Other(1) {{224, 412.3}, {200, 52}}
+                                        Other(1) {{224, 412.3}, {200, 52}}
+                                      Other(1) {{224, 412.3}, {200, 52}}
+                                        Other(1) {{224, 412.3}, {200, 52}}
+                                          Other(1) {{224, 412.3}, {200, 52}}
+                                            StaticText(48) label="Right row 5" {{224, 412.3}, {200, 52}}
+                                    Other(1) {{240, 411.3}, {168, 1}}
+                                    Cell(75) {{224, 464.3}, {200, 52.0}}
+                                      Other(1) {{224, 464.3}, {200, 52.0}}
+                                        Other(1) {{224, 464.3}, {200, 52.0}}
+                                      Other(1) {{224, 464.3}, {200, 52.0}}
+                                        Other(1) {{224, 464.3}, {200, 52.0}}
+                                          Other(1) {{224, 464.3}, {200, 52.0}}
+                                            StaticText(48) label="Right row 6" {{224, 464.3}, {200, 52.0}}
+                                    Other(1) {{240, 463.3}, {168, 1}}
+                                    Cell(75) {{224, 516.3}, {200, 52}}
+                                      Other(1) {{224, 516.3}, {200, 52}}
+                                        Other(1) {{224, 516.3}, {200, 52}}
+                                      Other(1) {{224, 516.3}, {200, 52}}
+                                        Other(1) {{224, 516.3}, {200, 52}}
+                                          Other(1) {{224, 516.3}, {200, 52}}
+                                            StaticText(48) label="Right row 7" {{224, 516.3}, {200, 52}}
+                                    Other(1) {{240, 515.3}, {168, 1}}
+                                    Cell(75) {{224, 568.3}, {200, 52}}
+                                      Other(1) {{224, 568.3}, {200, 52}}
+                                        Other(1) {{224, 568.3}, {200, 52}}
+                                      Other(1) {{224, 568.3}, {200, 52}}
+                                        Other(1) {{224, 568.3}, {200, 52}}
+                                          Other(1) {{224, 568.3}, {200, 52}}
+                                            StaticText(48) label="Right row 8" {{224, 568.3}, {200, 52}}
+                                    Other(1) {{240, 567.3}, {168, 1}}
+                                    Other(1) {{240, 619.3}, {168, 1}}
+                                    Other(1) label="Vertical scroll bar, 1 page" value="0%" {{391, 204.3}, {30, 668.7}}
+                                      Other(1) {{418, 863}, {3, 7}}
+                                    Other(1) label="Vertical scroll bar, 1 page" value="0%" {{391, 204.3}, {30, 668.7}}
+                                      Other(1) {{418, 863}, {3, 7}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 873}, {440, 83}}
+                Other(1) {{0, 0}, {440, 956}}
+                  TabBar(22) label="Tab Bar" {{0, 873}, {440, 83}}
+                    Other(1) {{21, 873}, {398, 62}}
+                      Other(1) {{21, 873}, {89.7, 54}}
+                      Other(1) {{21, 873}, {398, 62}}
+                        Button(9) label="Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image(43) label="hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button(9) label="Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image(43) label="message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button(9) label="Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image(43) label="sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button(9) label="Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image(43) label="grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button(9) label="Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image(43) label="edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(1) {{25, 877}, {89.7, 54}}
+                        Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                                Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                Other(1) {{0, 873}, {440, 83}}
+                  Other(1) {{0, 873}, {440, 83}}
+                    Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}
+                          Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}

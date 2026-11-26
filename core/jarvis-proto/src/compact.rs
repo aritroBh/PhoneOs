@@ -253,6 +253,13 @@ pub struct RawNode {
     /// list row (`jarvis_safety`'s row-swipe rule).
     #[serde(default)]
     pub in_cell: bool,
+    /// Mac run 161 (iOS 26.5): for a `Cell`, `Table` or `CollectionView`, its whole frame
+    /// when the part on screen ([`RawNode::frame`]) is less: a row whose swipe actions are
+    /// showing is shifted sideways out of its list (`{-87.3, 226.3} 400 x 52` in a 440-pt
+    /// list), which the clipped frame hides (`jarvis_safety`'s revealed-row rule). `None`
+    /// for other roles, and when the whole frame is on screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whole: Option<Rect>,
 }
 
 /// A text input of the raw tree a compact screen was built from, listed or not (eighth

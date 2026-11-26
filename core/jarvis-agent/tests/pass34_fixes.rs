@@ -492,6 +492,12 @@ fn f1_forged_neighbours_of_squarish_rows_never_lift_the_bound() {
                                 "{w}x{h} {name} {frame:?}: refused"
                             );
                         }
+                        // Mac run 161 (stricter): a cell reaching past its list's side with
+                        // no cell beside it at a carousel's spacing reads as a row whose
+                        // swipe actions show: a drag the way it reaches is refused.
+                        Err(GestureError::RowActionsShowing) => {
+                            assert_eq!(name, "partly off screen", "{w}x{h} {frame:?}");
+                        }
                         Err(e) => panic!("{w}x{h} {name}: {e}"),
                     }
                 }

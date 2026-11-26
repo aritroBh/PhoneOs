@@ -449,6 +449,7 @@ fn scrolled_nodes(s: &CompactScreen, bars: &[BarNode]) -> Vec<RawNode> {
         grid_cell: false,
         symbol: None,
         in_cell: false,
+        whole: None,
     };
     let mut v = vec![
         raw(0, Role::Application, full, None),

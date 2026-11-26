@@ -35,7 +35,8 @@
 //! `selected`, `on_tap`, `on_submit`, `bind` (state variable edited by typing; makes the
 //! element a text input that takes focus when tapped), `secure`, `layout`, `gap`, `scroll`,
 //! `for_each`, `item`, `switch` (state variable shown as an on/off switch inside a row),
-//! `opaque` (swallows taps that reach it) and `children`.
+//! `opaque` (swallows taps that reach it), `reveal`, `actions` and `on_full_swipe` (a row's
+//! swipe actions, see [`ElementDef::reveal`]) and `children`.
 //!
 //! All string fields are templates, see [`crate::expr`]: `{wifi ? '1' : '0'}`, `{total|money}`.
 //!
@@ -155,6 +156,22 @@ pub struct ElementDef {
     pub switch: Option<String>,
     /// Swallows taps that reach it even without effects.
     pub opaque: bool,
+    /// Row only (Mac run 161, a SwiftUI row with `.swipeActions`): a state variable
+    /// (template) holding whether the row's trailing swipe actions are showing. A
+    /// horizontal swipe starting on the row reveals, closes or full-swipes it
+    /// (`SimPhone`'s swipe: a leftward drag of 40 pt up to under 0.60 of the row reveals,
+    /// 0.60 or more is a full swipe; once revealed, 0.45 or more — 0.30 with two actions — is
+    /// a full swipe, a rightward drag closes). While revealed the row's cell is drawn shifted
+    /// left by 107 pt (one action; 205 with two) and the actions lie in a sibling `Other`
+    /// at the row's rest frame, after the cell, as on iOS 26.5; a tap on the shifted row
+    /// closes it.
+    pub reveal: Option<String>,
+    /// Row with `reveal` only: the trailing swipe actions shown while revealed (rightmost
+    /// last); each is built like any element (its own `on_tap`).
+    pub actions: Vec<ElementDef>,
+    /// Row with `reveal` only: the effects of a full swipe (the row's state variable is
+    /// reset first).
+    pub on_full_swipe: Vec<Effect>,
     /// Child elements.
     pub children: Vec<ElementDef>,
 }

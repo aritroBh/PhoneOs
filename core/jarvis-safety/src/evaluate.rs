@@ -357,9 +357,20 @@ pub fn not_owner_note() -> QuestionRow {
 pub const ROW_SWIPE_NOTE: &str =
     "The drag crosses a list row: it may trigger the row's swipe action (on measured lists a swipe of 0.60 to 0.69 of the row deleted it)";
 
-fn row_swipe_note() -> QuestionRow {
-    row(QuestionRowKind::Note, &format!(". {ROW_SWIPE_NOTE}"))
+fn row_swipe_note(showing: bool) -> QuestionRow {
+    let note = if showing {
+        ROW_ACTIONS_NOTE
+    } else {
+        ROW_SWIPE_NOTE
+    };
+    row(QuestionRowKind::Note, &format!(". {note}"))
 }
+
+/// Mac run 161: the note of a question about a sideways drag across a list row whose swipe
+/// actions are already showing (in place of [`ROW_SWIPE_NOTE`], whose shares were measured
+/// from a row at rest). Only a drag that closes them is ever sent ([`planned_drag`]).
+pub const ROW_ACTIONS_NOTE: &str =
+    "The drag crosses a list row whose swipe actions are showing: it may close them or trigger one of them";
 
 /// Review pass 31 (M2): the note of a question about a point or a drag over more than
 /// `MAX_SCANNED_CONTROLS` controls: how many, and the riskiest found (never one arbitrary
@@ -417,8 +428,8 @@ pub fn round3_question_notes(
     tree: Option<&ScreenTree<'_>>,
 ) -> Vec<QuestionRow> {
     let mut out = Vec::new();
-    if crosses_list_row(action, screen, tree) {
-        out.push(row_swipe_note());
+    if let Some(showing) = row_swipe(action, screen, tree) {
+        out.push(row_swipe_note(showing));
     }
     if let Some(many) = crate::classify::many_controls(action, screen) {
         out.push(many_controls_note(&many));
@@ -455,15 +466,23 @@ pub(crate) fn crosses_list_row(
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
 ) -> bool {
-    let Some((kind, direction, element)) = sideways_drag(action) else {
-        return false;
-    };
+    row_swipe(action, screen, tree).is_some()
+}
+
+/// Mac run 161: [`crosses_list_row`]'s reading with what it found: `Some(true)` when the
+/// path crosses the band of a row whose swipe actions are showing ([`revealed_rows`]),
+/// `Some(false)` for any other row, `None` when it is no row swipe.
+fn row_swipe(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> Option<bool> {
+    let (kind, direction, element) = sideways_drag(action)?;
     let target = element.and_then(|i| screen.get(i));
-    let Ok(g) = crate::gestures::drag_gesture(kind, direction, target.map(|e| e.frame), screen)
-    else {
-        return false;
-    };
-    crossed_rows(g, screen, tree).is_some_and(|c| c.any)
+    let g = crate::gestures::drag_gesture(kind, direction, target.map(|e| e.frame), screen).ok()?;
+    crossed_rows(g, screen, tree)
+        .filter(|c| c.any)
+        .map(|c| c.shown_left || c.shown_right)
 }
 
 /// The gesture kind, direction and element of a scroll or swipe whose finger moves
@@ -509,6 +528,8 @@ fn sideways_drag(
 /// | **grid cell**: an inset row that is squarish ([`ROW_SHAPE_MIN_ASPECT`], by its frame and by its drawn height) and no wider than an alike pair of cells side by side in its list ([`grid_widths`]) ([`CrossedRows::floor_width`]) | `max(S·w, T)` | never |
 /// | **no row**: what a list holds directly that holds no text and no control, or is narrower than `GRID_CELL_MIN_WIDTH` (a scroll indicator, a separator) ([`CrossedRows::floor_width`]) | `max(S·w, T)` | never |
 /// | a pager's page (a row by shape of a scroll view that fills its height), or nothing crossed | the screen cap | — |
+/// | Mac run 161: the band of a row whose swipe actions are showing ([`revealed_rows`]), the way it was pulled | — | always ([`crate::gestures::GestureError::RowActionsShowing`]) |
+/// | the same band the other way (closing) | the bound of the cells crossed, as above | as above |
 ///
 /// From 146 pt up every crossed cell's bound is at most `M` of it (80 / 146 < 0.55), below
 /// every measured delete share (0.60 to 0.69, run 154). The grid signal no longer lifts a
@@ -523,13 +544,30 @@ pub fn planned_drag(
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
 ) -> Result<crate::gestures::Gesture, crate::gestures::GestureError> {
+    let g = crate::gestures::drag_gesture(kind, direction, frame, screen)?;
+    planned_path(
+        g,
+        crate::gestures::finger_direction(kind, direction),
+        screen,
+        tree,
+    )
+}
+
+/// [`planned_drag`]'s bound and refusals for the path `g` (the reach) whose finger moves
+/// `finger`: `g` unchanged when it is not sideways; else cut to the bound of the rows it
+/// crosses, or refused. Public so a path of any length can be checked (the tests sweep
+/// them); the session only ever sends [`planned_drag`]'s.
+pub fn planned_path(
+    g: crate::gestures::Gesture,
+    finger: jarvis_proto::Direction,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> Result<crate::gestures::Gesture, crate::gestures::GestureError> {
     use crate::gestures::{
-        drag_gesture, finger_direction, shortened, GestureError, INSET_ROW_MAX_SHARE, MIN_TRAVEL,
-        ROW_SWIPE_SHARE,
+        shortened, GestureError, INSET_ROW_MAX_SHARE, MIN_TRAVEL, ROW_SWIPE_SHARE,
     };
-    let g = drag_gesture(kind, direction, frame, screen)?;
     if !matches!(
-        finger_direction(kind, direction),
+        finger,
         jarvis_proto::Direction::Left | jarvis_proto::Direction::Right
     ) {
         return Ok(g);
@@ -537,6 +575,28 @@ pub fn planned_drag(
     let Some(c) = crossed_rows(g, screen, tree) else {
         return Ok(g);
     };
+    // Mac run 161 (P13e): a row whose swipe actions show is not swiped further. From there a
+    // second drag the same way deleted at 0.45 of the row (one trailing action, 400- and
+    // 440-pt rows), 0.30 (two trailing actions) and 0.40 (one leading action) — inside the
+    // bounds below, which were measured from a row at rest (Jarvis's own bounded swipe made
+    // twice deleted in every kind tried). Any path through the band of such a row in the
+    // direction it was pulled is refused, whatever its length.
+    //
+    // The other way (closing) keeps the bound below, measured from rest. It is safe: the
+    // row starts displaced *against* the drag by its shift `d` (107 to 205 pt measured), so
+    // a drag of travel `b` can carry the row at most `b - d` past "closed" into the other
+    // side's actions (a row with leading and trailing actions), always less than the `b`
+    // judged safe from rest. Worst case measured: an edge-to-edge 440-pt row with one
+    // trailing action (`d` = 107) gets `b` = 0.45 x 440 = 198 pt, at most 91 pt (0.21 of
+    // the row) past closed; a 400-pt row 180 - 107 = 73 pt (0.18); a leading row (`d` =
+    // 116) dragged left 198 - 116 = 82 pt (0.19) — against 0.60 to 0.69 measured to delete
+    // from rest and 0.30 that only revealed. An inset or grid bound (at most 0.55 of the
+    // cell) is the same argument.
+    if (finger == jarvis_proto::Direction::Left && c.shown_left)
+        || (finger == jarvis_proto::Direction::Right && c.shown_right)
+    {
+        return Err(GestureError::RowActionsShowing);
+    }
     let mut bound = f64::INFINITY;
     if let Some(width) = c.list_width {
         let b = ROW_SWIPE_SHARE * width;
@@ -603,6 +663,227 @@ struct CrossedRows {
     /// Review pass 34 (F1): a grid cell is bounded too (it lifted the bound to the screen
     /// cap before).
     floor_width: Option<f64>,
+    /// Mac run 161: the path crosses the band of a row whose swipe actions are showing,
+    /// pulled to the left (its trailing actions show) — [`revealed_rows`]. A drag whose
+    /// finger moves left is refused ([`planned_drag`]).
+    shown_left: bool,
+    /// Mac run 161: the same, pulled to the right (its leading actions show).
+    shown_right: bool,
+}
+
+/// Mac run 161 (iOS 26.5, iPhone 17 Pro Max, SwiftUI `List` with `.swipeActions`): how far
+/// (in points) a row's `Cell` must reach past its list's side to read as pulled sideways.
+/// Real rows at rest lie inside their list (inset rows 20 pt in, edge-to-edge rows at 0);
+/// a revealed row was shifted 107 pt (one trailing action), 205 pt (two) or 116 pt (one
+/// leading), i.e. 87 to 205 pt past the side of its 440-pt list.
+const REVEAL_TOLERANCE: f64 = 4.0;
+/// Mac run 161: the widest gap between a cell reaching past its list and the next cell of
+/// its list on the side it moved away from for the pair to read as a carousel's or pager's
+/// (they scroll together, so their layout spacing stays: 0 for a pager, about 8 to 20 pt
+/// for a carousel). A revealed row leaves at least its shift (107 pt and up, measured)
+/// between itself and any cell beside its rest frame (a two-column list's other column).
+const CAROUSEL_GAP: f64 = 40.0;
+/// Mac run 161: at most this many crossed cells that reach past their list are checked for
+/// a neighbour in the band they vacated ([`revealed_rows`], each check reads the list's
+/// cells once); past it, a crossed cell that reaches past its list reads as revealed (fail
+/// closed: refused that way). A real drag crosses one row of a list, or two cells of a
+/// carousel's edge.
+const REVEAL_CHECKS: usize = 32;
+/// Mac run 161: at most this many crossed cells' rows are read for an action container
+/// ([`revealed_rows`]; each button checked reads them): the second reading is a weaker,
+/// added signal, so past it the remaining rows are left to the first.
+const REVEAL_BANDS: usize = 64;
+
+/// Mac run 161: whether the sideways path over `x0..=x1` × `y0..=y1` crosses the band of a
+/// list row whose swipe actions are showing, and which way that row was pulled: `(left,
+/// right)`. Measured (probe P13f): while a row's actions show, its `Cell` keeps its size
+/// and is shifted sideways out of its list (`{20, 226.3} 400 x 52` → `{-87.3, 226.3}` with
+/// one trailing action, `{-184.7, …}` with two, `{0, 191} 440 x 52` → `{116, 191}` with a
+/// leading one); the action `Button`s are **not** in the `Cell` but in a sibling `Other`
+/// (`Other > Other > Other > Button`) at the row's rest frame, a direct child of the same
+/// list after the `Cell`; the `Cell`'s only other change is one more child. Two readings,
+/// either one enough:
+///
+/// 1. **A shifted cell**: a drawn `Cell` whose nearest scrollable ancestor is a `Table` or
+///    `CollectionView` and whose whole frame (`RawNode::whole`) reaches more than
+///    [`REVEAL_TOLERANCE`] past its list's left (pulled left) or right (pulled right) side,
+///    while no other `Cell` of that list fills the band it vacated: one in the cell's rows
+///    (overlapping it by half the smaller height) that follows it on the side it moved
+///    away from, at most [`CAROUSEL_GAP`] from it. In a carousel or pager the neighbouring
+///    cell does (they scroll together), so a carousel's or pager's edge cell does not read
+///    as revealed; a revealed row's neighbours are a whole shift away. A cell past both
+///    sides, or with a frame that is not a number, reads as pulled both ways (unsure: fail
+///    closed). Missed: a shifted row that stays inside its list (a two-column list's right
+///    column in one list), left to the second reading.
+/// 2. **An action container** (weaker; not required — UIKit tables, Mail and Messages may
+///    place actions differently, not measured): a drawn `Button` held by no `Cell`, whose
+///    nearest scrollable ancestor is a `Table` or `CollectionView` and which lies inside a
+///    direct child of that list (no wider in height than a row), with its centre in the
+///    rows of a `Cell` of that list: that band is revealed, pulled left when the container's
+///    buttons hug its trailing edge (trailing actions), right when they hug its leading
+///    edge, both ways when neither.
+///
+/// A band is the row's rows across its whole list's width (a drag over the buttons' side
+/// crosses it, not only one over the shifted cell). Linear in the drawn nodes, plus at most
+/// [`REVEAL_CHECKS`] scans of the cells; read for sideways drags only.
+fn revealed_rows(
+    t: &ScreenTree<'_>,
+    nearest: &[u32],
+    (x0, x1, y0, y1): (f64, f64, f64, f64),
+    row_height: f64,
+) -> (bool, bool) {
+    let list_frame = |s: u32| {
+        (s != u32::MAX)
+            .then(|| crate::hit::raw_node(t, s))
+            .flatten()
+            .filter(|n| matches!(n.role, Role::Table | Role::CollectionView))
+            .map(|n| n.whole.unwrap_or(n.frame))
+    };
+    let list_of = |n: u32| {
+        usize::try_from(n)
+            .ok()
+            .and_then(|k| nearest.get(k))
+            .copied()
+            .unwrap_or(u32::MAX)
+    };
+    // The band of a row of frame `f` in a list of frame `l` crosses the path: its rows,
+    // across the list and the row itself (a shifted row reaches out of its list).
+    let crossed = |f: jarvis_proto::Rect, l: jarvis_proto::Rect| {
+        f.y <= y1 && f.max_y() >= y0 && l.x.min(f.x) <= x1 && l.max_x().max(f.max_x()) >= x0
+    };
+    // Every drawn cell of a list: (list, whole frame).
+    let mut cells: Vec<(u32, jarvis_proto::Rect)> = Vec::new();
+    for n in t.nodes {
+        if n.role != Role::Cell || n.keyboard || n.frame.is_empty() {
+            continue;
+        }
+        let s = list_of(n.node);
+        if list_frame(s).is_some() {
+            cells.push((s, n.whole.unwrap_or(n.frame)));
+        }
+    }
+    // The crossed ones: (list, whole frame, the list's frame).
+    let bands: Vec<(u32, jarvis_proto::Rect, jarvis_proto::Rect)> = cells
+        .iter()
+        .filter_map(|&(s, f)| list_frame(s).filter(|&l| crossed(f, l)).map(|l| (s, f, l)))
+        .collect();
+    if bands.is_empty() {
+        return (false, false);
+    }
+    let (mut left, mut right) = (false, false);
+    let rows_meet = |a: jarvis_proto::Rect, b: jarvis_proto::Rect| {
+        a.max_y().min(b.max_y()) - a.y.max(b.y) >= 0.5 * a.height.min(b.height)
+    };
+    // 1. Shifted cells.
+    let mut checks = 0usize;
+    for &(s, f, l) in &bands {
+        let out_left = f.x < l.x - REVEAL_TOLERANCE;
+        let out_right = f.max_x() > l.max_x() + REVEAL_TOLERANCE;
+        // Not a number reads as past both sides (fail closed).
+        let unknown = !(f.x.is_finite() && f.width.is_finite() && l.x.is_finite());
+        if !(out_left || out_right || unknown) {
+            continue;
+        }
+        if unknown || (out_left && out_right) {
+            left = true;
+            right = true;
+            continue;
+        }
+        // The band the cell vacated is filled when another cell of its list in its rows
+        // follows it on that side at a carousel's spacing (the cells scroll together).
+        checks += 1;
+        let filled = checks <= REVEAL_CHECKS
+            && cells.iter().any(|&(s2, g)| {
+                let gap = if out_left {
+                    g.x - f.max_x()
+                } else {
+                    f.x - g.max_x()
+                };
+                s2 == s
+                    && g != f
+                    && rows_meet(f, g)
+                    && (-REVEAL_TOLERANCE..=CAROUSEL_GAP).contains(&gap)
+            });
+        if !filled {
+            left |= out_left;
+            right |= out_right;
+        }
+    }
+    // 2. Action containers: a drawn button no cell holds, inside a direct child of its
+    //    list, in the rows of a cell whose band the path crosses.
+    // The direct child of a list holding each node (`u32::MAX`: none), in node order.
+    let mut child: Vec<u32> = Vec::with_capacity(t.parents.len());
+    for (i, &p) in t.parents.iter().enumerate() {
+        let parent = usize::try_from(p).ok().filter(|&k| p != u32::MAX && k < i);
+        let c = match parent {
+            Some(k) => {
+                if list_frame(p).is_some() {
+                    u32::try_from(i).unwrap_or(u32::MAX)
+                } else {
+                    child.get(k).copied().unwrap_or(u32::MAX)
+                }
+            }
+            None => u32::MAX,
+        };
+        child.push(c);
+    }
+    // Per container: (container, its frame, its buttons' union).
+    let mut groups: Vec<(u32, jarvis_proto::Rect, jarvis_proto::Rect)> = Vec::new();
+    for n in t.nodes {
+        if n.role != Role::Button || n.keyboard || n.in_cell || n.frame.is_empty() {
+            continue;
+        }
+        let s = list_of(n.node);
+        let Some(l) = list_frame(s) else { continue };
+        let c = usize::try_from(n.node)
+            .ok()
+            .and_then(|k| child.get(k))
+            .copied()
+            .unwrap_or(u32::MAX);
+        // The container is a direct child of this same list (no other list between).
+        let direct = usize::try_from(c)
+            .ok()
+            .and_then(|k| t.parents.get(k))
+            .is_some_and(|&p| p == s);
+        if !direct
+            || crate::hit::raw_node(t, c)
+                .is_some_and(|k| k.role == Role::Cell || k.frame.height > row_height)
+        {
+            continue;
+        }
+        let centre = n.frame.center();
+        let in_band = bands
+            .iter()
+            .take(REVEAL_BANDS)
+            .any(|&(s2, f, _)| s2 == s && centre.y >= f.y && centre.y <= f.max_y());
+        if !in_band {
+            continue;
+        }
+        // The container's buttons together (a subtree's nodes are contiguous).
+        let side = crate::hit::raw_node(t, c).map_or(l, |k| k.frame);
+        match groups.last_mut() {
+            Some(g) if g.0 == c => {
+                let (x0, x1) = (g.2.x.min(n.frame.x), g.2.max_x().max(n.frame.max_x()));
+                g.2 = jarvis_proto::Rect::new(x0, g.2.y, x1 - x0, g.2.height);
+            }
+            _ => groups.push((c, side, n.frame)),
+        }
+    }
+    // Which side the buttons hug: the trailing actions end at the row's trailing edge (P13f:
+    // "Flag" and "Delete" span 225.3 to 409.7 of a 20 to 420 container), the leading ones
+    // start at its leading edge (10 to 106 of 0 to 440). Even: both ways (fail closed).
+    for (_, side, b) in groups {
+        let (gap_left, gap_right) = (b.x - side.x, side.max_x() - b.max_x());
+        match gap_right.partial_cmp(&gap_left) {
+            Some(std::cmp::Ordering::Less) => left = true,
+            Some(std::cmp::Ordering::Greater) => right = true,
+            _ => {
+                left = true;
+                right = true;
+            }
+        }
+    }
+    (left, right)
 }
 
 /// Review pass 31 (L2): a row by shape of a scroll view that fills at least this share of
@@ -928,6 +1209,9 @@ fn crossed_rows(
         v.get(i).is_some_and(|&j| j < end)
     };
     let mut out = CrossedRows::default();
+    // Mac run 161: a row whose swipe actions show; crossing its band is a row swipe too.
+    (out.shown_left, out.shown_right) = revealed_rows(t, &nearest, (x0, x1, y0, y1), row_height);
+    out.any = out.shown_left || out.shown_right;
     for n in t.nodes {
         let f = n.frame;
         let touches = !n.keyboard

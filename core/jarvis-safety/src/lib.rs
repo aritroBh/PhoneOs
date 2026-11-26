@@ -79,8 +79,8 @@ pub use evaluate::{
     RECIPIENT_FIELD_WEAK_HEADS, UNVERIFIED_SCREEN_WARNING,
 };
 pub use evaluate::{
-    incomplete, planned_drag, round3_question_notes, source_rule, EMERGENCY_CALL_NOTE,
-    ROW_SWIPE_NOTE,
+    incomplete, planned_drag, planned_path, round3_question_notes, source_rule,
+    EMERGENCY_CALL_NOTE, ROW_ACTIONS_NOTE, ROW_SWIPE_NOTE,
 };
 pub use flow::{
     copy_control, edit_menu_shape, edit_menu_view, few_actionable, flow_checked, grid_cell,

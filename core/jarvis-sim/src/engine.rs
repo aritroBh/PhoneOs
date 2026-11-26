@@ -131,6 +131,31 @@ pub struct ScrollRegion {
     pub content_h: f64,
 }
 
+/// A row with swipe actions ([`ElementDef::reveal`]).
+#[derive(Debug, Clone)]
+pub struct SwipeRow {
+    /// Its rest frame on screen (clipped to its scroll viewport).
+    pub frame: Rect,
+    /// Its whole width.
+    pub width: f64,
+    /// The state path of its `reveal` variable.
+    pub var: String,
+    /// Whether its actions are showing.
+    pub revealed: bool,
+    /// How many trailing actions it has.
+    pub actions: usize,
+    /// Effects of a full swipe.
+    pub on_full_swipe: Vec<Effect>,
+    /// The `for_each` scope its effects run in.
+    pub scope: Value,
+}
+
+/// Mac run 161 (iOS 26.5, probe P13f): how far a revealed row's cell is shifted for `n`
+/// trailing actions (107 pt with one, 205 with two).
+pub fn reveal_shift(n: usize) -> f64 {
+    9.0 + 98.0 * n.max(1) as f64
+}
+
 /// A rendered screen.
 #[derive(Debug, Clone)]
 pub struct Rendered {
@@ -138,6 +163,8 @@ pub struct Rendered {
     pub root: UiNode,
     /// Hit regions, bottom to top.
     pub hits: Vec<Hit>,
+    /// Rows with swipe actions, in paint order.
+    pub rows: Vec<SwipeRow>,
     /// Scroll viewports, bottom to top.
     pub scrolls: Vec<ScrollRegion>,
     /// Whether the keyboard is up.
@@ -150,6 +177,7 @@ struct Builder<'a> {
     rt: &'a AppRuntime,
     focus: Option<&'a str>,
     hits: Vec<Hit>,
+    rows: Vec<SwipeRow>,
     scrolls: Vec<ScrollRegion>,
     focus_found: bool,
 }
@@ -324,6 +352,10 @@ impl<'a> Builder<'a> {
                     }
                     None => rect(0.0, 0.0, size.width, def.h.unwrap_or(size.height)),
                 };
+                if def.reveal.is_some() {
+                    out.extend(self.swipe_row(def, rel, origin, &sc));
+                    continue;
+                }
                 let node = self.build_node(def, rel, origin, &sc);
                 out.push(node);
             }
@@ -333,6 +365,61 @@ impl<'a> Builder<'a> {
 
     fn push_hit(&mut self, hit: Hit) {
         self.hits.push(hit);
+    }
+
+    /// A row with swipe actions ([`ElementDef::reveal`]): its cell (shifted left while its
+    /// actions show, a tap on it then closes them) and, while revealed, the sibling `Other`
+    /// holding the action buttons at the row's rest frame.
+    fn swipe_row(
+        &mut self,
+        def: &ElementDef,
+        rel: Rect,
+        origin: Point,
+        scope: &Value,
+    ) -> Vec<UiNode> {
+        let var = def
+            .reveal
+            .as_deref()
+            .map(|v| self.text(v, scope))
+            .unwrap_or_default();
+        let revealed = crate::expr::truthy(&get_path(&self.rt.state, &var));
+        let rest = rect(origin.x + rel.x, origin.y + rel.y, rel.width, rel.height);
+        self.rows.push(SwipeRow {
+            frame: rest,
+            width: rel.width,
+            var: var.clone(),
+            revealed,
+            actions: def.actions.len(),
+            on_full_swipe: def.on_full_swipe.clone(),
+            scope: scope.clone(),
+        });
+        if !revealed {
+            return vec![self.build_node(def, rel, origin, scope)];
+        }
+        let shift = reveal_shift(def.actions.len());
+        let mut shifted = def.clone();
+        shifted.on_tap = vec![Effect::Set {
+            var: var.clone(),
+            value: Value::Bool(false),
+        }];
+        let cell = self.build_node(
+            &shifted,
+            rect(rel.x - shift, rel.y, rel.width, rel.height),
+            origin,
+            scope,
+        );
+        // The actions, rightmost last, 87 pt wide, 98 pt apart, 10 pt in from the trailing
+        // edge (P13f: "Delete" {322.7, 230.3} 87 x 44 on a {20, 226.3} 400 x 52 row).
+        let n = def.actions.len();
+        let mut buttons = Vec::new();
+        for (i, a) in def.actions.iter().enumerate() {
+            let from_right = (n - 1 - i) as f64;
+            let x = rest.width - 10.0 - 87.0 - 98.0 * from_right;
+            let b = rect(x, 4.0, 87.0, (rest.height - 8.0).max(1.0));
+            buttons.push(self.build_node(a, b, rest.origin(), scope));
+        }
+        let container = UiNode::new(Role::Other("Other".to_owned()), rest).with_children(buttons);
+        vec![cell, container]
     }
 
     fn build_node(&mut self, def: &ElementDef, rel: Rect, origin: Point, scope: &Value) -> UiNode {
@@ -493,6 +580,7 @@ impl<'a> Builder<'a> {
         scope: &Value,
     ) -> Vec<UiNode> {
         let start = self.hits.len();
+        let rows_start = self.rows.len();
         let mut cursor = 0.0;
         let mut kids = self.build_list(&def.children, abs, true, def.gap, scope, &mut cursor);
         let content_h = (cursor - def.gap).max(0.0);
@@ -516,6 +604,13 @@ impl<'a> Builder<'a> {
             if let Some(clipped) = h.frame.intersection(&abs) {
                 h.frame = clipped;
                 self.hits.push(h);
+            }
+        }
+        for mut r in self.rows.split_off(rows_start) {
+            r.frame.y -= offset;
+            if let Some(clipped) = r.frame.intersection(&abs) {
+                r.frame = clipped;
+                self.rows.push(r);
             }
         }
         self.scrolls.push(ScrollRegion {
@@ -707,6 +802,7 @@ pub fn render_app(rt: &AppRuntime, focus: Option<&str>) -> Rendered {
         rt,
         focus,
         hits: Vec::new(),
+        rows: Vec::new(),
         scrolls: Vec::new(),
         focus_found: false,
     };
@@ -748,6 +844,7 @@ pub fn render_app(rt: &AppRuntime, focus: Option<&str>) -> Rendered {
     Rendered {
         root,
         hits: b.hits,
+        rows: b.rows,
         scrolls: b.scrolls,
         keyboard,
         focus_found: b.focus_found,

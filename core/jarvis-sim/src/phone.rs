@@ -829,7 +829,7 @@ impl SimPhone {
         };
         let dy = from.y - to.y;
         if dy.abs() < (from.x - to.x).abs() {
-            return good("horizontal swipe: no effect".to_owned());
+            return self.row_swipe(&r, from, to);
         }
         let alert = self.fg().is_some_and(|a| a.alert.is_some());
         let Some(region) = r.scrolls.iter().rev().find(|s| s.frame.contains(from)) else {
@@ -856,6 +856,60 @@ impl SimPhone {
         } else {
             good(format!("scroll: offset {cur:.0} -> {next:.0} of {max:.0}"))
         }
+    }
+
+    /// A horizontal swipe: on a row with swipe actions ([`crate::app::ElementDef::reveal`])
+    /// it reveals, closes or full-swipes the row by the shares measured on iOS 26.5 (Mac runs
+    /// 154 and 161): from rest a leftward drag of 40 pt reveals and one of 0.60 of the row
+    /// or more is a full swipe; once revealed a leftward drag of 0.45 of the row or more
+    /// (0.30 with two actions) is a full swipe, a shorter one leaves it revealed, and a
+    /// rightward drag closes it. Anywhere else: no effect.
+    fn row_swipe(&mut self, r: &Rendered, from: Point, to: Point) -> ActOutcome {
+        let Some(row) = r
+            .rows
+            .iter()
+            .rev()
+            .find(|w| w.frame.contains(from))
+            .cloned()
+        else {
+            return good("horizontal swipe: no effect".to_owned());
+        };
+        if self.fg().is_some_and(|a| a.alert.is_some()) {
+            return good("swipe: blocked by an alert".to_owned());
+        }
+        let travel = from.x - to.x;
+        let full_share = match (row.revealed, row.actions) {
+            (false, _) => 0.60,
+            (true, n) if n >= 2 => 0.30,
+            (true, _) => 0.45,
+        };
+        let set = |v: bool| Effect::Set {
+            var: row.var.clone(),
+            value: Value::Bool(v),
+        };
+        let (effects, what) = if travel >= full_share * row.width {
+            let mut e = vec![set(false)];
+            e.extend(row.on_full_swipe.iter().cloned());
+            (e, "full swipe")
+        } else if travel >= 40.0 && !row.revealed {
+            (vec![set(true)], "actions revealed")
+        } else if travel < 0.0 && row.revealed {
+            (vec![set(false)], "actions closed")
+        } else {
+            return good(format!(
+                "row swipe of {:.0} pt: no change ({})",
+                travel.abs(),
+                if row.revealed {
+                    "still revealed"
+                } else {
+                    "at rest"
+                }
+            ));
+        };
+        let mut notes = Vec::new();
+        let app = self.foreground.clone();
+        self.run_effects(&app, &effects, &row.scope, &mut notes, 0);
+        good(format!("row swipe of {:.0} pt: {what}", travel.abs()))
     }
 
     fn focused_hit(&self) -> Option<crate::engine::Hit> {

@@ -1,0 +1,406 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 161, probe round 3 p13f-revealed-tree (`probe3-p13f-revealed-tree-01-rows-inset-one-row-tree.txt`), verbatim below this line.
+Q: The one trailing action, full width (400 pt rows) rows at rest, before Inset one row 1 is dragged: the Cells, their texts, frames, values
+capture 01 (rows-inset-one-row): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 1: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 196, XCUITest snapshot 235 ms
+types without a core role: Other×141, SegmentedControl×1
+note: probe round 3 p13f-revealed-tree, capture 01: rows-inset-one-row
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Swipe rows, revealed {{0, 62}, {440, 54}}
+                            Button "Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText "Swipe rows, revealed" {{136, 73.7}, {168, 20.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  StaticText "No swipe action yet" id=probe3.swiperevealed.status {{145.3, 124}, {149.3, 20.3}}
+                                  Other(SegmentedControl) {{16, 152.3}, {408, 31}}
+                                    Button "Inset 1" {{16, 152.3}, {81, 32}} [selected]
+                                    Button "Edge 1" {{97, 152.3}, {82, 32}}
+                                    Button "Inset 2" {{179, 152.3}, {81, 32}}
+                                    Button "Leading" {{260, 152.3}, {82, 32}}
+                                    Button "Taps" {{342, 152.3}, {82, 32}}
+                                  CollectionView {{0, 191.3}, {440, 764.7}}
+                                    Other(Other) {{-20, -1338}, {480, 3945.7}}
+                                    Other(Other) {{0, 191.3}, {440, 764.7}}
+                                    Other(Other) {{0, 191.3}, {440, 764.7}}
+                                      Other(Other) {{0, 808.2}, {440, 147.8}}
+                                        Image id=AdditionalDimmingOverlay {{-120, 813}, {680, 286}}
+                                        Other(Other) {{0, 808.2}, {440, 147.8}}
+                                          Other(Other) {{0, 808.2}, {440, 147.8}}
+                                        Other(Other) {{0, 808.2}, {440, 147.8}}
+                                          Other(Other) {{0, 808.2}, {440, 147.8}}
+                                          Other(Other) {{0, 808.2}, {440, 147.8}}
+                                    Cell {{20, 226.3}, {400, 52}}
+                                      Other(Other) {{20, 226.3}, {400, 52}}
+                                        Other(Other) {{20, 226.3}, {400, 52}}
+                                      Other(Other) {{20, 226.3}, {400, 52}}
+                                        Other(Other) {{20, 226.3}, {400, 52}}
+                                          Other(Other) {{20, 226.3}, {400, 52}}
+                                            StaticText "Inset one row 1" {{20, 226.3}, {400, 52}}
+                                    Cell {{20, 278.3}, {400, 52}}
+                                      Other(Other) {{20, 278.3}, {400, 52}}
+                                        Other(Other) {{20, 278.3}, {400, 52}}
+                                      Other(Other) {{20, 278.3}, {400, 52}}
+                                        Other(Other) {{20, 278.3}, {400, 52}}
+                                          Other(Other) {{20, 278.3}, {400, 52}}
+                                            StaticText "Inset one row 2" {{20, 278.3}, {400, 52}}
+                                    Other(Other) {{40, 277.3}, {360, 1}}
+                                    Cell {{20, 330.3}, {400, 52}}
+                                      Other(Other) {{20, 330.3}, {400, 52}}
+                                        Other(Other) {{20, 330.3}, {400, 52}}
+                                      Other(Other) {{20, 330.3}, {400, 52}}
+                                        Other(Other) {{20, 330.3}, {400, 52}}
+                                          Other(Other) {{20, 330.3}, {400, 52}}
+                                            StaticText "Inset one row 3" {{20, 330.3}, {400, 52}}
+                                    Other(Other) {{40, 329.3}, {360, 1}}
+                                    Cell {{20, 382.3}, {400, 52}}
+                                      Other(Other) {{20, 382.3}, {400, 52}}
+                                        Other(Other) {{20, 382.3}, {400, 52}}
+                                      Other(Other) {{20, 382.3}, {400, 52}}
+                                        Other(Other) {{20, 382.3}, {400, 52}}
+                                          Other(Other) {{20, 382.3}, {400, 52}}
+                                            StaticText "Inset one row 4" {{20, 382.3}, {400, 52}}
+                                    Other(Other) {{40, 381.3}, {360, 1}}
+                                    Cell {{20, 434.3}, {400, 52}}
+                                      Other(Other) {{20, 434.3}, {400, 52}}
+                                        Other(Other) {{20, 434.3}, {400, 52}}
+                                      Other(Other) {{20, 434.3}, {400, 52}}
+                                        Other(Other) {{20, 434.3}, {400, 52}}
+                                          Other(Other) {{20, 434.3}, {400, 52}}
+                                            StaticText "Inset one row 5" {{20, 434.3}, {400, 52}}
+                                    Other(Other) {{40, 433.3}, {360, 1}}
+                                    Cell {{20, 486.3}, {400, 52.0}}
+                                      Other(Other) {{20, 486.3}, {400, 52.0}}
+                                        Other(Other) {{20, 486.3}, {400, 52.0}}
+                                      Other(Other) {{20, 486.3}, {400, 52.0}}
+                                        Other(Other) {{20, 486.3}, {400, 52.0}}
+                                          Other(Other) {{20, 486.3}, {400, 52.0}}
+                                            StaticText "Inset one row 6" {{20, 486.3}, {400, 52.0}}
+                                    Other(Other) {{40, 485.3}, {360, 1}}
+                                    Cell {{20, 538.3}, {400, 52}}
+                                      Other(Other) {{20, 538.3}, {400, 52}}
+                                        Other(Other) {{20, 538.3}, {400, 52}}
+                                      Other(Other) {{20, 538.3}, {400, 52}}
+                                        Other(Other) {{20, 538.3}, {400, 52}}
+                                          Other(Other) {{20, 538.3}, {400, 52}}
+                                            StaticText "Inset one row 7" {{20, 538.3}, {400, 52}}
+                                    Other(Other) {{40, 537.3}, {360, 1}}
+                                    Cell {{20, 590.3}, {400, 52}}
+                                      Other(Other) {{20, 590.3}, {400, 52}}
+                                        Other(Other) {{20, 590.3}, {400, 52}}
+                                      Other(Other) {{20, 590.3}, {400, 52}}
+                                        Other(Other) {{20, 590.3}, {400, 52}}
+                                          Other(Other) {{20, 590.3}, {400, 52}}
+                                            StaticText "Inset one row 8" {{20, 590.3}, {400, 52}}
+                                    Other(Other) {{40, 589.3}, {360, 1}}
+                                    Cell {{20, 642.3}, {400, 52}}
+                                      Other(Other) {{20, 642.3}, {400, 52}}
+                                        Other(Other) {{20, 642.3}, {400, 52}}
+                                      Other(Other) {{20, 642.3}, {400, 52}}
+                                        Other(Other) {{20, 642.3}, {400, 52}}
+                                          Other(Other) {{20, 642.3}, {400, 52}}
+                                            StaticText "Inset one row 9" {{20, 642.3}, {400, 52}}
+                                    Other(Other) {{40, 641.3}, {360, 1}}
+                                    Cell {{20, 694.3}, {400, 52}}
+                                      Other(Other) {{20, 694.3}, {400, 52}}
+                                        Other(Other) {{20, 694.3}, {400, 52}}
+                                      Other(Other) {{20, 694.3}, {400, 52}}
+                                        Other(Other) {{20, 694.3}, {400, 52}}
+                                          Other(Other) {{20, 694.3}, {400, 52}}
+                                            StaticText "Inset one row 10" {{20, 694.3}, {400, 52}}
+                                    Other(Other) {{40, 693.3}, {360, 1}}
+                                    Cell {{20, 746.3}, {400, 52}}
+                                      Other(Other) {{20, 746.3}, {400, 52}}
+                                        Other(Other) {{20, 746.3}, {400, 52}}
+                                      Other(Other) {{20, 746.3}, {400, 52}}
+                                        Other(Other) {{20, 746.3}, {400, 52}}
+                                          Other(Other) {{20, 746.3}, {400, 52}}
+                                            StaticText "Inset one row 11" {{20, 746.3}, {400, 52}}
+                                    Other(Other) {{40, 745.3}, {360, 1}}
+                                    Cell {{20, 798.3}, {400, 52}}
+                                      Other(Other) {{20, 798.3}, {400, 52}}
+                                        Other(Other) {{20, 798.3}, {400, 52}}
+                                      Other(Other) {{20, 798.3}, {400, 52}}
+                                        Other(Other) {{20, 798.3}, {400, 52}}
+                                          Other(Other) {{20, 798.3}, {400, 52}}
+                                            StaticText "Inset one row 12" {{20, 798.3}, {400, 52}}
+                                    Other(Other) {{40, 797.3}, {360, 1}}
+                                    Cell {{20, 850.3}, {400, 52}}
+                                      Other(Other) {{20, 850.3}, {400, 52}}
+                                        Other(Other) {{20, 850.3}, {400, 52}}
+                                      Other(Other) {{20, 850.3}, {400, 52}}
+                                        Other(Other) {{20, 850.3}, {400, 52}}
+                                          Other(Other) {{20, 850.3}, {400, 52}}
+                                            StaticText "Inset one row 13" {{20, 850.3}, {400, 52}}
+                                    Other(Other) {{40, 849.3}, {360, 1}}
+                                    Cell {{20, 902.3}, {400, 52}}
+                                      Other(Other) {{20, 902.3}, {400, 52}}
+                                        Other(Other) {{20, 902.3}, {400, 52}}
+                                      Other(Other) {{20, 902.3}, {400, 52}}
+                                        Other(Other) {{20, 902.3}, {400, 52}}
+                                          Other(Other) {{20, 902.3}, {400, 52}}
+                                            StaticText "Inset one row 14" {{20, 902.3}, {400, 52}}
+                                    Other(Other) {{40, 901.3}, {360, 1}}
+                                    Cell {{20, 954.3}, {400, 52}}
+                                      Other(Other) {{20, 954.3}, {400, 52}}
+                                        Other(Other) {{20, 954.3}, {400, 52}}
+                                      Other(Other) {{20, 954.3}, {400, 52}}
+                                        Other(Other) {{20, 954.3}, {400, 52}}
+                                          Other(Other) {{20, 954.3}, {400, 52}}
+                                            StaticText "Inset one row 15" {{20, 954.3}, {400, 52}}
+                                    Other(Other) {{40, 953.3}, {360, 1}}
+                                    Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{407, 219.3}, {30, 653.7}}
+                                      Other(Other) {{434, 863}, {3, 7}}
+                                    Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{407, 219.3}, {30, 653.7}}
+                                      Other(Other) {{434, 863}, {3, 7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image "sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button "Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 0}, {440, 956}}
+                          NavigationBar(21) id=Swipe rows, revealed {{0, 62}, {440, 54}}
+                            Button(9) label="Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText(48) label="Swipe rows, revealed" {{136, 73.7}, {168, 20.7}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+                              Other(1) {{0, 0}, {440, 956}}
+                                Other(1) {{0, 0}, {440, 956}}
+                                  StaticText(48) label="No swipe action yet" id=probe3.swiperevealed.status {{145.3, 124}, {149.3, 20.3}}
+                                  SegmentedControl(37) {{16, 152.3}, {408, 31}}
+                                    Button(9) label="Inset 1" value="" {{16, 152.3}, {81, 32}} [selected]
+                                    Button(9) label="Edge 1" value="" {{97, 152.3}, {82, 32}}
+                                    Button(9) label="Inset 2" value="" {{179, 152.3}, {81, 32}}
+                                    Button(9) label="Leading" value="" {{260, 152.3}, {82, 32}}
+                                    Button(9) label="Taps" value="" {{342, 152.3}, {82, 32}}
+                                  CollectionView(32) {{0, 191.3}, {440, 764.7}}
+                                    Other(1) {{-20, -1338}, {480, 3945.7}}
+                                    Other(1) {{0, 191.3}, {440, 764.7}}
+                                    Other(1) {{0, 191.3}, {440, 764.7}}
+                                      Other(1) {{0, 808.2}, {440, 147.8}}
+                                        Image(43) id=AdditionalDimmingOverlay {{-120, 813}, {680, 286}}
+                                        Other(1) {{0, 808.2}, {440, 147.8}}
+                                          Other(1) {{0, 808.2}, {440, 147.8}}
+                                        Other(1) {{0, 808.2}, {440, 147.8}}
+                                          Other(1) {{0, 808.2}, {440, 147.8}}
+                                          Other(1) {{0, 808.2}, {440, 147.8}}
+                                    Cell(75) {{20, 226.3}, {400, 52}}
+                                      Other(1) {{20, 226.3}, {400, 52}}
+                                        Other(1) {{20, 226.3}, {400, 52}}
+                                      Other(1) {{20, 226.3}, {400, 52}}
+                                        Other(1) {{20, 226.3}, {400, 52}}
+                                          Other(1) {{20, 226.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 1" {{20, 226.3}, {400, 52}}
+                                    Cell(75) {{20, 278.3}, {400, 52}}
+                                      Other(1) {{20, 278.3}, {400, 52}}
+                                        Other(1) {{20, 278.3}, {400, 52}}
+                                      Other(1) {{20, 278.3}, {400, 52}}
+                                        Other(1) {{20, 278.3}, {400, 52}}
+                                          Other(1) {{20, 278.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 2" {{20, 278.3}, {400, 52}}
+                                    Other(1) {{40, 277.3}, {360, 1}}
+                                    Cell(75) {{20, 330.3}, {400, 52}}
+                                      Other(1) {{20, 330.3}, {400, 52}}
+                                        Other(1) {{20, 330.3}, {400, 52}}
+                                      Other(1) {{20, 330.3}, {400, 52}}
+                                        Other(1) {{20, 330.3}, {400, 52}}
+                                          Other(1) {{20, 330.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 3" {{20, 330.3}, {400, 52}}
+                                    Other(1) {{40, 329.3}, {360, 1}}
+                                    Cell(75) {{20, 382.3}, {400, 52}}
+                                      Other(1) {{20, 382.3}, {400, 52}}
+                                        Other(1) {{20, 382.3}, {400, 52}}
+                                      Other(1) {{20, 382.3}, {400, 52}}
+                                        Other(1) {{20, 382.3}, {400, 52}}
+                                          Other(1) {{20, 382.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 4" {{20, 382.3}, {400, 52}}
+                                    Other(1) {{40, 381.3}, {360, 1}}
+                                    Cell(75) {{20, 434.3}, {400, 52}}
+                                      Other(1) {{20, 434.3}, {400, 52}}
+                                        Other(1) {{20, 434.3}, {400, 52}}
+                                      Other(1) {{20, 434.3}, {400, 52}}
+                                        Other(1) {{20, 434.3}, {400, 52}}
+                                          Other(1) {{20, 434.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 5" {{20, 434.3}, {400, 52}}
+                                    Other(1) {{40, 433.3}, {360, 1}}
+                                    Cell(75) {{20, 486.3}, {400, 52.0}}
+                                      Other(1) {{20, 486.3}, {400, 52.0}}
+                                        Other(1) {{20, 486.3}, {400, 52.0}}
+                                      Other(1) {{20, 486.3}, {400, 52.0}}
+                                        Other(1) {{20, 486.3}, {400, 52.0}}
+                                          Other(1) {{20, 486.3}, {400, 52.0}}
+                                            StaticText(48) label="Inset one row 6" {{20, 486.3}, {400, 52.0}}
+                                    Other(1) {{40, 485.3}, {360, 1}}
+                                    Cell(75) {{20, 538.3}, {400, 52}}
+                                      Other(1) {{20, 538.3}, {400, 52}}
+                                        Other(1) {{20, 538.3}, {400, 52}}
+                                      Other(1) {{20, 538.3}, {400, 52}}
+                                        Other(1) {{20, 538.3}, {400, 52}}
+                                          Other(1) {{20, 538.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 7" {{20, 538.3}, {400, 52}}
+                                    Other(1) {{40, 537.3}, {360, 1}}
+                                    Cell(75) {{20, 590.3}, {400, 52}}
+                                      Other(1) {{20, 590.3}, {400, 52}}
+                                        Other(1) {{20, 590.3}, {400, 52}}
+                                      Other(1) {{20, 590.3}, {400, 52}}
+                                        Other(1) {{20, 590.3}, {400, 52}}
+                                          Other(1) {{20, 590.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 8" {{20, 590.3}, {400, 52}}
+                                    Other(1) {{40, 589.3}, {360, 1}}
+                                    Cell(75) {{20, 642.3}, {400, 52}}
+                                      Other(1) {{20, 642.3}, {400, 52}}
+                                        Other(1) {{20, 642.3}, {400, 52}}
+                                      Other(1) {{20, 642.3}, {400, 52}}
+                                        Other(1) {{20, 642.3}, {400, 52}}
+                                          Other(1) {{20, 642.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 9" {{20, 642.3}, {400, 52}}
+                                    Other(1) {{40, 641.3}, {360, 1}}
+                                    Cell(75) {{20, 694.3}, {400, 52}}
+                                      Other(1) {{20, 694.3}, {400, 52}}
+                                        Other(1) {{20, 694.3}, {400, 52}}
+                                      Other(1) {{20, 694.3}, {400, 52}}
+                                        Other(1) {{20, 694.3}, {400, 52}}
+                                          Other(1) {{20, 694.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 10" {{20, 694.3}, {400, 52}}
+                                    Other(1) {{40, 693.3}, {360, 1}}
+                                    Cell(75) {{20, 746.3}, {400, 52}}
+                                      Other(1) {{20, 746.3}, {400, 52}}
+                                        Other(1) {{20, 746.3}, {400, 52}}
+                                      Other(1) {{20, 746.3}, {400, 52}}
+                                        Other(1) {{20, 746.3}, {400, 52}}
+                                          Other(1) {{20, 746.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 11" {{20, 746.3}, {400, 52}}
+                                    Other(1) {{40, 745.3}, {360, 1}}
+                                    Cell(75) {{20, 798.3}, {400, 52}}
+                                      Other(1) {{20, 798.3}, {400, 52}}
+                                        Other(1) {{20, 798.3}, {400, 52}}
+                                      Other(1) {{20, 798.3}, {400, 52}}
+                                        Other(1) {{20, 798.3}, {400, 52}}
+                                          Other(1) {{20, 798.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 12" {{20, 798.3}, {400, 52}}
+                                    Other(1) {{40, 797.3}, {360, 1}}
+                                    Cell(75) {{20, 850.3}, {400, 52}}
+                                      Other(1) {{20, 850.3}, {400, 52}}
+                                        Other(1) {{20, 850.3}, {400, 52}}
+                                      Other(1) {{20, 850.3}, {400, 52}}
+                                        Other(1) {{20, 850.3}, {400, 52}}
+                                          Other(1) {{20, 850.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 13" {{20, 850.3}, {400, 52}}
+                                    Other(1) {{40, 849.3}, {360, 1}}
+                                    Cell(75) {{20, 902.3}, {400, 52}}
+                                      Other(1) {{20, 902.3}, {400, 52}}
+                                        Other(1) {{20, 902.3}, {400, 52}}
+                                      Other(1) {{20, 902.3}, {400, 52}}
+                                        Other(1) {{20, 902.3}, {400, 52}}
+                                          Other(1) {{20, 902.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 14" {{20, 902.3}, {400, 52}}
+                                    Other(1) {{40, 901.3}, {360, 1}}
+                                    Cell(75) {{20, 954.3}, {400, 52}}
+                                      Other(1) {{20, 954.3}, {400, 52}}
+                                        Other(1) {{20, 954.3}, {400, 52}}
+                                      Other(1) {{20, 954.3}, {400, 52}}
+                                        Other(1) {{20, 954.3}, {400, 52}}
+                                          Other(1) {{20, 954.3}, {400, 52}}
+                                            StaticText(48) label="Inset one row 15" {{20, 954.3}, {400, 52}}
+                                    Other(1) {{40, 953.3}, {360, 1}}
+                                    Other(1) label="Vertical scroll bar, 2 pages" value="0%" {{407, 219.3}, {30, 653.7}}
+                                      Other(1) {{434, 863}, {3, 7}}
+                                    Other(1) label="Vertical scroll bar, 2 pages" value="0%" {{407, 219.3}, {30, 653.7}}
+                                      Other(1) {{434, 863}, {3, 7}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 873}, {440, 83}}
+                Other(1) {{0, 0}, {440, 956}}
+                  TabBar(22) label="Tab Bar" {{0, 873}, {440, 83}}
+                    Other(1) {{21, 873}, {398, 62}}
+                      Other(1) {{21, 873}, {89.7, 54}}
+                      Other(1) {{21, 873}, {398, 62}}
+                        Button(9) label="Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image(43) label="hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button(9) label="Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image(43) label="message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button(9) label="Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image(43) label="sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button(9) label="Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image(43) label="grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button(9) label="Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image(43) label="edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(1) {{25, 877}, {89.7, 54}}
+                        Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                                Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                Other(1) {{0, 873}, {440, 83}}
+                  Other(1) {{0, 873}, {440, 83}}
+                    Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}
+                          Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}

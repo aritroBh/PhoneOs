@@ -3757,6 +3757,11 @@ impl Session {
                 Exec::Runner(plan(&ui, screen, Some(&tree)).map_err(|e| match e {
                     PlanError::Covered(c) => Reject::NotDone(self.covered_message(c)),
                     PlanError::Point(e) => Reject::NotDone(self.point_message(action, e)),
+                    // Mac run 161: a row whose swipe actions show is not swiped further; the
+                    // model is told how to go on (tap the action, or the row to close it).
+                    PlanError::Gesture(
+                        g @ jarvis_safety::gestures::GestureError::RowActionsShowing,
+                    ) => Reject::NotDone(format!("not done: {g}")),
                     other => Reject::Failed(other.to_string()),
                 })?)
             }

@@ -1039,6 +1039,11 @@ pub fn compact_view(screen: &Screen) -> CompactView {
                         .and_then(|k| index.in_cell.get(k))
                         .copied()
                         .unwrap_or(false),
+                    // Run 161: a list's or a row's whole frame, when it reaches off screen
+                    // (a row whose swipe actions show is shifted out of its list).
+                    whole: (matches!(node.role, Role::Cell | Role::Table | Role::CollectionView)
+                        && node.frame != frame)
+                        .then_some(node.frame),
                 });
             }
         }
