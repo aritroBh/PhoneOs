@@ -73,9 +73,15 @@ public protocol RemoteTransport: Sendable {
     /// connection that closed first. The default sends and confirms at once (a transport
     /// without a completion signal: no backpressure beyond the hub's own queue bound).
     func send(_ bytes: Data, to connection: UInt64, written: @escaping @Sendable (Int) -> Void)
+    /// Where a controller can reach this phone while it listens (shown on the Remote
+    /// control screen as the connection details): its local addresses and the port. Empty
+    /// while not listening or when unknown (the default).
+    func localAddresses() -> [RemotePhoneAddress]
 }
 
 extension RemoteTransport {
+    public func localAddresses() -> [RemotePhoneAddress] { [] }
+
     public func send(_ bytes: Data, to connection: UInt64, written: @escaping @Sendable (Int) -> Void) {
         send(bytes, to: connection)
         written(bytes.count)

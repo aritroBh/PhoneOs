@@ -395,6 +395,13 @@ public final class RemoteControlService {
 
     public func isConnected(_ deviceId: String) -> Bool { connected.values.contains(deviceId) }
 
+    /// Where a controller reaches this phone now (the Remote control screen's connection
+    /// details): the listener's local addresses and port; empty while not listening.
+    public var connectionDetails: [RemotePhoneAddress] {
+        guard case .listening = status else { return [] }
+        return transport?.localAddresses() ?? []
+    }
+
     /// "Watch the screen layout" for a device: it may see the Live view (outlines of the
     /// screen, where Jarvis taps, step captions; never pictures of the screen, passwords
     /// or the lock screen). Off by default; stored with the device. Off ends its stream at

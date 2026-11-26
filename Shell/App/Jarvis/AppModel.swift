@@ -126,6 +126,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var remoteConnected: Set<String> = []
     /// Devices that watch the Live view now ("watching now" in the device row).
     @Published private(set) var remoteWatching: Set<String> = []
+    /// Where a controller reaches this phone (the connection details row).
+    @Published private(set) var remoteAddresses: [RemotePhoneAddress] = []
+
+    // Controlling another phone ("Control another phone")
+    @Published private(set) var controllerState = RemoteControllerModel.State()
+    /// The other phone's Live view timeline (republished when it changed).
+    @Published private(set) var controllerTimeline = CoreViewerTimeline.empty
 
     // Apps
     @Published private(set) var toolSpecs: [ToolSpec] = []
@@ -171,6 +178,23 @@ final class AppModel: ObservableObject {
         return runner
     }()
     private lazy var scheduler = WorkflowScheduler(library: workflows, stateURL: paths.workflowSchedule)
+    /// This device as the controller of another phone. Playground: the phone in this
+    /// process over the in-memory transport (no network, no Keychain).
+    private(set) lazy var controller: RemoteControllerModel = {
+        let playground = launch.playground
+        let model = RemoteControllerModel(
+            secrets: playground ? InMemorySecretStore() as any SecretStore : KeychainSecretStore(service: Self.controllerKeychainService),
+            random: SecureRandomSource(),
+            dialer: playground ? InMemoryRemoteDialer(transport: memoryTransport) as any RemoteDialer : NetworkRemoteDialer(),
+            deviceName: UIDevice.current.name
+        )
+        model.onChange = { [weak self] in self?.mirrorController() }
+        return model
+    }()
+    static let controllerKeychainService = "dev.jarvis.app.controller"
+    /// The controller's Live view never has real-screen frames (the stream carries none);
+    /// an empty store of its own.
+    let controllerFrames = ViewerFrameStore()
     private(set) lazy var remote: RemoteControlService = {
         let playground = launch.playground
         let transport = memoryTransport
@@ -214,7 +238,10 @@ final class AppModel: ObservableObject {
         if launch.reset {
             try? FileManager.default.removeItem(at: directory)
             // The paired devices live in the Keychain, not in the folder.
-            if !launch.playground { try? KeychainSecretStore().delete(RemoteControlService.secretKey) }
+            if !launch.playground {
+                try? KeychainSecretStore().delete(RemoteControlService.secretKey)
+                try? KeychainSecretStore(service: Self.controllerKeychainService).delete(RemoteControllerModel.secretKey)
+            }
         }
         let paths = JarvisPaths(directory: directory)
         self.paths = paths
@@ -790,6 +817,7 @@ final class AppModel: ObservableObject {
         remoteAudit = remote.audit.entries
         remoteConnected = Set(remote.connected.values)
         remoteWatching = remote.watching
+        remoteAddresses = remote.connectionDetails
     }
 
     func setRemoteEnabled(_ on: Bool) {
@@ -859,6 +887,97 @@ final class AppModel: ObservableObject {
 
     /// Categories no device can ever approve (from the core).
     var neverRemoteCategories: [RiskCategory] { (try? neverRemoteApprove()) ?? [] }
+
+    // MARK: - Controlling another phone
+
+    private func mirrorController() {
+        let state = controller.state
+        if state != controllerState { controllerState = state }
+        let timeline = controller.live.model.timeline
+        if timeline != controllerTimeline { controllerTimeline = timeline }
+    }
+
+    /// The controller screen appeared: connect with the stored pairing, if any.
+    func controllerActivate() {
+        controller.activate()
+        mirrorController()
+    }
+
+    /// Pairs with the phone at the typed address with the typed code; returns why not.
+    func controllerPair(code: String, host: String, port: String) async -> String? {
+        let address: RemotePhoneAddress
+        switch RemotePhoneAddress.parse(host: host, port: port) {
+        case .success(let parsed): address = parsed
+        case .failure(let problem): return problem.description
+        }
+        return await controllerPair(code: Redacted(code), address: address)
+    }
+
+    /// Pairs with a phone found on this Wi-Fi (or the in-process one).
+    func controllerPair(code: Redacted<String>, address: RemotePhoneAddress) async -> String? {
+        defer { mirrorController() }
+        do {
+            try await controller.pair(code: code, address: address)
+            return nil
+        } catch {
+            return String(describing: error)
+        }
+    }
+
+    /// QA (playground only): opens a pairing offer on this phone and pairs the controller
+    /// with it over the in-memory transport. The code is handed over in-process: it stays
+    /// out of the accessibility tree (the pairing sheet labels it "Pairing code" on purpose).
+    func controllerPairWithThisPhoneForQA() async -> String? {
+        guard launch.playground else { return "Only in playground mode." }
+        if !settings.remoteControlEnabled { setRemoteEnabled(true) }
+        let offer: RemotePairingOffer
+        do {
+            offer = try remote.openPairing()
+        } catch {
+            mirrorRemote()
+            return String(describing: error)
+        }
+        mirrorRemote()
+        return await controllerPair(code: offer.code, address: .inProcess)
+    }
+
+    func controllerStart(_ text: String) -> String? { controllerAction { try controller.startTask(text) } }
+    func controllerStop() -> String? { controllerAction { try controller.stop() } }
+    func controllerAnswer(approved: Bool) -> String? { controllerAction { try controller.answer(approved: approved) } }
+    func controllerWatch(_ on: Bool) -> String? {
+        controllerAction {
+            if on {
+                try controller.startWatching()
+            } else {
+                try controller.stopWatching()
+            }
+        }
+    }
+
+    func controllerReconnect() {
+        controller.reconnect()
+        mirrorController()
+    }
+
+    func controllerDisconnect() {
+        controller.disconnect()
+        mirrorController()
+    }
+
+    func controllerForget() {
+        controller.forget()
+        mirrorController()
+    }
+
+    private func controllerAction(_ action: () throws -> Void) -> String? {
+        defer { mirrorController() }
+        do {
+            try action()
+            return nil
+        } catch {
+            return String(describing: error)
+        }
+    }
 
     /// QA: pairs "Test Mac" in-process over the in-memory transport (playground only).
     private func seedRemoteDevice() {

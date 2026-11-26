@@ -184,6 +184,8 @@ final class RecordingTransport: RemoteTransport {
     }
 
     func stop() { inner.stop() }
+
+    func localAddresses() -> [RemotePhoneAddress] { inner.localAddresses() }
 }
 
 /// Bytes that are obviously not random (the hub must refuse them).

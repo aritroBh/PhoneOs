@@ -71,6 +71,9 @@ public final class InMemoryRemoteTransport: RemoteTransport {
     /// Bytes sent to `connection` with a completion (the phone's frames), for tests.
     public func sentBytes(on connection: UInt64) -> Int { state.withLock { $0.sentBytes[connection] ?? 0 } }
 
+    /// The phone in this process, while listening.
+    public func localAddresses() -> [RemotePhoneAddress] { isListening ? [.inProcess] : [] }
+
     public func consumed(_ count: Int, on connection: UInt64) {
         state.withLock { s in
             guard let left = s.unconsumed[connection] else { return }

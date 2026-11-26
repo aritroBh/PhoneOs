@@ -45,9 +45,19 @@ struct RemoteControlView: View {
                 }
 
                 if model.settings.remoteControlEnabled && model.remoteStatus != .off {
+                    if !model.remoteAddresses.isEmpty { connectionDetails }
                     pairSection
                     devicesSection
                 }
+
+                NavigationLink {
+                    ControllerView()
+                } label: {
+                    NavRow(icon: .remote, title: "Control another phone", detail: controllerDetail)
+                        .card()
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("remote.controlAnother")
 
                 NavigationLink {
                     RemoteAuditView()
@@ -67,6 +77,43 @@ struct RemoteControlView: View {
             PairingSheet()
                 .environmentObject(model)
                 .preferredColorScheme(.dark)
+        }
+    }
+
+    private var controllerDetail: String? {
+        let state = model.controllerState
+        guard state.isPaired else { return nil }
+        return state.phoneName ?? state.statusTitle
+    }
+
+    /// Where another device reaches this phone: the address and port to type there, beside
+    /// the pairing code (shown in the pairing sheet).
+    private var connectionDetails: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "Connection details")
+            VStack(alignment: .leading, spacing: Theme.gapSmall) {
+                ForEach(Array(model.remoteAddresses.enumerated()), id: \.offset) { index, address in
+                    Text(Self.text(address))
+                        .font(Theme.mono.weight(.semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("remote.address.\(index)")
+                }
+                Text("On the other device, open Control another phone and enter this address and port, then the pairing code.")
+                    .font(Theme.meta)
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(Theme.gutter)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+        }
+    }
+
+    private static func text(_ address: RemotePhoneAddress) -> String {
+        switch address {
+        case .host(let host, let port): "Address \(host) \u{00B7} port \(port)"
+        default: address.description
         }
     }
 

@@ -25,6 +25,9 @@ struct LiveScreenView: View {
     /// each query, so the endless pulse under the sheet starved them. Treated like Reduce
     /// Motion (no pulse; a glide that is still under way finishes) until the question is gone.
     var holdStill: Bool = false
+    /// The accessibility identifiers' prefix: `run.live` on the Run screen, `controller.live`
+    /// on the controller screen (both can be in the tree at once).
+    var identifierPrefix: String = "run.live"
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -69,7 +72,8 @@ struct LiveScreenView: View {
                     image: scenePhase == .active ? images.image(for: viewer.frameKey(for: screen?.info), in: frames) : nil,
                     now: now,
                     reduceMotion: reduceMotion || holdStill,
-                    area: $screenArea
+                    area: $screenArea,
+                    identifierPrefix: identifierPrefix
                 )
                 .onChange(of: scene?.needsFrames ?? false) { _, needs in
                     if !needs { settleTick &+= 1 }
@@ -146,14 +150,14 @@ struct LiveScreenView: View {
         let playing = status?.playing ?? false
         return VStack(spacing: Theme.gapSmall) {
             HStack(spacing: Theme.gapSmall) {
-                controlButton(.stepBack, label: "Previous step", identifier: "run.live.back", disabled: !hasSteps) {
+                controlButton(.stepBack, label: "Previous step", identifier: "\(identifierPrefix).back", disabled: !hasSteps) {
                     replay(.stepBack)
                 }
                 controlButton(playing ? .pause : .play, label: playing ? "Pause replay" : "Play replay",
-                              identifier: "run.live.play", disabled: !hasSteps) {
+                              identifier: "\(identifierPrefix).play", disabled: !hasSteps) {
                     replay(.togglePlay)
                 }
-                controlButton(.stepForward, label: "Next step", identifier: "run.live.forward", disabled: !hasSteps) {
+                controlButton(.stepForward, label: "Next step", identifier: "\(identifierPrefix).forward", disabled: !hasSteps) {
                     replay(.stepForward)
                 }
                 Slider(
@@ -167,7 +171,7 @@ struct LiveScreenView: View {
                 .disabled(count < 2)
                 .accessibilityLabel("Replay position")
                 .accessibilityValue(positionText)
-                .accessibilityIdentifier("run.live.scrubber")
+                .accessibilityIdentifier("\(identifierPrefix).scrubber")
             }
             HStack(spacing: Theme.gapSmall) {
                 Text(positionText)
@@ -215,7 +219,7 @@ struct LiveScreenView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Replay speed")
         .accessibilityValue(title)
-        .accessibilityIdentifier("run.live.speed")
+        .accessibilityIdentifier("\(identifierPrefix).speed")
     }
 
     private var liveChip: some View {
@@ -240,7 +244,7 @@ struct LiveScreenView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Follow live")
         .accessibilityAddTraits(following ? .isSelected : [])
-        .accessibilityIdentifier("run.live.followLive")
+        .accessibilityIdentifier("\(identifierPrefix).followLive")
     }
 }
 
@@ -276,6 +280,7 @@ private struct PhoneScreen: View {
     var reduceMotion: Bool
     /// Reports the screen's size in points (what the scene maps into).
     @Binding var area: CGSize
+    var identifierPrefix: String
 
     /// The screen's aspect ratio (an iPhone in portrait until there is a scene).
     private var displayAspect: Double { scene?.displayAspect ?? 393.0 / 852.0 }
@@ -298,7 +303,7 @@ private struct PhoneScreen: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: Theme.viewerScreenRadius, style: .continuous))
 
-            CaptionPill(text: scene?.caption ?? "", tone: tone, pulsing: scene?.isIdle ?? false)
+            CaptionPill(text: scene?.caption ?? "", tone: tone, pulsing: scene?.isIdle ?? false, identifierPrefix: identifierPrefix)
                 .padding(Theme.gapSmall)
         }
         .aspectRatio(CGFloat(displayAspect), contentMode: .fit)
@@ -312,7 +317,7 @@ private struct PhoneScreen: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Live view")
         .accessibilityValue(scene?.accessibilityValue ?? "")
-        .accessibilityIdentifier("run.live")
+        .accessibilityIdentifier(identifierPrefix)
     }
 
     // MARK: Backdrop
@@ -426,7 +431,7 @@ private struct PhoneScreen: View {
         return CursorPointer(pressed: scene.pressed, idle: scene.isIdle, now: now, reduceMotion: reduceMotion)
             .fixedSize()
             .offset(x: tip.x, y: tip.y)
-            .accessibilityIdentifier("run.live.cursor")
+            .accessibilityIdentifier("\(identifierPrefix).cursor")
     }
 }
 
@@ -549,6 +554,7 @@ private struct CaptionPill: View {
     var text: String
     var tone: Color
     var pulsing: Bool
+    var identifierPrefix: String
 
     var body: some View {
         HStack(spacing: 6) {
@@ -566,7 +572,7 @@ private struct CaptionPill: View {
             RoundedRectangle(cornerRadius: Theme.radiusField, style: .continuous)
                 .strokeBorder(Theme.bezel, lineWidth: Theme.bezelWidth)
         )
-        .accessibilityIdentifier("run.live.caption")
+        .accessibilityIdentifier("\(identifierPrefix).caption")
     }
 }
 

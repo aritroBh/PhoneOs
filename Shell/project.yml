@@ -72,8 +72,10 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         # Remote control: a TCP listener advertised over Bonjour, local network only
-        # (NetworkRemoteTransport). The prompt appears when the owner turns it on.
-        NSLocalNetworkUsageDescription: "Jarvis listens on your local network only when you turn on Remote control, so your paired devices can start and watch tasks."
+        # (NetworkRemoteTransport). The prompt appears when the owner turns it on, or when
+        # "Control another phone" looks for phones on the Wi-Fi (NetworkRemoteDialer,
+        # RemotePhoneBrowser: the same service type, local network only).
+        NSLocalNetworkUsageDescription: "Jarvis uses your local network only for Remote control: to listen for your paired devices when you turn it on, and to find and control another iPhone running Jarvis when you open Control another phone."
         NSBonjourServices:
           - _jarvis-remote._tcp
         # Probe round 3 (Playground fixture screens only, App/Jarvis/Playground/ProbeFixtures3.swift):

@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Security
+import Synchronization
 import JarvisKit
 
 /// Remote control's state in the Keychain: a generic password per key, readable after the
@@ -107,6 +108,9 @@ final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
     /// Changes with every listener made and with `stop()`: callbacks of an older listener and
     /// rebuilds scheduled for it do nothing.
     private var generation: UInt64 = 0
+    /// The listener's port while it is ready (read from any thread for the connection
+    /// details).
+    private let readyPort = Mutex<UInt16?>(nil)
 
     func start() -> AsyncStream<RemoteTransportEvent> {
         let (stream, continuation) = AsyncStream.makeStream(of: RemoteTransportEvent.self)
@@ -161,7 +165,41 @@ final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
         }
     }
 
+    /// This phone's local IPv4 addresses on Wi-Fi (or Ethernet) with the listener's port,
+    /// for the Remote control screen's connection details. Only addresses `PeerAddressPolicy`
+    /// accepts (local ones) are listed; empty while the listener is not ready.
+    func localAddresses() -> [RemotePhoneAddress] {
+        guard let port = readyPort.withLock({ $0 }) else { return [] }
+        return Self.localIPv4Addresses().map { .host($0, port: port) }
+    }
+
+    static func localIPv4Addresses() -> [String] {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return [] }
+        defer { freeifaddrs(list) }
+        var found: [String] = []
+        var cursor: UnsafeMutablePointer<ifaddrs>? = first
+        while let entry = cursor {
+            defer { cursor = entry.pointee.ifa_next }
+            let flags = Int32(bitPattern: entry.pointee.ifa_flags)
+            guard let address = entry.pointee.ifa_addr, address.pointee.sa_family == UInt8(AF_INET),
+                  flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0 else { continue }
+            let name = String(cString: entry.pointee.ifa_name)
+            guard name.hasPrefix("en") else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let status = getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
+            guard status == 0 else { continue }
+            let text = host.withUnsafeBufferPointer { buffer in buffer.baseAddress.map { String(cString: $0) } ?? "" }
+            guard let bytes = RemotePhoneAddress.ipv4Bytes(text),
+                  PeerAddressPolicy.decide(address: bytes, pathIsCellular: false) == .accept,
+                  !found.contains(text) else { continue }
+            found.append(text)
+        }
+        return found
+    }
+
     func stop() {
+        readyPort.withLock { $0 = nil }
         queue.async {
             self.generation &+= 1
             self.listener?.cancel()
@@ -203,8 +241,11 @@ final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
         case .ready:
             restart.listenerReady(nowMs: Self.nowMs())
             let port = listener?.port.map { " on port \($0.rawValue)" } ?? ""
+            let raw = listener?.port?.rawValue
+            readyPort.withLock { $0 = raw }
             continuation?.yield(.listening(detail: "Same Wi-Fi, \(Self.serviceType)\(port)"))
         case .failed(let error):
+            readyPort.withLock { $0 = nil }
             continuation?.yield(.failed("the listener stopped (\(error))"))
             listener?.cancel()
             listener = nil
