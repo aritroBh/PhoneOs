@@ -1284,6 +1284,13 @@ impl ScreenPlaces {
         let mut out = Vec::new();
         if self.base_read || (self.top.is_none() && self.nested.is_none()) {
             out.push(self.base.clone());
+            // Review pass 28 (H1): what a picker screen shows is read from the app it is shown
+            // over too (the identifiers are author-controlled: the app's own content can sit on
+            // a screen carrying them, or follow a sticky picker): the picker is additive on
+            // both sides — sources picker + app, destinations picker + app.
+            if let Some(host) = &self.host {
+                out.push(host.clone());
+            }
         }
         out.extend(self.embedded_places());
         out

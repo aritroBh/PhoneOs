@@ -326,6 +326,19 @@ fn row_swipe_note() -> QuestionRow {
     row(QuestionRowKind::Note, &format!(". {ROW_SWIPE_NOTE}"))
 }
 
+/// Review pass 28 (H2): raises `category` to `add` and carries `add` (every category a
+/// rule attaches, [`evaluate_sheeted`]'s deny check reads them all).
+fn carry(
+    carried: &mut Vec<RiskCategory>,
+    category: RiskCategory,
+    add: RiskCategory,
+) -> RiskCategory {
+    if add != RiskCategory::None && !carried.contains(&add) {
+        carried.push(add);
+    }
+    crate::phrases::max_risk(category, add)
+}
+
 /// Probe round 3 (F3): the note of a question about Return on the emergency-call key.
 pub const EMERGENCY_CALL_NOTE: &str =
     "The keyboard's Return key is its emergency-call key: pressing it may place an emergency call";
@@ -410,19 +423,25 @@ pub(crate) fn crosses_list_row(
     };
     // The nearest scrollable ancestor of every raw node (`u32::MAX`: none), in node order
     // (a parent's index is below its children's).
+    // Review pass 28 (M2): and whether a drawn `Cell` holds it (at any depth): a node on a
+    // cell's row is on the row whatever frame the cell itself reports.
     let mut nearest: Vec<u32> = Vec::with_capacity(t.parents.len());
+    let mut in_cell: Vec<bool> = Vec::with_capacity(t.parents.len());
     for (i, &p) in t.parents.iter().enumerate() {
-        let up = usize::try_from(p)
-            .ok()
-            .filter(|&k| p != u32::MAX && k < i)
-            .map_or(u32::MAX, |k| {
-                if crate::hit::raw_node(t, p).is_some_and(|n| scroller(&n.role)) {
-                    p
-                } else {
-                    nearest.get(k).copied().unwrap_or(u32::MAX)
-                }
-            });
+        let parent = usize::try_from(p).ok().filter(|&k| p != u32::MAX && k < i);
+        let drawn = parent.and_then(|_| crate::hit::raw_node(t, p));
+        let up = parent.map_or(u32::MAX, |k| {
+            if drawn.is_some_and(|n| scroller(&n.role)) {
+                p
+            } else {
+                nearest.get(k).copied().unwrap_or(u32::MAX)
+            }
+        });
+        let cell = parent.is_some_and(|k| {
+            drawn.is_some_and(|n| n.role == Role::Cell) || in_cell.get(k).copied().unwrap_or(false)
+        });
         nearest.push(up);
+        in_cell.push(cell);
     }
     let parent_of = |i: u32| {
         usize::try_from(i)
@@ -441,7 +460,12 @@ pub(crate) fn crosses_list_row(
         if !touches {
             return false;
         }
-        if n.role == Role::Cell {
+        let held = usize::try_from(n.node)
+            .ok()
+            .and_then(|k| in_cell.get(k))
+            .copied()
+            .unwrap_or(false);
+        if n.role == Role::Cell || held {
             return true;
         }
         if f.height > row_height {
@@ -886,27 +910,34 @@ pub fn evaluate_sheeted(
         }
         None => classify_from(action, screen, tool, source),
     };
+    // Review pass 28 (H2): every category a rule attaches is carried, not only the riskiest:
+    // the question shows the riskiest, and a denial of ANY carried category refuses.
+    let mut carried: Vec<RiskCategory> = vec![category];
     // Audit of real trees (C2): an SF Symbol named by the identifier of the pressed control
     // or of an image inside it raises the category, whatever its label says or in which
     // language (risk only: never an exemption).
-    category = crate::phrases::max_risk(category, symbol_identifier_risk(action, screen, tree));
+    category = carry(
+        &mut carried,
+        category,
+        symbol_identifier_risk(action, screen, tree),
+    );
     // Probe round 3 (F1): a sideways drag whose path crosses a row of a list may trigger
     // the row's swipe action (a long one deleted a real row with no tap), whatever verb the
     // model used: at least `Delete`.
     let row_swipe = crosses_list_row(action, screen, tree);
     if row_swipe {
-        category = crate::phrases::max_risk(category, RiskCategory::Delete);
+        category = carry(&mut carried, category, RiskCategory::Delete);
     }
     // Probe round 3 (F6): text typed into the field beside a password (Safari's HTTP sign-in
     // dialog: `TextField placeholder="User Name"` next to `SecureTextField`) is a credential,
     // and it always asks.
     let credential = credential_pair(action, screen, tree);
     if credential {
-        category = crate::phrases::max_risk(category, RiskCategory::Credential);
+        category = carry(&mut carried, category, RiskCategory::Credential);
     }
     // Probe round 3 (F6): the button that sends a password form is an account action.
     if sign_in_press(action, screen, tree) {
-        category = crate::phrases::max_risk(category, RiskCategory::AccountChange);
+        category = carry(&mut carried, category, RiskCategory::AccountChange);
     }
     // Fourteenth review (Rule C): how the category was established. A category the
     // control's own words or role gave (`read`) is READ; one the gate guessed — a presumed
@@ -920,7 +951,7 @@ pub fn evaluate_sheeted(
     // Probe round 3 (F3): Return on a keyboard whose Return key no identifier types is of
     // unknown effect: it asks, phone only.
     if screen.cues.return_key_unknown && matches!(actuation(action, screen), Actuation::Return(_)) {
-        category = crate::phrases::max_risk(category, RiskCategory::Unverified);
+        category = carry(&mut carried, category, RiskCategory::Unverified);
         unclear = true;
     }
     unclear |= credential;
@@ -932,9 +963,9 @@ pub fn evaluate_sheeted(
         RiskCategory::None
     };
     if presumed {
-        category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
+        category = carry(&mut carried, category, RiskCategory::SendMessage);
         if presumed_money(action, screen, tree) {
-            category = crate::phrases::max_risk(category, RiskCategory::Payment);
+            category = carry(&mut carried, category, RiskCategory::Payment);
         }
         unclear |= category != read;
     }
@@ -952,7 +983,7 @@ pub fn evaluate_sheeted(
     if emergency {
         // Raised, never replaced: a send presumed from the field stays a send (the note names
         // the call).
-        category = crate::phrases::max_risk(category, RiskCategory::Call);
+        category = carry(&mut carried, category, RiskCategory::Call);
         unclear = true;
     }
     // Probe round 3 (F6): a credential typed beside a password asks whatever was relaxed.
@@ -961,7 +992,7 @@ pub fn evaluate_sheeted(
         if !owner_gave_url(&url, owner) {
             // A call link stays `Call` (it asks as one); any other link sends.
             if crate::classify::url_risk(&url) == RiskCategory::None {
-                category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
+                category = carry(&mut carried, category, RiskCategory::SendMessage);
             }
             unclear = true;
             // Seventeenth review: after something was read, not even an empty confirm
@@ -976,7 +1007,7 @@ pub fn evaluate_sheeted(
         if let Some(payment) = screen_shows_money(screen) {
             unclear = true;
             if payment {
-                category = crate::phrases::max_risk(category, RiskCategory::Payment);
+                category = carry(&mut carried, category, RiskCategory::Payment);
             }
         }
     }
@@ -988,14 +1019,14 @@ pub fn evaluate_sheeted(
         } else {
             RiskCategory::Unverified
         };
-        category = crate::phrases::max_risk(category, floor);
+        category = carry(&mut carried, category, floor);
         unclear = true;
     }
     // Sixteenth review (Rule P): a control that inserts content the question cannot show
     // (Paste, AutoFill, password items) always asks, phone only.
     let inserts = crate::flow::insert_control(action, screen, tree);
     if let Some(floor) = inserts {
-        category = crate::phrases::max_risk(category, floor);
+        category = carry(&mut carried, category, floor);
         unclear = true;
     }
     // Seventeenth review: an edit-menu item that is not a local action may hand the
@@ -1006,7 +1037,7 @@ pub fn evaluate_sheeted(
         && (crate::flow::handoff_control(action, screen, tree)
             || crate::flow::share_sheet_control(action, screen, tree, share_sheet));
     if hands_on {
-        category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
+        category = carry(&mut carried, category, RiskCategory::SendMessage);
         unclear = true;
     }
     forced |= inserts.is_some() || hands_on;
@@ -1015,11 +1046,19 @@ pub fn evaluate_sheeted(
     let not_owner =
         (sensitive && matches!(action, Action::Type { .. })) || !egress_owned(action, owner);
     if not_owner {
-        category = crate::phrases::max_risk(category, RiskCategory::SendMessage);
+        category = carry(&mut carried, category, RiskCategory::SendMessage);
         unclear = true;
     }
     let runner_text =
         source == ScreenSource::RunnerText && !matches!(action, Action::CallTool { .. });
+    // Review pass 28 (H2): a denied category any rule attached refuses, whatever the riskiest
+    // one is (an emergency call behind a presumed send, a row swipe on a send button).
+    if let Some(denied) = carried
+        .iter()
+        .find(|c| crate::gate::gate(policy, **c) == Gate::Deny)
+    {
+        return Decision::Deny(format!("{denied:?} actions are not allowed"));
+    }
     // Rule P (and the hand-on items) ask whatever the owner relaxed (only a denial refuses).
     let gate = gate_owned(
         policy,

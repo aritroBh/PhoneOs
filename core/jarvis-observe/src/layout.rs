@@ -352,10 +352,15 @@ pub(crate) struct Layout<'a> {
     quiet_nodes: HashMap<usize, Quiet>,
     /// The topmost shown Alert/Sheet (last in document order), outside excluded subtrees.
     pub alert: Option<&'a UiNode>,
-    /// The first shown keyboard: its area occludes, its Return key is a cue.
+    /// The first shown keyboard: its node is drawn over the keyboards' whole area.
     pub keyboard: Option<&'a UiNode>,
+    /// Review pass 28 (M1): every shown keyboard, in tree order (an app can draw a node
+    /// typed `Keyboard` of its own before the real one): their Return keys are all read
+    /// (`compact::return_key`), and their areas are one.
+    pub keyboards: Vec<&'a UiNode>,
     /// Audit of real trees (C4): where the keyboard takes touches — larger than the
-    /// `Keyboard` node (see [`keyboard_area`]).
+    /// `Keyboard` node (see [`keyboard_area`]); review pass 28: the union over every shown
+    /// keyboard.
     pub keyboard_area: Option<Rect>,
     bounds: Rect,
     occluder: Option<Rect>,
@@ -366,7 +371,7 @@ impl<'a> Layout<'a> {
     pub fn of(screen: &'a Screen) -> Layout<'a> {
         let excluded = exclusions(screen);
         let mut alert = None;
-        let mut keyboard = None;
+        let mut keyboards: Vec<&UiNode> = Vec::new();
         // (node, inside an excluded subtree)
         let mut stack = vec![(&screen.root, false)];
         while let Some((n, out)) = stack.pop() {
@@ -376,14 +381,16 @@ impl<'a> Layout<'a> {
             let out = out || excluded.contains(&addr(n));
             match n.role {
                 Role::Alert | Role::Sheet if !out && !n.frame.is_empty() => alert = Some(n),
-                Role::Keyboard if !out && keyboard.is_none() && !n.frame.is_empty() => {
-                    keyboard = Some(n);
-                }
+                Role::Keyboard if !out && !n.frame.is_empty() => keyboards.push(n),
                 _ => {}
             }
             stack.extend(n.children.iter().rev().map(|c| (c, out)));
         }
-        let keyboard_area = keyboard.map(|k| keyboard_area(screen, k, &excluded));
+        let keyboard = keyboards.first().copied();
+        let keyboard_area = keyboards
+            .iter()
+            .map(|k| keyboard_area(screen, k, &excluded))
+            .reduce(bounding);
         let occluder = if alert.is_some() { None } else { keyboard_area };
         let quiet = keyboard_parts(screen, &excluded);
         let quiet_nodes = quiet_nodes(screen, &quiet, &excluded);
@@ -393,6 +400,7 @@ impl<'a> Layout<'a> {
             quiet_nodes,
             alert,
             keyboard,
+            keyboards,
             keyboard_area,
             bounds: screen.bounds(),
             occluder,

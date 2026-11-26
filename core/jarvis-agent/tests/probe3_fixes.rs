@@ -624,7 +624,12 @@ fn f2_each_real_picker_is_a_place_of_its_own() {
             kind: *kind,
         };
         assert_eq!(p.base(), &want, "{what}");
-        assert_eq!(p.read_places(), vec![want.clone()], "{what}");
+        // Review pass 28 (H1): read from the picker and from the app it is shown over.
+        assert_eq!(
+            p.read_places(),
+            vec![want.clone(), FlowContext::app("dev.jarvis.app")],
+            "{what}"
+        );
         assert_eq!(p.picker(), Some(*kind), "{what}");
         assert!(p.shows_presentation(), "{what}");
         // Review M2 (c): the app leads the name.

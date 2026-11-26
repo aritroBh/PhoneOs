@@ -1057,7 +1057,24 @@ pub fn compact_view(screen: &Screen) -> CompactView {
     });
 
     let bounds = screen.bounds();
-    let return_key = layout.keyboard.and_then(return_key).unwrap_or_default();
+    // Review pass 28 (M1): every shown keyboard's Return key is read; the cue is the
+    // emergency-call key if any keyboard has one, else a send key, else the first found;
+    // several keyboards, or typed keys that disagree, make Return of unknown effect.
+    let keys: Vec<ReturnKey> = layout
+        .keyboards
+        .iter()
+        .filter_map(|k| return_key(k))
+        .collect();
+    let pick = |kind: &str| keys.iter().find(|k| k.kind == Some(kind)).cloned();
+    let return_key = pick("emergency call")
+        .or_else(|| pick("send"))
+        .or_else(|| keys.first().cloned())
+        .unwrap_or_default();
+    let several_keyboards = layout.keyboards.len() > 1
+        || keys
+            .iter()
+            .filter_map(|k| k.kind)
+            .any(|k| Some(k) != return_key.kind);
     let mut kept: Vec<(Cand, Rect)> = walker
         .cands
         .into_iter()
@@ -1118,7 +1135,8 @@ pub fn compact_view(screen: &Screen) -> CompactView {
             return_key_type: return_key.kind.map(str::to_owned),
             // Probe round 3 (F3): a keyboard is up whose Return key's type no identifier
             // gives: what Return does is unknown (fail closed).
-            return_key_unknown: layout.keyboard.is_some() && return_key.kind.is_none(),
+            return_key_unknown: (layout.keyboard.is_some() && return_key.kind.is_none())
+                || several_keyboards,
             ..cues(alert.unwrap_or(&screen.root), bounds, &layout)
         },
     };
