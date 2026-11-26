@@ -23,7 +23,7 @@ import WebKit
 /// symbol-only buttons have no `accessibilityLabel` and no identifier on purpose).
 enum Probe3Screen: String, Hashable, CaseIterable {
     case symbols, returns, modals, controls, web, pickers, permissions, system, swipes
-    case swipesNarrow, swipesColumns, swipesLeading, swipesPlain, swipesRevealed
+    case swipesNarrow, swipesColumns, swipesLeading, swipesPlain, swipesRevealed, swipesUIKit
 
     var title: String {
         switch self {
@@ -41,6 +41,7 @@ enum Probe3Screen: String, Hashable, CaseIterable {
         case .swipesLeading: "Swipe rows, leading"
         case .swipesPlain: "Swipe rows, edge to edge"
         case .swipesRevealed: "Swipe rows, revealed"
+        case .swipesUIKit: "Swipe rows, UIKit"
         }
     }
 }
@@ -78,6 +79,7 @@ struct Probe3Destination: View {
         case .swipesLeading: Probe3SwipeVariantFixture(variant: .leading)
         case .swipesPlain: Probe3SwipeVariantFixture(variant: .plain)
         case .swipesRevealed: Probe3SwipeRevealedFixture()
+        case .swipesUIKit: Probe3UIKitSwipesFixture()
         }
     }
 }
