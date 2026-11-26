@@ -897,7 +897,12 @@ final class TopLayerRunnerTests: QATestCase {
             }
             produced += 1
             try await Task.sleep(for: .seconds(1))
-            note("\(name): up (\(c.surface.identifier) in SpringBoard's tree); Settings state \(settings.state.rawValue)")
+            // The app's state while the surface is up is the OS's to report (run 150: under the
+            // App Switcher Settings read as running in the background, state 3; in runs 146-149
+            // as foreground): the note then names the surface alone, and "unchanged by the
+            // refused tap" is checked against this reading, not against "foreground".
+            let stateUp = settings.state
+            note("\(name): up (\(c.surface.identifier) in SpringBoard's tree); Settings state \(stateUp.rawValue)")
 
             // (i) The top layer is not Settings: the unidentified layer.
             let askedAt = Date()
@@ -917,8 +922,9 @@ final class TopLayerRunnerTests: QATestCase {
             XCTAssertFalse(look.deviceLocked, "\(name): judged locked (the phone is unlocked)")
             for label in settingsLabels { XCTAssertFalse(labels.contains(label), "\(name): Settings' \"\(label)\" is in the look") }
             for label in c.labels { XCTAssertFalse(labels.contains(label), "\(name): \"\(label)\" of \(name) is in the look") }
-            XCTAssertTrue(look.notes.contains(c.surface.note(over: Self.settingsId)),
-                          "\(name): no note names \(name) over Settings: \(look.notes)")
+            let namesSurface = look.notes.contains(c.surface.note(over: Self.settingsId))
+                || (stateUp != .runningForeground && look.notes.contains(c.surface.note(over: nil)))
+            XCTAssertTrue(namesSurface, "\(name): no note names \(name) (over Settings while Settings reads as foreground; Settings state \(stateUp.rawValue)): \(look.notes)")
 
             // (iii) A tap planned on Settings, at a point of the surface: stale at once (no
             // banner wait), and the surface is unchanged.
@@ -934,7 +940,7 @@ final class TopLayerRunnerTests: QATestCase {
             XCTAssertEqual(stale.failure, RunnerFailure.stale)
             XCTAssertFalse((stale.error ?? "").contains("notification banner"), "\(name): refused by the banner gate, not the top layer: \(stale.error ?? "")")
             XCTAssertTrue(surfaceUp(board, c.surface), "\(name) is gone after the refused tap: a touch may have reached it")
-            XCTAssertEqual(settings.state, .runningForeground, "\(name): Settings is no longer in the foreground after the refused tap")
+            XCTAssertEqual(settings.state, stateUp, "\(name): Settings' state changed after the refused tap (was \(stateUp.rawValue))")
 
             // (iv) Home dismisses it; a fresh look is Settings or the Home Screen.
             let home = try await runner.perform(.pressKey(key: .home), expect: nil)
