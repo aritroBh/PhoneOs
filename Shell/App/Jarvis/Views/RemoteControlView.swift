@@ -211,7 +211,7 @@ private struct PendingDeviceRow: View {
                 .foregroundStyle(Theme.textPrimary)
                 .accessibilityLabel(pending.check)
                 .accessibilityIdentifier("\(prefix).check")
-            Text("Confirm only if the device you just paired shows these same numbers. If you did not pair it, or the numbers differ, remove it. Until you confirm, it can do nothing; it is removed after 10 minutes.")
+            Text("Confirm only if the other device shows these same numbers. If it shows other numbers or none, or you did not pair it, tap Remove. Until you confirm, it can do nothing; it is removed 10 minutes after it paired.")
                 .font(Theme.meta)
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -404,7 +404,7 @@ private struct PairingSheet: View {
                     offerView(offer, seconds: seconds)
                 } else if !model.remotePending.isEmpty {
                     VStack(alignment: .leading, spacing: Theme.gap) {
-                        Text("Paired. Now confirm it.")
+                        Text("Paired. Confirm it only if the other device shows the same numbers.")
                             .font(Theme.question)
                             .foregroundStyle(Theme.textPrimary)
                             .accessibilityIdentifier("remote.pair.ended")

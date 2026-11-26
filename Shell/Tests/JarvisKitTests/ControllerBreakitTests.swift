@@ -178,14 +178,20 @@ struct ControllerBreakitTests {
         }
         #expect(r.service.deviceLockedUntilMs(id) > r.service.nowMs(), "the lockout was not armed")
         c.reconnect()
-        try await eventually("the controller to stop retrying", seconds: 10) {
-            if case .disconnected(let d) = c.state.phase { return !d.retrying }
-            return false
+        // Confirm-step break-it review F1: the lockout no longer refuses the device's own
+        // key at all (this test used to wait for the refused retries to end), so it cannot
+        // read as removed either.
+        try await eventually("connected again despite the lockout", seconds: 10) {
+            if case .disconnected(let d) = c.state.phase, !d.retrying { return true }
+            return c.state.phase == .connected
         }
-        guard case .disconnected(let d) = c.state.phase else { return }
         #expect(!r.service.devices.isEmpty, "the device is still paired on the phone")
-        #expect(d.reason != .refused,
-                "a lockout of a few seconds became a permanent 'pair again' state: \(d.reason.text)")
+        #expect(c.state.phase == .connected, "the device's own key was refused: \(c.state.phase)")
+        if case .disconnected(let d) = c.state.phase {
+            #expect(d.reason != .refused,
+                    "a lockout of a few seconds became a permanent 'pair again' state: \(d.reason.text)")
+        }
+        c.disconnect()
     }
 
     @Test("FINDING: a phone that accepts the handshake and drops at once makes the controller reconnect without bound")

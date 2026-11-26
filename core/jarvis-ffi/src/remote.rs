@@ -221,6 +221,19 @@ impl JarvisRemoteHub {
         self.with("to_json", |h| Ok(h.to_json().as_str().to_owned()))
     }
 
+    /// Writing `toJson()` after a `storeChanged` failed. Call it at once (the shell carries
+    /// out nothing after the failed write but closes, and closes every connection). The
+    /// question pending now (if any) stays the phone's own: no device is shown it or may
+    /// answer it; the next request id and connection counter are leased again first (a new
+    /// `storeChanged` before them), so no id from a lease that was not stored ever reaches
+    /// a device.
+    pub fn store_write_failed(&self) -> Result<(), JarvisError> {
+        self.with("store_write_failed", |h| {
+            h.store_write_failed();
+            Ok(())
+        })
+    }
+
     /// SECRET OUTPUT. Opens a single-use pairing offer valid for 5 minutes (replacing any
     /// open one); show `code`/`qrPayload` on screen only. `entropy`: at least 32 fresh
     /// bytes from `SecRandomCopyBytes`. Throws `remoteEntropy` (weak or short entropy) or

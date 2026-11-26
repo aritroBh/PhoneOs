@@ -848,6 +848,18 @@ do {
     }
     check("payment can never be approved remotely",
           try neverRemoteApprove().contains(.payment) && !(try remotelyApprovable(category: .payment)))
+    // A store write that failed: the next question's id is leased again (storeChanged
+    // before anything is sent) before it reaches the device.
+    try hub.storeWriteFailed()
+    log = []
+    let asked = try local(.confirmRequested(request: ConfirmRequest(
+        category: .firstUse, summary: "First use", app: "Settings", phoneOnly: false, stage: .whole, verb: .other)))
+    let askedId = try hub.pendingRequestId()
+    check("after a failed store write the next question is leased again before it is sent",
+          log.first == .storeChanged && askedId != nil
+              && asked.contains { if case let .confirmPending(id, _, _, _) = $0 { return id == askedId } else { return false } },
+          "\(log) \(asked)")
+    _ = try local(.confirmResolved(requestId: askedId ?? 0, approved: false))
     let restored = try JarvisRemoteHub(storeJson: keychain, phoneName: "Smoke phone")
     check("the hub restores from the Keychain JSON", try restored.devices() == devices)
     log = []

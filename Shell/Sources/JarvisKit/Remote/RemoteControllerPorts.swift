@@ -49,8 +49,9 @@ public enum RemotePhoneAddress: Sendable, Hashable, Codable, CustomStringConvert
     /// a literal the way the system resolver would read it, so nothing passes here as local
     /// that the system dials as a public host:
     /// - an IPv6 literal (it has a colon; brackets are optional) must parse and be local by
-    ///   `PeerAddressPolicy` (link-local and unique-local allowed; an IPv4-mapped address is
-    ///   judged by its IPv4 address);
+    ///   `PeerAddressPolicy` on a path not known yet: loopback, link-local and unique-local
+    ///   only (no global address, whatever network this device is on); an IPv4-mapped
+    ///   address is judged by its IPv4 address;
     /// - a numeric-looking host (it starts with a digit, or its last label does) must be
     ///   canonical dotted-decimal IPv4 (exactly four parts, 0 to 255, no leading zeros, no
     ///   hex, no trailing dot) and a local address; every other numeric form (`010.8.8.8`,
@@ -70,7 +71,11 @@ public enum RemotePhoneAddress: Sendable, Hashable, Codable, CustomStringConvert
         }
         if host.contains(":") {
             guard let v6 = ipv6Bytes(host) else { return .failure(.notAHost) }
-            if case .refuse(let why) = PeerAddressPolicy.decide(address: v6, pathIsCellular: false) {
+            // Nothing is known of the path yet: judged as a peer on an unknown path, so only
+            // loopback, link-local (fe80::/10) and unique-local (fc00::/7) pass (and an
+            // IPv4-mapped address by its IPv4 rule); a global address (2001:4860::8888,
+            // 2002::/16 6to4) is refused, as the listener refuses one it cannot place.
+            if case .refuse(let why) = PeerAddressPolicy.decide(address: v6, pathIsCellular: nil) {
                 return .failure(.notLocal(why))
             }
             return .success(.host(host, port: port))

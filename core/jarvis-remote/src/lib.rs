@@ -62,7 +62,9 @@
 //! lockout    ≥ 5 failed MAC checks (pairing: per offer, a new offer starts clean;
 //!            connect: per claimed known device) → that handshake refused for 5 s,
 //!            doubling, max 10 min (pairing: max 30 s, and at most 60 s in all per offer);
-//!            forgotten after 15 quiet minutes; refusals during it are not counted
+//!            forgotten after 15 quiet minutes; refusals during it are not counted. A
+//!            connect that proves the device key is accepted even while that device is
+//!            locked (the id travels in clear: the lockout must not be a weapon)
 //! messages   JSON tagged with "type": ClientMessage (remote → phone), ServerMessage back
 //! ```
 //!
@@ -86,7 +88,9 @@
 //!   from rate-limit dropping while something runs.
 //! * `ListSkills` needs `start_tasks`; a device with every permission off learns from
 //!   `Welcome` only the protocol version and its own permissions.
-//! * Limits: [`MAX_DEVICES`] paired devices, [`MAX_CONNECTIONS`] connections,
+//! * Limits: [`MAX_DEVICES`] paired devices, [`MAX_CONNECTIONS`] connections (a full
+//!   table closes its oldest unfinished handshake to admit a new connection; authenticated
+//!   connections are never evicted),
 //!   [`MAX_BUFFERED_BYTES`] buffered per connection, [`MAX_PLAINTEXT_LEN`] per message,
 //!   [`RATE_MAX_MESSAGES`] per [`RATE_WINDOW_MS`] per connection, a
 //!   [`HANDSHAKE_TIMEOUT_MS`] and an [`IDLE_TIMEOUT_MS`]. Every time check uses the
@@ -228,7 +232,7 @@ pub use pairing::{
 pub use permissions::{remotely_approvable, RemotePermissions, NEVER_REMOTE_APPROVE};
 pub use store::{
     clean_name, DeviceInfo, DeviceRecord, DeviceStore, PendingRecord, StoredHub,
-    DEVICE_STORE_VERSION, MAX_DEVICES, MAX_DEVICE_NAME_BYTES,
+    DEVICE_STORE_VERSION, MAX_DEVICES, MAX_DEVICE_NAME_BYTES, MAX_LEASE,
 };
 pub use viewer::{
     ViewerEndReason, ViewerEvent, ViewerMessage, ViewerRequest, MAX_DELTA_BASE64, MAX_DELTA_BYTES,

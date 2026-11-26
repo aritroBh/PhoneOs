@@ -50,7 +50,7 @@ use crate::pairing::{format_code, qr_payload, PairingOffer, PAIRING_TTL_MS};
 use crate::permissions::{remotely_approvable, RemotePermissions};
 use crate::store::{
     clean_name, DeviceInfo, DeviceRecord, DeviceStore, PendingRecord, StoredHub, MAX_DEVICES,
-    MAX_DEVICE_NAME_BYTES,
+    MAX_DEVICE_NAME_BYTES, MAX_LEASE,
 };
 use crate::text::{clean_text, redact_text};
 use crate::viewer::{
@@ -61,7 +61,9 @@ use crate::viewer::{
 /// The shell's identifier for one transport connection.
 pub type ConnId = u64;
 
-/// Most simultaneous connections (authenticated or not).
+/// Most simultaneous connections (authenticated or not). When the table is full, a new
+/// connection takes the place of the oldest one still in its handshake; only a table full
+/// of authenticated connections refuses it (an authenticated connection is never evicted).
 pub const MAX_CONNECTIONS: usize = 8;
 /// A connection must finish its handshake this soon after opening, in milliseconds.
 pub const HANDSHAKE_TIMEOUT_MS: u64 = 10_000;
@@ -72,6 +74,9 @@ pub const RATE_WINDOW_MS: u64 = 1_000;
 /// Messages accepted per connection per window; the rest are dropped (except `Cancel`).
 pub const RATE_MAX_MESSAGES: u32 = 20;
 /// Failed MAC checks (per device for connects, per offer for pairing) before a lockout.
+/// A connect lockout only changes how forged requests are refused: a request that carries
+/// a valid proof for the device is accepted whatever its lockout (break-it review F1: the
+/// device id travels in clear, so anyone on the network could otherwise keep it out).
 pub const LOCKOUT_THRESHOLD: u32 = 5;
 /// First lockout, in milliseconds; doubles with every further failure.
 pub const LOCKOUT_BASE_MS: u64 = 5_000;
@@ -129,6 +134,7 @@ pub enum CloseReason {
     /// A connect request repeated a recently seen `(device id, remote nonce)`.
     Replayed,
     /// Handshakes for this device (or pairing) are locked out after repeated failures.
+    /// For a device, only a request that fails its MAC check is refused this way.
     LockedOut,
     /// The handshake did not finish within [`HANDSHAKE_TIMEOUT_MS`].
     HandshakeTimeout,
@@ -424,8 +430,9 @@ struct Provisional {
 struct PendingDevice {
     record: DeviceRecord,
     check: String,
-    /// Removed at this time; `None` until the first call after a restore (the shell's
-    /// clock may have restarted), then [`PENDING_CONFIRM_TTL_MS`] from then.
+    /// Removed at this time; `None` until the first call after a restore, then
+    /// [`PENDING_CONFIRM_TTL_MS`] after its pairing time (or after that call, if the clock
+    /// is then earlier than the pairing time).
     expires_at_ms: Option<u64>,
 }
 
@@ -597,6 +604,10 @@ struct Pending {
     decided: bool,
     /// Devices that were sent this `ConfirmPending` (they may decline it).
     notified: BTreeSet<DeviceId>,
+    /// Offered to remote devices. `false` when its id may not be durably leased (a store
+    /// write failed, see [`RemoteHub::store_write_failed`], or the ids ran out): the phone
+    /// still asks its owner, but no device is shown it or may answer it.
+    remote: bool,
 }
 
 #[derive(Debug, Default)]
@@ -709,6 +720,24 @@ impl RemoteHub {
     pub fn from_json(phone_name: &str, json: &str) -> Result<Self, PersistError> {
         let stored = DeviceStore::from_json_full(json)?;
         Ok(Self::build(phone_name, stored))
+    }
+
+    /// The shell could not write [`RemoteHub::to_json`] after a [`HubEffect::StoreChanged`]
+    /// (it carried out nothing after it but closes). The leases may then be ahead of what
+    /// is stored, so ids from them must not reach anyone: the question now pending (if
+    /// any) stays the phone's own (no device is shown it or may answer it), and the next
+    /// request id and connection counter are leased again (a new `StoreChanged` ahead of
+    /// their first use, whose write the shell must succeed in before it sends what
+    /// follows). Ids handed out before stay below every lease written later.
+    pub fn store_write_failed(&mut self) {
+        if let Some(p) = self.pending.as_mut() {
+            // What followed the failed write was not sent, and the shell closed every
+            // connection: no device holds this question now.
+            p.remote = false;
+            p.notified.clear();
+        }
+        self.request_lease = self.next_request_id;
+        self.nonce_lease = self.nonce_counter;
     }
 
     /// The persisted state, keys included, for the Keychain (see [`DeviceStore`]), with
@@ -956,7 +985,8 @@ impl RemoteHub {
         self.offer.as_ref().map_or(0, |o| o.lockout.locked_until_ms)
     }
 
-    /// End of the connect lockout for one device (0 when none has happened).
+    /// End of the connect lockout for one device (0 when none has happened). It refuses
+    /// only requests that fail the MAC check; one that proves the key is always accepted.
     pub fn device_locked_until_ms(&self, device_id: DeviceId) -> u64 {
         self.device_lockouts
             .get(&device_id)
@@ -1013,7 +1043,15 @@ impl RemoteHub {
             self.close(conn_id, CloseReason::DuplicateConnection, &mut fx);
             return fx;
         }
-        if self.conns.len() >= MAX_CONNECTIONS {
+        // Break-it review F2: handshakes that never finish must not starve the owner. A full
+        // table makes room by closing its oldest handshake; only authenticated connections
+        // hold their place.
+        let evict = if self.conns.len() >= MAX_CONNECTIONS {
+            self.oldest_handshake()
+        } else {
+            None
+        };
+        if self.conns.len() >= MAX_CONNECTIONS && evict.is_none() {
             fx.push(HubEffect::Close {
                 conn_id,
                 reason: CloseReason::TooManyConnections,
@@ -1043,9 +1081,23 @@ impl RemoteHub {
             );
             return fx;
         }
+        if self.nonce_counter >= MAX_LEASE {
+            // Out of counters (never in practice): refused rather than repeating one.
+            fx.push(HubEffect::Close {
+                conn_id,
+                reason: CloseReason::Internal,
+            });
+            return fx;
+        }
+        if let Some(old) = evict {
+            self.close(old, CloseReason::TooManyConnections, &mut fx);
+        }
         // Lease the counter before using it, so a restart never reuses one.
         if self.nonce_counter >= self.nonce_lease {
-            self.nonce_lease = self.nonce_counter.saturating_add(NONCE_LEASE_BLOCK);
+            self.nonce_lease = self
+                .nonce_counter
+                .saturating_add(NONCE_LEASE_BLOCK)
+                .min(MAX_LEASE);
             fx.push(HubEffect::StoreChanged);
         }
         let counter = self.nonce_counter;
@@ -1231,13 +1283,20 @@ impl RemoteHub {
             }
             LocalEvent::ConfirmRequested { request } => {
                 // Lease ids before using one, so a restarted hub never hands out an id an
-                // old question (still on a controller's screen) carried.
-                if self.next_request_id >= self.request_lease {
-                    self.request_lease = self.next_request_id.saturating_add(REQUEST_LEASE_BLOCK);
+                // old question (still on a controller's screen) carried. Once the ids run
+                // out (never in practice) the question is the phone's alone: no id repeats.
+                let remote = self.next_request_id < MAX_LEASE;
+                if remote && self.next_request_id >= self.request_lease {
+                    self.request_lease = self
+                        .next_request_id
+                        .saturating_add(REQUEST_LEASE_BLOCK)
+                        .min(MAX_LEASE);
                     fx.push(HubEffect::StoreChanged);
                 }
                 let id = self.next_request_id;
-                self.next_request_id = self.next_request_id.saturating_add(1);
+                if remote {
+                    self.next_request_id += 1;
+                }
                 self.pending = Some(Pending {
                     id,
                     category: request.category,
@@ -1245,6 +1304,7 @@ impl RemoteHub {
                     summary: request.summary,
                     decided: false,
                     notified: BTreeSet::new(),
+                    remote,
                 });
                 self.broadcast_pending(&mut fx);
             }
@@ -1252,8 +1312,10 @@ impl RemoteHub {
                 if self.pending.as_ref().is_some_and(|p| p.id == request_id) {
                     if let Some(p) = self.pending.take() {
                         self.broadcast(&mut fx, |_, c| {
-                            (c.subscribed || c.device_id.is_some_and(|d| p.notified.contains(&d)))
-                                .then_some(ServerMessage::ConfirmResolved { request_id: p.id })
+                            // A question that stayed the phone's own is not announced.
+                            ((p.remote && c.subscribed)
+                                || c.device_id.is_some_and(|d| p.notified.contains(&d)))
+                            .then_some(ServerMessage::ConfirmResolved { request_id: p.id })
                         });
                     }
                 }
@@ -1409,6 +1471,15 @@ impl RemoteHub {
         self.last_now_ms
     }
 
+    /// The connection still in its handshake that opened first (ties: lowest id).
+    fn oldest_handshake(&self) -> Option<ConnId> {
+        self.conns
+            .iter()
+            .filter(|(_, c)| matches!(c.phase, Phase::Handshake { .. }))
+            .min_by_key(|(id, c)| (c.opened_at_ms, **id))
+            .map(|(id, _)| *id)
+    }
+
     fn provisional_count(&self) -> usize {
         self.conns
             .values()
@@ -1446,12 +1517,21 @@ impl RemoteHub {
         }
     }
 
-    /// Removes pending devices whose confirmation time ran out (and starts the clock for
+    /// Removes pending devices whose confirmation time ran out (and sets the time for
     /// those restored without one).
     fn expire_pending(&mut self, now: u64, fx: &mut Vec<HubEffect>) {
         for p in &mut self.pending_devices {
             if p.expires_at_ms.is_none() {
-                p.expires_at_ms = Some(now.saturating_add(PENDING_CONFIRM_TTL_MS));
+                // Break-it review F3: a restored device keeps the 10 minutes it was given at
+                // pairing (the shell's clock is the wall clock), so relaunching Jarvis does
+                // not extend them. Only a clock that went back before the pairing time
+                // (it cannot be trusted then) starts them again from now.
+                let paired = p.record.paired_at_ms;
+                p.expires_at_ms = Some(if now >= paired {
+                    paired.saturating_add(PENDING_CONFIRM_TTL_MS)
+                } else {
+                    now.saturating_add(PENDING_CONFIRM_TTL_MS)
+                });
             }
         }
         let expired: Vec<DeviceId> = self
@@ -1816,14 +1896,14 @@ impl RemoteHub {
             return;
         };
         let key = dev.key.clone();
-        if self
+        // Break-it review F1: the lockout never refuses a request that proves the key (a
+        // network host that knows the id could re-arm it for ever). While locked, a request
+        // is still checked (one HMAC, as for any request), and only a failure is refused
+        // as locked out, without being counted.
+        let locked = self
             .device_lockouts
             .get(&device_id)
-            .is_some_and(|l| l.locked(now))
-        {
-            self.close(conn_id, CloseReason::LockedOut, fx);
-            return;
-        }
+            .is_some_and(|l| l.locked(now));
         if self
             .recent_connects
             .iter()
@@ -1847,7 +1927,11 @@ impl RemoteHub {
             return;
         };
         if verify_connect_client_mac(&ak, &device_id, &t, &mac).is_err() {
-            self.handshake_mac_failed(conn_id, Some(device_id), now, fx);
+            if locked {
+                self.close(conn_id, CloseReason::LockedOut, fx);
+            } else {
+                self.handshake_mac_failed(conn_id, Some(device_id), now, fx);
+            }
             return;
         }
         self.device_lockouts.remove(&device_id);
@@ -2194,7 +2278,7 @@ impl RemoteHub {
         let Some(p) = self
             .pending
             .as_ref()
-            .filter(|p| p.id == request_id && !p.decided)
+            .filter(|p| p.id == request_id && !p.decided && p.remote)
         else {
             return self.deny(conn_id, device_id, request, DenyReason::StaleRequest, fx);
         };
@@ -2653,7 +2737,7 @@ impl RemoteHub {
     }
 
     fn pending_message(&self, perms: RemotePermissions) -> Option<ServerMessage> {
-        let p = self.pending.as_ref().filter(|p| !p.decided)?;
+        let p = self.pending.as_ref().filter(|p| !p.decided && p.remote)?;
         let can_approve = !p.phone_only && perms.can_approve(p.category);
         let summary = if perms.see_screen_text || can_approve {
             redact_text(&p.summary, MAX_SUMMARY_CHARS)

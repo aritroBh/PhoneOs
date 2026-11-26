@@ -24,6 +24,11 @@ use crate::text::is_format;
 pub const MAX_DEVICES: usize = 8;
 /// Longest device name, in bytes of UTF-8.
 pub const MAX_DEVICE_NAME_BYTES: usize = 64;
+/// Largest lease (request ids and connection counters) a store may hold. Leases grow by
+/// one small block per persist, so a real store stays far below this (2^53, about 10^16);
+/// a store above it is refused at load like any corrupt one, and a hub whose ids reach it
+/// stops handing out ids rather than repeating one.
+pub const MAX_LEASE: u64 = 1 << 53;
 /// Current schema version of the persisted device list. Version 2 added `nonce_lease`;
 /// version 1 is not read (it was never shipped). Later additions are optional fields
 /// written only when used (`watch_screen`, `pending_check`, `request_lease`), so a store
@@ -250,6 +255,9 @@ impl DeviceStore {
         }
         let doc: StoreJson =
             serde_json::from_value(probe).map_err(|e| PersistError::corrupt(&e))?;
+        if doc.request_lease > MAX_LEASE {
+            return Err(PersistError::Invalid("unreasonable lease".into()));
+        }
         let mut devices: Vec<DeviceRecord> = Vec::with_capacity(doc.devices.len());
         let mut pending: Vec<PendingRecord> = Vec::new();
         let mut watch = BTreeSet::new();
@@ -259,7 +267,7 @@ impl DeviceStore {
                 .ok_or_else(|| PersistError::Invalid("invalid key".into()))?;
             let record = DeviceRecord {
                 id: d.id,
-                name: d.name,
+                name: migrated_name(d.name),
                 key: Secret32::from_bytes(key_bytes),
                 permissions: d.permissions,
                 paired_at_ms: d.paired_at_ms,
@@ -310,8 +318,12 @@ impl DeviceStore {
     }
 
     /// Checks the invariants [`DeviceStore::from_json`] enforces: at most
-    /// [`MAX_DEVICES`], unique ids, clean names within [`MAX_DEVICE_NAME_BYTES`].
+    /// [`MAX_DEVICES`], unique ids, clean names within [`MAX_DEVICE_NAME_BYTES`], a lease
+    /// of at most [`MAX_LEASE`].
     pub fn validate(&self) -> Result<(), PersistError> {
+        if self.nonce_lease > MAX_LEASE {
+            return Err(PersistError::Invalid("unreasonable lease".into()));
+        }
         if self.devices.len() > MAX_DEVICES {
             return Err(PersistError::Invalid("too many devices".into()));
         }
@@ -333,6 +345,10 @@ impl DeviceStore {
 /// Cleans a device name: control and format characters removed, whitespace collapsed,
 /// trimmed, cut to [`MAX_DEVICE_NAME_BYTES`] on a character boundary.
 pub fn clean_name(name: &str) -> String {
+    clean_name_with(name, is_format)
+}
+
+fn clean_name_with(name: &str, is_format: fn(char) -> bool) -> String {
     let mut out = String::new();
     let mut space = false;
     for c in name.chars() {
@@ -356,9 +372,45 @@ pub fn clean_name(name: &str) -> String {
     out
 }
 
+/// The format characters names were cleaned of before the full Cf table (`adfce96` and
+/// earlier). Only for [`migrated_name`].
+fn legacy_is_format(c: char) -> bool {
+    matches!(c,
+        '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
+        | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}'
+        | '\u{E0000}'..='\u{E007F}')
+}
+
+/// A stored name that was clean under the earlier, shorter list of format characters is
+/// cleaned with the full table instead of failing the store's validation (which would
+/// drop every pairing on the update). Any other name is returned as it is and validated.
+fn migrated_name(name: String) -> String {
+    if clean_name_with(&name, legacy_is_format) == name {
+        let cleaned = clean_name(&name);
+        if !cleaned.is_empty() {
+            return cleaned;
+        }
+    }
+    name
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_stored_under_the_earlier_list_loads_cleaned() {
+        let json = r#"{"schema_version":2,"nonce_lease":0,"devices":[{"id":"00112233445566778899aabbccddeeff","name":"Owner\ud834\udd73 Mac","key":"0000000000000000000000000000000000000000000000000000000000000000","permissions":{"start_tasks":true,"see_progress":true,"see_screen_text":false,"approve":false},"paired_at_ms":5}]}"#;
+        let store = DeviceStore::from_json(json).unwrap();
+        assert_eq!(store.devices[0].name, "Owner Mac");
+        // Names the earlier list refused stay refused.
+        let dirty = json.replace("Owner\\ud834\\udd73 Mac", "Owner\\u202e Mac");
+        assert_ne!(dirty, json);
+        assert!(DeviceStore::from_json(&dirty).is_err());
+        // A name of nothing but newly listed characters is refused, not emptied.
+        let empty = json.replace("Owner\\ud834\\udd73 Mac", "\\ud834\\udd73");
+        assert!(DeviceStore::from_json(&empty).is_err());
+    }
 
     #[test]
     fn names_are_cleaned() {

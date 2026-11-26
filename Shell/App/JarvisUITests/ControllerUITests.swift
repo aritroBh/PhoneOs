@@ -131,6 +131,20 @@ final class ControllerUITests: QATestCase {
         // The controller: confirmed (idle), then watch, then start a scripted task.
         push(app.buttons["remote.controlAnother"], "Control another phone", in: app)
         waitForStatus("Idle", timeout: 20, in: app)
+        // Let in, but the controller keeps its numbers until the owner says they matched
+        // (a welcome is not proof that the phone confirmed THIS device).
+        let kept = app.staticTexts["controller.check"]
+        require(kept, "the controller's check string after the welcome", timeout: 10, in: app)
+        XCTAssertEqual(kept.label, controllerCheck, "the controller shows other numbers after the welcome")
+        let reminder = app.staticTexts["controller.checkReminder"]
+        require(reminder, "the controller's reminder to compare the numbers", in: app)
+        XCTAssertTrue(reminder.label.contains(controllerCheck), "reminder: \(reminder.label)")
+        XCTAssertFalse(reminder.label.contains("Confirmed on the phone"), "reminder: \(reminder.label)")
+        let matched = app.buttons["controller.checkMatched"]
+        require(matched, "The numbers matched", in: app)
+        scrollTo(matched, in: app)
+        matched.tap()
+        XCTAssertTrue(kept.waitForNonExistence(timeout: 10), "the check string stayed after the owner said it matched")
         XCTAssertTrue(app.descendants(matching: .any)["controller.sharingNote"].firstMatch.exists,
                       "a new device does not see screen text: the screen must say what it is not shown")
         let watch = app.buttons["controller.watch"]

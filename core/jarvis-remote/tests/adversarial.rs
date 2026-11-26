@@ -437,9 +437,17 @@ fn connect_lockout_is_per_device() {
         let (link, fx, _) = rig.try_connect(&forged);
         assert_eq!(closed(&fx, link.conn), Some(CloseReason::AuthFailed));
     }
-    assert!(rig.hub.device_locked_until_ms(victim.device_id) > rig.now);
-    let (link, fx, _) = rig.try_connect(&victim);
+    let until = rig.hub.device_locked_until_ms(victim.device_id);
+    assert!(until > rig.now);
+    // During the lockout a forged request is refused as locked out (and not counted)...
+    let (link, fx, _) = rig.try_connect(&forged);
     assert_eq!(closed(&fx, link.conn), Some(CloseReason::LockedOut));
+    assert_eq!(rig.hub.device_locked_until_ms(victim.device_id), until);
+    // ...but the device's own key is never refused because of someone else's failures
+    // (confirm-step break-it review F1; this used to assert `LockedOut` for it).
+    let (link, _, _) = rig.try_connect(&victim);
+    assert!(rig.hub.is_authenticated(link.conn));
+    rig.hub.connection_closed(link.conn);
     // Other devices, and unknown ids, are not affected or counted.
     rig.connect(&bystander);
     let unknown = ClientCredentials {
@@ -450,7 +458,7 @@ fn connect_lockout_is_per_device() {
         let _ = rig.try_connect(&unknown);
     }
     assert_eq!(rig.hub.device_locked_until_ms(unknown.device_id), 0);
-    rig.now = rig.hub.device_locked_until_ms(victim.device_id);
+    rig.now = until;
     rig.connect(&victim);
 }
 

@@ -79,7 +79,7 @@ struct ControllerView: View {
         case .disconnected(let d): return d.retrying ? Theme.warning : Theme.error
         case .connected: break
         }
-        if state.awaitingConfirmation != nil || state.question != nil { return Theme.warning }
+        if state.awaitingConfirmation != nil || state.checkUnverified || state.question != nil { return Theme.warning }
         switch state.activity {
         case .running: return Theme.tally
         case .ended(let e): return e.status == .success ? Theme.connected : Theme.error
@@ -104,17 +104,34 @@ struct ControllerView: View {
                     .foregroundStyle(Theme.textSecondary)
                     .accessibilityIdentifier("controller.phone")
             }
-            if let prompt = state.confirmationPrompt, state.isConnected {
+            if let prompt = state.confirmationPrompt, state.isPaired {
                 Text(prompt)
                     .font(Theme.rowTitle)
                     .foregroundStyle(Theme.warning)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("controller.confirmCheck")
-                Text("That phone lists this device under Waiting for your confirmation. Confirm it there only if it shows the same numbers; until then it gives this device nothing.")
+                Text("That phone lists this device under Waiting for your confirmation. Confirm it there only if it shows these same numbers. If it shows other numbers or none, remove it there and forget the phone here.")
                     .font(Theme.meta)
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("controller.confirmNote")
+            } else if let reminder = state.checkReminder, let check = state.pairingCheck {
+                // Being let in is not proof that the phone's owner confirmed THIS device (a
+                // fake phone that saw the code lets it in at once): the numbers stay until
+                // the owner says they matched.
+                Text(check)
+                    .font(.system(size: 28, weight: .semibold).monospaced())
+                    .foregroundStyle(Theme.warning)
+                    .accessibilityLabel(check)
+                    .accessibilityIdentifier("controller.check")
+                Text(reminder)
+                    .font(Theme.meta)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("controller.checkReminder")
+                Button("The numbers matched") { model.controllerCheckMatched() }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("controller.checkMatched")
             }
             if case .disconnected(let d) = state.phase {
                 Text(d.reason.text)

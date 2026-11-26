@@ -77,7 +77,9 @@ public struct RemotePairingOffer: Sendable, Equatable, CustomStringConvertible, 
 ///   its `[HubEffect]` are carried out in order, and `storeChanged` writes `toJson()` to the
 ///   `SecretStore` before the next effect runs. Events the effects cause on the phone (a
 ///   session starting) are queued behind them, so frames always leave in the hub's order.
-///   If the write fails, nothing after it goes out and every connection is closed.
+///   If the write fails, nothing after it goes out, every connection is closed, and the hub
+///   is told (`storeWriteFailed`): the question pending then stays the phone's own, and the
+///   next request id is leased (and stored) again before any device sees it.
 /// - **One entry for tasks.** Remote `startTask`/`runSkill`/`runWorkflow` start through
 ///   `TaskCenter` / `WorkflowRunner` exactly like the owner's requests; skills are checked
 ///   again with `SkillLibrary.context`.
@@ -629,6 +631,11 @@ public final class RemoteControlService {
                     try secrets.write(Self.secretKey, try hub.toJson())
                 } catch {
                     persistFailed = true
+                    // The hub's leases may now be ahead of what is stored: it keeps the
+                    // pending question on the phone and leases again before the next id
+                    // goes out, so no request id from an unstored lease reaches a device
+                    // (and none repeats after a restart). The phone still asks locally.
+                    try? hub?.storeWriteFailed()
                     lastError = "Remote control could not save its state, so every connection was closed."
                     for id in open.sorted() { closeConnection(id) }
                 }

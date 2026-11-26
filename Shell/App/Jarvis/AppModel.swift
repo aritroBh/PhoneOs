@@ -991,6 +991,12 @@ final class AppModel: ObservableObject {
         mirrorController()
     }
 
+    /// The owner says the phone showed this device's check string when they confirmed it.
+    func controllerCheckMatched() {
+        controller.confirmCheckMatched()
+        mirrorController()
+    }
+
     private func controllerAction(_ action: () throws -> Void) -> String? {
         defer { mirrorController() }
         do {

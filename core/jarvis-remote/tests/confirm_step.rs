@@ -361,12 +361,15 @@ fn a_pending_device_survives_a_restart_still_pending_and_old_stores_load_confirm
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].check, check);
     assert_eq!(pending[0].device.permissions, RemotePermissions::NONE);
-    // The confirmation clock restarts at the first call after the restore.
+    // The expiry is set at the first call after the restore: 10 minutes after the pairing
+    // (break-it review F3; it used to be 10 minutes after that call).
     assert_eq!(pending[0].expires_at_ms, None);
+    let paired_at = pending[0].device.paired_at_ms;
     rig.hub.tick(rig.now);
+    assert!(rig.now >= paired_at);
     assert_eq!(
         rig.hub.pending_devices()[0].expires_at_ms,
-        Some(rig.now + PENDING_CONFIRM_TTL_MS)
+        Some(paired_at + PENDING_CONFIRM_TTL_MS)
     );
     let mut link = rig.connect(&creds);
     let (_, msgs) = rig.request(&mut link, ClientMessage::Hello);

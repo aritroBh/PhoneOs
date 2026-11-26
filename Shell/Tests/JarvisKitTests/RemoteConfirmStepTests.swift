@@ -80,7 +80,7 @@ struct RemoteConfirmStepTests {
         c.disconnect()
     }
 
-    @Test("Confirm on the phone grants exactly the new-device permissions; the controller is welcomed and the pairing record forgets the check")
+    @Test("Confirm on the phone grants exactly the new-device permissions; the controller is welcomed and keeps the check until the owner says it matched")
     func confirmGrantsNewDevicePermissions() async throws {
         let r = RemoteHarness("confirm-grant")
         defer { r.cleanUp() }
@@ -98,10 +98,20 @@ struct RemoteConfirmStepTests {
         #expect(r.service.pendingDevices.isEmpty)
         #expect(c.state.awaitingConfirmation == nil)
         #expect(c.state.phoneName == "Test phone")
-        #expect(c.state.entries.contains { $0.text == "Confirmed on the phone" })
+        // Confirm-step break-it review: a welcome is not proof that the phone's owner
+        // confirmed THIS device, so it is not worded as one and the check string is kept
+        // until the owner says the numbers matched (this test used to expect "Confirmed on
+        // the phone" and the check deleted at the welcome).
+        #expect(!c.state.entries.contains { $0.text == "Confirmed on the phone" })
+        #expect(c.state.entries.contains { $0.text.contains("Check that it showed \(pending.check)") })
+        #expect(c.state.pairingCheck == pending.check && c.state.checkUnverified)
         #expect(r.service.audit.entries.contains { $0.text.contains("Confirmed \u{201C}Work Mac\u{201D}") })
+        let kept = try PairedPhone.decode(try #require(try secrets.read(RemoteControllerModel.secretKey)))
+        #expect(kept.check == pending.check)
+        c.confirmCheckMatched()
         let after = try PairedPhone.decode(try #require(try secrets.read(RemoteControllerModel.secretKey)))
         #expect(after.check == nil)
+        #expect(c.state.pairingCheck == nil)
         #expect(c.state.canStartTask)
         // Confirming again is refused (it is no longer pending).
         #expect(throws: RemoteControlError.self) { try r.service.confirm(deviceId: pending.device.id) }
@@ -194,7 +204,7 @@ struct RemoteConfirmStepTests {
         #expect(r.service.pairingLockedUntilMs == 0)
     }
 
-    @Test("after refused handshakes the controller keeps trying slowly and comes back once the phone's pause ends")
+    @Test("the phone's lockout never refuses the device's key; after refused handshakes the controller keeps trying slowly and comes back")
     func slowRetryAfterLockout() async throws {
         let r = RemoteHarness("confirm-slow")
         defer { r.cleanUp() }
@@ -219,6 +229,15 @@ struct RemoteConfirmStepTests {
             _ = try? await InProcessRemote.connect(credentials: Redacted(forged), over: r.transport, timeout: .milliseconds(500))
         }
         #expect(r.service.deviceLockedUntilMs(id) > r.service.nowMs())
+        // Confirm-step break-it review F1: the lockout never refuses the device's own key
+        // (this test used to expect the refusal here and the slow retries below from it).
+        c.reconnect()
+        try await eventually("connected despite the lockout") { c.state.phase == .connected }
+        c.disconnect()
+        // A phone that does not accept this device (removed there, or refusing for any
+        // other reason): the controller retries slowly.
+        let probe = try #require(r.probe)
+        probe.refuseConnections.withLock { $0 = true }
         c.reconnect()
         try await eventually("not accepted, retrying slowly") {
             if case .disconnected(let d) = c.state.phase { return d.reason == .notAccepted && d.slowRetry && !d.retrying }
@@ -226,7 +245,8 @@ struct RemoteConfirmStepTests {
         }
         #expect(c.state.statusTitle == "Disconnected")
         #expect(!(c.state.phase.disconnectText ?? "").contains("removed there; pair again"))
-        // The lockout is 5 seconds: a slow retry after it connects again by itself.
+        // Once the phone accepts again, a slow retry connects by itself.
+        probe.refuseConnections.withLock { $0 = false }
         try await eventually("back by itself", seconds: 20) { c.state.phase == .connected }
         c.disconnect()
     }

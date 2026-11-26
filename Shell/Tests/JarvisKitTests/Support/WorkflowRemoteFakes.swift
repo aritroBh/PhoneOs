@@ -236,8 +236,14 @@ final class HubProbe: JarvisRemoteHubProtocol, @unchecked Sendable {
     func clockMs() throws -> UInt64 { try hub.clockMs() }
     func connectionClosed(connId: UInt64, nowMs: UInt64) throws -> [HubEffect] { try check(); return keep(try hub.connectionClosed(connId: connId, nowMs: nowMs)) }
     func connectionCount() throws -> UInt32 { try hub.connectionCount() }
+    /// While set, the phone closes every new connection before its handshake (as a phone
+    /// that does not accept the device does; the hub's own reasons for that, a removed
+    /// device or a full table of authenticated connections, are slow to stage).
+    let refuseConnections = Mutex(false)
     func connectionOpened(connId: UInt64, nowMs: UInt64, entropy: Data) throws -> [HubEffect] {
-        try check(); return keep(try hub.connectionOpened(connId: connId, nowMs: nowMs, entropy: entropy))
+        try check()
+        if refuseConnections.withLock({ $0 }) { return keep([.close(connId: connId, reason: .tooManyConnections)]) }
+        return keep(try hub.connectionOpened(connId: connId, nowMs: nowMs, entropy: entropy))
     }
     func deviceLockedUntilMs(deviceId: String) throws -> UInt64 { try hub.deviceLockedUntilMs(deviceId: deviceId) }
     func devices() throws -> [DeviceInfo] { try hub.devices() }
@@ -280,6 +286,12 @@ final class HubProbe: JarvisRemoteHubProtocol, @unchecked Sendable {
         try check(); return keep(try hub.confirmDevice(nowMs: nowMs, deviceId: deviceId))
     }
     func pairingFailedAttempts() throws -> UInt32 { try hub.pairingFailedAttempts() }
+    /// Times the service reported a failed store write.
+    let storeWriteFailures = Mutex(0)
+    func storeWriteFailed() throws {
+        storeWriteFailures.withLock { $0 += 1 }
+        try hub.storeWriteFailed()
+    }
     func isWatching(connId: UInt64) throws -> Bool { try hub.isWatching(connId: connId) }
 }
 

@@ -44,7 +44,12 @@ public enum RemoteControllerError: Error, Sendable, Equatable, CustomStringConve
 ///   Right after pairing the device is **waiting for confirmation**
 ///   (`State.awaitingConfirmation`): the phone gives it nothing until its owner confirms
 ///   it there, after checking that the phone shows the same check string as this device
-///   ("Confirm on the phone that it shows 123 456"). While connected the task is unknown
+///   ("Confirm on the phone that it shows 123 456"). The check string stays with the
+///   pairing (`State.pairingCheck`, across reconnects and relaunches) until the owner says
+///   here that the numbers matched (`confirmCheckMatched()`): a `welcome` is not proof that
+///   the phone's owner confirmed THIS device (a fake phone that saw the code can welcome it
+///   at once while the real phone lists the fake's device as pending), so until then the
+///   controller asks the owner to check what the phone showed. While connected the task is unknown
 ///   (the phone shares nothing about it), idle, running (possibly waiting for an answer or
 ///   an unlock), or ended with its outcome.
 /// - **Reconnects** are bounded: the attempt count starts again only after a connection
@@ -215,9 +220,31 @@ public final class RemoteControllerModel {
         /// The name this device gave the phone at pairing.
         public var deviceName: String?
 
+        /// The check string this device derived when it paired, kept with the pairing (also
+        /// after the phone's `welcome`, across reconnects and relaunches) until the owner
+        /// says on this device that the phone showed the same numbers
+        /// (`RemoteControllerModel.confirmCheckMatched()`). `nil` for pairings made before
+        /// the confirm step and once the owner said so.
+        public var pairingCheck: String?
+
+        /// The owner has not yet said on this device that the phone showed this device's
+        /// check string: being let in by "the phone" proves nothing about which device its
+        /// owner confirmed.
+        public var checkUnverified: Bool { pairingCheck != nil }
+
         /// The line asking the owner to confirm on the phone.
         public var confirmationPrompt: String? {
             awaitingConfirmation.map { "Confirm on the phone that it shows \($0)" }
+        }
+
+        /// After the phone let this device in, while the owner has not said the numbers
+        /// matched: what to check, and what to do if they did not (`nil` otherwise, and
+        /// while the phone still waits for its owner's Confirm: `confirmationPrompt`).
+        public var checkReminder: String? {
+            guard awaitingConfirmation == nil, let check = pairingCheck, isPaired else { return nil }
+            let lead = isConnected ? "Connected. " : ""
+            return lead + "Check that the phone showed \(check) when you confirmed this device. "
+                + "If it showed other numbers or none, remove this pairing on both devices."
         }
 
         public var isPaired: Bool {
@@ -379,6 +406,7 @@ public final class RemoteControllerModel {
                     state.phoneName = record?.phoneName
                     state.address = record?.address
                     state.deviceName = record?.deviceName
+                    state.pairingCheck = record?.check
                 }
             } catch {
                 state.lastError = "The saved pairing could not be read (\(error))."
@@ -432,6 +460,28 @@ public final class RemoteControllerModel {
         changed()
         await open(client, intent: .pair, address: address)
         if state.phase == .notPaired, let why = state.lastError { throw RemoteControllerError.core(why) }
+    }
+
+    /// The owner says the phone showed this device's check string when they confirmed it
+    /// there ("the numbers matched"): the string is deleted from the stored pairing and no
+    /// longer shown. If the stored pairing cannot be written, nothing changes
+    /// (`state.lastError`).
+    public func confirmCheckMatched() {
+        guard var r = record, r.check != nil else {
+            state.pairingCheck = nil
+            changed()
+            return
+        }
+        r.check = nil
+        do {
+            try secrets.write(Self.secretKey, r.encoded())
+            record = r
+            state.pairingCheck = nil
+            note(.connection, "You checked that the phone showed the same numbers")
+        } catch {
+            state.lastError = RemoteControllerError.store(String(describing: error)).description
+        }
+        changed()
     }
 
     /// Opens a connection again now (the owner tapped Reconnect), with fresh attempts.
@@ -801,6 +851,7 @@ public final class RemoteControllerModel {
                 do {
                     try secrets.write(Self.secretKey, paired.encoded())
                     record = paired
+                    state.pairingCheck = paired.check
                 } catch {
                     state.lastError = RemoteControllerError.store(String(describing: error)).description
                     connection.close()
@@ -863,13 +914,16 @@ public final class RemoteControllerModel {
             resume()
         case .welcome(_, let permissions, let phoneName, let busy):
             resume()
-            if state.awaitingConfirmation != nil || record?.check != nil {
-                // The phone only says welcome to a device its owner confirmed there.
-                if state.awaitingConfirmation != nil { note(.connection, "Confirmed on the phone") }
+            // The real phone says welcome only to a device its owner confirmed there, but a
+            // fake phone that saw the code can say it at once: this is not proof that the
+            // owner confirmed THIS device. The check string stays until the owner says here
+            // that the phone showed it (`confirmCheckMatched`).
+            if state.awaitingConfirmation != nil {
                 state.awaitingConfirmation = nil
-                if var r = record, r.check != nil {
-                    r.check = nil
-                    if (try? secrets.write(Self.secretKey, r.encoded())) != nil { record = r }
+                if let check = state.pairingCheck {
+                    note(.connection, "The phone let this device in. Check that it showed \(check) when you confirmed it.")
+                } else {
+                    note(.connection, "The phone let this device in")
                 }
             }
             apply(permissions)
@@ -1045,8 +1099,9 @@ struct PairedPhone: Codable, Sendable, Equatable, CustomStringConvertible, Custo
     var credentials: String
     var phoneName: String?
     var address: RemotePhoneAddress
-    /// The check string from pairing, while the phone has not confirmed this device
-    /// (absent in records written before the confirm step, and once confirmed).
+    /// The check string from pairing, until the owner said on this device that the phone
+    /// showed the same numbers (absent in records written before the confirm step, and in
+    /// those `adfce96` wrote after a `welcome`).
     var check: String?
     /// The name this device gave the phone at pairing.
     var deviceName: String?
