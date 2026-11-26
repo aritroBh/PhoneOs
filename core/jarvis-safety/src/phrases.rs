@@ -1027,6 +1027,21 @@ pub(crate) fn match_label(label: &str, tables: &[&[Phrase]]) -> LabelRisk {
     match_tokens(&tokens(&bounded(label)), tables)
 }
 
+/// Review pass 35 (F1–F3): [`match_label`] over `label`'s own tokens and every look-alike
+/// reading of it ([`crate::text::lookalike_readings`]): the riskiest category any reading
+/// gives, generic when any reading is. The same as `match_label` (and no allocation more)
+/// for a label without a look-alike in a fold position.
+pub(crate) fn match_label_read(label: &str, tables: &[&[Phrase]]) -> LabelRisk {
+    let b = bounded(label);
+    let mut lr = match_tokens(&tokens(&b), tables);
+    for reading in crate::text::lookalike_readings(&b).into_iter().flatten() {
+        let o = match_tokens(&tokens(&reading), tables);
+        lr.category = max_risk(lr.category, o.category);
+        lr.generic |= o.generic;
+    }
+    lr
+}
+
 /// Whether `bundle_id` starts with `prefix`, ignoring ASCII case.
 pub(crate) fn in_app(bundle_id: &str, prefix: &str) -> bool {
     bundle_id

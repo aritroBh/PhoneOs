@@ -1359,9 +1359,17 @@ fn sign_in_press(action: &Action, screen: &CompactScreen, tree: Option<&ScreenTr
         Actuation::Press(e) => e,
         _ => return false,
     };
-    let words = crate::text::tokens(&el.label);
-    crate::phrases::match_whole(&words, &[crate::phrases::SIGN_IN_PHRASES]).category
-        != RiskCategory::None
+    // Review pass 35: the label's own words or any look-alike reading of them.
+    let sign_in = |label: &str| {
+        let words = crate::text::tokens(label);
+        crate::phrases::match_whole(&words, &[crate::phrases::SIGN_IN_PHRASES]).category
+            != RiskCategory::None
+    };
+    (sign_in(&el.label)
+        || crate::text::lookalike_readings(&el.label)
+            .into_iter()
+            .flatten()
+            .any(|r| sign_in(&r)))
         && beside_password(el, tree)
 }
 
@@ -1757,6 +1765,11 @@ pub fn evaluate_sheeted(
     // Review pass 28 (H2): every category a rule attaches is carried, not only the riskiest:
     // the question shows the riskiest, and a denial of ANY carried category refuses.
     let mut carried: Vec<RiskCategory> = vec![category];
+    // Review pass 35 (F1–F3): the pressed control's own words and every look-alike reading
+    // of them (`DeIete`, `Rem0ve`, `Send M0ney`) each give a category, all carried.
+    for c in crate::classify::reading_risks(action, screen) {
+        category = carry(&mut carried, category, c);
+    }
     // Audit of real trees (C2): an SF Symbol named by the identifier of the pressed control
     // or of an image inside it raises the category, whatever its label says or in which
     // language (risk only: never an exemption).
@@ -2455,8 +2468,10 @@ fn amount_shown(v: &str) -> bool {
 fn own_category(action: &Action, screen: &CompactScreen) -> RiskCategory {
     let tables = crate::phrases::action_tables(&screen.app_bundle_id);
     let own = |text: &str| crate::phrases::match_label(text, &tables).category;
+    // Review pass 35: a control's own words in every look-alike reading.
+    let own_read = |text: &str| crate::phrases::match_label_read(text, &tables).category;
     match actuation(action, screen) {
-        Actuation::Press(t) | Actuation::Drag(t) => own(&crate::classify::element_text(t)),
+        Actuation::Press(t) | Actuation::Drag(t) => own_read(&crate::classify::element_text(t)),
         // Audit C1: the key's type by identifier and its label, the riskier.
         Actuation::Return(_) => screen
             .cues

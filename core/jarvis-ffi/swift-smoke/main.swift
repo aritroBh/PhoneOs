@@ -114,7 +114,8 @@ struct Run {
 }
 
 func drive(memoryJson: String, config: SessionConfig? = nil,
-           decide: (ConfirmRequest) -> Bool = { _ in true }) -> Run {
+           decide: (ConfirmRequest) -> Bool = { _ in true },
+           byPhone: (ConfirmRequest) -> Bool = { _ in true }) -> Run {
     var run = Run()
     let session: JarvisSession
     do {
@@ -171,7 +172,7 @@ func drive(memoryJson: String, config: SessionConfig? = nil,
             event = .actResult(result: RunnerResult(ok: true, error: nil))
         case .confirm(let request):
             run.confirms.append(request)
-            event = .userDecision(approved: decide(request))
+            event = .userDecision(approved: decide(request), byPhone: byPhone(request))
         case .callTool(let call):
             run.error = "unexpected tool call \(call)"
             return run
@@ -253,6 +254,20 @@ check("memory holds one learned flow", flows?.count == 1, "\(String(describing: 
 check("memory remembers the approved app",
       (memory?["approved_apps"] as? [String]) == [settingsBundle],
       "\(String(describing: memory?["approved_apps"]))")
+
+// Review pass 35 (F4): the same session with its first use answered by a paired device:
+// the approval holds for the task and is not remembered; an answer that does not say where
+// it was given is a remote one.
+let remote = drive(memoryJson: "", byPhone: { $0.category != .firstUse })
+check("a session whose first use a device approved finished with success",
+      remote.outcome?.status == .success && remote.confirms.count == 2,
+      "\(String(describing: remote.outcome)) \(remote.confirms)")
+check("a first use a device approved is not remembered",
+      (jsonObject(remote.memoryJson)?["approved_apps"] as? [String]) == [],
+      String(remote.memoryJson.prefix(200)))
+check("an answer that does not say byPhone is a remote one",
+      Event.userDecision(approved: true) == Event.userDecision(approved: true, byPhone: false)
+          && Event.userDecision(approved: true) != Event.userDecision(approved: true, byPhone: true))
 
 // 2. Replay from that memory.
 let second = drive(memoryJson: first.memoryJson)

@@ -688,10 +688,7 @@ fn session_stages(out: &mut CaseResult, id: &str, screen: &Screen, tap_index: u3
         // as before.
         let mut sent = matches!(acted, Effect::Act(_));
         if matches!(acted, Effect::Confirm(_)) {
-            let look = waiting.step(TimedEvent::new(
-                2_100,
-                Event::UserDecision { approved: true },
-            ));
+            let look = waiting.step(TimedEvent::new(2_100, Event::phone_decision(true)));
             if matches!(look, Effect::Observe { .. }) {
                 sent = matches!(
                     waiting.step(TimedEvent::new(2_200, observed(screen))),
@@ -762,10 +759,7 @@ fn session_stages(out: &mut CaseResult, id: &str, screen: &Screen, tap_index: u3
             );
             return;
         }
-        let looking = s.step(TimedEvent::new(
-            3_000,
-            Event::UserDecision { approved: true },
-        ));
+        let looking = s.step(TimedEvent::new(3_000, Event::phone_decision(true)));
         if !matches!(looking, Effect::Observe { .. }) {
             put(
                 "step.approved_look",

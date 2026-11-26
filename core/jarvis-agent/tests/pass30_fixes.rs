@@ -680,7 +680,7 @@ fn runner_text_keeps_the_old_focus_rule() {
             },
             Effect::Confirm(_) => {
                 confirms += 1;
-                Event::UserDecision { approved: true }
+                Event::phone_decision(true)
             }
             Effect::Act(cmd) => {
                 acts.push(cmd.without_expect());

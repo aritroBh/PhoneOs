@@ -288,7 +288,7 @@ fn session(seed: u64) {
                 if req.summary.contains("could be passed on here") {
                     once = false;
                 }
-                Event::UserDecision { approved: true }
+                Event::phone_decision(true)
             }
             Effect::AskUser { .. } => Event::UserAnswer {
                 text: String::new(),

@@ -165,9 +165,7 @@ fn drive(
                     asked_in_shop = true;
                 }
                 trace.confirms.push(c.summary.clone());
-                Event::UserDecision {
-                    approved: decisions.pop_front().unwrap_or(false),
-                }
+                Event::phone_decision(decisions.pop_front().unwrap_or(false))
             }
             Effect::CallTool(_) => {
                 now += 50;

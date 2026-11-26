@@ -296,7 +296,10 @@ pub fn drive_with(
             Effect::Confirm { request } => {
                 let approved = decide(&request);
                 run.confirms.push(request);
-                Event::UserDecision { approved }
+                Event::UserDecision {
+                    approved,
+                    by_phone: true,
+                }
             }
             Effect::CallTool { call } => panic!("unexpected tool call {call:?}"),
             Effect::AskUser { question } => panic!("unexpected question {question:?}"),
@@ -396,7 +399,10 @@ pub fn drive_updates(
                     request: request.clone(),
                 });
                 on_confirm();
-                Event::UserDecision { approved: true }
+                Event::UserDecision {
+                    approved: true,
+                    by_phone: true,
+                }
             }
             Effect::Finished { outcome } => {
                 feed(CoreViewerUpdate::Finished {

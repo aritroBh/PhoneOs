@@ -1430,7 +1430,7 @@ fn search_with_results(text: &str, looks: Vec<Screen>) -> (Vec<RunnerCommand>, S
                 acts.push(cmd);
                 Event::ActResult(jarvis_proto::RunnerResult::ok())
             }
-            Effect::Confirm(_) => Event::UserDecision { approved: true },
+            Effect::Confirm(_) => Event::phone_decision(true),
             Effect::Finished(o) => return (acts, o.summary),
             other => panic!("{other:?}"),
         };

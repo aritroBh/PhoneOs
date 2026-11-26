@@ -347,7 +347,7 @@ fn a_pending_confirmation_is_asked_again_after_the_unlock_on_the_same_screen() {
     let (reason, _) = expect_wait(&s.step(ev(40, Event::DeviceLocked)));
     assert!(reason.contains("approval"), "{reason}");
     // An approval given while locked is not carried across the lock.
-    expect_wait(&s.step(ev(50, Event::UserDecision { approved: true })));
+    expect_wait(&s.step(ev(50, Event::phone_decision(true))));
     assert_eq!(
         s.step(ev(60, Event::DeviceUnlocked)),
         Effect::Observe { screenshot: false }
@@ -362,7 +362,7 @@ fn a_pending_confirmation_is_asked_again_after_the_unlock_on_the_same_screen() {
     // Approved: one more look at the screen before acting (changed deliberately with the
     // observe-after-approval rule), then the tap.
     assert_eq!(
-        s.step(ev(80, Event::UserDecision { approved: true })),
+        s.step(ev(80, Event::phone_decision(true))),
         Effect::Observe { screenshot: false }
     );
     assert!(matches!(
@@ -396,7 +396,7 @@ fn a_decline_sent_while_locked_is_honoured() {
     thinking(&mut s);
     s.step(ev(30, model(TAP_AIRPLANE)));
     expect_wait(&s.step(ev(40, Event::DeviceLocked)));
-    expect_wait(&s.step(ev(50, Event::UserDecision { approved: false })));
+    expect_wait(&s.step(ev(50, Event::phone_decision(false))));
     s.step(ev(60, Event::DeviceUnlocked));
     // Not asked again: decided afresh, and the model knows the owner said no.
     let r = expect_infer(s.step(ev(70, observed(settings_screen()))));
@@ -412,7 +412,7 @@ fn an_approval_given_before_the_lock_is_asked_again_for_the_unexecuted_action() 
     s.step(ev(30, model(TAP_AIRPLANE)));
     // Approved: a fresh look first (observe-after-approval), then the tap.
     assert_eq!(
-        s.step(ev(40, Event::UserDecision { approved: true })),
+        s.step(ev(40, Event::phone_decision(true))),
         Effect::Observe { screenshot: false }
     );
     assert!(matches!(
@@ -470,7 +470,7 @@ fn call_approved(s: &mut Session, now: u64, call: &str) -> Effect {
                 "{}",
                 r.summary
             );
-            s.step(ev(now + 1, Event::UserDecision { approved: true }))
+            s.step(ev(now + 1, Event::phone_decision(true)))
         }
         other => other,
     }
@@ -853,7 +853,7 @@ fn a_replay_step_refused_by_the_lock_is_derived_again_with_no_model_call() {
     assert_eq!(again, e);
     // Approved: a fresh look first (observe-after-approval, a flow step included).
     assert_eq!(
-        s.step(ev(110, Event::UserDecision { approved: true })),
+        s.step(ev(110, Event::phone_decision(true))),
         Effect::Observe { screenshot: false }
     );
     assert!(matches!(
@@ -898,7 +898,7 @@ fn a_replay_step_whose_result_the_lock_made_unknown_hands_over_to_the_model() {
     ));
     // Approved: a fresh look first (observe-after-approval), then the tap.
     assert_eq!(
-        s.step(ev(80, Event::UserDecision { approved: true })),
+        s.step(ev(80, Event::phone_decision(true))),
         Effect::Observe { screenshot: false }
     );
     assert!(matches!(

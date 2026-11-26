@@ -91,7 +91,7 @@ impl Driver {
                     self.variant += 1;
                     Event::ActResult(RunnerResult::ok())
                 }
-                Effect::Confirm(_) => Event::UserDecision { approved: true },
+                Effect::Confirm(_) => Event::phone_decision(true),
                 _ => return,
             };
             self.feed(event);

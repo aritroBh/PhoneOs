@@ -642,6 +642,25 @@ fn store_crud_json_and_lookups() {
     assert_eq!(s.len(), 2);
 }
 
+/// Review pass 35 (low): a stored workflow without `enabled` loads disabled, so a scheduled
+/// one never starts running unattended because the field was lost; one that says so stays
+/// enabled, and code building on `Workflow::default()` gets an enabled workflow.
+#[test]
+fn a_stored_workflow_without_enabled_loads_disabled() {
+    let json = r#"{"schema_version":1,"workflows":[
+        {"id":"m","name":"M","trigger":{"type":"schedule","days":["mon"],"hour":7,"minute":30},
+         "steps":[{"type":"notify","text":"hi"}]},
+        {"id":"e","name":"E","enabled":true,"steps":[{"type":"notify","text":"hi"}]}
+    ]}"#;
+    let (s, issues) = WorkflowStore::from_json_with_issues(json).unwrap();
+    assert!(issues.is_empty(), "{issues:?}");
+    assert!(!s.get("m").unwrap().enabled);
+    assert!(s.get("e").unwrap().enabled);
+    let w: Workflow = serde_json::from_str(r#"{"id":"w","name":"W"}"#).unwrap();
+    assert!(!w.enabled);
+    assert!(Workflow::default().enabled);
+}
+
 #[test]
 fn workflow_snapshots_tolerate_unknown_fields_and_reject_corruption() {
     let json = r#"{"schema_version":1,"extra":true,"workflows":[

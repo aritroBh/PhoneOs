@@ -165,9 +165,9 @@ fn drive(
                 match owner.pop_front().unwrap_or(Owner::No) {
                     Owner::Yes => {
                         before = Before::Approved;
-                        Event::UserDecision { approved: true }
+                        Event::phone_decision(true)
                     }
-                    Owner::No => Event::UserDecision { approved: false },
+                    Owner::No => Event::phone_decision(false),
                     Owner::Lock => {
                         locked_pending = true;
                         Event::DeviceLocked
@@ -921,7 +921,7 @@ fn only_an_exact_id_is_between() {
         );
         assert!(matches!(e, Effect::Confirm(_)), "{e:?}");
         assert_eq!(
-            step(&mut s, Event::UserDecision { approved: true }),
+            step(&mut s, Event::phone_decision(true)),
             Effect::Observe { screenshot: false }
         );
         let e = step(&mut s, Event::Observed(Observation::new(product_screen())));

@@ -87,7 +87,7 @@ impl D {
     }
     fn approve(&mut self) {
         assert_eq!(
-            self.step(Event::UserDecision { approved: true }),
+            self.step(Event::phone_decision(true)),
             Effect::Observe { screenshot: false }
         );
     }

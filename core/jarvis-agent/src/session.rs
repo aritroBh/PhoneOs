@@ -116,7 +116,7 @@ use jarvis_observe::{compact_view, diff, marks, screen_digest, screen_hash, Scre
 use std::collections::VecDeque;
 
 use jarvis_proto::{
-    render_rows, Action, AppInfo, BarNode, CompactScreen, ConfirmRequest, ConfirmStage,
+    render_rows, Action, Answerer, AppInfo, BarNode, CompactScreen, ConfirmRequest, ConfirmStage,
     ConfirmTarget, Effect, Element, Event, ImageRef, Key, ModelRequest, Observation, Outcome,
     OutcomeStatus, Point, Progress, QuestionRow, QuestionRowKind, RawInput, RawNode, RequestKind,
     RiskCategory, RunnerCommand, SessionConfig, Size, TaskOrigin, TaskSpec, TimedEvent, ToolCall,
@@ -530,6 +530,9 @@ pub struct Session {
     model_failures: u32,
     last_request: Option<ModelRequest>,
     approved_apps: BTreeSet<String>,
+    /// Review pass 35 (F4): apps whose first use a remote device approved: covered for this
+    /// task only, never written to memory (`approved_apps` is).
+    task_apps: BTreeSet<String>,
     declined_apps: BTreeSet<String>,
     last_action: Option<Action>,
     log_steps: Vec<LogStep>,
@@ -652,6 +655,7 @@ impl std::fmt::Debug for Session {
             .field("app", &self.current.screen.app_bundle_id)
             .field("declined", &self.declined)
             .field("approved_apps", &self.approved_apps)
+            .field("task_apps", &self.task_apps)
             .field("stale_approvals", &self.stale_approvals)
             .field("declined_apps", &self.declined_apps)
             .field("replaying", &self.replay.is_some())
@@ -777,6 +781,7 @@ impl Session {
             model_failures: 0,
             last_request: None,
             approved_apps: BTreeSet::new(),
+            task_apps: BTreeSet::new(),
             declined_apps: BTreeSet::new(),
             last_action: None,
             log_steps: Vec::new(),
@@ -1307,15 +1312,34 @@ impl Session {
         event: Event,
         state: &str,
     ) -> Out {
+        // Review pass 35 (F4): a remote device may not approve what only the phone may (a
+        // phone-only request, a category of `NEVER_REMOTE_APPROVE`): the hub refuses such a
+        // "yes"; one that reaches the session anyway counts as a "no".
+        let event = match event {
+            Event::UserDecision {
+                approved: true,
+                by: Answerer::Remote,
+            } if !remotely_approvable(&request) => Event::UserDecision {
+                approved: false,
+                by: Answerer::Remote,
+            },
+            other => other,
+        };
         match event {
-            Event::UserDecision { approved: true } => {
+            Event::UserDecision { approved: true, by } => {
                 match approves_app {
                     Some(app) => {
                         // Front app: the first use of an app the runner cannot identify
                         // covers this action only (the next unidentified app may be any
                         // other); never kept for the task or in memory.
+                        // Review pass 35 (F4): a remote device's answer is never kept: a
+                        // first use it approved covers this task only, and the next task
+                        // asks again (on the phone or remotely).
                         if !is_unidentified_app(&app) {
-                            self.approved_apps.insert(app);
+                            match by {
+                                Answerer::Phone => self.approved_apps.insert(app),
+                                Answerer::Remote => self.task_apps.insert(app),
+                            };
                         }
                     }
                     // Sixteenth review (Rule T): the flow this question named is allowed
@@ -1403,7 +1427,9 @@ impl Session {
                     }
                 }
             }
-            Event::UserDecision { approved: false } => {
+            Event::UserDecision {
+                approved: false, ..
+            } => {
                 self.prior_approval = None;
                 let flow = pending
                     .flow
@@ -1689,7 +1715,7 @@ impl Session {
                 }
                 _ => self.protocol_error(now, &Event::ToolResult(result), state),
             },
-            Event::UserDecision { approved } => match late {
+            Event::UserDecision { approved, by } => match late {
                 Some(Late::Decision {
                     request,
                     approves_app,
@@ -1715,7 +1741,7 @@ impl Session {
                     }
                     self.await_unlock(now, resume, None)
                 }
-                _ => self.protocol_error(now, &Event::UserDecision { approved }, state),
+                _ => self.protocol_error(now, &Event::UserDecision { approved, by }, state),
             },
             Event::UserAnswer { text } => match late {
                 Some(Late::Answer { described }) => {
@@ -3368,6 +3394,7 @@ impl Session {
         }
         self.memory.is_app_approved(app)
             || self.approved_apps.contains(app)
+            || self.task_apps.contains(app)
             || self.is_agent_app(app)
     }
 
@@ -5216,6 +5243,13 @@ impl Session {
         };
         self.memory.log.push(entry);
     }
+}
+
+/// Review pass 35 (F4): whether a paired device may approve `request` (the hub's rule,
+/// `jarvis_remote::remotely_approvable` and `phone_only`): not a phone-only request, and no
+/// category of `NEVER_REMOTE_APPROVE`.
+fn remotely_approvable(request: &ConfirmRequest) -> bool {
+    !request.phone_only && !jarvis_safety::NEVER_REMOTE_APPROVE.contains(&request.category)
 }
 
 fn category_name(c: RiskCategory) -> &'static str {

@@ -52,6 +52,11 @@ final class QAOwner: HumanGate {
         return approved
     }
 
+    /// Review pass 35 (F4): the QA owner answers on the phone (its approvals are kept).
+    func decide(_ request: ConfirmRequest) async throws -> OwnerDecision {
+        OwnerDecision(approved: try await confirm(request), byPhone: true)
+    }
+
     func answer(_ question: String) async throws -> String {
         log.withLock { $0.questions.append(question) }
         if let onQuestion, let reply = await onQuestion(question) {

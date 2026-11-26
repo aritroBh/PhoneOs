@@ -211,9 +211,7 @@ fn session(seed: u64) -> (usize, usize) {
             }
             Effect::Confirm(_) => {
                 confirms += 1;
-                Event::UserDecision {
-                    approved: decisions.pop_front().unwrap_or(false),
-                }
+                Event::phone_decision(decisions.pop_front().unwrap_or(false))
             }
             Effect::Finished(_) => break,
             other => panic!("unexpected effect {other:?}"),

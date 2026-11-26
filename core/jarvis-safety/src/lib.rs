@@ -109,6 +109,20 @@ pub use hit::{
 #[doc(hidden)]
 pub mod reference {
     pub use crate::hit::reference::tap_spot_under;
+
+    /// Review pass 35: a tap's category by the target's own words, then by each look-alike
+    /// reading of them (empty when it has none): the old classification is the first.
+    pub fn tap_reading_risks(
+        action: &jarvis_proto::Action,
+        screen: &jarvis_proto::CompactScreen,
+    ) -> Vec<jarvis_proto::RiskCategory> {
+        crate::classify::reading_risks(action, screen)
+    }
+
+    /// Review pass 35: the look-alike readings of `text` (`None` when it has none).
+    pub fn lookalike_readings(text: &str) -> Option<Vec<String>> {
+        crate::text::lookalike_readings(text)
+    }
 }
 pub use phrases::{
     identifier_symbol_risk, label_risk, max_risk, AppRule, Phrase, RuleTarget, ACTION_PHRASES,

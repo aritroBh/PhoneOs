@@ -77,7 +77,7 @@ impl D {
     }
     fn approve(&mut self) {
         assert_eq!(
-            self.step(Event::UserDecision { approved: true }),
+            self.step(Event::phone_decision(true)),
             Effect::Observe { screenshot: false }
         );
     }
@@ -589,7 +589,7 @@ fn summaries_and_decline_texts_never_carry_protected_values() {
     assert!(summary.contains("(hidden)"), "{summary}");
     // Declined; the model then claims it is done: the outcome quotes the summary.
     assert!(matches!(
-        d.step(Event::UserDecision { approved: false }),
+        d.step(Event::phone_decision(false)),
         Effect::Infer(_)
     ));
     let e = d.step(Event::ModelOutput(ModelOutput {

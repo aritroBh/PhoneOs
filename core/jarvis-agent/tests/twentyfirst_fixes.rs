@@ -384,9 +384,7 @@ fn drive(
             Effect::Confirm(req) => {
                 change(confirms.len(), &req, &mut phone.screen);
                 confirms.push(req);
-                Event::UserDecision {
-                    approved: script.decisions.pop_front().unwrap_or(false),
-                }
+                Event::phone_decision(script.decisions.pop_front().unwrap_or(false))
             }
             Effect::AwaitUnlock { .. } => Event::DeviceUnlocked,
             Effect::Finished(o) => return (effects, confirms, o),

@@ -221,7 +221,7 @@ fn drive_with(
                 output: "ok".into(),
                 error: None,
             }),
-            Effect::Confirm(_) => Event::UserDecision { approved: false },
+            Effect::Confirm(_) => Event::phone_decision(false),
             Effect::AskUser { .. } => {
                 questions += 1;
                 Event::UserAnswer {

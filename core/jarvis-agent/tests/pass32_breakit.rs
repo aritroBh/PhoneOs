@@ -399,9 +399,7 @@ fn run_swapped(first: Screen, after: Screen, steps: Vec<String>, decisions: Vec<
             Effect::Confirm(req) => {
                 out.confirms.push(req);
                 phone = after.clone();
-                Event::UserDecision {
-                    approved: decisions.pop_front().unwrap_or(false),
-                }
+                Event::phone_decision(decisions.pop_front().unwrap_or(false))
             }
             Effect::AskUser { .. } => Event::UserAnswer {
                 text: String::new(),

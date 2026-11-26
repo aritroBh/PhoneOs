@@ -52,6 +52,11 @@ pub enum Event {
     UserDecision {
         /// True to proceed.
         approved: bool,
+        /// Review pass 35 (F4): where the answer was given. Missing in JSON (an older shell,
+        /// a relay that does not say) reads [`Answerer::Remote`]: an answer is the phone's
+        /// only when the shell knows the owner gave it on the phone.
+        #[serde(default)]
+        by: Answerer,
     },
     /// The user's answer to `Effect::AskUser`.
     UserAnswer {
@@ -82,6 +87,37 @@ pub enum Event {
     },
 }
 
+/// Review pass 35 (F4): who answered a confirmation. A remote device's answer covers at
+/// most the action (and, for a first use, the task) the question was about: it never
+/// becomes a kept approval (memory). Unknown is remote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Answerer {
+    /// The owner, on the phone itself (Jarvis's own approval sheet).
+    Phone,
+    /// A paired remote device, or a source the shell cannot vouch for.
+    #[default]
+    Remote,
+}
+
+impl Event {
+    /// The owner's answer given on the phone.
+    pub fn phone_decision(approved: bool) -> Self {
+        Event::UserDecision {
+            approved,
+            by: Answerer::Phone,
+        }
+    }
+
+    /// An answer from a paired remote device (or a source not known to be the phone).
+    pub fn remote_decision(approved: bool) -> Self {
+        Event::UserDecision {
+            approved,
+            by: Answerer::Remote,
+        }
+    }
+}
+
 impl std::fmt::Debug for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -94,9 +130,10 @@ impl std::fmt::Debug for Event {
             }
             Event::ActResult(r) => f.debug_tuple("ActResult").field(r).finish(),
             Event::ToolResult(r) => f.debug_tuple("ToolResult").field(r).finish(),
-            Event::UserDecision { approved } => f
+            Event::UserDecision { approved, by } => f
                 .debug_struct("UserDecision")
                 .field("approved", approved)
+                .field("by", by)
                 .finish(),
             Event::UserAnswer { text } => f
                 .debug_struct("UserAnswer")

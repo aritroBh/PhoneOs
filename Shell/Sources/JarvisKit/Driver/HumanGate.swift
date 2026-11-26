@@ -11,8 +11,35 @@ public protocol HumanGate: Sendable {
     /// Asks the owner to approve a risky action. `true` approves.
     func confirm(_ request: ConfirmRequest) async throws -> Bool
 
+    /// Review pass 35 (F4): asks as `confirm` does and says where the answer was given.
+    /// The default (a gate that only implements `confirm`) reports it as not given on the
+    /// phone: an answer is the phone's only when the gate knows it (a remote answer covers
+    /// the action, a first use the task, and is never kept in memory).
+    func decide(_ request: ConfirmRequest) async throws -> OwnerDecision
+
     /// Asks the owner a question and returns their answer.
     func answer(_ question: String) async throws -> String
+}
+
+/// An answer to a confirmation and where it was given (review pass 35, F4).
+public struct OwnerDecision: Sendable, Equatable {
+    /// `true` approves.
+    public var approved: Bool
+    /// The owner answered on the phone itself (Jarvis's own sheet); `false` for an answer
+    /// relayed from a paired device or of unknown source.
+    public var byPhone: Bool
+
+    public init(approved: Bool, byPhone: Bool) {
+        self.approved = approved
+        self.byPhone = byPhone
+    }
+}
+
+extension HumanGate {
+    /// Unknown source: not the phone's.
+    public func decide(_ request: ConfirmRequest) async throws -> OwnerDecision {
+        OwnerDecision(approved: try await confirm(request), byPhone: false)
+    }
 }
 
 /// Getting the owner's attention when the run cannot go on without them physically: the

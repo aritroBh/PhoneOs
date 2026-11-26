@@ -162,13 +162,21 @@ pub(crate) fn longer_than(text: &str, max_chars: usize) -> bool {
 /// Characters that render as nothing or reorder text: zero-width and joiner characters,
 /// bidi embeddings, overrides and isolates, the soft hyphen, word joiners and invisible
 /// operators, variation selectors, tag characters, Hangul fillers and the BOM. In owner-
-/// facing names, triggers and ids they let two different strings look identical.
+/// facing names, triggers and ids they let two different strings look identical. Review
+/// pass 35: every character of Unicode general category Cf (15.1) is among them (the
+/// prepended concatenation marks and the Egyptian format controls were missing); the
+/// table the test walks is `jarvis_remote::text::FORMAT_RANGES`, copied (no dependency).
 pub(crate) fn is_invisible(c: char) -> bool {
     matches!(
         c,
         '\u{00AD}'
             | '\u{034F}'
+            | '\u{0600}'..='\u{0605}'
             | '\u{061C}'
+            | '\u{06DD}'
+            | '\u{070F}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08E2}'
             | '\u{115F}'
             | '\u{1160}'
             | '\u{17B4}'
@@ -182,6 +190,9 @@ pub(crate) fn is_invisible(c: char) -> bool {
             | '\u{FEFF}'
             | '\u{FFA0}'
             | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{110BD}'
+            | '\u{110CD}'
+            | '\u{13430}'..='\u{1343F}'
             | '\u{1BCA0}'..='\u{1BCA3}'
             | '\u{1D173}'..='\u{1D17A}'
             | '\u{E0000}'..='\u{E007F}'
@@ -247,6 +258,50 @@ pub(crate) fn opposite(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
     use jarvis_memory::intent_key;
+
+    /// Every character of Unicode general category Cf, version 15.1, as inclusive ranges (a
+    /// copy of `jarvis_remote::text::FORMAT_RANGES`, generated from the Unicode Character
+    /// Database).
+    const FORMAT_RANGES: [(char, char); 21] = [
+        ('\u{00AD}', '\u{00AD}'),
+        ('\u{0600}', '\u{0605}'),
+        ('\u{061C}', '\u{061C}'),
+        ('\u{06DD}', '\u{06DD}'),
+        ('\u{070F}', '\u{070F}'),
+        ('\u{0890}', '\u{0891}'),
+        ('\u{08E2}', '\u{08E2}'),
+        ('\u{180E}', '\u{180E}'),
+        ('\u{200B}', '\u{200F}'),
+        ('\u{202A}', '\u{202E}'),
+        ('\u{2060}', '\u{2064}'),
+        ('\u{2066}', '\u{206F}'),
+        ('\u{FEFF}', '\u{FEFF}'),
+        ('\u{FFF9}', '\u{FFFB}'),
+        ('\u{110BD}', '\u{110BD}'),
+        ('\u{110CD}', '\u{110CD}'),
+        ('\u{13430}', '\u{1343F}'),
+        ('\u{1BCA0}', '\u{1BCA3}'),
+        ('\u{1D173}', '\u{1D17A}'),
+        ('\u{E0001}', '\u{E0001}'),
+        ('\u{E0020}', '\u{E007F}'),
+    ];
+
+    /// Review pass 35: every Cf character is hidden in names, triggers and ids, and is
+    /// removed from an argument.
+    #[test]
+    fn every_format_character_is_invisible() {
+        let mut count = 0u32;
+        for (lo, hi) in FORMAT_RANGES {
+            for c in lo..=hi {
+                count += 1;
+                let text = format!("Wi{c}Fi");
+                assert!(is_invisible(c), "U+{:04X}", u32::from(c));
+                assert!(has_hidden(&text), "U+{:04X}", u32::from(c));
+                assert_eq!(clean_arg(&text), "WiFi", "U+{:04X}", u32::from(c));
+            }
+        }
+        assert_eq!(count, 170, "Unicode 15.1 has 170 Cf characters");
+    }
 
     #[test]
     fn key_tokens_join_to_the_intent_key() {

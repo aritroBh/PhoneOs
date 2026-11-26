@@ -136,7 +136,7 @@ fn an_approval_looks_at_the_screen_again_before_acting() {
     let e = d.model(&tap_buy(&before));
     assert!(matches!(e, Effect::Confirm(_)), "{e:?}");
     // Meanwhile the app re-laid out: "Buy now" moved; where it was is now "Subscribe".
-    let e = d.step(Event::UserDecision { approved: true });
+    let e = d.step(Event::phone_decision(true));
     match e {
         Effect::Act(cmd) => panic!(
             "approved action sent without re-observing; it taps {:?} on whatever is there now",
@@ -169,7 +169,7 @@ fn an_approved_control_that_shifted_is_tapped_where_it_is_now() {
     d.observed(&before);
     assert!(matches!(d.model(&tap_buy(&before)), Effect::Confirm(_)));
     assert!(matches!(
-        d.step(Event::UserDecision { approved: true }),
+        d.step(Event::phone_decision(true)),
         Effect::Observe { .. }
     ));
     let shifted = shop(310.0, "Add to wishlist");
@@ -188,7 +188,7 @@ fn an_approved_control_that_shifted_is_tapped_where_it_is_now() {
     d.step(Event::Start);
     d.observed(&before);
     assert!(matches!(d.model(&tap_buy(&before)), Effect::Confirm(_)));
-    d.step(Event::UserDecision { approved: true });
+    d.step(Event::phone_decision(true));
     assert_eq!(
         d.observed(&shifted),
         Effect::Act(RunnerCommand::Wait { ms: 500 })
@@ -217,7 +217,7 @@ fn an_approved_control_that_moved_away_is_not_tapped_and_is_asked_again() {
     let Effect::Confirm(asked) = d.model(&tap_buy(&before)) else {
         panic!()
     };
-    d.step(Event::UserDecision { approved: true });
+    d.step(Event::phone_decision(true));
     // "Buy now" moved down; "Subscribe" is where it was (a different control).
     let moved = screen(
         "com.example.shop",
@@ -250,7 +250,7 @@ fn an_approved_control_that_moved_away_is_not_tapped_and_is_asked_again() {
     };
     assert_eq!(again.category, asked.category);
     assert!(matches!(
-        d.step(Event::UserDecision { approved: true }),
+        d.step(Event::phone_decision(true)),
         Effect::Observe { .. }
     ));
     assert_eq!(
@@ -274,7 +274,7 @@ fn an_approved_control_that_is_gone_or_in_another_app_is_not_tapped() {
         let before = shop(300.0, "Add to wishlist");
         d.observed(&before);
         d.model(&tap_buy(&before));
-        d.step(Event::UserDecision { approved: true });
+        d.step(Event::phone_decision(true));
         let mut after = after;
         if after.app_bundle_id == "com.example.shop" {
             // Same layout, but the button now reads differently: not the approved control.
@@ -312,7 +312,7 @@ fn a_first_use_approval_also_looks_again_before_acting() {
     };
     assert_eq!(fu.category, RiskCategory::FirstUse);
     assert!(matches!(
-        d.step(Event::UserDecision { approved: true }),
+        d.step(Event::phone_decision(true)),
         Effect::Observe { .. }
     ));
     assert!(matches!(d.observed(&before), Effect::Act(_)));
@@ -371,7 +371,7 @@ fn an_approved_typed_submit_is_rechecked_before_its_return() {
         c.summary
     );
     assert!(matches!(
-        d.step(Event::UserDecision { approved: true }),
+        d.step(Event::phone_decision(true)),
         Effect::Observe { .. }
     ));
     // The conversation was closed meanwhile: no field to type into. Changed with the
@@ -424,7 +424,7 @@ fn approvals_on_a_screen_that_keeps_changing_end_by_the_budget() {
             Effect::Infer(_) => d.model(&tap_buy(&current)),
             Effect::Confirm(_) => {
                 confirms += 1;
-                d.step(Event::UserDecision { approved: true })
+                d.step(Event::phone_decision(true))
             }
             Effect::Act(cmd) => {
                 if cmd != settle_wait() {
@@ -720,7 +720,7 @@ fn session_debug_never_shows_typed_text_mid_action() {
         }),
     );
     let e = match e {
-        Effect::Confirm(_) => step(&mut s, Event::UserDecision { approved: true }),
+        Effect::Confirm(_) => step(&mut s, Event::phone_decision(true)),
         other => other,
     };
     let e = match e {
@@ -820,7 +820,7 @@ fn approve_then_look(
         panic!("expected a confirmation")
     };
     assert!(matches!(
-        d.step(Event::UserDecision { approved: true }),
+        d.step(Event::phone_decision(true)),
         Effect::Observe { .. }
     ));
     // Changed with the settle retry: `after` is shown at every look the approval takes.
@@ -841,12 +841,12 @@ fn approve_all_then_look(
     let Effect::Confirm(asked) = d.model(&format!(r#"{{"action":"tap","element":{i}}}"#)) else {
         panic!("expected a confirmation")
     };
-    let mut e = d.step(Event::UserDecision { approved: true });
+    let mut e = d.step(Event::phone_decision(true));
     for _ in 0..4 {
         if !matches!(e, Effect::Confirm(_)) {
             break;
         }
-        e = d.step(Event::UserDecision { approved: true });
+        e = d.step(Event::phone_decision(true));
     }
     assert!(matches!(e, Effect::Observe { .. }), "{e:?}");
     (asked.summary, d.look(after).0)
@@ -1000,7 +1000,7 @@ fn stale_approvals_are_capped_even_with_successes_in_between() {
             Effect::Confirm(c) => {
                 assert_eq!(c.category, RiskCategory::Purchase, "{}", c.summary);
                 confirms += 1;
-                d.step(Event::UserDecision { approved: true })
+                d.step(Event::phone_decision(true))
             }
             Effect::Act(cmd) => {
                 // Changed with the settle retry: one wait per approval, not a tap.
@@ -1204,7 +1204,7 @@ fn a_huge_screen_is_gated_and_rechecked_quickly() {
     let asked = d.model(&format!(r#"{{"action":"tap","element":{i}}}"#));
     let ask = t.elapsed();
     assert!(matches!(asked, Effect::Confirm(_)), "{asked:?}");
-    d.step(Event::UserDecision { approved: true });
+    d.step(Event::phone_decision(true));
     let t = Instant::now();
     let acted = d.observed(&s);
     let recheck = t.elapsed();
@@ -1520,7 +1520,7 @@ fn a_live_eta_ends_the_session_with_advice_for_the_owner() {
         let c = d.model(&format!(r#"{{"action":"tap","element":{i}}}"#));
         assert!(matches!(c, Effect::Confirm(_)), "{c:?}");
         assert!(matches!(
-            d.step(Event::UserDecision { approved: true }),
+            d.step(Event::phone_decision(true)),
             Effect::Observe { .. }
         ));
         eta -= 1;

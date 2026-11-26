@@ -213,7 +213,8 @@ public final class Transcript: Sendable {
         case .actResult(let r):
             r.ok ? "act_result(ok)" : "act_result(failed\(r.failure == .deviceLocked ? " [device locked]" : ""): \(r.error ?? "?"))"
         case .toolResult(let r): r.ok ? "tool_result(ok, \(r.output))" : "tool_result(failed: \(r.error ?? "?"))"
-        case .userDecision(let approved): "user_decision(\(approved ? "approved" : "declined"))"
+        case .userDecision(let approved, let byPhone):
+            "user_decision(\(approved ? "approved" : "declined")\(byPhone ? "" : ", remote"))"
         case .userAnswer(let text): "user_answer(\(text))"
         case .cancel: "cancel"
         case .deviceLocked: "device_locked"

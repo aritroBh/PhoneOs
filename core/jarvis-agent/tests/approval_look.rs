@@ -157,7 +157,7 @@ impl Driver {
         let e = self.model(&tap_buy());
         assert!(matches!(e, Effect::Confirm(_)), "{e:?}");
         assert_eq!(
-            self.step(Event::UserDecision { approved: true }),
+            self.step(Event::phone_decision(true)),
             Effect::Observe { screenshot: false }
         );
     }
@@ -326,7 +326,7 @@ fn when_jarvis_is_the_asked_app_the_sheet_settles_without_an_activation() {
         Effect::Confirm(_)
     ));
     assert!(matches!(
-        d.step(Event::UserDecision { approved: true }),
+        d.step(Event::phone_decision(true)),
         Effect::Observe { .. }
     ));
     assert_eq!(d.observed(&sheet(true)), settle_wait());
@@ -475,7 +475,7 @@ fn the_failure_budget_counts_one_failure_per_stale_approval() {
     let e = d.model(&tap_buy_on(&asked_after_change()));
     assert!(matches!(e, Effect::Confirm(_)), "{e:?}");
     assert!(matches!(
-        d.step(Event::UserDecision { approved: true }),
+        d.step(Event::phone_decision(true)),
         Effect::Observe { .. }
     ));
     assert_eq!(d.observed(&changed()), settle_wait());
@@ -676,7 +676,7 @@ fn a_first_use_approval_brings_the_app_back_too() {
     };
     assert_eq!(fu.category, jarvis_proto::RiskCategory::FirstUse);
     assert!(matches!(
-        d.step(Event::UserDecision { approved: true }),
+        d.step(Event::phone_decision(true)),
         Effect::Observe { .. }
     ));
     assert_eq!(d.observed(&jarvis_app()), launch_shop());

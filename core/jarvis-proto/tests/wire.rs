@@ -225,8 +225,8 @@ fn all_events() -> Vec<Event> {
             output: "Reminder created".into(),
             error: None,
         }),
-        Event::UserDecision { approved: true },
-        Event::UserDecision { approved: false },
+        Event::phone_decision(true),
+        Event::phone_decision(false),
         Event::UserAnswer {
             text: "Alex Kim".into(),
         },

@@ -81,6 +81,8 @@ pub struct Script {
     pub answers: VecDeque<String>,
     /// Tool behaviour.
     pub tool: Box<dyn FnMut(&ToolCall) -> ToolResult>,
+    /// Review pass 35: who gives every answer (`None`: see [`run_spec`]).
+    pub answerer: Option<jarvis_proto::Answerer>,
 }
 
 impl Script {
@@ -95,7 +97,15 @@ impl Script {
                 output: "ok".into(),
                 error: None,
             }),
+            answerer: None,
         }
+    }
+
+    /// Review pass 35: every answer is given by `by`, whatever the question and the task's
+    /// origin.
+    pub fn answered_by(mut self, by: jarvis_proto::Answerer) -> Self {
+        self.answerer = Some(by);
+        self
     }
 
     /// Adds confirmation decisions.
@@ -187,6 +197,12 @@ pub fn run_spec(
     mut phone: Phone,
     mut script: Script,
 ) -> Run {
+    // Review pass 35 (F4): who answers. A task a paired device started has its questions
+    // answered by that device wherever it may (as `RemoteControlService` relays them); what
+    // only the phone may approve (a phone-only request, a category of
+    // `NEVER_REMOTE_APPROVE`) is answered on the phone. A task started on the phone is
+    // answered on the phone.
+    let remote_task = task.origin == jarvis_proto::TaskOrigin::Remote;
     let mut session = Session::new(config, task, memory);
     let mut now = 1_000u64;
     let mut event = Event::Start;
@@ -272,9 +288,17 @@ pub fn run_spec(
                 Event::ToolResult((script.tool)(&call))
             }
             Effect::Confirm(req) => {
+                let remote = remote_task
+                    && !req.phone_only
+                    && !jarvis_safety::NEVER_REMOTE_APPROVE.contains(&req.category);
                 out.confirms.push(req);
                 Event::UserDecision {
                     approved: script.decisions.pop_front().unwrap_or(false),
+                    by: script.answerer.unwrap_or(if remote {
+                        jarvis_proto::Answerer::Remote
+                    } else {
+                        jarvis_proto::Answerer::Phone
+                    }),
                 }
             }
             Effect::AskUser { question } => {

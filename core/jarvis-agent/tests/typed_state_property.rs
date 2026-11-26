@@ -193,9 +193,7 @@ fn drive(
             }
             Effect::Confirm(_) => {
                 out.confirms += 1;
-                Event::UserDecision {
-                    approved: decisions.pop_front().unwrap_or(false),
-                }
+                Event::phone_decision(decisions.pop_front().unwrap_or(false))
             }
             Effect::AwaitUnlock { .. } => Event::DeviceUnlocked,
             Effect::Finished(_) => return out,

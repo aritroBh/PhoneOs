@@ -27,7 +27,8 @@ public protocol ConfirmationDesk: Sendable {
     /// they are still pending). Remote control binds each request it announces to exactly
     /// one of these.
     func confirmations(after id: Int) -> [(id: Int, request: ConfirmRequest)]
-    /// Answers confirmation `id`; false when it is no longer pending.
+    /// Answers confirmation `id` for a paired device (review pass 35: an answer given here
+    /// is remote, never kept); false when it is no longer pending.
     @discardableResult
     func resolveConfirmation(_ id: Int, approved: Bool) -> Bool
 }
@@ -55,7 +56,7 @@ public enum HumanPromptError: Error, Equatable, Sendable {
 /// touched by it. `withdraw(_:)` does the same for a caller that holds an id.
 public final class HumanPromptBroker: HumanGate, ConfirmationDesk, OwnerQuestioner {
     private enum Waiter {
-        case confirm(CheckedContinuation<Bool, any Error>)
+        case confirm(CheckedContinuation<OwnerDecision, any Error>)
         case answer(CheckedContinuation<String, any Error>)
     }
 
@@ -85,9 +86,15 @@ public final class HumanPromptBroker: HumanGate, ConfirmationDesk, OwnerQuestion
     public var pending: HumanPrompt? { state.withLock { $0.prompt } }
 
     public func confirm(_ request: ConfirmRequest) async throws -> Bool {
+        try await decide(request).approved
+    }
+
+    /// Review pass 35 (F4): `approve`/`decline` (Jarvis's own sheet) answer on the phone,
+    /// `resolveConfirmation` (remote control's desk) for a paired device.
+    public func decide(_ request: ConfirmRequest) async throws -> OwnerDecision {
         let id = reserve()
         return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Bool, any Error>) in
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<OwnerDecision, any Error>) in
                 install(id, .confirm(id: id, request: request), .confirm(c))
             }
         } onCancel: {
@@ -109,12 +116,12 @@ public final class HumanPromptBroker: HumanGate, ConfirmationDesk, OwnerQuestion
     public func askYesNo(_ question: String) async throws -> Bool {
         let id = reserve()
         return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Bool, any Error>) in
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<OwnerDecision, any Error>) in
                 install(id, .yesNo(id: id, text: question), .confirm(c))
             }
         } onCancel: {
             self.withdraw(id)
-        }
+        }.approved
     }
 
     public var latestPromptId: Int { state.withLock { $0.nextID - 1 } }
@@ -128,19 +135,23 @@ public final class HumanPromptBroker: HumanGate, ConfirmationDesk, OwnerQuestion
         return (id, request)
     }
 
-    public func resolveConfirmation(_ id: Int, approved: Bool) -> Bool { decide(id, approved, kind: .confirm) }
+    public func resolveConfirmation(_ id: Int, approved: Bool) -> Bool {
+        decide(id, OwnerDecision(approved: approved, byPhone: false), kind: .confirm)
+    }
 
-    /// Approves confirmation `id`. Returns false when it is no longer pending.
+    /// Approves confirmation `id` on the phone. Returns false when it is no longer pending.
     @discardableResult
-    public func approve(_ id: Int) -> Bool { decide(id, true, kind: .confirm) }
+    public func approve(_ id: Int) -> Bool { decide(id, OwnerDecision(approved: true, byPhone: true), kind: .confirm) }
 
-    /// Declines confirmation `id`.
+    /// Declines confirmation `id` on the phone.
     @discardableResult
-    public func decline(_ id: Int) -> Bool { decide(id, false, kind: .confirm) }
+    public func decline(_ id: Int) -> Bool { decide(id, OwnerDecision(approved: false, byPhone: true), kind: .confirm) }
 
     /// Answers yes/no question `id`.
     @discardableResult
-    public func answerYesNo(_ id: Int, yes: Bool) -> Bool { decide(id, yes, kind: .yesNo) }
+    public func answerYesNo(_ id: Int, yes: Bool) -> Bool {
+        decide(id, OwnerDecision(approved: yes, byPhone: true), kind: .yesNo)
+    }
 
     /// Answers question `id`.
     @discardableResult
@@ -216,9 +227,9 @@ public final class HumanPromptBroker: HumanGate, ConfirmationDesk, OwnerQuestion
 
     private enum Kind { case confirm, question, yesNo }
 
-    private func decide(_ id: Int, _ approved: Bool, kind: Kind) -> Bool {
+    private func decide(_ id: Int, _ decision: OwnerDecision, kind: Kind) -> Bool {
         guard let waiter = take(id, kind: kind), case .confirm(let c) = waiter else { return false }
-        c.resume(returning: approved)
+        c.resume(returning: decision)
         return true
     }
 

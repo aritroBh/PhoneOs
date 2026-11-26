@@ -479,7 +479,7 @@ fn a_swipe_planned_on_the_home_screen_is_not_sent_once_the_layer_changed() {
             }),
             Effect::Confirm(req) => {
                 confirms.push(req.summary.clone());
-                Event::UserDecision { approved: false }
+                Event::phone_decision(false)
             }
             Effect::AskUser { .. } => Event::UserAnswer {
                 text: String::new(),

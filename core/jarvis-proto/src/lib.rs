@@ -44,8 +44,8 @@ pub use policy::{
 };
 pub use runner::{Expect, Key, RunnerCommand, RunnerFailure, RunnerResult};
 pub use session::{
-    render_rows, ConfirmRequest, ConfirmStage, ConfirmTarget, ConfirmVerb, Effect, Event, Outcome,
-    OutcomeStatus, Phase, Progress, QuestionRow, QuestionRowKind, TimedEvent,
+    render_rows, Answerer, ConfirmRequest, ConfirmStage, ConfirmTarget, ConfirmVerb, Effect, Event,
+    Outcome, OutcomeStatus, Phase, Progress, QuestionRow, QuestionRowKind, TimedEvent,
 };
 pub use skill::SkillContext;
 pub use task::{AppInfo, SessionConfig, TaskOrigin, TaskSpec};

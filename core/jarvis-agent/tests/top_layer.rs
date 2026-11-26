@@ -408,7 +408,7 @@ fn an_approval_whose_look_finds_an_alert_is_stale() {
             }),
             Effect::Confirm(req) => {
                 confirmed |= req.summary.starts_with("Tap \"Fact probes\"");
-                Event::UserDecision { approved: true }
+                Event::phone_decision(true)
             }
             Effect::AskUser { .. } => Event::UserAnswer {
                 text: String::new(),

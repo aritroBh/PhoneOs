@@ -93,7 +93,7 @@ fn a_runner_text_screen_asks_before_a_tap_the_typed_tree_does_not() {
     );
     // Approved: the look (runner text again) runs it.
     assert!(matches!(
-        d.step(Event::UserDecision { approved: true }),
+        d.step(Event::phone_decision(true)),
         Effect::Observe { .. }
     ));
     let e = d.observe(&settings_screen(), true);
@@ -108,7 +108,7 @@ fn an_approval_does_not_cross_screen_sources() {
     let (mut d, e) = start(true, &tap);
     assert!(matches!(e, Effect::Confirm(_)));
     assert!(matches!(
-        d.step(Event::UserDecision { approved: true }),
+        d.step(Event::phone_decision(true)),
         Effect::Observe { .. }
     ));
     let e = d.observe(&settings_screen(), false);

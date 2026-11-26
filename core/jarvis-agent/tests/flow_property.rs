@@ -1220,7 +1220,7 @@ fn one_case(seed: u64) -> (u32, u32, u32) {
                 }
                 approved_unlooked |= approve;
                 look_owed = approve;
-                Event::UserDecision { approved: approve }
+                Event::phone_decision(approve)
             }
             Effect::AskUser { .. } => {
                 look_owed = true;

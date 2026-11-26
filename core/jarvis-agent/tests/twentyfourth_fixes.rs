@@ -228,7 +228,7 @@ fn drive(
                 if approved {
                     before = Before::Approved;
                 }
-                Event::UserDecision { approved }
+                Event::phone_decision(approved)
             }
             Effect::CallTool(_) => {
                 now += 50;

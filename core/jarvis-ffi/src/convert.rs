@@ -1162,7 +1162,10 @@ impl From<p::Event> for Event {
             p::Event::ToolResult(result) => Event::ToolResult {
                 result: result.into(),
             },
-            p::Event::UserDecision { approved } => Event::UserDecision { approved },
+            p::Event::UserDecision { approved, by } => Event::UserDecision {
+                approved,
+                by_phone: by == p::Answerer::Phone,
+            },
             p::Event::UserAnswer { text } => Event::UserAnswer { text },
             p::Event::Cancel => Event::Cancel,
             p::Event::DeviceLocked => Event::DeviceLocked,
@@ -1188,7 +1191,17 @@ pub(crate) fn event_into_proto(v: Event) -> (p::Event, Option<String>) {
         Event::ModelFailed { error } => (p::Event::ModelFailed { error }, None),
         Event::ActResult { result } => (p::Event::ActResult(result.into()), None),
         Event::ToolResult { result } => (p::Event::ToolResult(result.into()), None),
-        Event::UserDecision { approved } => (p::Event::UserDecision { approved }, None),
+        Event::UserDecision { approved, by_phone } => (
+            p::Event::UserDecision {
+                approved,
+                by: if by_phone {
+                    p::Answerer::Phone
+                } else {
+                    p::Answerer::Remote
+                },
+            },
+            None,
+        ),
         Event::UserAnswer { text } => (p::Event::UserAnswer { text }, None),
         Event::Cancel => (p::Event::Cancel, None),
         Event::DeviceLocked => (p::Event::DeviceLocked, None),

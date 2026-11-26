@@ -85,7 +85,7 @@ struct DriverTests {
         #expect(allWarned(h.gate.confirms))
         #expect(h.phone.page == .settings, "the row was not tapped")
         #expect(h.phone.commands.count == 0)
-        #expect(updates.contains(.effectCompleted(.confirm(request: try #require(h.gate.confirms.first)), event: .userDecision(approved: false))))
+        #expect(updates.contains(.effectCompleted(.confirm(request: try #require(h.gate.confirms.first)), event: .userDecision(approved: false, byPhone: true))))
         #expect(h.memory.saves.count == 1)
     }
 

@@ -277,6 +277,8 @@ final class FakeGate: HumanGate {
     }
 
     let approve: Bool
+    /// Review pass 35: the fake owner answers on the phone unless told otherwise.
+    let byPhone: Bool
     let answerText: String
     let confirmReply: Reply
     let answerReply: Reply
@@ -289,8 +291,10 @@ final class FakeGate: HumanGate {
         set { hook.withLock { $0 = newValue } }
     }
 
-    init(approve: Bool = true, answer: String = "HomeNet", confirmReply: Reply = .value, answerReply: Reply = .value) {
+    init(approve: Bool = true, byPhone: Bool = true, answer: String = "HomeNet", confirmReply: Reply = .value,
+         answerReply: Reply = .value) {
         self.approve = approve
+        self.byPhone = byPhone
         self.answerText = answer
         self.confirmReply = confirmReply
         self.answerReply = answerReply
@@ -309,6 +313,10 @@ final class FakeGate: HumanGate {
             await latch.hang()
             return approve
         }
+    }
+
+    func decide(_ request: ConfirmRequest) async throws -> OwnerDecision {
+        OwnerDecision(approved: try await confirm(request), byPhone: byPhone)
     }
 
     func answer(_ question: String) async throws -> String {

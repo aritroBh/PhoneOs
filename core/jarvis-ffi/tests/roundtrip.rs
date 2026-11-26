@@ -560,8 +560,8 @@ fn all_events() -> Vec<p::Event> {
             output: String::new(),
             error: Some("denied".to_owned()),
         }),
-        p::Event::UserDecision { approved: true },
-        p::Event::UserDecision { approved: false },
+        p::Event::phone_decision(true),
+        p::Event::phone_decision(false),
         p::Event::UserAnswer {
             text: "the one from work".to_owned(),
         },

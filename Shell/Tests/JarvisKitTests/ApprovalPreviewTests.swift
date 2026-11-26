@@ -128,6 +128,11 @@ private final class ApprovalGate: HumanGate {
     var asked: [(key: ViewerFrameKey?, frame: CapturedScreenshot?)] { log.withLock { $0.asked } }
     var askedAt: [ContinuousClock.Instant] { log.withLock { $0.at } }
 
+    /// The scripted owner answers on the phone (review pass 35).
+    func decide(_ request: ConfirmRequest) async throws -> OwnerDecision {
+        OwnerDecision(approved: try await confirm(request), byPhone: true)
+    }
+
     func confirm(_ request: ConfirmRequest) async throws -> Bool {
         let n = log.withLock { l -> Int in
             let key = store?.key

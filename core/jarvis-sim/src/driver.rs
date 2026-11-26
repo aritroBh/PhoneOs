@@ -429,7 +429,7 @@ pub fn run_with(
                     } else {
                         "owner declines".to_owned()
                     },
-                    Some(Event::UserDecision { approved }),
+                    Some(Event::phone_decision(approved)),
                 )
             }
             Effect::AskUser { question } => {

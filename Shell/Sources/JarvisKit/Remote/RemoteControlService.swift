@@ -776,7 +776,8 @@ public final class RemoteControlService {
             case .confirmationPending(let request):
                 enqueue(.confirmRequested(request))
             case .effectCompleted(.confirm, let decision):
-                enqueue(.confirmResolved(approved: decision == .userDecision(approved: true)))
+                let approved = if case .userDecision(approved: true, _) = decision { true } else { false }
+                enqueue(.confirmResolved(approved: approved))
             default:
                 break
             }

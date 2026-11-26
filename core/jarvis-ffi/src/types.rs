@@ -521,6 +521,12 @@ pub enum Event {
     },
     UserDecision {
         approved: bool,
+        /// Review pass 35 (F4): the owner gave this answer on the phone itself (Jarvis's own
+        /// approval sheet). `false` — the default, and what every answer relayed from a paired
+        /// device or from a source the shell cannot vouch for must say — makes it a remote
+        /// answer: it covers the action (a first use: the task) and is never kept in memory.
+        #[uniffi(default = false)]
+        by_phone: bool,
     },
     UserAnswer {
         text: String,
@@ -1685,9 +1691,10 @@ impl std::fmt::Debug for Event {
                 .debug_struct("ToolResult")
                 .field("result", result)
                 .finish(),
-            Event::UserDecision { approved } => f
+            Event::UserDecision { approved, by_phone } => f
                 .debug_struct("UserDecision")
                 .field("approved", approved)
+                .field("by_phone", by_phone)
                 .finish(),
             Event::UserAnswer { text } => f
                 .debug_struct("UserAnswer")

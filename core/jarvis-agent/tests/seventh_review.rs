@@ -120,7 +120,7 @@ fn a_non_control_overlay_moved_over_the_approved_button_is_not_tapped() {
                 panic!("{role:?}: {e:?}")
             };
             assert_eq!(
-                d.step(Event::UserDecision { approved: true }),
+                d.step(Event::phone_decision(true)),
                 Effect::Observe { screenshot: false }
             );
             let e = d.look(&fresh);
@@ -522,7 +522,7 @@ fn an_aria_disabled_button_moved_over_the_approved_button_is_not_tapped() {
     let Effect::Confirm(req) = e else {
         panic!("{e:?}")
     };
-    d.step(Event::UserDecision { approved: true });
+    d.step(Event::phone_decision(true));
     let e = d.look(&fresh);
     assert!(
         !matches!(e, Effect::Act(RunnerCommand::Tap { .. })),

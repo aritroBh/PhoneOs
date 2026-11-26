@@ -308,7 +308,7 @@ fn the_return_part_of_a_submit_outlines_nothing() {
     ));
     run.add(Update::EffectCompleted {
         effect: p::Effect::Confirm(request_for(&submit, p::ConfirmStage::Typing, typing)),
-        event: p::Event::UserDecision { approved: true },
+        event: p::Event::phone_decision(true),
     });
     // The typing runs, the screen is looked at again, then Return is asked.
     run.act_typed(type_text("hi"), submit.clone());
@@ -397,7 +397,7 @@ fn every_other_update_clears_it_and_a_locked_screen_has_none() {
     assert!(r.approval().is_some());
     let change = r.apply(Update::EffectCompleted {
         effect: p::Effect::Confirm(request("s")),
-        event: p::Event::UserDecision { approved: false },
+        event: p::Event::phone_decision(false),
     });
     assert!(change.approval && change.any());
     assert!(r.approval().is_none());

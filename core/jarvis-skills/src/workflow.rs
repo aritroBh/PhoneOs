@@ -246,7 +246,12 @@ pub struct Workflow {
     pub id: String,
     /// What the owner calls it.
     pub name: String,
-    /// Disabled workflows never trigger and refuse to run.
+    /// Disabled workflows never trigger and refuse to run. Review pass 35 (low): a stored
+    /// record without the field loads **disabled** (a scheduled workflow must never start
+    /// running unattended because a field was lost); [`Workflow::default`], what code builds
+    /// on, and the shell's new workflows (`WorkflowDraft`, enabled unless the owner says
+    /// otherwise) set it explicitly.
+    #[serde(default)]
     pub enabled: bool,
     /// What starts it.
     pub trigger: Trigger,
@@ -268,6 +273,7 @@ pub struct Workflow {
 
 impl Default for Workflow {
     /// An empty, enabled, manual workflow (not valid until it has an id, a name and steps).
+    /// Only code builds on it: JSON without `enabled` reads `false` (see the field).
     fn default() -> Self {
         Self {
             id: String::new(),

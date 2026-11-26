@@ -180,7 +180,10 @@ fn drive(
                     target: viewer.approval_target().unwrap(),
                     acts_after: vec![],
                 });
-                Event::UserDecision { approved: true }
+                Event::UserDecision {
+                    approved: true,
+                    by_phone: true,
+                }
             }
             Effect::AwaitUnlock { .. } => {
                 feed(CoreViewerUpdate::AwaitingUnlock);

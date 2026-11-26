@@ -9,16 +9,16 @@ use jarvis_proto::{
 
 use crate::gestures::{drag_gesture, finger_direction, GestureKind};
 use crate::phrases::{
-    action_tables, in_app, match_label, match_tokens, match_whole, max_risk, severity,
-    sf_symbol_risk, LabelRisk, Phrase, RuleTarget, ACTION_PHRASES, APP_RULES,
+    action_tables, in_app, match_label, match_label_read, match_tokens, match_whole, max_risk,
+    severity, sf_symbol_risk, LabelRisk, Phrase, RuleTarget, ACTION_PHRASES, APP_RULES,
     COMPOSE_FIELD_PHRASES, CONTEXT_PHRASES, CREDENTIAL_FIELD_PHRASES, NAVIGATION_PHRASES,
     PRICE_VERB_PHRASES, SETTINGS_ACTION_PHRASES, SETTINGS_BUNDLE_ID, SETTINGS_CONTEXT_PHRASES,
     SHARE_SAFE_PHRASES, WHOLE_LABEL_PHRASES,
 };
 use crate::redact::contains_secret;
 use crate::text::{
-    bounded, has_foreign_word, has_money, has_non_english_letters, label_is_unreadable, tokens,
-    CURRENCY_WORDS,
+    bounded, has_foreign_word, has_money, has_non_english_letters, label_is_unreadable,
+    lookalike_readings, tokens, CURRENCY_WORDS,
 };
 use crate::validate::{looks_like_url, url_scheme};
 use jarvis_proto::SPRINGBOARD_BUNDLE_ID;
@@ -526,8 +526,78 @@ fn is_priced_item_row(el: &Element, toks: &[String], lr: LabelRisk) -> bool {
         && names_something
 }
 
-/// Risk of tapping (or long-pressing) `el`.
+/// Review pass 35 (F1–F3): `el` once per look-alike reading of its label and value
+/// ([`lookalike_readings`]), the texts replaced by the reading; `None` (without allocating)
+/// when neither holds a look-alike in a fold position, and for text inputs (a tap only
+/// focuses them; their value is the owner's or the model's text, not the control's name).
+fn element_readings(el: &Element) -> Option<Vec<Element>> {
+    if el.role.is_text_input() {
+        return None;
+    }
+    let label = lookalike_readings(&bounded(&el.label));
+    let value = el
+        .value
+        .as_deref()
+        .and_then(|v| lookalike_readings(&bounded(v)));
+    if label.is_none() && value.is_none() {
+        return None;
+    }
+    let n = label
+        .as_ref()
+        .map_or(0, Vec::len)
+        .max(value.as_ref().map_or(0, Vec::len));
+    let pick = |rs: &Option<Vec<String>>, k: usize| -> Option<String> {
+        rs.as_ref().and_then(|rs| rs.get(k).or(rs.last())).cloned()
+    };
+    Some(
+        (0..n)
+            .map(|k| {
+                let mut e = el.clone();
+                if let Some(l) = pick(&label, k) {
+                    e.label = l;
+                }
+                if let Some(v) = pick(&value, k) {
+                    e.value = Some(v);
+                }
+                e
+            })
+            .collect(),
+    )
+}
+
+/// Risk of tapping (or long-pressing) `el`: the riskiest of its own words and of every
+/// look-alike reading of them (review pass 35).
 pub(crate) fn element_risk(el: &Element, r: &Reader<'_>) -> RiskCategory {
+    let plain = element_risk_read(el, r);
+    match element_readings(el) {
+        None => plain,
+        Some(readings) => readings
+            .iter()
+            .fold(plain, |a, e| max_risk(a, element_risk_read(e, r))),
+    }
+}
+
+/// Review pass 35: the category of a tap on the target of `action` (a tap or long press) by
+/// its own words and by each look-alike reading of them, every one kept (the gate carries
+/// them all: a denial of any refuses). Empty when the target has no look-alike reading.
+pub(crate) fn reading_risks(action: &Action, screen: &CompactScreen) -> Vec<RiskCategory> {
+    let (Action::Tap { element } | Action::LongPress { element, .. }) = action else {
+        return Vec::new();
+    };
+    let Some(el) = screen.get(*element) else {
+        return Vec::new();
+    };
+    let Some(readings) = element_readings(el) else {
+        return Vec::new();
+    };
+    let r = Reader::new(screen);
+    std::iter::once(element_risk_read(el, &r))
+        .chain(readings.iter().map(|e| element_risk_read(e, &r)))
+        .collect()
+}
+
+/// Risk of tapping (or long-pressing) `el` by one reading of its words.
+fn element_risk_read(el: &Element, r: &Reader<'_>) -> RiskCategory {
     let screen = r.screen;
     if el.role.is_text_input() {
         // Tapping a field only focuses it.
@@ -642,7 +712,7 @@ fn type_risk(element: Option<u32>, text: &str, submit: bool, r: &Reader<'_>) -> 
         );
         if t.secure
             || t.role == Role::SecureTextField
-            || match_label(&field, &[CREDENTIAL_FIELD_PHRASES]).category != RiskCategory::None
+            || match_label_read(&field, &[CREDENTIAL_FIELD_PHRASES]).category != RiskCategory::None
         {
             risk = RiskCategory::Credential;
         }
@@ -733,10 +803,12 @@ fn submit_risk(target: Option<&Element>, text: &str, r: &Reader<'_>) -> RiskCate
     let tables = action_tables(&r.screen.app_bundle_id);
     // Generic words ("OK", "confirm") mean what the screen means; definite ones count.
     let words = |t: &str| match_label(t, &tables).category;
+    // Review pass 35: the field's own label and placeholder in every look-alike reading.
+    let field_words = |t: &str| match_label_read(t, &tables).category;
     let named = target.map_or(RiskCategory::None, |t| {
         max_risk(
-            words(&bounded(&t.label)),
-            words(&bounded(t.placeholder.as_deref().unwrap_or(""))),
+            field_words(&t.label),
+            field_words(t.placeholder.as_deref().unwrap_or("")),
         )
     });
     // In a multi-line text view a Return key that is not a submit label inserts a line
@@ -1232,7 +1304,7 @@ fn swipe_risk(el: &Element, direction: Direction, r: &Reader<'_>) -> RiskCategor
     } else if sideways || is_adjustable(el) {
         element_risk(el, r)
     } else {
-        match_label(&element_text(el), &action_tables(&r.screen.app_bundle_id)).category
+        match_label_read(&element_text(el), &action_tables(&r.screen.app_bundle_id)).category
     }
 }
 
@@ -1605,5 +1677,175 @@ mod differential {
             }
         }
         assert!(pages > 1_000 && stacked > 1_000, "{pages} {stacked}");
+    }
+}
+
+/// Review pass 35: ordinary labels holding digits, symbols, capital `I`s and alternating
+/// case classify exactly as before the look-alike readings.
+#[cfg(test)]
+mod pass35_ordinary_labels {
+    use super::*;
+    use jarvis_proto::Rect;
+
+    /// Labels real apps use that hold a look-alike candidate (digits beside letters, `@`,
+    /// `$`, `|`, `!`, a capital `I` after a lowercase letter, several camel steps) or none.
+    const ORDINARY: &[&str] = &[
+        "iPhone",
+        "WiFi",
+        "Wi-Fi",
+        "Wi\u{2011}Fi 6",
+        "H2O",
+        "MP3",
+        "MP4",
+        "B2B",
+        "Top 10",
+        "Top10",
+        "Top5",
+        "Pay42",
+        "iOS 26",
+        "iOS 26.5",
+        "iPadOS",
+        "5G",
+        "4G LTE",
+        "4K",
+        "3D Touch",
+        "v2",
+        "v1.3",
+        "24h",
+        "1st",
+        "2nd",
+        "3rd",
+        "4th",
+        "Win10",
+        "x86",
+        "A1",
+        "A17 Pro",
+        "M3 Max",
+        "S24 Ultra",
+        "Pixel 8",
+        "Series 9",
+        "Q3 Report",
+        "COVID-19",
+        "USB-C",
+        "H.264",
+        "802.11ax",
+        "Gate B7",
+        "Seat 14A",
+        "Flight UA857",
+        "Room 101",
+        "Route 66",
+        "Bus 38",
+        "Channel 5",
+        "7-Eleven",
+        "7Up",
+        "3M",
+        "R2D2",
+        "C3PO",
+        "B12",
+        "Omega3",
+        "Level 3",
+        "Gr8",
+        "B4",
+        "L8r",
+        "4ever",
+        "1Password",
+        "OpenID",
+        "PayID",
+        "Apple ID",
+        "FaceID",
+        "TouchID",
+        "LinkedIn",
+        "McIntosh",
+        "YouTube",
+        "YouTubeTV",
+        "DuckDuckGo",
+        "PlayStation 5",
+        "AirPodsPro",
+        "MacBookAir",
+        "iCloud+",
+        "eBay",
+        "McDonald's",
+        "AT&T",
+        "Go!",
+        "Done!",
+        "Hello!",
+        "Yahoo!",
+        "Hi there!",
+        "john@example.com",
+        "@handle",
+        "$HOME",
+        "Home | Settings",
+        "Model Number, A3257LL/A",
+        "Serial Number, ZJLGNW7555",
+        "PageFormatMenuButton",
+        "Il y a 5 min",
+        "AL",
+        "Al Green",
+        "10:41",
+        "100%",
+        "Sum 41",
+        "Maroon 5",
+        "U2",
+        "Blink-182",
+        "Send",
+        "Delete",
+        "Pay $5.00",
+        "Buy 1 Get 1",
+        "SignIn",
+        "LogIn",
+    ];
+
+    fn element(role: Role, label: &str) -> Element {
+        Element {
+            index: 1,
+            role,
+            label: label.to_owned(),
+            value: None,
+            placeholder: None,
+            frame: Rect::new(16.0, 40.0, 361.0, 36.0),
+            enabled: true,
+            focused: false,
+            selected: false,
+            secure: false,
+            fingerprint: 1,
+        }
+    }
+
+    #[test]
+    fn ordinary_labels_classify_exactly_as_before() {
+        assert!(ORDINARY.len() >= 60, "{}", ORDINARY.len());
+        let mut wrong = Vec::new();
+        for label in ORDINARY {
+            for role in [Role::Button, Role::Cell, Role::Link, Role::StaticText] {
+                for bundle in ["com.example.app", "com.apple.Preferences"] {
+                    let el = element(role.clone(), label);
+                    let screen = CompactScreen {
+                        app_bundle_id: bundle.to_owned(),
+                        app_name: Some("App".to_owned()),
+                        size: jarvis_proto::fixtures::IPHONE_SIZE,
+                        keyboard_visible: false,
+                        elements: vec![el.clone()],
+                        cues: Default::default(),
+                    };
+                    let r = Reader::new(&screen);
+                    let before = element_risk_read(&el, &r);
+                    let now = element_risk(&el, &r);
+                    let readings = reading_risks(&Action::Tap { element: 1 }, &screen);
+                    let extra = readings
+                        .iter()
+                        .any(|c| *c != RiskCategory::None && *c != before);
+                    let tables = action_tables(bundle);
+                    let own_before = match_label(label, &tables);
+                    let own_now = match_label_read(label, &tables);
+                    if now != before || extra || own_before != own_now {
+                        wrong.push(format!(
+                            "{label:?} {role:?} in {bundle}: {before:?} -> {now:?} \
+                             (readings {readings:?}; own {own_before:?} -> {own_now:?})"
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 }

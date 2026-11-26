@@ -2843,7 +2843,7 @@ pub fn run_task(t: &Task, rep: &mut Report, verbose: bool) {
                     if !approved {
                         rep.declined += 1;
                     }
-                    Event::UserDecision { approved }
+                    Event::phone_decision(approved)
                 }
             }
             Effect::AskUser { .. } => {

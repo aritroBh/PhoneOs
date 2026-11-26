@@ -161,7 +161,7 @@ fn drive(looks: Vec<Screen>, after: Screen, model: &[&str]) -> Ran {
             }
             Effect::Confirm(req) => {
                 out.confirms.push(req);
-                Event::UserDecision { approved: true }
+                Event::phone_decision(true)
             }
             Effect::AskUser { .. } => Event::UserAnswer {
                 text: String::new(),

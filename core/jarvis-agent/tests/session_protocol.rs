@@ -89,7 +89,7 @@ fn states() -> Vec<(&'static str, Vec<Event>, Phase)> {
                 model(r#"{"action":"call_tool","name":"note","args":{"text":"hi"}}"#),
                 // Sixteenth review (Rule T): the task read the screen, so a tool call with
                 // arguments asks first (phone only); approved, the tool runs.
-                Event::UserDecision { approved: true },
+                Event::phone_decision(true),
             ],
             Phase::CallingTool,
         ),
@@ -165,7 +165,7 @@ fn unexpected_events_are_protocol_errors_in_every_state() {
         ("observing", model("{}")),
         ("thinking", Event::ActResult(RunnerResult::ok())),
         ("acting", observed()),
-        ("verifying", Event::UserDecision { approved: true }),
+        ("verifying", Event::phone_decision(true)),
         ("tool", Event::ActResult(RunnerResult::ok())),
         ("confirm", Event::UserAnswer { text: "yes".into() }),
         ("answer", Event::Start),
@@ -431,9 +431,7 @@ fn random_event(rng: &mut Rng) -> Event {
             output: random_text(rng),
             error: None,
         }),
-        8 => Event::UserDecision {
-            approved: rng.below(2) == 0,
-        },
+        8 => Event::phone_decision(rng.below(2) == 0),
         _ => {
             if rng.below(20) == 0 {
                 Event::Cancel

@@ -389,7 +389,7 @@ start and the memory file stays as it is (`JarvisCoordinator.startDriver`). `run
 | `infer` | `model.generate` | `modelOutput` | `modelFailed(error:)` |
 | `act` | `runner.perform` | `actResult` | `actResult(ok: false, error:)` |
 | `callTool` | `tools.execute` | `toolResult` | `toolResult(ok: false, …)` (timeout) |
-| `confirm` | `human.confirm` | `userDecision(approved:)` | `userDecision(approved: false)` |
+| `confirm` | `human.decide` (review pass 35: `confirm` plus where it was answered; a gate that only implements `confirm` is not the phone) | `userDecision(approved:byPhone:)` | `userDecision(approved: false, byPhone: false)` |
 | `askUser` | `human.answer` | `userAnswer(text:)` | `cancel`, `endReason = .noAnswer` |
 | any, on `cancel()` / task cancellation | the IO in flight is abandoned at once | `cancel` | (none) |
 

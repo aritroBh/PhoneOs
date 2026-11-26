@@ -435,7 +435,10 @@ fn a_driver_and_a_progress_poller_on_two_threads_do_not_interfere() {
                     },
                 }
             }
-            Effect::Confirm { .. } => Event::UserDecision { approved: true },
+            Effect::Confirm { .. } => Event::UserDecision {
+                approved: true,
+                by_phone: true,
+            },
             other => panic!("{other:?}"),
         };
         effect = session.step(now, event);
@@ -527,7 +530,13 @@ fn a_declined_first_use_blocks_through_the_bridge() {
         ask.summary,
         "Let Jarvis act in Settings (com.apple.Preferences)?"
     );
-    let Effect::Infer { request } = session.step(4, Event::UserDecision { approved: false }) else {
+    let Effect::Infer { request } = session.step(
+        4,
+        Event::UserDecision {
+            approved: false,
+            by_phone: true,
+        },
+    ) else {
         panic!("expected infer after the decline")
     };
     let progress = session.progress().unwrap();
@@ -631,7 +640,13 @@ fn a_locked_phone_waits_resumes_by_observing_and_can_time_out() {
     // is refused.
     assert!(matches!(effect, Effect::Confirm { .. }), "{effect:?}");
     assert!(matches!(
-        session.step(4, Event::UserDecision { approved: true }),
+        session.step(
+            4,
+            Event::UserDecision {
+                approved: true,
+                by_phone: true
+            }
+        ),
         Effect::Observe { .. }
     ));
     assert!(matches!(

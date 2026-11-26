@@ -378,17 +378,18 @@ public actor SessionDriver {
         let human = deps.human
         do {
             let watched = try await ioWatchingLock(.confirm, configuration.humanTimeout) {
-                try await human.confirm(request)
+                try await human.decide(request)
             }
             // A lock while the owner decides: the core asks again after the unlock.
-            guard case .value(let approved) = watched else { return lockDetected(.confirm) }
-            return .userDecision(approved: approved)
+            guard case .value(let decision) = watched else { return lockDetected(.confirm) }
+            // Review pass 35 (F4): where it was answered (a remote answer is never kept).
+            return .userDecision(approved: decision.approved, byPhone: decision.byPhone)
         } catch let error where isOurCancellation(error) {
             return stop(.cancelled)
         } catch {
             // No decision is a decline: a risky action never runs without a yes.
             emit(.ioFailed(.confirm, message: describe(error), willRetry: false))
-            return .userDecision(approved: false)
+            return .userDecision(approved: false, byPhone: false)
         }
     }
 
