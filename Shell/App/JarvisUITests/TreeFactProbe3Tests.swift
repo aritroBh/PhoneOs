@@ -7,13 +7,15 @@ import JarvisKit
 
 /// Probe round 3, on the Playground's own fixture screens ("Fact probes 3",
 /// `ProbeFixtures3.swift`): facts the safety gate assumes but no real iOS 26.5 tree had shown
-/// (docs/ARCHITECTURE.md, *What real trees showed*; the audit's P2, P3, P4, P9, P10, P11).
+/// (docs/ARCHITECTURE.md, *What real trees showed*; the audit's P2, P3, P4, P9, P10, P11), and
+/// P13 (row swipe lengths) and P14 (the runner under a hung front app).
 /// Conventions: `Probe3Case`. Each test RECORDS; it fails only when its own set-up cannot run
 /// (the app does not launch) and skips, after attaching the evidence, when a state cannot be
 /// produced on a simulator.
 ///
-/// Simulator time (typical): P2 ~70 s, P3 ~40 s, P4a ~35 s, P4b ~75 s, P4c ~80 s, P4d ~80 s,
-/// P9 ~80 s, P10/P11a/P11b ~55 s each.
+/// Simulator time (typical, run 139 where measured): P2 ~115 s, P3 ~35 s, P4a ~25 s,
+/// P4b ~105 s, P4c ~115 s, P4d ~85 s, P9a ~70 s, P9b ~80 s, P10 ~50 s, P11a ~105 s,
+/// P11b ~55 s, P13 ~130 s, P14 ~100 s.
 final class TreeFactProbe3Tests: Probe3Case {
     /// The symbols of `Probe3SymbolsFixture.symbols`, in the same order.
     static let symbolNames = [
@@ -189,6 +191,9 @@ final class TreeFactProbe3Tests: Probe3Case {
         var dismiss: [String]
         var longPress = false
         var withSpringBoard = false
+        /// Open with a coordinate tap at the trigger's frame centre (the SwiftUI Menu did not
+        /// open from `tap()` in run 139).
+        var coordinateTap = false
     }
 
     private static let modalCases: [ModalCase] = [
@@ -205,7 +210,7 @@ final class TreeFactProbe3Tests: Probe3Case {
         ModalCase(id: "probe3.modals.popover", slug: "popover", name: "popover (compact adaptation .popover)", marker: "Probe popover body text",
                   destructive: nil, dismiss: ["probe3.modals.close"]),
         ModalCase(id: "probe3.modals.menu", slug: "menu", name: "Menu", marker: "Probe menu item",
-                  destructive: "Delete from menu", dismiss: []),
+                  destructive: "Delete from menu", dismiss: [], coordinateTap: true),
         ModalCase(id: "probe3.modals.context", slug: "context-menu", name: "contextMenu", marker: "Probe context item",
                   destructive: "Delete from context menu", dismiss: [], longPress: true),
     ]
@@ -240,14 +245,26 @@ final class TreeFactProbe3Tests: Probe3Case {
                 fact("\(item.name): could not produce (the trigger \(item.id) was not found)")
                 continue
             }
+            // Let the previous modal's dismissal finish before the next trigger.
+            await pause(0.8)
             if item.longPress {
                 tolerant("long-press for the \(item.name)") { trigger.press(forDuration: 1.2) }
+            } else if item.coordinateTap {
+                tapCentre(app, trigger, "open the \(item.name) (tap at its frame centre)")
             } else {
                 tolerant("open the \(item.name)") { trigger.tap() }
             }
-            await pause(1.3)
+            await pause(1.5)
             let marker = Self.node(in: app, labelled: item.marker)
-            note("\(item.name): its marker \"\(item.marker)\" found by query: \(Self.yesNo(existsNow(marker)))")
+            var opened = existsNow(marker)
+            if !opened, !item.longPress, hittableNow(trigger) {
+                note("\(item.name): its marker \"\(item.marker)\" is not there 1.5 s after the tap and the trigger is still hittable: one more tap at its frame centre")
+                tapCentre(app, trigger, "open the \(item.name) again (tap at its frame centre)")
+                await pause(1.5)
+                opened = existsNow(marker)
+            }
+            note("\(item.name): its marker \"\(item.marker)\" found by query: \(Self.yesNo(opened))")
+            fact("\(item.name): opened (its marker \"\(item.marker)\" found by query): \(Self.yesNo(opened))")
             let tree = capture(app, Self.appBundleId, item.slug, "With the \(item.name) up: is there an Alert/Sheet/dialog-like node, is the content behind still in the tree, is anything marking it covered, what role do destructive buttons have?")
             var boardTree: RawElement?
             if item.withSpringBoard {
@@ -419,7 +436,8 @@ final class TreeFactProbe3Tests: Probe3Case {
             await runnerDo(runner, .swipe(from: path.from, to: path.to, durationMs: 200), expecting: Self.appBundleId, "swipe left on Swipe row 1 (the core's path for a swipe left on the row)")
             await pause(1.5)
             let after = capture(app, Self.appBundleId, "row1-after-runner-swipe", "After the runner's swipe left on a row whose trailing actions allow a full swipe: is the row still there, which actions were revealed (role, label, identifier)?")
-            let still = after.map { !Self.hits($0, Self.mentions("Swipe row 1")).isEmpty } ?? false
+            // The row's own text only: the status line ("Deleted swipe row 1") mentions it too.
+            let still = after.map { tree in !Self.hits(tree) { $0.label == "Swipe row 1" }.isEmpty } ?? false
             let revealed = report(after, "revealed actions (buttons labelled Delete or Flag)") { e in e.label == "Delete" || e.label == "Flag" }
             let revealedText = Self.briefs(revealed)
             let statusText = labelNow(status)
@@ -442,8 +460,10 @@ final class TreeFactProbe3Tests: Probe3Case {
         await runnerDo(runner, .swipe(from: from, to: to, durationMs: 200), expecting: Self.appBundleId, "full-width swipe left on Swipe row 2 (safe-area edge to edge)")
         await pause(1.5)
         let after = capture(app, Self.appBundleId, "row2-after-full-swipe", "After the runner's full-width swipe left on a row with a full-swipe destructive action: was the row deleted?")
-        let still = after.map { !Self.hits($0, Self.mentions("Swipe row 2")).isEmpty } ?? false
-        fact("runner full-width swipe left (\(Self.pointText(from)) -> \(Self.pointText(to))): row 2 still in the tree \(Self.yesNo(still)); status \"\(labelNow(status))\"")
+        // The row's own text node only (run 139 matched the status "Deleted swipe row 2" and
+        // reported the deleted row as still there).
+        let still = after.map { tree in !Self.hits(tree) { $0.label == "Swipe row 2" }.isEmpty } ?? false
+        fact("runner full-width swipe left (\(Self.pointText(from)) -> \(Self.pointText(to))): row 2 (a node labelled exactly \"Swipe row 2\") still in the tree \(Self.yesNo(still)); status \"\(labelNow(status))\"")
         if still {
             let revealed = after.map { tree in Self.hits(tree) { $0.label == "Delete" } } ?? []
             if !revealed.isEmpty, let back = Self.coreSwipe("right", frame: frame2, screen: screen) {
@@ -622,11 +642,17 @@ final class TreeFactProbe3Tests: Probe3Case {
 
     // MARK: - P9: permission prompts
 
-    private static let permissionCases: [(id: String, slug: String, name: String)] = [
+    private typealias PermissionCase = (id: String, slug: String, name: String)
+
+    /// Prompts about the device (P9a) and about the owner's data (P9b): two tests, each well
+    /// inside its allowance (run 139 ran all eight in one test and timed out in the paste case).
+    private static let devicePermissionCases: [PermissionCase] = [
         ("probe3.perm.location", "location", "location when in use"),
         ("probe3.perm.camera", "camera", "camera"),
         ("probe3.perm.microphone", "microphone", "microphone"),
         ("probe3.perm.contacts", "contacts", "contacts"),
+    ]
+    private static let dataPermissionCases: [PermissionCase] = [
         ("probe3.perm.photos", "photos", "photo library"),
         ("probe3.perm.tracking", "tracking", "tracking transparency"),
         ("probe3.perm.localnet", "localnet", "local network"),
@@ -634,13 +660,25 @@ final class TreeFactProbe3Tests: Probe3Case {
     ]
 
     @MainActor
-    func testP09_PermissionPrompts() async throws {
-        executionTimeAllowance = 240
-        begin("p9-permissions", "For each permission prompt raised from the Playground: is it an Alert in SpringBoard's tree only, what are its buttons' labels and identifiers, does the runner's top-layer reading see it? (Each is denied.)")
+    func testP09a_PermissionPromptsDevice() async throws {
+        try await permissionProbe("p9a-permissions", Self.devicePermissionCases,
+                                  "For the location, camera, microphone and contacts prompts raised from the Playground: is each an Alert in SpringBoard's tree only, what are its buttons' labels and identifiers, does the runner's top-layer reading see it? (Each is denied.)")
+    }
+
+    @MainActor
+    func testP09b_PermissionPromptsData() async throws {
+        try await permissionProbe("p9b-permissions", Self.dataPermissionCases,
+                                  "For the photo library, tracking, local network and paste prompts raised from the Playground: is each an Alert in SpringBoard's tree only, its buttons, does the runner's top-layer reading see it? With the paste prompt up (Jarvis's main thread blocked in the read), does the runner report SpringBoard's alert without touching Jarvis, and how long does its look take? (Each is denied.)")
+    }
+
+    @MainActor
+    private func permissionProbe(_ name: String, _ cases: [PermissionCase], _ question: String) async throws {
+        executionTimeAllowance = 180
+        begin(name, question)
         let app = launchPlayground()
         var reason: String?
         if await openProbe3(app, "probe3.permissions") {
-            await probePermissions(app)
+            await probePermissions(app, cases)
         } else {
             capture(app, Self.appBundleId, "no-screen", "Why was the Permissions screen not reached?")
             reason = "the Permissions screen was not reached"
@@ -649,14 +687,17 @@ final class TreeFactProbe3Tests: Probe3Case {
         if let reason { throw XCTSkip(reason) }
     }
 
+    /// Per prompt: ask, wait (≤ 10 s) for an alert, SpringBoard's tree, the alert by query,
+    /// the runner's look (also when no alert was found: run 139 had none for photos), Jarvis's
+    /// tree, deny. The paste prompt has its own order (`probePaste`).
     @MainActor
-    private func probePermissions(_ app: XCUIApplication) async {
+    private func probePermissions(_ app: XCUIApplication, _ cases: [PermissionCase]) async {
         let board = XCUIApplication(bundleIdentifier: Self.springboardId)
         let status = app.staticTexts["probe3.perm.status"].firstMatch
-        for item in Self.permissionCases {
+        for item in cases {
             if item.slug == "paste" {
-                UIPasteboard.general.string = "Probe paste 5521"
-                note("the test runner (another process) wrote \"Probe paste 5521\" to the general pasteboard")
+                await probePaste(app, board, status, item)
+                continue
             }
             let button = app.buttons[item.id].firstMatch
             guard waitFor(button, "the \(item.name) button", 5) else {
@@ -664,30 +705,88 @@ final class TreeFactProbe3Tests: Probe3Case {
                 continue
             }
             tolerant("ask for \(item.name)") { button.tap() }
-            let owner = await waitForAlert([(Self.springboardId, board), (Self.appBundleId, app)], 6)
+            var owner = await waitForAlert([(Self.springboardId, board), (Self.appBundleId, app)], 10)
             await pause(0.5)
             let boardTree = capture(board, Self.springboardId, "\(item.slug)-springboard", "After asking for \(item.name): is the prompt an Alert in SpringBoard's tree? Its buttons' labels and identifiers?")
+            if owner == nil, existsNow(board.alerts.firstMatch) {
+                note("\(item.name): an alert came up in SpringBoard after the 10 s wait")
+                owner = (Self.springboardId, board)
+            }
+            var labels: [String] = []
+            if let (ownerId, ownerApp) = owner { labels = readAlert(ownerApp, ownerId, item.name) }
+            let moment = owner == nil ? "after asking for \(item.name) (no alert found by query)" : "the \(item.name) prompt up"
+            let look = await runnerLook(moment, item.slug)
             let appTree = capture(app, Self.appBundleId, "\(item.slug)-jarvis", "After asking for \(item.name): does Jarvis's own tree hold the prompt?")
             let inBoard = boardTree.map { Self.hits($0) { $0.elementType == XCUIElementTypeCode.alert }.count } ?? 0
             let inApp = appTree.map { Self.hits($0) { $0.elementType == XCUIElementTypeCode.alert }.count } ?? 0
             let buttons = (boardTree.map { Self.alertButtons($0) } ?? []) + (appTree.map { Self.alertButtons($0) } ?? [])
+            let lookApp = look?.appBundleId ?? "?"
             guard let (ownerId, ownerApp) = owner else {
-                fact("\(item.name): no Alert in SpringBoard's or Jarvis's tree within 6 s (Alert nodes: SpringBoard \(inBoard), Jarvis \(inApp)); status \"\(labelNow(status))\"")
+                fact("\(item.name): no Alert in SpringBoard's or Jarvis's tree within 10 s (Alert nodes: SpringBoard \(inBoard), Jarvis \(inApp)); the runner's top layer \(lastRunnerFront), its look of \(lookApp); status \"\(labelNow(status))\"")
                 await pause(0.5)
                 continue
             }
-            let labels = readAlert(ownerApp, ownerId, item.name)
-            let look = await runnerLook("the \(item.name) prompt up", item.slug)
             let deny = Self.denyingLabel(labels) ?? labels.last
             let quoted: [String] = labels.map { "\"\($0)\"" }
             let buttonText = buttons.isEmpty ? quoted.joined(separator: ", ") : buttons.joined(separator: "; ")
-            let lookApp = look?.appBundleId ?? "?"
             let denyText = deny ?? "nothing to tap"
-            fact("\(item.name): the prompt is an Alert in \(ownerId)'s tree by query; Alert nodes in the snapshots: SpringBoard \(inBoard), Jarvis \(inApp); buttons: \(buttonText); the runner's top layer: \(lookApp); denied with \"\(denyText)\"")
-            if let deny { await tapInAlert(ownerApp, deny, "deny the \(item.name) prompt") }
+            fact("\(item.name): the prompt is an Alert in \(ownerId)'s tree by query; Alert nodes in the snapshots: SpringBoard \(inBoard), Jarvis \(inApp); buttons: \(buttonText); the runner's top layer: \(lastRunnerFront), its look of \(lookApp); denied with \"\(denyText)\"")
+            if let deny, existsNow(ownerApp.alerts.firstMatch) {
+                await tapInAlert(ownerApp, deny, "deny the \(item.name) prompt")
+            } else if deny != nil {
+                note("\(item.name): the alert was gone before the denial (handled by XCTest's interruption handling while Jarvis was captured?)")
+            }
             await pause(0.8)
             note("\(item.name): status afterwards \"\(labelNow(status))\"")
         }
+    }
+
+    /// The paste prompt. Jarvis reads the pasteboard on its main thread, which blocks until
+    /// the prompt is answered (run 139: XCUITest's own tap then waited 60 s for Jarvis to
+    /// idle, and the probe's snapshot of Jarvis retried until the allowance ran out). So:
+    /// the frame of Read pasteboard is read while Jarvis is idle, the tap goes through
+    /// SpringBoard's coordinates, and until the prompt is answered only SpringBoard and the
+    /// runner's look are touched (the runner checks SpringBoard's alerts first; whether it
+    /// reports the alert without touching Jarvis, and how long its look takes, is recorded).
+    /// Jarvis is captured only after the prompt is answered.
+    @MainActor
+    private func probePaste(_ app: XCUIApplication, _ board: XCUIApplication, _ status: XCUIElement, _ item: PermissionCase) async {
+        let button = app.buttons[item.id].firstMatch
+        guard waitFor(button, "the \(item.name) button", 5), let frame = queryFrame(button) else {
+            fact("\(item.name): could not produce (no Read pasteboard button)")
+            return
+        }
+        UIPasteboard.general.string = "Probe paste 5521"
+        note("the test runner (another process) wrote \"Probe paste 5521\" to the general pasteboard")
+        note("from the tap until the prompt is answered nothing queries or captures Jarvis")
+        checkpoint("tapping Read pasteboard (Jarvis's main thread blocks in the read until the paste prompt is answered)", force: true)
+        tapThroughSpringBoard(frame, "tap Read pasteboard")
+        let owner = await waitForAlert([(Self.springboardId, board)], 8)
+        await pause(0.5)
+        let boardTree = capture(board, Self.springboardId, "\(item.slug)-springboard", "After asking to read the pasteboard: is the paste prompt an Alert in SpringBoard's tree? Its buttons' labels and identifiers?")
+        let inBoard = boardTree.map { Self.hits($0) { $0.elementType == XCUIElementTypeCode.alert }.count } ?? 0
+        let buttons = boardTree.map { Self.alertButtons($0) } ?? []
+        var labels: [String] = []
+        if owner != nil { labels = readAlert(board, Self.springboardId, item.name) }
+        checkpoint("the runner's look with the paste prompt up (Jarvis blocked)", force: true)
+        let lookStart = Date()
+        let look = await runnerLook("the paste prompt up, Jarvis's main thread blocked in the read", item.slug)
+        let lookSeconds = String(format: "%.1f", Date().timeIntervalSince(lookStart))
+        let lookApp = look?.appBundleId ?? "?"
+        let lookAlerts = look?.root.map { root in Self.findAll(root) { $0.role == .alert }.count } ?? 0
+        let deny = Self.denyingLabel(labels) ?? "Don’t Allow Paste"
+        var answered = "nothing (no alert by query)"
+        if existsNow(board.alerts.firstMatch) {
+            await tapInAlert(board, deny, "answer the paste prompt")
+            answered = "\"\(deny)\""
+        }
+        let quoted: [String] = labels.map { "\"\($0)\"" }
+        let buttonText = buttons.isEmpty ? quoted.joined(separator: ", ") : buttons.joined(separator: "; ")
+        let ownerText = owner == nil ? "no Alert in SpringBoard by query within 8 s" : "an Alert in SpringBoard's tree by query"
+        fact("\(item.name): \(ownerText); Alert nodes in SpringBoard's snapshot \(inBoard); buttons: \(buttonText); with Jarvis blocked the runner's look took \(lookSeconds) s in all (frontBundleId() \(lastRunnerFrontMs) ms -> \(lastRunnerFront), snapshot \(lastRunnerSnapshotMs) ms -> of \(lookApp), \(lookAlerts) typed Alert node(s)); answered with \(answered)")
+        await pause(1)
+        capture(app, Self.appBundleId, "\(item.slug)-jarvis-after", "After the paste prompt was answered: is Jarvis responsive again; what did the read return (the status line)?")
+        note("\(item.name): status afterwards \"\(labelNow(status))\"")
     }
 
     // MARK: - P3: an incoming CallKit call
@@ -717,11 +816,13 @@ final class TreeFactProbe3Tests: Probe3Case {
         let call = app.buttons["probe3.system.call"].firstMatch
         guard waitFor(call, "the Report incoming call button", 5) else { return "no Report incoming call button" }
         tolerant("report an incoming call") { call.tap() }
+        // The status line keeps its history, newest first ("Provider reset (was: Reporting
+        // call)"), so the order of CallKit's answers is recorded; decisions read the newest.
         var shown = ""
-        let deadline = Date().addingTimeInterval(8)
+        let deadline = Date().addingTimeInterval(10)
         while Date() < deadline {
             shown = labelNow(status)
-            if shown.hasPrefix("Call report failed") || shown == "Call reported" { break }
+            if shown.hasPrefix("Call report failed") || shown.hasPrefix("Call reported") { break }
             await pause(0.4)
         }
         await pause(1.5)
@@ -766,6 +867,238 @@ final class TreeFactProbe3Tests: Probe3Case {
         }
         await pause(1)
         fact("incoming call: declined via \(declined.isEmpty ? "nothing (the app ended it)" : declined); status afterwards \"\(labelNow(status))\"")
+        return nil
+    }
+
+    // MARK: - P13: row swipe lengths
+
+    /// One drag of P13: the core's path (`fraction` nil, `scroll` nil), a centred drag of
+    /// `fraction` of the screen width (through the runner, or as an XCUITest drag at the
+    /// core's 200 ms), or the core's horizontal scroll with content direction `scroll`.
+    private struct SwipeAttempt {
+        var name: String
+        var fraction: Double?
+        var viaRunner = true
+        var scroll: String?
+    }
+
+    private static let swipeAttempts: [SwipeAttempt] = [
+        SwipeAttempt(name: "the core's swipe left (runner)"),
+        SwipeAttempt(name: "60 % of the width (runner)", fraction: 0.6),
+        SwipeAttempt(name: "70 % of the width (runner)", fraction: 0.7),
+        SwipeAttempt(name: "80 % of the width (runner)", fraction: 0.8),
+        SwipeAttempt(name: "90 % of the width (runner)", fraction: 0.9),
+        SwipeAttempt(name: "60 % of the width (XCUITest drag, 200 ms)", fraction: 0.6, viaRunner: false),
+        SwipeAttempt(name: "70 % of the width (XCUITest drag, 200 ms)", fraction: 0.7, viaRunner: false),
+        SwipeAttempt(name: "80 % of the width (XCUITest drag, 200 ms)", fraction: 0.8, viaRunner: false),
+        SwipeAttempt(name: "90 % of the width (XCUITest drag, 200 ms)", fraction: 0.9, viaRunner: false),
+        SwipeAttempt(name: "the core's scroll right, finger left (runner)", scroll: "right"),
+        SwipeAttempt(name: "the core's scroll left, finger right (runner)", scroll: "left"),
+    ]
+
+    @MainActor
+    func testP13_RowSwipeLengths() async throws {
+        executionTimeAllowance = 200
+        begin("p13-swipe-lengths", "On list rows whose trailing actions allow a full swipe (Delete, Flag): what do the core's swipe-left path, centred drags of 60, 70, 80 and 90 % of the screen width (through the runner, and as XCUITest drags at the core's 200 ms) and the core's horizontal scroll paths do: reveal the actions, delete the row, or nothing? At which length is the row deleted?")
+        let app = launchPlayground()
+        var reason: String?
+        if await openProbe3(app, "probe3.swipes") {
+            reason = await probeSwipeLengths(app)
+        } else {
+            capture(app, Self.appBundleId, "no-screen", "Why was the Swipe rows screen not reached?")
+            reason = "the Swipe rows screen was not reached"
+        }
+        await finish(terminating: [])
+        if let reason { throw XCTSkip(reason) }
+    }
+
+    /// Each attempt on a fresh row ("Full swipe row N", N = 1, 2, …): the row's frame by query,
+    /// the drag, then by query: is the row's own text gone (deleted), are Delete/Flag hittable
+    /// (revealed), else nothing. Revealed actions are closed with the core's swipe right.
+    @MainActor
+    private func probeSwipeLengths(_ app: XCUIApplication) async -> String? {
+        let status = app.staticTexts["probe3.swipes.status"].firstMatch
+        guard waitFor(status, "the swipe rows' status line", 5) else { return "the Swipe rows screen has no status line" }
+        capture(app, Self.appBundleId, "rows", "The swipe rows before any swipe: each row's Cell and text, frames")
+        let runner = XCUITestPhoneRunner()
+        let look = await runnerLook("the swipe rows before any swipe", "rows", runner: runner)
+        guard let screen = look?.screenSize, screen.width > 0 else { return "no runner look (no screen size)" }
+        note("the runner's swipe sends press(forDuration: 0.05, thenDragTo:) at XCTest's own speed: the command's durationMs is not honoured (XCUITestPhoneRunner); the XCUITest drags below pass a velocity of length / 0.2 s")
+        var row = 0
+        var revealCaptured = false
+        var deleteCaptured = false
+        var deletedAt: [String] = []
+        for attempt in Self.swipeAttempts {
+            row += 1
+            let text = "Full swipe row \(row)"
+            let cell = app.cells.containing(NSPredicate(format: "label == %@", text)).firstMatch
+            guard let cg = queryFrame(cell) else {
+                fact("P13 \(attempt.name): could not produce (\(text) not found by query)")
+                continue
+            }
+            let frame = Rect(x: Double(cg.origin.x), y: Double(cg.origin.y), width: Double(cg.width), height: Double(cg.height))
+            let y = frame.y + frame.height / 2
+            var from = Point(x: 0, y: y)
+            var to = Point(x: 0, y: y)
+            var duration: UInt64 = 200
+            if let scroll = attempt.scroll {
+                guard let path = Self.coreDrag("scroll", scroll, frame: frame, screen: screen) else { continue }
+                from = path.from
+                to = path.to
+                duration = path.durationMs
+            } else if let fraction = attempt.fraction {
+                let centre = frame.x + frame.width / 2
+                let half = screen.width * fraction / 2
+                from = Point(x: min(centre + half, screen.width - 1), y: y)
+                to = Point(x: max(centre - half, 1), y: y)
+            } else {
+                guard let path = Self.coreSwipe("left", frame: frame, screen: screen) else { continue }
+                from = path.from
+                to = path.to
+            }
+            let length = abs(from.x - to.x)
+            let share = Int((length / screen.width * 100).rounded())
+            if attempt.viaRunner {
+                await runnerDo(runner, .swipe(from: from, to: to, durationMs: duration), expecting: Self.appBundleId, "\(attempt.name) on \(text)")
+            } else {
+                let velocity = CGFloat(length / 0.2)
+                let drag = from
+                let drop = to
+                tolerant("\(attempt.name) on \(text): XCUITest drag at velocity \(Int(velocity))") {
+                    let origin = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+                    let start = origin.withOffset(CGVector(dx: drag.x, dy: drag.y))
+                    let end = origin.withOffset(CGVector(dx: drop.x, dy: drop.y))
+                    start.press(forDuration: 0.05, thenDragTo: end, withVelocity: XCUIGestureVelocity(rawValue: velocity), thenHoldForDuration: 0)
+                }
+                note("\(attempt.name) on \(text): XCUITest drag \(Self.pointText(from)) -> \(Self.pointText(to)), velocity \(Int(velocity)) (length / 0.2 s)")
+            }
+            await pause(1.3)
+            let deleted = !existsNow(Self.node(in: app, labelled: text))
+            let revealed = ["Delete", "Flag"].filter { hittableNow(app.buttons[$0].firstMatch) }
+            let statusText = labelNow(status)
+            var outcome = "nothing (the row in place, no action revealed)"
+            if deleted {
+                outcome = "deleted"
+                deletedAt.append(attempt.name)
+            } else if !revealed.isEmpty {
+                outcome = "actions revealed (\(revealed.joined(separator: ", ")))"
+            }
+            fact("P13 \(attempt.name): \(Self.pointText(from)) -> \(Self.pointText(to)) on \(text) \(Self.rectText(frame)), \(Int(length.rounded())) pt (\(share) % of the width), sent as \(duration) ms -> \(outcome); status \"\(statusText)\"")
+            if deleted && !deleteCaptured {
+                deleteCaptured = true
+                capture(app, Self.appBundleId, "after-delete-\(row)", "After \(attempt.name) deleted \(text): the rows and the status line")
+            }
+            if !deleted && !revealed.isEmpty {
+                if !revealCaptured {
+                    revealCaptured = true
+                    let tree = capture(app, Self.appBundleId, "revealed-\(row)", "After \(attempt.name) on \(text): the revealed actions (role, label, identifier, frame)")
+                    report(tree, "revealed actions (nodes labelled Delete or Flag)") { $0.label == "Delete" || $0.label == "Flag" }
+                }
+                if let back = Self.coreSwipe("right", frame: frame, screen: screen) {
+                    await runnerDo(runner, .swipe(from: back.from, to: back.to, durationMs: 200), expecting: Self.appBundleId, "the core's swipe right on \(text) to close its actions")
+                    await pause(1)
+                }
+                if hittableNow(app.buttons["Delete"].firstMatch) {
+                    tolerant("tap the status line to close the actions") { status.tap() }
+                    await pause(1)
+                    note("actions still open after the swipe right: tapped the status line; open now: \(Self.yesNo(hittableNow(app.buttons["Delete"].firstMatch)))")
+                }
+            }
+        }
+        let deletedText = deletedAt.isEmpty ? "none" : deletedAt.joined(separator: "; ")
+        fact("P13 summary: the drags that deleted their row: \(deletedText)")
+        return nil
+    }
+
+    // MARK: - P14: the runner under a hung front app
+
+    /// The three runner calls P14 makes while Jarvis's main thread is blocked.
+    private static let hungCalls = ["snapshot(includeScreenshot: false)", "frontBundleId()", "perform(.tap) on Count tap"]
+
+    @MainActor
+    func testP14_RunnerUnderHungApp() async throws {
+        executionTimeAllowance = 200
+        begin("p14-hung-app", "With Jarvis's main thread blocked for 20 s (the front app hung): how long do the runner's snapshot, frontBundleId() and a tap take, and what do they return? Does a look hang past the runner's 16 s budget?")
+        let app = launchPlayground()
+        var reason: String?
+        if await openProbe3(app, "probe3.system") {
+            reason = await probeHung(app)
+        } else {
+            capture(app, Self.appBundleId, "no-screen", "Why was the System screen not reached?")
+            reason = "the System screen was not reached"
+        }
+        await finish(terminating: [])
+        if let reason { throw XCTSkip(reason) }
+    }
+
+    /// Per call: a fresh hang (the Hang button, tapped through SpringBoard's coordinates so the
+    /// tap does not wait for Jarvis; the app blocks 1 s later, for 20 s), the call 2 s into
+    /// the hang, timed; then a wait (with no query on Jarvis) until the hang is over. A call
+    /// that does not return within 40 s ends the probe (XCTest cannot be interrupted: the
+    /// progress file written right before it records that it started).
+    @MainActor
+    private func probeHung(_ app: XCUIApplication) async -> String? {
+        let hang = app.buttons["probe3.system.hang"].firstMatch
+        let count = app.buttons["probe3.system.count"].firstMatch
+        let taps = app.staticTexts["probe3.system.taps"].firstMatch
+        let status = app.staticTexts["probe3.system.status"].firstMatch
+        guard waitFor(hang, "the Hang button", 5), let hangFrame = queryFrame(hang), let countFrame = queryFrame(count) else {
+            capture(app, Self.appBundleId, "no-hang-button", "Why are the Hang and Count tap buttons missing?")
+            return "no Hang or Count tap button on the System screen"
+        }
+        let runner = XCUITestPhoneRunner()
+        await runnerLook("the System screen, Jarvis not hung (the baseline timings)", "calm", runner: runner)
+        fact("P14 baseline (not hung): frontBundleId() \(lastRunnerFrontMs) ms -> \(lastRunnerFront); snapshot \(lastRunnerSnapshotMs) ms")
+        for call in Self.hungCalls {
+            checkpoint("starting a 20 s hang for the runner's \(call)", force: true)
+            let tapped = Date()
+            tapThroughSpringBoard(hangFrame, "tap Hang 20 s")
+            let hangStart = tapped.addingTimeInterval(1)
+            let hangEnd = hangStart.addingTimeInterval(20)
+            let lead = hangStart.addingTimeInterval(2).timeIntervalSinceNow
+            if lead > 0 { await pause(lead) }
+            let into = String(format: "%.1f", Date().timeIntervalSince(hangStart))
+            checkpoint("the runner's \(call), \(into) s into the hang", force: true)
+            let start = Date()
+            var answer = ""
+            if call.hasPrefix("snapshot") {
+                runner.onObservation = { [weak self] record in self?.keepRunnerRecord(record) }
+                pendingRunnerSlug = "hung-snapshot"
+                pendingRunnerQuestion = "What does Jarvis's runner report with Jarvis's main thread blocked (a snapshot 2 s into a 20 s hang)?"
+                do {
+                    let seen = try await runner.snapshot(includeScreenshot: false)
+                    let nodes = seen.root.map { Self.typedCount($0) } ?? 0
+                    let notes = seen.notes.isEmpty ? "none" : seen.notes.joined(separator: " | ")
+                    answer = "of \(seen.appBundleId), \(nodes) typed nodes; notes: \(notes)"
+                } catch {
+                    answer = "threw \(error)"
+                }
+                runner.onObservation = nil
+            } else if call.hasPrefix("frontBundleId") {
+                do {
+                    let id = try await runner.frontBundleId()
+                    answer = id ?? "nil"
+                } catch {
+                    answer = "threw \(error)"
+                }
+            } else {
+                let result = await runnerDo(runner, .tap(x: Double(countFrame.midX), y: Double(countFrame.midY)), expecting: Self.appBundleId, "tap Count tap during the hang")
+                answer = result.map { r in r.ok ? "ok" : "failed: \(r.error ?? "?")" } ?? "threw (see the step above)"
+            }
+            let took = Date().timeIntervalSince(start)
+            let returnedBeforeEnd = Date() < hangEnd
+            let tookText = String(format: "%.1f", took)
+            fact("P14 \(call) with Jarvis hung (called \(into) s into a 20 s hang): returned after \(tookText) s (\(returnedBeforeEnd ? "before" : "after") the hang ended; past the runner's 16 s budget: \(Self.yesNo(took > 16))) -> \(answer)")
+            let rest = hangEnd.addingTimeInterval(1.5).timeIntervalSinceNow
+            if rest > 0 { await pause(rest) }
+            if took > 40 {
+                fact("P14: \(call) took over 40 s: the remaining calls are not made")
+                break
+            }
+            note("after the hang: status \"\(labelNow(status))\", taps \"\(labelNow(taps))\"")
+        }
+        fact("P14: the Count tap line after the hangs (the tap sent during a hang is delivered when the hang ends if it reads Taps 1): \"\(labelNow(taps))\"")
+        await runnerLook("the System screen after the hangs", "after", runner: runner)
         return nil
     }
 
@@ -841,6 +1174,18 @@ final class TreeFactProbe3Tests: Probe3Case {
 /// XCTest issues raised while probing are captured as data (`tolerant`), every wait is bounded,
 /// and a state that cannot be produced on a simulator ends the probe with `XCTSkip` after the
 /// evidence is attached. Each probe leaves the simulator on the Home Screen, in portrait.
+///
+/// A test that runs out of its execution time allowance is killed with no teardown (run 139,
+/// P9 and P5b: nothing was written). So the steps so far are also written as they go:
+/// `probe3-<probe>-progress-NN.txt` (every step and every fact so far, cumulative; the
+/// highest NN is the latest), at most every 30 s before a capture or a runner call, and
+/// always right before a step that may block (`checkpoint(force:)`). The final result and
+/// facts files supersede them.
+///
+/// A system app is opened only through `bringForward`: its icon must be in SpringBoard's tree
+/// and it must reach the foreground within 10 s (run 139: activating Notes, which the
+/// iOS 26.5 simulator does not have, blocked inside `activate()` for two minutes); an app
+/// that did not come forward is not queried again, not even by `finish`.
 class Probe3Case: QATestCase {
     static let springboardId = "com.apple.springboard"
     static let settingsId = "com.apple.Preferences"
@@ -853,8 +1198,18 @@ class Probe3Case: QATestCase {
     var started = Date()
     /// The last observation a `runnerLook` runner reported (main actor only).
     var lastRunnerRecord: RunnerObservationRecord?
-    private var pendingRunnerSlug = "runner"
-    private var pendingRunnerQuestion = ""
+    /// What the last `runnerLook` read: `frontBundleId()` (its top layer) and how long that
+    /// call and the snapshot took (ms).
+    var lastRunnerFront = "?"
+    var lastRunnerFrontMs = 0
+    var lastRunnerSnapshotMs = 0
+    /// Apps `bringForward` found no icon for, or that did not start: never queried again.
+    var unavailableApps: Set<String> = []
+    var pendingRunnerSlug = "runner"
+    var pendingRunnerQuestion = ""
+    private var checkpoints = 0
+    private var lastCheckpoint = Date()
+    private var checkpointedLines = 0
 
     override func tearDownWithError() throws {
         // Never leave the simulator rotated, even when a probe ended early (teardown runs on
@@ -877,8 +1232,35 @@ class Probe3Case: QATestCase {
         lines = []
         facts = []
         started = Date()
+        checkpoints = 0
+        lastCheckpoint = Date()
+        checkpointedLines = 0
+        unavailableApps = []
         note("probe round 3, \(name), started (\(ProcessInfo.processInfo.operatingSystemVersionString))")
         note("QUESTION: \(question)")
+    }
+
+    /// Writes every step and fact so far as `probe3-<probe>-progress-NN.txt` (cumulative), so
+    /// a test killed at its time allowance still leaves its record. Unforced: at most every
+    /// 30 s and only with new steps; forced: now (before a step that may block).
+    @MainActor
+    func checkpoint(_ why: String, force: Bool = false) {
+        if !force {
+            guard Date().timeIntervalSince(lastCheckpoint) >= 30, lines.count > checkpointedLines else { return }
+        }
+        checkpoints += 1
+        lastCheckpoint = Date()
+        note("progress \(checkpoints) written (next: \(why))")
+        checkpointedLines = lines.count
+        let n = String(format: "%02d", checkpoints)
+        let head = "PROBE ROUND 3 \(probe): PROGRESS \(n), written before: \(why). Every step so far, then the facts so far; the result and facts files written when the probe ends supersede this.\n"
+        let text = head + lines.joined(separator: "\n") + "\n\nFACTS SO FAR\n" + factsBody()
+        attach(XCTAttachment(string: text), "probe3-\(probe)-progress-\(n).txt")
+    }
+
+    @MainActor
+    func factsBody() -> String {
+        facts.isEmpty ? "(no fact could be read mechanically: see the result file)\n" : facts.map { "- " + $0 }.joined(separator: "\n") + "\n"
     }
 
     @MainActor
@@ -897,17 +1279,20 @@ class Probe3Case: QATestCase {
     /// named apps terminated) and writes the result and facts attachments.
     @MainActor
     func finish(terminating ids: [String]) async {
+        checkpoint("finishing (terminate Jarvis and \(ids), Home Screen)", force: true)
         if XCUIDevice.shared.orientation != .portrait { XCUIDevice.shared.orientation = .portrait }
         let own = XCUIApplication()
         if own.state != .notRunning {
             tolerant("terminate Jarvis") { own.terminate() }
         }
-        await SystemAppAgentTests.startOnHomeScreen(terminating: ids)
+        let unavailable = unavailableApps
+        let reachable = ids.filter { !unavailable.contains($0) }
+        if reachable.count < ids.count { note("not terminated (never came forward, not queried again): \(ids.filter { unavailable.contains($0) })") }
+        await SystemAppAgentTests.startOnHomeScreen(terminating: reachable)
         note("probe ended: Home Screen, portrait")
         let text = "PROBE ROUND 3 \(probe): every step in time order\n" + lines.joined(separator: "\n") + "\n"
         attach(XCTAttachment(string: text), "probe3-\(probe)-result.txt")
-        let body = facts.isEmpty ? "(no fact could be read mechanically: see the result file)\n" : facts.map { "- " + $0 }.joined(separator: "\n") + "\n"
-        let factText = "PROBE ROUND 3 \(probe): the questions answered mechanically (question: answer)\n" + body
+        let factText = "PROBE ROUND 3 \(probe): the questions answered mechanically (question: answer)\n" + factsBody()
         attach(XCTAttachment(string: factText), "probe3-\(probe)-facts.txt")
         print(text)
         print(factText)
@@ -919,6 +1304,7 @@ class Probe3Case: QATestCase {
     @MainActor
     @discardableResult
     func capture(_ app: XCUIApplication, _ bundleId: String, _ slug: String, _ question: String) -> RawElement? {
+        checkpoint("capture of \(bundleId) (\(slug))")
         captures += 1
         let n = String(format: "%02d", captures)
         let base = "probe3-\(probe)-\(n)-\(slug)"
@@ -988,37 +1374,44 @@ class Probe3Case: QATestCase {
     @MainActor
     @discardableResult
     func runnerLook(_ moment: String, _ slug: String, runner given: XCUITestPhoneRunner? = nil) async -> RunnerObservation? {
+        checkpoint("the runner's look: \(moment)")
         let runner = given ?? XCUITestPhoneRunner()
         pendingRunnerSlug = slug
         pendingRunnerQuestion = "What does Jarvis's runner (XCUITestPhoneRunner, the code the agent runs) report: \(moment)? Compare with the raw captures next to it."
         lastRunnerRecord = nil
         runner.onObservation = { [weak self] record in self?.keepRunnerRecord(record) }
         var front = "?"
+        let frontStart = Date()
         do {
             let id = try await runner.frontBundleId()
             front = id ?? "nil"
         } catch {
             front = "threw \(error)"
         }
-        note("\(moment): the runner's frontBundleId() (its top layer) is \(front)")
+        lastRunnerFront = front
+        lastRunnerFrontMs = Int(Date().timeIntervalSince(frontStart) * 1_000)
+        note("\(moment): the runner's frontBundleId() (its top layer) is \(front) (\(lastRunnerFrontMs) ms)")
         var observation: RunnerObservation?
+        let snapshotStart = Date()
         do {
             let seen = try await runner.snapshot(includeScreenshot: false)
             observation = seen
+            lastRunnerSnapshotMs = Int(Date().timeIntervalSince(snapshotStart) * 1_000)
             let count = seen.root.map { Self.typedCount($0) } ?? 0
             let size = "\(seen.screenSize.width.compactText)x\(seen.screenSize.height.compactText)"
             let keyboard = seen.keyboardVisible ? "visible" : "hidden"
             let notes = seen.notes.isEmpty ? "none" : seen.notes.joined(separator: " | ")
-            note("\(moment): the runner's look is of \(seen.appBundleId), \(count) typed nodes, keyboard \(keyboard), orientation \(seen.orientation), screen \(size); notes: \(notes)")
+            note("\(moment): the runner's look (\(lastRunnerSnapshotMs) ms) is of \(seen.appBundleId), \(count) typed nodes, keyboard \(keyboard), orientation \(seen.orientation), screen \(size); notes: \(notes)")
         } catch {
-            note("\(moment): the runner's snapshot threw \(error)")
+            lastRunnerSnapshotMs = Int(Date().timeIntervalSince(snapshotStart) * 1_000)
+            note("\(moment): the runner's snapshot threw after \(lastRunnerSnapshotMs) ms: \(error)")
         }
         runner.onObservation = nil
         return observation
     }
 
     @MainActor
-    private func keepRunnerRecord(_ record: RunnerObservationRecord) {
+    func keepRunnerRecord(_ record: RunnerObservationRecord) {
         lastRunnerRecord = record
         captures += 1
         let n = String(format: "%02d", captures)
@@ -1033,16 +1426,32 @@ class Probe3Case: QATestCase {
     @MainActor
     @discardableResult
     func runnerDo(_ runner: XCUITestPhoneRunner, _ command: RunnerCommand, expecting bundleId: String?, _ what: String) async -> RunnerResult? {
+        checkpoint("runner command: \(what)")
         let expect = bundleId.map { CommandExpect(bundleId: $0) }
+        let start = Date()
         do {
             let result = try await runner.perform(command, expect: expect)
+            let ms = Int(Date().timeIntervalSince(start) * 1_000)
             let detail = result.ok ? "" : ", failure \(String(describing: result.failure)), \(result.error ?? "")"
-            note("runner \(what): \(Transcript.describe(command)), expect \(bundleId ?? "none") -> ok \(result.ok)\(detail)")
+            note("runner \(what): \(Transcript.describe(command)), expect \(bundleId ?? "none") -> ok \(result.ok)\(detail) (\(ms) ms)")
             return result
         } catch {
-            note("runner \(what): \(Transcript.describe(command)) threw \(error)")
+            let ms = Int(Date().timeIntervalSince(start) * 1_000)
+            note("runner \(what): \(Transcript.describe(command)) threw after \(ms) ms: \(error)")
             return nil
         }
+    }
+
+    /// The core's drag for a `kind` ("swipe": `direction` is the finger's; "scroll":
+    /// `direction` is where the content comes from, so the finger moves the other way) left
+    /// or right on `frame`, with the core's duration (`SWIPE_DURATION_MS` 200,
+    /// `SCROLL_DURATION_MS` 400; gestures.rs `gesture`, `finger_direction`).
+    static func coreDrag(_ kind: String, _ direction: String, frame: Rect?, screen: Size) -> (from: Point, to: Point, durationMs: UInt64)? {
+        var finger = direction
+        if kind == "scroll" { finger = direction == "left" ? "right" : "left" }
+        guard let path = coreSwipe(finger, frame: frame, screen: screen) else { return nil }
+        let duration: UInt64 = kind == "scroll" ? 400 : 200
+        return (path.from, path.to, duration)
     }
 
     /// The drag the core plans for a swipe in `direction` ("left" or "right") on `frame`, or
@@ -1273,11 +1682,14 @@ class Probe3Case: QATestCase {
     }
 
     /// Modal-like nodes of a raw tree: Alert, Dialog, Sheet, Popover, and Other nodes whose
-    /// identifier names a sheet, popover, dimming view or dismiss region.
+    /// identifier names a sheet, popover, dimming view or dismiss region. The fixtures' own
+    /// identifiers (`probe3.…`, e.g. the triggers `probe3.modals.sheet`) never count (run 139
+    /// counted the Modals screen's trigger buttons as modal-like nodes).
     static func modalish(_ e: RawElement) -> Bool {
         if [XCUIElementTypeCode.alert, XCUIElementTypeCode.dialog, XCUIElementTypeCode.sheet, XCUIElementTypeCode.popover].contains(e.elementType) {
             return true
         }
+        if e.identifier.hasPrefix("probe3.") { return false }
         let id = e.identifier.lowercased()
         return ["sheet", "popover", "dimming", "dismiss", "alert", "dialog"].contains { id.contains($0) }
     }
@@ -1345,8 +1757,15 @@ class Probe3Case: QATestCase {
         let emoji = Self.hits(tree) { $0.label == "Emoji" }.first?.element
         let dictate = Self.hits(tree) { $0.label == "Dictate" || $0.identifier == "dictation" }.first?.element
         fact("\(what): Keyboard node \(keyboard.map { Self.rectText($0.frame) } ?? "none"); input host (id inputView) \(host.map { Self.rectText($0.frame) } ?? "none"); Emoji \(emoji.map { Self.rectText($0.frame) } ?? "none"); Dictate \(dictate.map { Self.brief($0) + " " + Self.rectText($0.frame) } ?? "none")")
-        if let keyboard, let emoji {
-            fact("\(what): Emoji lies below the Keyboard node's bottom edge: \(Self.yesNo(emoji.frame.y >= keyboard.frame.y + keyboard.frame.height - 1))")
+        // Run 139 compared Emoji's top edge with the Keyboard node's bottom edge: Emoji and
+        // Dictate reach y 956 while the Keyboard node ends at 898, so compare bottom edges.
+        let keyboardBottom = keyboard.map { $0.frame.y + $0.frame.height }
+        for (name, extra) in [("Emoji", emoji), ("Dictate", dictate)] {
+            guard let keyboard, let keyboardBottom, let extra else { continue }
+            let bottom = extra.frame.y + extra.frame.height
+            let below = bottom > keyboardBottom + 1
+            let wholly = extra.frame.y >= keyboardBottom - 1
+            fact("\(what): \(name) extends below the Keyboard node's bottom edge: \(Self.yesNo(below)) (its bottom y \(Int(bottom.rounded())), the Keyboard node's \(Int(keyboardBottom.rounded())); wholly below it: \(Self.yesNo(wholly)); inside the Keyboard node's frame \(Self.rectText(keyboard.frame)): \(Self.yesNo(!below && extra.frame.y >= keyboard.frame.y - 1)))")
         }
     }
 
@@ -1384,6 +1803,86 @@ class Probe3Case: QATestCase {
         guard waitFor(row, "the \(id) row", 5) else { return false }
         tolerant("open \(id)") { row.tap() }
         await pause(1)
+        return true
+    }
+
+    /// Whether SpringBoard's tree holds an icon labelled (or identified) `label`, on any Home
+    /// Screen page or in a folder (the caller is on the Home Screen). Queries SpringBoard only.
+    @MainActor
+    func iconInstalled(_ label: String) -> Bool {
+        let board = XCUIApplication(bundleIdentifier: Self.springboardId)
+        var found = false
+        tolerant("look for the \(label) icon in SpringBoard's tree") {
+            found = board.icons.matching(NSPredicate(format: "label == %@ OR identifier == %@", label, label)).firstMatch.exists
+        }
+        note("the \"\(label)\" icon in SpringBoard's tree: \(Self.yesNo(found))")
+        return found
+    }
+
+    /// Brings the system app `bundleId` forward only when it can come forward within a short
+    /// bound: its icon `icon` must be in SpringBoard's tree (activating an app that is not
+    /// installed blocked inside `activate()` for two minutes in run 139), then it is
+    /// activated and must be in the foreground within `timeout` s. Returns the app, or nil
+    /// with the reason recorded as a fact; an app with no icon, or not running afterwards, is
+    /// never queried again (`unavailableApps`). The caller is on the Home Screen.
+    @MainActor
+    func bringForward(_ bundleId: String, icon: String, timeout: TimeInterval = 10, fresh: Bool = true) async -> XCUIApplication? {
+        guard iconInstalled(icon) else {
+            unavailableApps.insert(bundleId)
+            fact("\(bundleId): no \"\(icon)\" icon in SpringBoard's tree (not installed on this simulator, or not on the Home Screen): not activated")
+            return nil
+        }
+        let app = XCUIApplication(bundleIdentifier: bundleId)
+        if fresh, isRunning(app) {
+            tolerant("terminate \(bundleId) for a fresh start") { app.terminate() }
+        }
+        checkpoint("activating \(bundleId) (bounded at \(timeout.compactText) s)", force: true)
+        let start = Date()
+        tolerant("activate \(bundleId)") { app.activate() }
+        let activateSeconds = Date().timeIntervalSince(start)
+        var up = false
+        tolerant("wait for \(bundleId) in the foreground") { up = app.wait(for: .runningForeground, timeout: timeout) }
+        let seconds = String(format: "%.1f", Date().timeIntervalSince(start))
+        note("\(bundleId): activate() returned after \(String(format: "%.1f", activateSeconds)) s; in the foreground: \(Self.yesNo(up)) (\(seconds) s after the request)")
+        guard up else {
+            if !isRunning(app) { unavailableApps.insert(bundleId) }
+            fact("\(bundleId): did not reach the foreground within \(timeout.compactText) s of activate() (state \(stateText(app))): not driven")
+            return nil
+        }
+        return app
+    }
+
+    /// A tap at the centre of `element`'s query frame, synthesized through SpringBoard's
+    /// coordinates: XCUITest then waits for SpringBoard to idle, never for the app under the
+    /// point (run 139: a tap on Jarvis's Read pasteboard button waited 60 s for Jarvis, whose
+    /// main thread was blocked in the read). The frame is read first, while the app is idle.
+    @MainActor
+    @discardableResult
+    func tapThroughSpringBoard(_ frame: CGRect, _ what: String) -> Bool {
+        let board = XCUIApplication(bundleIdentifier: Self.springboardId)
+        let start = Date()
+        let ok = tolerant(what) {
+            let origin = board.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            origin.withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+        }
+        note("\(what): tapped (\(Int(frame.midX)), \(Int(frame.midY))) through SpringBoard's coordinates; returned after \(String(format: "%.1f", Date().timeIntervalSince(start))) s")
+        return ok
+    }
+
+    /// A tap at the centre of `element`'s query frame by coordinate on `app` (a SwiftUI Menu
+    /// did not open from `tap()` in run 139). False when the element has no frame.
+    @MainActor
+    @discardableResult
+    func tapCentre(_ app: XCUIApplication, _ element: XCUIElement, _ what: String) -> Bool {
+        guard let frame = queryFrame(element) else {
+            note("\(what): no frame by query; nothing tapped")
+            return false
+        }
+        tolerant(what) {
+            let origin = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            origin.withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+        }
+        note("\(what): tapped the frame centre (\(Int(frame.midX)), \(Int(frame.midY))) of \(Self.frameText(frame)) by coordinate")
         return true
     }
 
@@ -1492,10 +1991,18 @@ class Probe3Case: QATestCase {
             note("not a URL: \(url)")
             return nil
         }
+        guard iconInstalled("Safari") else {
+            unavailableApps.insert(Self.safariId)
+            fact("Safari: no Safari icon in SpringBoard's tree: not opened")
+            return nil
+        }
         note("opening \(url) in Safari")
+        checkpoint("opening \(url) in Safari (bounded at 10 s)", force: true)
         tolerant("open the URL") { XCUIDevice.shared.system.open(target) }
-        guard safari.wait(for: .runningForeground, timeout: 15) else {
-            note("Safari did not reach the foreground in 15 s (state \(safari.state.rawValue))")
+        var up = false
+        tolerant("wait for Safari in the foreground") { up = safari.wait(for: .runningForeground, timeout: 10) }
+        guard up else {
+            note("Safari did not reach the foreground in 10 s (state \(stateText(safari)))")
             return nil
         }
         let text = Self.node(in: safari, labelled: heading)

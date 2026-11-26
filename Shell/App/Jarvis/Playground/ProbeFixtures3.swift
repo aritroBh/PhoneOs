@@ -22,7 +22,7 @@ import WebKit
 /// Labels are left as the system makes them wherever the label itself is the question (the
 /// symbol-only buttons have no `accessibilityLabel` and no identifier on purpose).
 enum Probe3Screen: String, Hashable, CaseIterable {
-    case symbols, returns, modals, controls, web, pickers, permissions, system
+    case symbols, returns, modals, controls, web, pickers, permissions, system, swipes
 
     var title: String {
         switch self {
@@ -34,6 +34,7 @@ enum Probe3Screen: String, Hashable, CaseIterable {
         case .pickers: "Pickers"
         case .permissions: "Permissions"
         case .system: "System"
+        case .swipes: "Swipe rows"
         }
     }
 }
@@ -65,6 +66,7 @@ struct Probe3Destination: View {
         case .pickers: Probe3PickersFixture()
         case .permissions: Probe3PermissionsFixture()
         case .system: Probe3SystemFixture()
+        case .swipes: Probe3SwipeRowsFixture()
         }
     }
 }
@@ -458,6 +460,44 @@ private struct Probe3TabsCover: View {
     }
 }
 
+// MARK: - P13: swipe lengths
+
+/// Sixteen rows whose trailing swipe actions (a destructive Delete, a Flag) allow a full
+/// swipe, under a status line. P13 drags each row once, with a different path, and reads
+/// whether the row was deleted, its actions revealed, or nothing happened.
+struct Probe3SwipeRowsFixture: View {
+    @State private var rows = Array(1...16)
+    @State private var status = "No swipe action yet"
+
+    var body: some View {
+        List {
+            Section {
+                Text(status)
+                    .accessibilityIdentifier("probe3.swipes.status")
+            }
+            Section("Full swipe rows") {
+                ForEach(rows, id: \.self) { n in
+                    Text("Full swipe row \(n)")
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                rows.removeAll { $0 == n }
+                                status = "Deleted full swipe row \(n)"
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                            Button {
+                                status = "Flagged full swipe row \(n)"
+                            } label: {
+                                Label("Flag", systemImage: "flag")
+                            }
+                        }
+                }
+            }
+        }
+        .navigationTitle("Swipe rows")
+    }
+}
+
 // MARK: - P6: a WKWebView in the app
 
 /// The probe's local page (`-jarvis-probe-url`) in a `WKWebView` under a row of the host's own
@@ -723,10 +763,10 @@ final class Probe3SystemActions: NSObject, ObservableObject, @preconcurrency CXP
         Task { @MainActor in
             do {
                 try await provider.reportNewIncomingCall(with: id, update: update)
-                self.status = "Call reported"
+                self.status = "Call reported (was: \(self.status))"
             } catch {
                 let ns = error as NSError
-                self.status = "Call report failed: \(ns.domain) \(ns.code) \(ns.localizedDescription)"
+                self.status = "Call report failed: \(ns.domain) \(ns.code) \(ns.localizedDescription) (was: \(self.status))"
             }
         }
         Task { @MainActor in
@@ -740,6 +780,23 @@ final class Probe3SystemActions: NSObject, ObservableObject, @preconcurrency CXP
         provider.reportCall(with: id, endedAt: nil, reason: .remoteEnded)
         callId = nil
         status = "Call ended by the app"
+    }
+
+    @Published var taps = 0
+
+    /// P14: blocks the main thread for 20 s, starting 1 s after the tap (so XCUITest's own
+    /// tap, made through SpringBoard's coordinates, has returned): the front app hung.
+    func hangSoon() {
+        status = "Hang starts in 1 s"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            MainActor.assumeIsolated { self?.hangNow() }
+        }
+    }
+
+    private func hangNow() {
+        status = "Hanging"
+        Thread.sleep(forTimeInterval: 20)
+        status = "Hang over (20 s)"
     }
 
     func setBadge(_ count: Int) {
@@ -756,9 +813,11 @@ final class Probe3SystemActions: NSObject, ObservableObject, @preconcurrency CXP
         }
     }
 
+    /// Keeps what the status said before (run 139 showed only "Provider reset"): the order of
+    /// CallKit's answers is the evidence.
     func providerDidReset(_ provider: CXProvider) {
         callId = nil
-        status = "Provider reset"
+        status = "Provider reset (was: \(status))"
     }
 
     func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
@@ -786,6 +845,12 @@ struct Probe3SystemFixture: View {
                 .accessibilityIdentifier("probe3.system.call")
             Button("End call") { actions.endCall() }
                 .accessibilityIdentifier("probe3.system.endcall")
+            Button("Hang 20 s") { actions.hangSoon() }
+                .accessibilityIdentifier("probe3.system.hang")
+            Button("Count tap") { actions.taps += 1 }
+                .accessibilityIdentifier("probe3.system.count")
+            Text("Taps \(actions.taps)")
+                .accessibilityIdentifier("probe3.system.taps")
             Text(actions.status)
                 .accessibilityIdentifier("probe3.system.status")
         }
