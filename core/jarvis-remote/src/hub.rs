@@ -39,16 +39,18 @@ use zeroize::Zeroizing;
 use crate::codec::PROTOCOL_VERSION;
 use crate::codec::{encode_record, DeviceId, Kind, Record, RecordError, RecordReader};
 use crate::crypto::{
-    auth_key, check_entropy, connect_phone_mac, derive_device_id, derive_device_key, pair_key,
-    pair_phone_mac, pairing_secret_from_entropy, verify_connect_client_mac, verify_pair_client_mac,
-    Channel, Ephemeral, PairingSecret, Side, Transcript, MAC_LEN, NONCE_LEN, PUBLIC_LEN,
+    auth_key, check_entropy, confirm_check, confirm_commitment, connect_phone_mac,
+    derive_device_id, derive_device_key, pair_key, pair_phone_mac, pairing_secret_from_entropy,
+    verify_connect_client_mac, verify_pair_client_mac, Channel, Ephemeral, PairingSecret, Side,
+    Transcript, CONFIRM_LEN, MAC_LEN, NONCE_LEN, PUBLIC_LEN,
 };
 use crate::error::{HubError, MessageError, PersistError};
 use crate::message::{CatalogEntry, ClientMessage, DenyReason, ErrorCode, ServerMessage};
 use crate::pairing::{format_code, qr_payload, PairingOffer, PAIRING_TTL_MS};
 use crate::permissions::{remotely_approvable, RemotePermissions};
 use crate::store::{
-    clean_name, DeviceInfo, DeviceRecord, DeviceStore, MAX_DEVICES, MAX_DEVICE_NAME_BYTES,
+    clean_name, DeviceInfo, DeviceRecord, DeviceStore, PendingRecord, StoredHub, MAX_DEVICES,
+    MAX_DEVICE_NAME_BYTES,
 };
 use crate::text::{clean_text, redact_text};
 use crate::viewer::{
@@ -69,12 +71,24 @@ pub const IDLE_TIMEOUT_MS: u64 = 120_000;
 pub const RATE_WINDOW_MS: u64 = 1_000;
 /// Messages accepted per connection per window; the rest are dropped (except `Cancel`).
 pub const RATE_MAX_MESSAGES: u32 = 20;
-/// Failed MAC checks (per device for connects, one counter for pairing) before a lockout.
+/// Failed MAC checks (per device for connects, per offer for pairing) before a lockout.
 pub const LOCKOUT_THRESHOLD: u32 = 5;
 /// First lockout, in milliseconds; doubles with every further failure.
 pub const LOCKOUT_BASE_MS: u64 = 5_000;
-/// Longest lockout, in milliseconds.
+/// Longest connect lockout, in milliseconds.
 pub const LOCKOUT_MAX_MS: u64 = 10 * 60_000;
+/// Longest single pairing lockout, in milliseconds.
+pub const PAIR_LOCKOUT_MAX_MS: u64 = 30_000;
+/// Most time one pairing offer spends locked, in milliseconds (a fifth of its lifetime).
+/// Once it is used up, wrong codes for that offer are still counted and shown on the
+/// phone but no longer lock it: a network host without the code cannot keep the owner
+/// from pairing for more than this. Guessing stays hopeless (see the crate docs).
+pub const PAIR_LOCKOUT_BUDGET_MS: u64 = 60_000;
+/// A device paired but not confirmed on the phone within this long is removed.
+pub const PENDING_CONFIRM_TTL_MS: u64 = 10 * 60_000;
+/// Confirmation request ids are leased in blocks of this size (one persist per block), so
+/// a restarted hub never reuses an id an old question card may still carry.
+pub const REQUEST_LEASE_BLOCK: u64 = 64;
 /// A failure counter with no new failure for this long starts again from zero.
 pub const FAILURE_MEMORY_MS: u64 = 15 * 60_000;
 /// Pre-authentication audit entries are merged per window of this length: the first
@@ -157,11 +171,17 @@ pub struct AuditEntry {
 pub enum AuditEvent {
     /// The pairing offer expired unused.
     PairingExpired,
-    /// A device was paired (it proved it holds the key on its first frame).
+    /// A device was paired (it proved it holds the key on its first frame). It holds no
+    /// permission until the owner confirms it on the phone ([`AuditEvent::DeviceConfirmed`]).
     Paired {
         /// Its name.
         name: String,
     },
+    /// The owner confirmed a paired device on the phone: it now has the new-device
+    /// permissions.
+    DeviceConfirmed,
+    /// A paired device was not confirmed in time and was removed.
+    PendingExpired,
     /// Pairing completed cryptographically but the connection closed before the remote
     /// confirmed it; the device was not added.
     PairingAbandoned,
@@ -296,9 +316,16 @@ pub enum HubEffect {
         /// Deciding device, for the task log.
         device_id: DeviceId,
     },
-    /// A device was paired (followed by [`HubEffect::StoreChanged`]).
+    /// A device was paired (followed by [`HubEffect::StoreChanged`]). It is pending: it
+    /// holds no permission and is listed by [`RemoteHub::pending_devices`] with its check
+    /// string until the owner confirms it ([`RemoteHub::confirm_device`]) or removes it.
     DevicePaired {
         /// The new device.
+        device: DeviceInfo,
+    },
+    /// The owner confirmed a pending device (followed by [`HubEffect::StoreChanged`]).
+    DeviceConfirmed {
+        /// The device, with its permissions now.
         device: DeviceInfo,
     },
     /// Append to the audit log.
@@ -377,6 +404,40 @@ pub enum LocalEvent {
 struct Offer {
     secret: PairingSecret,
     expires_at_ms: u64,
+    /// Wrong codes are counted per offer: a new offer starts clean.
+    lockout: Lockout,
+    /// Time this offer has spent locked (at most [`PAIR_LOCKOUT_BUDGET_MS`]).
+    locked_ms: u64,
+    /// Wrong codes tried against this offer (shown on the phone).
+    wrong_codes: u32,
+}
+
+/// A device paired on a connection, kept once its first authenticated frame arrives.
+#[derive(Debug)]
+struct Provisional {
+    record: DeviceRecord,
+    check: String,
+}
+
+/// A device waiting for the owner's confirmation on the phone.
+#[derive(Debug)]
+struct PendingDevice {
+    record: DeviceRecord,
+    check: String,
+    /// Removed at this time; `None` until the first call after a restore (the shell's
+    /// clock may have restarted), then [`PENDING_CONFIRM_TTL_MS`] from then.
+    expires_at_ms: Option<u64>,
+}
+
+/// A device waiting for confirmation, for the phone's Remote control screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingDeviceInfo {
+    /// The device (its permissions are all off).
+    pub device: DeviceInfo,
+    /// The check string the device showed after pairing ("123 456").
+    pub check: String,
+    /// When it is removed unless confirmed (hub clock).
+    pub expires_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -393,6 +454,11 @@ impl Lockout {
 
     /// Counts one failed MAC check; returns the new lockout end if one was armed.
     fn fail(&mut self, now: u64) -> Option<u64> {
+        self.fail_capped(now, LOCKOUT_MAX_MS)
+    }
+
+    /// [`Lockout::fail`] with a longest lockout of `max_ms`.
+    fn fail_capped(&mut self, now: u64, max_ms: u64) -> Option<u64> {
         if self.failures > 0 && now.saturating_sub(self.last_failure_ms) >= FAILURE_MEMORY_MS {
             self.failures = 0;
         }
@@ -402,9 +468,7 @@ impl Lockout {
             return None;
         }
         let shift = (self.failures - LOCKOUT_THRESHOLD).min(16);
-        let ms = LOCKOUT_BASE_MS
-            .saturating_mul(1u64 << shift)
-            .min(LOCKOUT_MAX_MS);
+        let ms = LOCKOUT_BASE_MS.saturating_mul(1u64 << shift).min(max_ms);
         self.locked_until_ms = now.saturating_add(ms);
         Some(self.locked_until_ms)
     }
@@ -420,7 +484,7 @@ enum Phase {
         channel: Box<Channel>,
         device_id: DeviceId,
         /// A device paired on this connection, not yet confirmed by a data frame.
-        provisional: Option<Box<DeviceRecord>>,
+        provisional: Option<Box<Provisional>>,
         subscribed: bool,
         window_start_ms: u64,
         window_count: u32,
@@ -547,9 +611,10 @@ struct PreAuthAudit {
 pub struct RemoteHub {
     phone_name: String,
     devices: Vec<DeviceRecord>,
+    /// Paired devices the owner has not confirmed yet (no permission at all).
+    pending_devices: Vec<PendingDevice>,
     offer: Option<Offer>,
     conns: BTreeMap<ConnId, Conn>,
-    pair_lockout: Lockout,
     device_lockouts: BTreeMap<DeviceId, Lockout>,
     requested: Option<Requested>,
     running: Option<Running>,
@@ -558,6 +623,8 @@ pub struct RemoteHub {
     /// permission (`Some(waiting_for_unlock)`), so they hear only when it changes.
     coarse_sent: Option<bool>,
     next_request_id: u64,
+    /// Request ids below this may have been used before a restart (persisted).
+    request_lease: u64,
     next_task_id: u64,
     skills: Vec<CatalogEntry>,
     workflows: Vec<CatalogEntry>,
@@ -578,28 +645,49 @@ pub struct RemoteHub {
 impl RemoteHub {
     /// A hub with no paired devices.
     pub fn new(phone_name: &str) -> Self {
-        Self::build(phone_name, DeviceStore::default())
+        Self::build(phone_name, StoredHub::default())
     }
 
     /// A hub with previously paired devices. Validated like [`DeviceStore::from_json`].
     pub fn with_store(phone_name: &str, store: DeviceStore) -> Result<Self, PersistError> {
         store.validate()?;
-        Ok(Self::build(phone_name, store))
+        Ok(Self::build(
+            phone_name,
+            StoredHub {
+                store,
+                ..StoredHub::default()
+            },
+        ))
     }
 
-    fn build(phone_name: &str, store: DeviceStore) -> Self {
+    fn build(phone_name: &str, stored: StoredHub) -> Self {
+        let StoredHub {
+            store,
+            watch,
+            pending,
+            request_lease,
+        } = stored;
         Self {
             phone_name: clean_name(phone_name),
             devices: store.devices,
+            pending_devices: pending
+                .into_iter()
+                .map(|p| PendingDevice {
+                    record: p.record,
+                    check: p.check,
+                    expires_at_ms: None,
+                })
+                .collect(),
             offer: None,
             conns: BTreeMap::new(),
-            pair_lockout: Lockout::default(),
             device_lockouts: BTreeMap::new(),
             requested: None,
             running: None,
             pending: None,
             coarse_sent: None,
-            next_request_id: 1,
+            // Everything below the lease may have been used before the restart.
+            next_request_id: request_lease.max(1),
+            request_lease,
             next_task_id: 1,
             skills: Vec::new(),
             workflows: Vec::new(),
@@ -610,24 +698,98 @@ impl RemoteHub {
             nonce_lease: store.nonce_lease,
             recent_connects: VecDeque::new(),
             preauth: PreAuthAudit::default(),
-            watch_allowed: BTreeSet::new(),
+            watch_allowed: watch,
             viewer: DeltaEncoder::new(),
         }
     }
 
-    /// Restores a hub from [`RemoteHub::to_json`] output.
+    /// Restores a hub from [`RemoteHub::to_json`] output. Devices that were waiting for
+    /// the owner's confirmation are still waiting (never confirmed by a restart); stores
+    /// written before the confirm step load every device as confirmed.
     pub fn from_json(phone_name: &str, json: &str) -> Result<Self, PersistError> {
-        let (store, watch) = DeviceStore::from_json_with_watch(json)?;
-        let mut hub = Self::with_store(phone_name, store)?;
-        hub.watch_allowed = watch;
-        Ok(hub)
+        let stored = DeviceStore::from_json_full(json)?;
+        Ok(Self::build(phone_name, stored))
     }
 
     /// The persisted state, keys included, for the Keychain (see [`DeviceStore`]), with
-    /// the `watch_screen` permissions. Devices whose pairing is not yet confirmed are not
-    /// included.
+    /// the `watch_screen` permissions, the devices waiting for confirmation and the
+    /// request-id lease. A device paired on a connection that has not yet sent its first
+    /// authenticated frame is not included.
     pub fn to_json(&self) -> Zeroizing<String> {
-        self.store().to_json_with_watch(&self.watch_allowed)
+        DeviceStore::to_json_full(&StoredHub {
+            store: self.store(),
+            watch: self.watch_allowed.clone(),
+            pending: self
+                .pending_devices
+                .iter()
+                .map(|p| PendingRecord {
+                    record: p.record.clone(),
+                    check: p.check.clone(),
+                })
+                .collect(),
+            request_lease: self.request_lease,
+        })
+    }
+
+    /// Paired devices waiting for the owner's confirmation, in pairing order. Show each
+    /// with its name and check string ("Confirm" / "Remove"): the owner confirms only when
+    /// the device they paired shows the same string.
+    pub fn pending_devices(&self) -> Vec<PendingDeviceInfo> {
+        self.pending_devices
+            .iter()
+            .map(|p| PendingDeviceInfo {
+                device: p.record.info(),
+                check: p.check.clone(),
+                expires_at_ms: p.expires_at_ms,
+            })
+            .collect()
+    }
+
+    /// The owner confirmed a pending device on the phone (it showed the same check string
+    /// as the device they paired). It gets [`RemotePermissions::NEW_DEVICE`], exactly what
+    /// a new device got before the confirm step, and its open connections are sent a
+    /// `Welcome`. Persist on the returned `StoreChanged`. Only the phone's owner can call
+    /// this: no message from any device leads here. [`HubError::UnknownDevice`] when no
+    /// such device is pending (expired, removed, or already confirmed).
+    pub fn confirm_device(
+        &mut self,
+        device_id: DeviceId,
+        now_ms: u64,
+    ) -> Result<Vec<HubEffect>, HubError> {
+        let mut fx = Vec::new();
+        self.expire(now_ms, &mut fx);
+        let index = self
+            .pending_devices
+            .iter()
+            .position(|p| p.record.id == device_id)
+            .ok_or(HubError::UnknownDevice)?;
+        if self.devices.len() >= MAX_DEVICES {
+            return Err(HubError::TooManyDevices);
+        }
+        let pending = self.pending_devices.remove(index);
+        let record = DeviceRecord {
+            permissions: RemotePermissions::NEW_DEVICE,
+            ..pending.record
+        };
+        let info = record.info();
+        self.devices.push(record);
+        fx.push(HubEffect::DeviceConfirmed {
+            device: info.clone(),
+        });
+        fx.push(HubEffect::StoreChanged);
+        self.audit(None, Some(device_id), AuditEvent::DeviceConfirmed, &mut fx);
+        let welcome = self.welcome(info.permissions);
+        self.broadcast(&mut fx, |_, c| {
+            (c.device_id == Some(device_id)).then(|| welcome.clone())
+        });
+        Ok(fx)
+    }
+
+    /// Wrong pairing codes tried against the open offer (0 when none is open). Show it on
+    /// the pairing sheet: a count above zero means wrong codes are being tried from the
+    /// network (or the owner mistyped).
+    pub fn pairing_failed_attempts(&self) -> u32 {
+        self.offer.as_ref().map_or(0, |o| o.wrong_codes)
     }
 
     /// Whether a device holds the `watch_screen` permission: it may receive the Live view
@@ -788,9 +950,10 @@ impl RemoteHub {
         Ok(vec![HubEffect::StoreChanged])
     }
 
-    /// End of the pairing lockout (0 when none has happened).
+    /// End of the open offer's pairing lockout (0 when no offer is open or it was never
+    /// locked). Wrong codes are counted per offer: a new offer starts unlocked.
     pub fn pairing_locked_until_ms(&self) -> u64 {
-        self.pair_lockout.locked_until_ms
+        self.offer.as_ref().map_or(0, |o| o.lockout.locked_until_ms)
     }
 
     /// End of the connect lockout for one device (0 when none has happened).
@@ -801,11 +964,12 @@ impl RemoteHub {
     }
 
     /// Creates a single-use pairing offer, valid for [`PAIRING_TTL_MS`]. The secret is
-    /// derived from `entropy` (≥ 32 CSPRNG bytes). Replaces any open offer.
+    /// derived from `entropy` (≥ 32 CSPRNG bytes). Replaces any open offer, and starts its
+    /// wrong-code count and lockout from zero.
     pub fn open_pairing(&mut self, now_ms: u64, entropy: &[u8]) -> Result<PairingOffer, HubError> {
         let now = self.clock(now_ms);
         check_entropy(entropy)?;
-        if self.devices.len() + self.provisional_count() >= MAX_DEVICES {
+        if self.device_count() >= MAX_DEVICES {
             return Err(HubError::TooManyDevices);
         }
         let secret = pairing_secret_from_entropy(entropy).map_err(|_| HubError::Crypto)?;
@@ -818,6 +982,9 @@ impl RemoteHub {
         self.offer = Some(Offer {
             secret,
             expires_at_ms,
+            lockout: Lockout::default(),
+            locked_ms: 0,
+            wrong_codes: 0,
         });
         Ok(offer)
     }
@@ -890,9 +1057,15 @@ impl RemoteHub {
             });
             return fx;
         };
-        let mut hello = Vec::with_capacity(NONCE_LEN + PUBLIC_LEN);
+        // Np || Ep, and while a pairing offer is open the commitment to this connection's
+        // confirmation value (a pairing needs it, see `crypto::confirm_check`; a connect
+        // ignores it, so outside an offer the hello is what it always was).
+        let mut hello = Vec::with_capacity(NONCE_LEN + PUBLIC_LEN + CONFIRM_LEN);
         hello.extend_from_slice(&eph.nonce);
         hello.extend_from_slice(&eph.public);
+        if self.offer.is_some() {
+            hello.extend_from_slice(&confirm_commitment(&eph.confirm));
+        }
         self.conns.insert(
             conn_id,
             Conn {
@@ -1057,6 +1230,12 @@ impl RemoteHub {
                 });
             }
             LocalEvent::ConfirmRequested { request } => {
+                // Lease ids before using one, so a restarted hub never hands out an id an
+                // old question (still on a controller's screen) carried.
+                if self.next_request_id >= self.request_lease {
+                    self.request_lease = self.next_request_id.saturating_add(REQUEST_LEASE_BLOCK);
+                    fx.push(HubEffect::StoreChanged);
+                }
                 let id = self.next_request_id;
                 self.next_request_id = self.next_request_id.saturating_add(1);
                 self.pending = Some(Pending {
@@ -1185,10 +1364,11 @@ impl RemoteHub {
     }
 
     fn revoke(&mut self, device_id: DeviceId, fx: &mut Vec<HubEffect>) {
-        let before = self.devices.len();
+        let before = self.devices.len() + self.pending_devices.len();
         // Dropping the record zeroizes its key.
         self.devices.retain(|d| d.id != device_id);
-        if self.devices.len() == before {
+        self.pending_devices.retain(|p| p.record.id != device_id);
+        if self.devices.len() + self.pending_devices.len() == before {
             return;
         }
         self.device_lockouts.remove(&device_id);
@@ -1196,17 +1376,7 @@ impl RemoteHub {
         self.watch_allowed.remove(&device_id);
         fx.push(HubEffect::StoreChanged);
         self.audit(None, Some(device_id), AuditEvent::Revoked, fx);
-        let ids: Vec<ConnId> = self
-            .conns
-            .iter()
-            .filter(|(_, c)| {
-                matches!(c.phase, Phase::Established { device_id: d, .. } if d == device_id)
-            })
-            .map(|(id, _)| *id)
-            .collect();
-        for id in ids {
-            self.close(id, CloseReason::Revoked, fx);
-        }
+        self.close_removed(device_id, fx);
         // Stop what this device asked for, and nothing else.
         if let Some(r) = self.running.filter(|r| r.origin == Some(device_id)) {
             fx.push(HubEffect::CancelTask {
@@ -1252,6 +1422,69 @@ impl RemoteHub {
                 )
             })
             .count()
+    }
+
+    /// Confirmed, pending and provisional devices: what counts against [`MAX_DEVICES`].
+    fn device_count(&self) -> usize {
+        self.devices.len() + self.pending_devices.len() + self.provisional_count()
+    }
+
+    fn is_pending(&self, device_id: DeviceId) -> bool {
+        self.pending_devices
+            .iter()
+            .any(|p| p.record.id == device_id)
+    }
+
+    /// `Welcome` for a device with these permissions.
+    fn welcome(&self, perms: RemotePermissions) -> ServerMessage {
+        let reveal = !perms.is_none();
+        ServerMessage::Welcome {
+            protocol_version: PROTOCOL_VERSION,
+            permissions: perms,
+            phone_name: reveal.then(|| self.phone_name.clone()),
+            busy: reveal.then(|| self.is_busy()),
+        }
+    }
+
+    /// Removes pending devices whose confirmation time ran out (and starts the clock for
+    /// those restored without one).
+    fn expire_pending(&mut self, now: u64, fx: &mut Vec<HubEffect>) {
+        for p in &mut self.pending_devices {
+            if p.expires_at_ms.is_none() {
+                p.expires_at_ms = Some(now.saturating_add(PENDING_CONFIRM_TTL_MS));
+            }
+        }
+        let expired: Vec<DeviceId> = self
+            .pending_devices
+            .iter()
+            .filter(|p| p.expires_at_ms.is_some_and(|t| now >= t))
+            .map(|p| p.record.id)
+            .collect();
+        for device_id in expired {
+            self.pending_devices.retain(|p| p.record.id != device_id);
+            self.device_lockouts.remove(&device_id);
+            self.recent_connects.retain(|(d, _)| *d != device_id);
+            fx.push(HubEffect::StoreChanged);
+            self.audit(None, Some(device_id), AuditEvent::PendingExpired, fx);
+            self.close_removed(device_id, fx);
+        }
+    }
+
+    /// Tells every open connection of a removed device so (an authenticated `Removed`,
+    /// which nobody on the network can fake), then closes them.
+    fn close_removed(&mut self, device_id: DeviceId, fx: &mut Vec<HubEffect>) {
+        let ids: Vec<ConnId> = self
+            .conns
+            .iter()
+            .filter(|(_, c)| {
+                matches!(c.phase, Phase::Established { device_id: d, .. } if d == device_id)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            self.send(id, &ServerMessage::Removed, fx);
+            self.close(id, CloseReason::Revoked, fx);
+        }
     }
 
     fn permissions(&self, device_id: Option<DeviceId>) -> Option<RemotePermissions> {
@@ -1330,6 +1563,7 @@ impl RemoteHub {
             self.offer = None;
             self.audit(None, None, AuditEvent::PairingExpired, fx);
         }
+        self.expire_pending(now, fx);
         let expired: Vec<(ConnId, CloseReason)> = self
             .conns
             .iter()
@@ -1431,12 +1665,28 @@ impl RemoteHub {
         now: u64,
         fx: &mut Vec<HubEffect>,
     ) {
-        let lockout = match device {
-            Some(d) => self.device_lockouts.entry(d).or_default(),
-            None => &mut self.pair_lockout,
+        let (armed, failures) = match device {
+            Some(d) => {
+                let lockout = self.device_lockouts.entry(d).or_default();
+                (lockout.fail(now), lockout.failures)
+            }
+            None => match self.offer.as_mut() {
+                Some(o) => {
+                    o.wrong_codes = o.wrong_codes.saturating_add(1);
+                    let mut armed = o.lockout.fail_capped(now, PAIR_LOCKOUT_MAX_MS);
+                    if let Some(until) = armed {
+                        // Within the offer's lockout budget only.
+                        let left = PAIR_LOCKOUT_BUDGET_MS.saturating_sub(o.locked_ms);
+                        let len = until.saturating_sub(now).min(left);
+                        o.locked_ms = o.locked_ms.saturating_add(len);
+                        o.lockout.locked_until_ms = now.saturating_add(len);
+                        armed = (len > 0).then_some(now.saturating_add(len));
+                    }
+                    (armed, o.lockout.failures)
+                }
+                None => (None, 0),
+            },
         };
-        let armed = lockout.fail(now);
-        let failures = lockout.failures;
         self.audit_preauth(
             Some(conn_id),
             device,
@@ -1457,7 +1707,7 @@ impl RemoteHub {
 
     fn handle_pair(&mut self, conn_id: ConnId, payload: &[u8], now: u64, fx: &mut Vec<HubEffect>) {
         // Lockout is decided before anything is checked or counted.
-        if self.pair_lockout.locked(now) {
+        if self.offer.as_ref().is_some_and(|o| o.lockout.locked(now)) {
             self.close(conn_id, CloseReason::LockedOut, fx);
             return;
         }
@@ -1491,40 +1741,51 @@ impl RemoteHub {
             self.handshake_mac_failed(conn_id, None, now, fx);
             return;
         }
-        // Authenticated: the offer is used up whatever happens next.
+        // Authenticated: the offer is used up whatever happens next (so at most one
+        // device can be paired, and so be pending, per offer).
         self.offer = None;
-        self.pair_lockout = Lockout::default();
-        if self.devices.len() + self.provisional_count() >= MAX_DEVICES {
+        if self.device_count() >= MAX_DEVICES {
             self.close(conn_id, CloseReason::TooManyDevices, fx);
             return;
         }
+        let confirm = eph.confirm;
         let derived = eph.agree(&er).and_then(|dh| {
             let id = derive_device_id(&secret, &t)?;
             let key = derive_device_key(&secret, &dh, &t, &id, &name)?;
             let channel = Channel::new(Side::Phone, &key, &dh, id, &t)?;
             let mac = pair_phone_mac(&pk, &t, &name, &id)?;
-            Ok((id, key, channel, mac))
+            let check = confirm_check(&key, &confirm, &id, &t)?;
+            Ok((id, key, channel, mac, check))
         });
         drop(eph);
-        let Ok((device_id, key, channel, phone_mac)) = derived else {
+        let Ok((device_id, key, channel, phone_mac, check)) = derived else {
             self.close(conn_id, CloseReason::AuthFailed, fx);
             return;
         };
-        if self.devices.iter().any(|d| d.id == device_id) {
+        if self.devices.iter().any(|d| d.id == device_id) || self.is_pending(device_id) {
             self.close(conn_id, CloseReason::Internal, fx);
             return;
         }
+        // Pending: no permission at all until the owner confirms it on the phone.
         let record = DeviceRecord {
             id: device_id,
             name,
             key,
-            permissions: RemotePermissions::NEW_DEVICE,
+            permissions: RemotePermissions::NONE,
             paired_at_ms: now,
         };
-        let mut body = Vec::with_capacity(16 + MAC_LEN);
+        // device_id || MAC || the confirmation value committed to in the ServerHello.
+        let mut body = Vec::with_capacity(16 + MAC_LEN + CONFIRM_LEN);
         body.extend_from_slice(&device_id.0);
         body.extend_from_slice(&phone_mac);
-        self.establish(conn_id, channel, device_id, Some(Box::new(record)), now);
+        body.extend_from_slice(&confirm);
+        self.establish(
+            conn_id,
+            channel,
+            device_id,
+            Some(Box::new(Provisional { record, check })),
+            now,
+        );
         fx.push(HubEffect::Send {
             conn_id,
             bytes: encode_record(Kind::PairAccept, &body),
@@ -1542,7 +1803,14 @@ impl RemoteHub {
             self.close(conn_id, CloseReason::AuthFailed, fx);
             return;
         };
-        let Some(dev) = self.devices.iter().find(|d| d.id == device_id) else {
+        // A pending device connects too (it is told only that it waits for confirmation).
+        let known = self.devices.iter().find(|d| d.id == device_id).or_else(|| {
+            self.pending_devices
+                .iter()
+                .map(|p| &p.record)
+                .find(|d| d.id == device_id)
+        });
+        let Some(dev) = known else {
             // Unknown ids are not counted against anyone.
             self.close(conn_id, CloseReason::AuthFailed, fx);
             return;
@@ -1610,7 +1878,7 @@ impl RemoteHub {
         conn_id: ConnId,
         channel: Channel,
         device_id: DeviceId,
-        provisional: Option<Box<DeviceRecord>>,
+        provisional: Option<Box<Provisional>>,
         now: u64,
     ) {
         if let Some(conn) = self.conns.get_mut(&conn_id) {
@@ -1628,8 +1896,9 @@ impl RemoteHub {
         }
     }
 
-    /// Adds a device paired on this connection once it has proved it holds the key.
-    fn confirm_provisional(&mut self, conn_id: ConnId, fx: &mut Vec<HubEffect>) -> bool {
+    /// Keeps a device paired on this connection once it has proved it holds the key: as
+    /// pending, until the owner confirms it on the phone.
+    fn confirm_provisional(&mut self, conn_id: ConnId, now: u64, fx: &mut Vec<HubEffect>) -> bool {
         let Some(Conn {
             phase: Phase::Established { provisional, .. },
             ..
@@ -1637,16 +1906,24 @@ impl RemoteHub {
         else {
             return true;
         };
-        let Some(record) = provisional.take() else {
+        let Some(provisional) = provisional.take() else {
             return true;
         };
-        if self.devices.len() >= MAX_DEVICES || self.devices.iter().any(|d| d.id == record.id) {
+        let Provisional { record, check } = *provisional;
+        if self.devices.len() + self.pending_devices.len() >= MAX_DEVICES
+            || self.devices.iter().any(|d| d.id == record.id)
+            || self.is_pending(record.id)
+        {
             self.close(conn_id, CloseReason::TooManyDevices, fx);
             return false;
         }
         let info = record.info();
         let name = record.name.clone();
-        self.devices.push(*record);
+        self.pending_devices.push(PendingDevice {
+            record,
+            check,
+            expires_at_ms: Some(now.saturating_add(PENDING_CONFIRM_TTL_MS)),
+        });
         fx.push(HubEffect::DevicePaired {
             device: info.clone(),
         });
@@ -1677,10 +1954,11 @@ impl RemoteHub {
             return;
         };
         conn.last_rx_ms = now;
-        if !self.confirm_provisional(conn_id, fx) {
+        if !self.confirm_provisional(conn_id, now, fx) {
             return;
         }
-        if self.permissions(Some(device_id)).is_none() {
+        let pending = self.is_pending(device_id);
+        if !pending && self.permissions(Some(device_id)).is_none() {
             self.close(conn_id, CloseReason::Revoked, fx);
             return;
         }
@@ -1688,7 +1966,7 @@ impl RemoteHub {
         let decoded = ClientMessage::from_bytes(&plaintext);
         if let Some(count) = over_limit {
             // Cancel is never dropped while there is something to cancel.
-            let cancel = matches!(decoded, Ok(ClientMessage::Cancel)) && self.is_busy();
+            let cancel = !pending && matches!(decoded, Ok(ClientMessage::Cancel)) && self.is_busy();
             if !cancel {
                 // One reply and one audit entry per window; the rest are dropped silently.
                 if count == RATE_MAX_MESSAGES + 1 {
@@ -1697,6 +1975,9 @@ impl RemoteHub {
                 return;
             }
         }
+        if pending {
+            return self.handle_pending(conn_id, device_id, decoded, fx);
+        }
         match decoded {
             Ok(msg) => self.handle_message(conn_id, device_id, msg, fx),
             Err(MessageError::UnknownType(t)) if ViewerRequest::TYPES.contains(&t.as_str()) => {
@@ -1704,6 +1985,34 @@ impl RemoteHub {
                     Ok(req) => self.handle_viewer(conn_id, device_id, req, now, fx),
                     Err(_) => self.reject(conn_id, device_id, None, ErrorCode::Malformed, fx),
                 }
+            }
+            Err(MessageError::UnknownType(t)) => {
+                self.reject(conn_id, device_id, Some(t), ErrorCode::UnknownMessage, fx);
+            }
+            Err(MessageError::Malformed(_) | MessageError::TooLarge) => {
+                self.reject(conn_id, device_id, None, ErrorCode::Malformed, fx);
+            }
+        }
+    }
+
+    /// A device waiting for the owner's confirmation: it is told that it waits (on
+    /// `Hello`), may keep the connection alive (`Ping`), and is refused everything else
+    /// (audited). It learns nothing about the phone, not even its name.
+    fn handle_pending(
+        &mut self,
+        conn_id: ConnId,
+        device_id: DeviceId,
+        decoded: Result<ClientMessage, MessageError>,
+        fx: &mut Vec<HubEffect>,
+    ) {
+        match decoded {
+            Ok(ClientMessage::Hello) => {
+                self.send(conn_id, &ServerMessage::AwaitingConfirmation, fx);
+            }
+            Ok(ClientMessage::Ping) => self.send(conn_id, &ServerMessage::Pong, fx),
+            Ok(msg) => self.deny(conn_id, device_id, msg.name(), DenyReason::NotPermitted, fx),
+            Err(MessageError::UnknownType(t)) if ViewerRequest::TYPES.contains(&t.as_str()) => {
+                self.viewer_deny(conn_id, device_id, &t, fx);
             }
             Err(MessageError::UnknownType(t)) => {
                 self.reject(conn_id, device_id, Some(t), ErrorCode::UnknownMessage, fx);
@@ -1750,13 +2059,7 @@ impl RemoteHub {
         let request = msg.name();
         match msg {
             ClientMessage::Hello => {
-                let reveal = !perms.is_none();
-                let welcome = ServerMessage::Welcome {
-                    protocol_version: PROTOCOL_VERSION,
-                    permissions: perms,
-                    phone_name: reveal.then(|| self.phone_name.clone()),
-                    busy: reveal.then(|| self.is_busy()),
-                };
+                let welcome = self.welcome(perms);
                 self.send(conn_id, &welcome, fx);
             }
             ClientMessage::Ping => self.send(conn_id, &ServerMessage::Pong, fx),

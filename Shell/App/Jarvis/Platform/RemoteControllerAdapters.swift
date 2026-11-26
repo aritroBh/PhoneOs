@@ -73,8 +73,15 @@ final class NetworkRemoteConnection: RemoteConnection, @unchecked Sendable {
         case .ready:
             let path = connection.currentPath
             let cellular = path.map { $0.usesInterfaceType(.cellular) }
-            let remote = path?.remoteEndpoint ?? connection.endpoint
-            if case .refuse(let why) = PeerAddressPolicy.decide(address: NetworkRemoteTransport.addressBytes(remote), pathIsCellular: cellular) {
+            // A Bonjour dial's own endpoint is the service name: the address it reached is
+            // the path's remote endpoint.
+            let remote = connection.currentPath?.remoteEndpoint ?? connection.endpoint
+            let address = NetworkRemoteTransport.addressBytes(remote)
+            guard !address.isEmpty else {
+                shutdown(RemoteDialError.refused("the phone's IP address could not be read from the connection, so it cannot be checked to be on this network"))
+                return
+            }
+            if case .refuse(let why) = PeerAddressPolicy.decide(address: address, pathIsCellular: cellular) {
                 shutdown(RemoteDialError.refused(why))
                 return
             }
@@ -82,9 +89,10 @@ final class NetworkRemoteConnection: RemoteConnection, @unchecked Sendable {
             opening?.resume()
             opening = nil
             receive()
-        case .waiting(let error):
-            // Refused or no route: nothing listens there now.
-            shutdown(RemoteDialError.unreachable("\(error)"))
+        case .waiting:
+            // Not final: iOS reports waiting while it shows the local-network prompt (the
+            // first pairing) and while a route comes up. The ready timeout ends it.
+            break
         case .failed(let error):
             shutdown(RemoteDialError.unreachable("\(error)"))
         case .cancelled:
@@ -151,7 +159,9 @@ final class RemotePhoneBrowser: ObservableObject {
         parameters.includePeerToPeer = false
         parameters.prohibitedInterfaceTypes = [.cellular]
         let browser = NWBrowser(for: .bonjour(type: NetworkRemoteTransport.serviceType, domain: nil), using: parameters)
-        browser.browseResultsChangedHandler = { [weak self] results, _ in
+        // Called on `queue`, not on the main actor: the closure is `@Sendable` and hops to
+        // the main actor explicitly.
+        browser.browseResultsChangedHandler = { @Sendable [weak self] results, _ in
             let found = results.compactMap { result -> String? in
                 if case .service(let name, _, _, _) = result.endpoint { return name }
                 return nil

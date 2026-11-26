@@ -15,6 +15,8 @@ struct ControllerView: View {
     @State private var host = ""
     @State private var port = ""
     @State private var code = ""
+    /// The name this device gives the phone (filled from the device when the screen appears).
+    @State private var deviceName = ""
     @State private var task = ""
     @State private var working = false
     @State private var error: String?
@@ -52,6 +54,7 @@ struct ControllerView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             model.controllerActivate()
+            if deviceName.isEmpty { deviceName = model.controllerDefaultDeviceName }
             if !model.launch.playground && !state.isPaired { browser.start() }
         }
         .onDisappear { browser.stop() }
@@ -76,7 +79,7 @@ struct ControllerView: View {
         case .disconnected(let d): return d.retrying ? Theme.warning : Theme.error
         case .connected: break
         }
-        if state.question != nil { return Theme.warning }
+        if state.awaitingConfirmation != nil || state.question != nil { return Theme.warning }
         switch state.activity {
         case .running: return Theme.tally
         case .ended(let e): return e.status == .success ? Theme.connected : Theme.error
@@ -100,6 +103,18 @@ struct ControllerView: View {
                     .font(Theme.meta)
                     .foregroundStyle(Theme.textSecondary)
                     .accessibilityIdentifier("controller.phone")
+            }
+            if let prompt = state.confirmationPrompt, state.isConnected {
+                Text(prompt)
+                    .font(Theme.rowTitle)
+                    .foregroundStyle(Theme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("controller.confirmCheck")
+                Text("That phone lists this device under Waiting for your confirmation. Confirm it there only if it shows the same numbers; until then it gives this device nothing.")
+                    .font(Theme.meta)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("controller.confirmNote")
             }
             if case .disconnected(let d) = state.phase {
                 Text(d.reason.text)
@@ -177,16 +192,17 @@ struct ControllerView: View {
                 .keyboardType(.numbersAndPunctuation)
             field("Port", text: $port, prompt: "51234", identifier: "controller.port")
                 .keyboardType(.numberPad)
-            field("Pairing code", text: $code, prompt: "ABCD-EFGH-\u{2026}", identifier: "controller.code", mono: true,
-                  capitalization: .characters)
-            Text("The code works once, for 5 minutes. After 5 wrong codes the phone pauses pairing for a while.")
+            codeField
+            field("This device's name", text: $deviceName, prompt: "Work iPad", identifier: "controller.deviceName",
+                  capitalization: .words)
+            Text("The code works once, for 5 minutes. After 5 wrong codes the phone pauses that code for a while. The phone then shows this device's name and six digits: confirm it there.")
                 .font(Theme.meta)
                 .foregroundStyle(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
                 Task {
                     working = true
-                    error = await model.controllerPair(code: code, host: host, port: port)
+                    error = await model.controllerPair(code: code, host: host, port: port, name: deviceName)
                     if error == nil { code = "" }
                     working = false
                 }
@@ -200,7 +216,7 @@ struct ControllerView: View {
                 Button("Pair with this phone (QA)") {
                     Task {
                         working = true
-                        error = await model.controllerPairWithThisPhoneForQA()
+                        error = await model.controllerPairWithThisPhoneForQA(name: deviceName)
                         working = false
                     }
                 }
@@ -216,9 +232,31 @@ struct ControllerView: View {
     private func pair(_ address: RemotePhoneAddress) {
         Task {
             working = true
-            error = await model.controllerPair(code: Redacted(code), address: address)
+            error = await model.controllerPair(code: Redacted(code), address: address, name: deviceName)
             if error == nil { code = "" }
             working = false
+        }
+    }
+
+    /// The pairing code: kept out of the accessibility value (VoiceOver and UI tests see
+    /// only its label), redacted in screenshots of a locked screen, offered as a one-time
+    /// code, never autocorrected or capitalised by the keyboard.
+    private var codeField: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Pairing code").font(Theme.meta.weight(.semibold)).foregroundStyle(Theme.textSecondary)
+            TextField("", text: $code, prompt: Text("ABCD-EFGH-\u{2026}").foregroundColor(Theme.textTertiary))
+                .font(Theme.mono.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .textContentType(.oneTimeCode)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .privacySensitive()
+                .padding(.horizontal, 12)
+                .frame(minHeight: Theme.minTarget)
+                .modifier(Bezeled(fill: Theme.well, radius: Theme.radiusField, stroke: Theme.controlBezel))
+                .accessibilityLabel("Pairing code")
+                .accessibilityValue(Text(""))
+                .accessibilityIdentifier("controller.code")
         }
     }
 

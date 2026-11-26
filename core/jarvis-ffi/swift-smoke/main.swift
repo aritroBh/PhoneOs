@@ -784,6 +784,29 @@ do {
     let credentials = events.compactMap { e -> String? in
         if case let .paired(_, json) = e { return json } else { return nil }
     }.first
+    // The confirm step: the new device waits for the owner on the phone and gets nothing.
+    let pendingList = try hub.pendingDevices()
+    check("a paired device is pending and told only that it waits",
+          try messages(events) == [.awaitingConfirmation] && (try hub.devices()).isEmpty && pendingList.count == 1
+          && pendingList.first?.device.permissions == RemotePermissions(),
+          "\(messages(events)) \(pendingList)")
+    let check1 = try pairing.pairingCheck()
+    check("both ends show the same check string",
+          check1 != nil && check1 == pendingList.first?.check && check1?.count == 7, "\(String(describing: check1))")
+    now += 10
+    let refused = messages(try pump(1, pairing, try apply(try hub.receive(connId: 1,
+        bytes: try pairing.send(message: .startTask(text: "Turn off Wi-Fi")), nowMs: now))))
+    check("a pending device's startTask is refused", try refused == [.denied(reason: .notPermitted)]
+          && !(try hub.isBusy()), "\(refused)")
+    now += 10
+    let welcomed = messages(try pump(1, pairing, try apply(try hub.confirmDevice(nowMs: now,
+        deviceId: pendingList.first?.device.id ?? ""))))
+    if case let .welcome(_, permissions, _, _)? = welcomed.first {
+        check("confirming on the phone welcomes the device with the new-device permissions",
+              try permissions == newDeviceRemotePermissions() && (try hub.pendingDevices()).isEmpty, "\(welcomed)")
+    } else {
+        check("confirming on the phone welcomes the device", false, "\(welcomed)")
+    }
     let devices = try hub.devices()
     check("pairing over the in-process protocol", try credentials != nil && devices.count == 1
           && devices.first?.name == "Smoke Mac" && (try pairing.isConnected()), "\(devices)")
@@ -980,6 +1003,9 @@ do {
     let client = try JarvisRemoteClient.pair(code: offer.code, deviceName: "Smoke Mac", entropy: entropy())
     _ = try pump(1, client, try apply(try hub.connectionOpened(connId: 1, nowMs: now, entropy: entropy())))
     let deviceId = try client.deviceId() ?? ""
+    // The owner confirms the new device on the phone (the confirm step).
+    now += 1
+    _ = try pump(1, client, try apply(try hub.confirmDevice(nowMs: now, deviceId: deviceId)))
     let mayWatch = try hub.watchScreen(deviceId: deviceId)
     let listedOff = try hub.devices().first?.watchScreen == false
     check("stream: a new device may not watch the screen layout", !mayWatch && listedOff)

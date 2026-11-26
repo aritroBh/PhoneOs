@@ -116,7 +116,16 @@ impl Phone {
     fn pair(&mut self, rng: &mut Rng, conn: u64) -> Controller {
         let offer = self.hub.open_pairing(self.now, rng.bytes()).unwrap();
         let client = JarvisRemoteClient::pair(offer.code, "Work Mac".into(), rng.bytes()).unwrap();
-        self.connect(rng, conn, client)
+        let mut c = self.connect(rng, conn, client);
+        // The owner confirms the new device on the phone (the confirm step).
+        self.now += 1;
+        let fx = self
+            .hub
+            .confirm_device(self.now, c.device_id.clone())
+            .unwrap();
+        let out = self.apply(fx);
+        self.deliver(&mut c, out);
+        c
     }
 
     fn reconnect(&mut self, rng: &mut Rng, conn: u64, credentials: &str) -> Controller {

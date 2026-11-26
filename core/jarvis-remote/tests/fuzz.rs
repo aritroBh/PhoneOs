@@ -227,6 +227,19 @@ fn reconnect(rng: &mut Rng, hub: &mut RemoteHub, now: u64, legit: &mut Legit) {
             }
         }
     }
+    // The owner confirms a newly paired device on the phone (it would compare the check
+    // strings first); the Welcome that follows keeps the client's counters in step.
+    if let Some(id) = legit.creds.as_ref().map(|c| c.device_id) {
+        if hub.pending_devices().iter().any(|p| p.device.id == id) {
+            if let Ok(fx) = hub.confirm_device(id, now) {
+                check_effects(hub, &fx);
+                let back = sends(&fx, conn);
+                if !back.is_empty() && client.receive(&back).is_err() {
+                    return;
+                }
+            }
+        }
+    }
     if client.is_connected() {
         legit.conn = conn;
         legit.client = Some(client);

@@ -115,6 +115,14 @@ public final class RemoteControlService {
 
     public private(set) var status: Status = .off
     public private(set) var devices: [DeviceInfo] = []
+    /// Devices paired with a code but not yet confirmed by the owner here: they hold no
+    /// permission. Each shows its name and check string with Confirm and Remove; the owner
+    /// confirms only when the device they paired shows the same string. One not confirmed
+    /// within 10 minutes is removed by the hub.
+    public private(set) var pendingDevices: [PendingDevice] = []
+    /// Wrong codes tried against the open pairing offer (0 without one). Above zero the
+    /// pairing sheet says that wrong codes are being tried from the network.
+    public var pairingFailedAttempts: UInt32 { (try? hub?.pairingFailedAttempts()) ?? 0 }
     public private(set) var pairing: RemotePairingOffer?
     /// The last problem worth showing (refused entropy, a failed write, a rebuilt hub).
     public private(set) var lastError: String?
@@ -387,10 +395,27 @@ public final class RemoteControlService {
         try ownerAction { try $0.setPermissions(nowMs: self.clock(), deviceId: deviceId, permissions: permissions) }
     }
 
-    /// Removes a device at once: its key is forgotten, its connections close and the task it
-    /// asked for stops (never one the owner started).
+    /// Removes a device at once (a paired one, or one waiting for confirmation): its key is
+    /// forgotten, its connections close and the task it asked for stops (never one the
+    /// owner started).
     public func revoke(deviceId: String) throws {
+        let pending = pendingDevices.first { $0.device.id == deviceId }
         try ownerAction { try $0.revokeDevice(nowMs: self.clock(), deviceId: deviceId) }
+        if let pending {
+            note("Removed \u{201C}\(pending.device.name)\u{201D} before it was confirmed", device: nil, warning: false)
+        }
+    }
+
+    /// The owner confirms on this phone a device waiting for confirmation, after checking
+    /// that the device they paired shows the same check string. It then gets the new-device
+    /// permissions (start and stop tasks, see that a task runs); everything else stays off.
+    public func confirm(deviceId: String) throws {
+        try ownerAction { try $0.confirmDevice(nowMs: self.clock(), deviceId: deviceId) }
+    }
+
+    /// The check string shown beside a device waiting for confirmation.
+    public func pendingCheck(_ deviceId: String) -> String? {
+        pendingDevices.first { $0.device.id == deviceId }?.check
     }
 
     public func isConnected(_ deviceId: String) -> Bool { connected.values.contains(deviceId) }
@@ -457,7 +482,9 @@ public final class RemoteControlService {
         })
     }
 
-    public func deviceName(_ id: String) -> String? { devices.first { $0.id == id }?.name }
+    public func deviceName(_ id: String) -> String? {
+        devices.first { $0.id == id }?.name ?? pendingDevices.first { $0.device.id == id }?.device.name
+    }
 
     private func ownerAction(_ call: @escaping @MainActor (any JarvisRemoteHubProtocol) throws -> [HubEffect]) throws {
         guard let hub else { throw RemoteControlError.off }
@@ -639,7 +666,13 @@ public final class RemoteControlService {
                 decide(requestId: requestId, approved: approved, category: category, deviceId: deviceId)
             case .devicePaired(let device):
                 pairing = nil
-                note("Paired \u{201C}\(device.name)\u{201D}", device: device.id, warning: false)
+                refreshDevices()
+                let check = pendingCheck(device.id).map { " (it shows \($0))" } ?? ""
+                note("Paired \u{201C}\(device.name)\u{201D}\(check): waiting for you to confirm it on this phone",
+                     device: nil, warning: false)
+            case .deviceConfirmed(let device):
+                refreshDevices()
+                note("Confirmed \u{201C}\(device.name)\u{201D} on this phone", device: device.id, warning: false)
             case .audit(let entry):
                 record(entry)
             }
@@ -827,6 +860,7 @@ public final class RemoteControlService {
 
     private func refreshDevices() {
         devices = (try? hub?.devices()) ?? []
+        pendingDevices = (try? hub?.pendingDevices()) ?? []
         var now: Set<String> = []
         if let hub {
             for (conn, device) in connected where (try? hub.isWatching(connId: conn)) == true { now.insert(device) }

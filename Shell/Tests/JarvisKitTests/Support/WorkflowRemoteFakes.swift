@@ -275,6 +275,11 @@ final class HubProbe: JarvisRemoteHubProtocol, @unchecked Sendable {
         try check(); return try hub.setWatchScreen(nowMs: nowMs, deviceId: deviceId, allowed: allowed)
     }
     func watchScreen(deviceId: String) throws -> Bool { try hub.watchScreen(deviceId: deviceId) }
+    func pendingDevices() throws -> [PendingDevice] { try hub.pendingDevices() }
+    func confirmDevice(nowMs: UInt64, deviceId: String) throws -> [HubEffect] {
+        try check(); return keep(try hub.confirmDevice(nowMs: nowMs, deviceId: deviceId))
+    }
+    func pairingFailedAttempts() throws -> UInt32 { try hub.pairingFailedAttempts() }
     func isWatching(connId: UInt64) throws -> Bool { try hub.isWatching(connId: connId) }
 }
 
@@ -293,6 +298,13 @@ final class RemoteHarness {
     final class Probes: Sendable { let list = Mutex<[HubProbe]>([]) }
     let probes = Probes()
     let service: RemoteControlService
+    /// The scripted owner confirms every newly paired device on the phone, as the owner
+    /// does after comparing the check strings (the confirm step's own tests turn it off and
+    /// confirm or remove by hand).
+    var autoConfirm = true
+    /// Devices the scripted owner confirmed.
+    private(set) var confirmedByOwner: [String] = []
+    private var confirming = false
 
     init(_ name: String, rules: ScriptedOwner.Rules = ScriptedOwner.Rules(), random: any RandomSource = GeneratorRandomSource(),
          settingsProblem: @escaping @MainActor () -> String? = { nil },
@@ -312,6 +324,18 @@ final class RemoteHarness {
                 return probe
             }
         )
+        service.onChange = { [weak self] in self?.confirmPending() }
+    }
+
+    /// The scripted owner's Confirm on the phone (only while `autoConfirm`).
+    private func confirmPending() {
+        guard autoConfirm, !confirming else { return }
+        confirming = true
+        defer { confirming = false }
+        for pending in service.pendingDevices where !confirmedByOwner.contains(pending.device.id) {
+            confirmedByOwner.append(pending.device.id)
+            try? service.confirm(deviceId: pending.device.id)
+        }
     }
 
     var probe: HubProbe? { probes.list.withLock { $0.last } }

@@ -234,11 +234,21 @@ pub enum ServerMessage {
     },
     /// Answer to `Ping`.
     Pong,
+    /// Answer to `Hello` from a device paired but not yet confirmed by the owner on the
+    /// phone: it may do nothing until then (every request is refused). The device shows
+    /// its own check string and asks the owner to confirm on the phone that the phone
+    /// shows the same; the phone never sends the string (each side derives its own).
+    AwaitingConfirmation,
+    /// Sent to a device's open connections just before they close because the owner
+    /// removed it on the phone (or it was not confirmed in time). Authenticated like every
+    /// frame, so unlike a closed connection (which anyone on the network can cause) it is
+    /// proof that the phone no longer knows this device: forget the phone and pair again.
+    Removed,
 }
 
 impl ServerMessage {
     /// Every `"type"` tag.
-    pub const TYPES: [&'static str; 11] = [
+    pub const TYPES: [&'static str; 13] = [
         "welcome",
         "task_started",
         "progress",
@@ -250,6 +260,8 @@ impl ServerMessage {
         "denied",
         "error",
         "pong",
+        "awaiting_confirmation",
+        "removed",
     ];
 
     /// Encodes to JSON bytes.

@@ -36,7 +36,7 @@ use crate::error::JarvisError;
 use crate::guard::{guarded, panic_message};
 use crate::types::{
     ClientEvent, ClientMessage, ClientReceived, DeviceInfo, HubEffect, LocalEvent, PairingOffer,
-    RemotePermissions, RiskCategory,
+    PendingDevice, RemotePermissions, RiskCategory,
 };
 
 /// Maps a store or credentials loading error without echoing any input (the input holds
@@ -189,6 +189,15 @@ fn known(hub: &RemoteHub, id: &r::DeviceId) -> Result<(), JarvisError> {
     }
 }
 
+/// A confirmed device, or one waiting for confirmation (what `revokeDevice` removes).
+fn known_or_pending(hub: &RemoteHub, id: &r::DeviceId) -> Result<(), JarvisError> {
+    if hub.pending_devices().iter().any(|p| p.device.id == *id) {
+        Ok(())
+    } else {
+        known(hub, id)
+    }
+}
+
 #[uniffi::export]
 impl JarvisRemoteHub {
     /// Restores the hub from the JSON `toJson()` returned last time (empty for a phone
@@ -214,21 +223,59 @@ impl JarvisRemoteHub {
 
     /// SECRET OUTPUT. Opens a single-use pairing offer valid for 5 minutes (replacing any
     /// open one); show `code`/`qrPayload` on screen only. `entropy`: at least 32 fresh
-    /// bytes from `SecRandomCopyBytes`. Throws `remoteEntropy` (weak or short entropy),
-    /// `remoteLimitReached` (8 devices paired), `remotePairingLocked(untilMs:)` (pairing
-    /// handshakes are locked out after failed attempts; no offer is left open).
+    /// bytes from `SecRandomCopyBytes`. Throws `remoteEntropy` (weak or short entropy) or
+    /// `remoteLimitReached` (8 devices paired or waiting). Wrong codes are counted per
+    /// offer: a new offer starts unlocked, whatever was tried against the last one
+    /// (`remotePairingLocked` is no longer thrown here).
     pub fn open_pairing(&self, now_ms: u64, entropy: Vec<u8>) -> Result<PairingOffer, JarvisError> {
         let entropy = Zeroizing::new(entropy);
         self.with("open_pairing", |h| {
             let offer = h
                 .open_pairing(now_ms, &entropy)
                 .map_err(|e| hub_error(e, None))?;
-            let until_ms = h.pairing_locked_until_ms();
-            if until_ms > h.clock_ms() {
-                h.cancel_pairing();
-                return Err(JarvisError::RemotePairingLocked { until_ms });
-            }
             Ok(offer.into())
+        })
+    }
+
+    /// Wrong codes tried against the open offer (0 when none is open). Above zero, the
+    /// pairing sheet says that wrong codes are being tried from the network.
+    pub fn pairing_failed_attempts(&self) -> Result<u32, JarvisError> {
+        self.with("pairing_failed_attempts", |h| {
+            Ok(h.pairing_failed_attempts())
+        })
+    }
+
+    /// Devices paired but not yet confirmed by the owner, in pairing order, with their
+    /// check strings. They hold no permission; a pending device not confirmed within 10
+    /// minutes is removed by the hub (audited).
+    pub fn pending_devices(&self) -> Result<Vec<PendingDevice>, JarvisError> {
+        self.with("pending_devices", |h| {
+            Ok(h.pending_devices()
+                .into_iter()
+                .map(|p| PendingDevice {
+                    device: p.device.into(),
+                    check: p.check,
+                    expires_at_ms: p.expires_at_ms,
+                })
+                .collect())
+        })
+    }
+
+    /// The owner confirmed a pending device on the phone (after comparing the check
+    /// string it shows with the one on the device they paired). It gets exactly the
+    /// new-device permissions; its connections are sent a `welcome`. Returns
+    /// `deviceConfirmed` and `storeChanged` (plus any timeout effects, like `tick`). Throws
+    /// `remoteUnknownDevice` when it is not pending (expired, removed, confirmed).
+    pub fn confirm_device(
+        &self,
+        now_ms: u64,
+        device_id: String,
+    ) -> Result<Vec<HubEffect>, JarvisError> {
+        self.with("confirm_device", |h| {
+            let id = device_id_from(&device_id)?;
+            h.confirm_device(id, now_ms)
+                .map(effects)
+                .map_err(|e| hub_error(e, Some(&id)))
         })
     }
 
@@ -367,8 +414,9 @@ impl JarvisRemoteHub {
         })
     }
 
-    /// Revokes a device: forgets its key, closes its connections and cancels the task it
-    /// requested (never one the owner started). Throws `remoteUnknownDevice`.
+    /// Revokes a device (or removes one waiting for confirmation): forgets its key, closes
+    /// its connections and cancels the task it requested (never one the owner started).
+    /// Throws `remoteUnknownDevice`.
     pub fn revoke_device(
         &self,
         now_ms: u64,
@@ -376,7 +424,7 @@ impl JarvisRemoteHub {
     ) -> Result<Vec<HubEffect>, JarvisError> {
         self.with("revoke_device", |h| {
             let id = device_id_from(&device_id)?;
-            known(h, &id)?;
+            known_or_pending(h, &id)?;
             Ok(effects(h.local_event(
                 now_ms,
                 r::LocalEvent::DeviceRevoked { device_id: id },
@@ -391,8 +439,8 @@ impl JarvisRemoteHub {
         self.with("clock_ms", |h| Ok(h.clock_ms()))
     }
 
-    /// End of the pairing lockout on the hub clock (0 when there never was one; in the
-    /// past when it is over).
+    /// End of the open offer's pairing lockout on the hub clock (0 when no offer is open
+    /// or it was never locked; in the past when it is over).
     pub fn pairing_locked_until_ms(&self) -> Result<u64, JarvisError> {
         self.with("pairing_locked_until_ms", |h| {
             Ok(h.pairing_locked_until_ms())
@@ -577,6 +625,15 @@ impl JarvisRemoteClient {
     pub fn device_id(&self) -> Result<Option<String>, JarvisError> {
         self.with("device_id", |c| {
             Ok(c.credentials().map(|cr| cr.device_id.to_hex()))
+        })
+    }
+
+    /// After a pairing on this connection: the check string ("123 456") the phone shows
+    /// beside this device. Show it with "Confirm on the phone that it shows …" and keep it
+    /// with the pairing (not secret). `nil` for a connect with stored credentials.
+    pub fn pairing_check(&self) -> Result<Option<String>, JarvisError> {
+        self.with("pairing_check", |c| {
+            Ok(c.pairing_check().map(str::to_owned))
         })
     }
 

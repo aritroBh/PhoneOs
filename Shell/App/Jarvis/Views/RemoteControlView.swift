@@ -47,6 +47,7 @@ struct RemoteControlView: View {
                 if model.settings.remoteControlEnabled && model.remoteStatus != .off {
                     if !model.remoteAddresses.isEmpty { connectionDetails }
                     pairSection
+                    if !model.remotePending.isEmpty { pendingSection }
                     devicesSection
                 }
 
@@ -152,10 +153,21 @@ struct RemoteControlView: View {
             .disabled(lockedFor > 0)
             .accessibilityIdentifier("remote.pair")
             if lockedFor > 0 {
-                Text("Pairing is paused for \(max(1, lockedFor / 60)) min after failed attempts.")
+                Text("This pairing code is paused for \(lockedFor) s after wrong codes.")
                     .font(Theme.meta)
                     .foregroundStyle(Theme.warning)
                     .accessibilityIdentifier("remote.lockout")
+            }
+        }
+    }
+
+    /// Devices paired with a code that wait for the owner's Confirm (they hold nothing).
+    private var pendingSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "Waiting for your confirmation")
+            ForEach(Array(model.remotePending.enumerated()), id: \.element.device.id) { index, pending in
+                PendingDeviceRow(pending: pending, prefix: "remote.pending.\(index)", error: $error)
+                    .card()
             }
         }
     }
@@ -176,6 +188,46 @@ struct RemoteControlView: View {
                 DeviceCard(device: device, index: index, error: $error)
             }
         }
+    }
+}
+
+/// A device paired with the code and waiting for the owner: its name and check string,
+/// Confirm and Remove. Anyone who saw the code can pair; only the owner, comparing the
+/// numbers with the device they paired, lets it in.
+private struct PendingDeviceRow: View {
+    @EnvironmentObject private var model: AppModel
+    var pending: PendingDevice
+    var prefix: String
+    @Binding var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.gap) {
+            Text(pending.device.name)
+                .font(Theme.rowTitle)
+                .foregroundStyle(Theme.textPrimary)
+                .accessibilityIdentifier("\(prefix).name")
+            Text(pending.check)
+                .font(.system(size: 28, weight: .semibold).monospaced())
+                .foregroundStyle(Theme.textPrimary)
+                .accessibilityLabel(pending.check)
+                .accessibilityIdentifier("\(prefix).check")
+            Text("Confirm only if the device you just paired shows these same numbers. If you did not pair it, or the numbers differ, remove it. Until you confirm, it can do nothing; it is removed after 10 minutes.")
+                .font(Theme.meta)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: Theme.gap) {
+                Button("Remove") { error = model.removeDevice(pending.device.id) }
+                    .buttonStyle(SecondaryButtonStyle(foreground: Theme.errorText))
+                    .accessibilityIdentifier("\(prefix).remove")
+                Button("Confirm") { error = model.confirmDevice(pending.device.id) }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("\(prefix).confirm")
+            }
+        }
+        .padding(Theme.gutter)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(prefix)
     }
 }
 
@@ -341,6 +393,7 @@ struct NeverRemoteNote: View {
 private struct PairingSheet: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var error: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.gutter) {
@@ -349,12 +402,26 @@ private struct PairingSheet: View {
                 let seconds = model.pairingSecondsLeft()
                 if let offer = model.remotePairing, seconds > 0 {
                     offerView(offer, seconds: seconds)
+                } else if !model.remotePending.isEmpty {
+                    VStack(alignment: .leading, spacing: Theme.gap) {
+                        Text("Paired. Now confirm it.")
+                            .font(Theme.question)
+                            .foregroundStyle(Theme.textPrimary)
+                            .accessibilityIdentifier("remote.pair.ended")
+                        ForEach(Array(model.remotePending.enumerated()), id: \.element.device.id) { index, pending in
+                            PendingDeviceRow(pending: pending, prefix: "remote.pair.pending.\(index)", error: $error)
+                                .card(fill: Theme.raised)
+                        }
+                    }
                 } else {
                     Text(model.remoteDevices.isEmpty ? "The code expired." : "Done. The code no longer works.")
                         .font(Theme.question)
                         .foregroundStyle(Theme.textPrimary)
                         .accessibilityIdentifier("remote.pair.ended")
                 }
+            }
+            if let error {
+                InlineError(text: error, identifier: "remote.pair.error")
             }
             Spacer(minLength: 0)
             Button("Cancel") {
@@ -404,6 +471,16 @@ private struct PairingSheet: View {
                 .foregroundStyle(Theme.textTertiary)
                 .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("remote.pair.countdown")
+            if model.remoteWrongCodes > 0 {
+                let locked = model.pairingLockedForSeconds
+                Text("Wrong codes are being tried from the network (\(model.remoteWrongCodes) so far)."
+                     + (locked > 0 ? " This code is paused for \(locked) s." : "")
+                     + " If that was not you mistyping, someone on this Wi-Fi is guessing: they cannot guess it, and any device that pairs still needs your Confirm here.")
+                    .font(Theme.meta)
+                    .foregroundStyle(Theme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("remote.pair.wrongCodes")
+            }
         }
     }
 }

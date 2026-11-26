@@ -69,36 +69,70 @@ final class ControllerUITests: QATestCase {
 
     @MainActor
     func testControlAnotherPhoneOverLoopback() {
+        // Belt and braces: a notification-permission alert (the app asks when remote
+        // control is turned on outside the playground) is answered, not left over the UI.
+        _ = addUIInterruptionMonitor(withDescription: "Notification permission") { element in
+            nonisolated(unsafe) let alert = element
+            return MainActor.assumeIsolated {
+                for title in ["Allow", "Don\u{2019}t Allow", "Don't Allow"] where alert.buttons[title].exists {
+                    alert.buttons[title].tap()
+                    return true
+                }
+                return false
+            }
+        }
         let app = launchPlayground()
         tab("Control", in: app).tap()
         push(app.buttons["control.remote"], "the Remote control row", in: app)
 
-        // The phone side: remote control on.
+        // The phone side: remote control on and listening (its status line; the
+        // connection details row depends on the transport's addresses, not needed here).
         switchOn(app.switches["remote.enabled"], "the Remote control switch", in: app)
-        let details = app.staticTexts["remote.address.0"]
-        require(details, "the connection details", timeout: 10, in: app)
+        let remoteStatus = app.descendants(matching: .any)["remote.status"].firstMatch
+        require(remoteStatus, "the Remote control status line", timeout: 10, in: app)
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Listening"), evaluatedWith: remoteStatus)
+        waitForExpectations(timeout: 15)
 
-        // The controller: pair with this phone.
+        // The controller: pair with this phone. The code is handed over in-process; the
+        // code field is never read (its accessibility value is empty on purpose).
         push(app.buttons["remote.controlAnother"], "Control another phone", in: app)
         require(app.staticTexts["controller.title"], "the controller screen", in: app)
         let pairHere = app.buttons["controller.qa.pairHere"]
         require(pairHere, "Pair with this phone (QA)", in: app)
         scrollTo(pairHere, in: app)
         pairHere.tap()
-        waitForStatus("Idle", timeout: 30, in: app)
-        XCTAssertTrue(app.descendants(matching: .any)["controller.sharingNote"].firstMatch.exists,
-                      "a new device does not see screen text: the screen must say what it is not shown")
+
+        // Paired, not yet confirmed: the controller shows its check string and nothing else.
+        waitForStatus("Waiting for confirmation", timeout: 30, in: app)
+        let prompt = app.staticTexts["controller.confirmCheck"]
+        require(prompt, "the controller's confirm line", timeout: 10, in: app)
+        let controllerCheck = String(prompt.label.suffix(7))
+        XCTAssertTrue(prompt.label.hasPrefix("Confirm on the phone that it shows "), "prompt: \(prompt.label)")
+        XCTAssertFalse(app.textFields["controller.composer"].exists && app.textFields["controller.composer"].isEnabled,
+                       "a device waiting for confirmation was offered to start a task")
+
+        // The phone side: the pending row shows the same string; the owner taps Confirm.
+        back(in: app)
+        let pendingCheck = app.staticTexts["remote.pending.0.check"]
+        require(pendingCheck, "the pending device on the phone", timeout: 20, in: app)
+        XCTAssertEqual(pendingCheck.label, controllerCheck, "the check strings differ")
+        let confirm = app.buttons["remote.pending.0.confirm"]
+        require(confirm, "Confirm on the phone", in: app)
+        scrollTo(confirm, in: app)
+        confirm.tap()
 
         // The phone side: the new device may watch the screen layout.
-        back(in: app)
         let device = app.descendants(matching: .any)["remote.device.0"].firstMatch
         require(device, "the controller in the phone's device list", timeout: 20, in: app)
+        XCTAssertFalse(app.descendants(matching: .any)["remote.pending.0"].firstMatch.exists, "still listed as pending")
         switchOn(app.switches["remote.device.0.watchScreen"], "Watch the screen layout", in: app)
         XCTAssertEqual(app.switches["remote.device.0.approve"].value as? String, "0", "watching must not turn approving on")
 
-        // The controller: watch, then start a scripted task.
+        // The controller: confirmed (idle), then watch, then start a scripted task.
         push(app.buttons["remote.controlAnother"], "Control another phone", in: app)
         waitForStatus("Idle", timeout: 20, in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["controller.sharingNote"].firstMatch.exists,
+                      "a new device does not see screen text: the screen must say what it is not shown")
         let watch = app.buttons["controller.watch"]
         require(watch, "Watch the screen layout on the controller", in: app)
         scrollTo(watch, in: app)

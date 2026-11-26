@@ -120,6 +120,11 @@ final class AppModel: ObservableObject {
     // Remote control
     @Published private(set) var remoteStatus: RemoteControlService.Status = .off
     @Published private(set) var remoteDevices: [DeviceInfo] = []
+    /// Devices paired with a code and waiting for the owner's Confirm here (they hold no
+    /// permission until then).
+    @Published private(set) var remotePending: [PendingDevice] = []
+    /// Wrong codes tried against the open pairing offer (the pairing sheet warns).
+    @Published private(set) var remoteWrongCodes: UInt32 = 0
     @Published private(set) var remotePairing: RemotePairingOffer?
     @Published private(set) var remoteError: String?
     @Published private(set) var remoteAudit: [RemoteAuditRecord] = []
@@ -812,6 +817,8 @@ final class AppModel: ObservableObject {
     private func mirrorRemote() {
         remoteStatus = remote.status
         remoteDevices = remote.devices
+        remotePending = remote.pendingDevices
+        remoteWrongCodes = remote.pairingFailedAttempts
         remotePairing = remote.pairing
         remoteError = remote.lastError
         remoteAudit = remote.audit.entries
@@ -875,6 +882,12 @@ final class AppModel: ObservableObject {
         remoteAction { try remote.revoke(deviceId: id) }
     }
 
+    /// The owner confirms a device waiting for confirmation (its check string matched the
+    /// one on the device they paired).
+    func confirmDevice(_ id: String) -> String? {
+        remoteAction { try remote.confirm(deviceId: id) }
+    }
+
     private func remoteAction(_ action: () throws -> Void) -> String? {
         defer { mirrorRemote() }
         do {
@@ -903,21 +916,26 @@ final class AppModel: ObservableObject {
         mirrorController()
     }
 
-    /// Pairs with the phone at the typed address with the typed code; returns why not.
-    func controllerPair(code: String, host: String, port: String) async -> String? {
+    /// The name this device gives a phone it pairs with, unless the owner types another
+    /// (`UIDevice.current.name` reads "iPhone" without the device-name entitlement).
+    var controllerDefaultDeviceName: String { controller.defaultDeviceName }
+
+    /// Pairs with the phone at the typed address with the typed code under `name`; returns
+    /// why not.
+    func controllerPair(code: String, host: String, port: String, name: String? = nil) async -> String? {
         let address: RemotePhoneAddress
         switch RemotePhoneAddress.parse(host: host, port: port) {
         case .success(let parsed): address = parsed
         case .failure(let problem): return problem.description
         }
-        return await controllerPair(code: Redacted(code), address: address)
+        return await controllerPair(code: Redacted(code), address: address, name: name)
     }
 
     /// Pairs with a phone found on this Wi-Fi (or the in-process one).
-    func controllerPair(code: Redacted<String>, address: RemotePhoneAddress) async -> String? {
+    func controllerPair(code: Redacted<String>, address: RemotePhoneAddress, name: String? = nil) async -> String? {
         defer { mirrorController() }
         do {
-            try await controller.pair(code: code, address: address)
+            try await controller.pair(code: code, address: address, name: name)
             return nil
         } catch {
             return String(describing: error)
@@ -927,7 +945,9 @@ final class AppModel: ObservableObject {
     /// QA (playground only): opens a pairing offer on this phone and pairs the controller
     /// with it over the in-memory transport. The code is handed over in-process: it stays
     /// out of the accessibility tree (the pairing sheet labels it "Pairing code" on purpose).
-    func controllerPairWithThisPhoneForQA() async -> String? {
+    /// The new device then waits for the owner's Confirm on this phone's Remote control
+    /// screen, like any other (the UI test taps that row).
+    func controllerPairWithThisPhoneForQA(name: String? = nil) async -> String? {
         guard launch.playground else { return "Only in playground mode." }
         if !settings.remoteControlEnabled { setRemoteEnabled(true) }
         let offer: RemotePairingOffer
@@ -938,7 +958,9 @@ final class AppModel: ObservableObject {
             return String(describing: error)
         }
         mirrorRemote()
-        return await controllerPair(code: offer.code, address: .inProcess)
+        let failure = await controllerPair(code: offer.code, address: .inProcess, name: name)
+        mirrorRemote()
+        return failure
     }
 
     func controllerStart(_ text: String) -> String? { controllerAction { try controller.startTask(text) } }
@@ -979,15 +1001,30 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// QA: pairs "Test Mac" in-process over the in-memory transport (playground only).
+    /// QA: pairs "Test Mac" in-process over the in-memory transport and confirms it, as the
+    /// owner would after comparing the check strings (playground only; the confirm step's
+    /// own UI test confirms through the Remote control screen instead).
     private func seedRemoteDevice() {
         Task { @MainActor [weak self] in
             guard let self, self.remote.isOn else { return }
             guard (self.remote.devices).isEmpty else { return }
             do {
                 let offer = try self.remote.openPairing()
-                self.seededRemote = try await InProcessRemote.pair(code: offer.code, name: "Test Mac", over: self.memoryTransport,
-                                                                  random: SecureRandomSource())
+                let seeded = try await InProcessRemote.pair(code: offer.code, name: "Test Mac", over: self.memoryTransport,
+                                                           random: SecureRandomSource())
+                self.seededRemote = seeded
+                // The hub keeps the device (pending) once its first frame arrives, which can
+                // be just after the client says it is connected.
+                var confirmed = false
+                for _ in 0..<500 where !confirmed {
+                    if let id = seeded.deviceId, self.remote.pendingDevices.contains(where: { $0.device.id == id }) {
+                        try self.remote.confirm(deviceId: id)
+                        confirmed = true
+                    } else {
+                        try await Task.sleep(for: .milliseconds(10))
+                    }
+                }
+                if !confirmed { self.remoteError = "The QA device paired but could not be confirmed." }
             } catch {
                 self.remoteError = "The QA device could not pair: \(error)"
             }

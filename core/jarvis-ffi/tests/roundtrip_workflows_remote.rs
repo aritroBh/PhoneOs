@@ -538,6 +538,8 @@ fn audit_variant(v: &r::AuditEvent) -> usize {
         r::AuditEvent::Rejected { .. } => 11,
         r::AuditEvent::Revoked => 12,
         r::AuditEvent::PermissionsChanged { .. } => 13,
+        r::AuditEvent::DeviceConfirmed => 14,
+        r::AuditEvent::PendingExpired => 15,
     }
 }
 
@@ -579,6 +581,8 @@ fn audit_events() -> Vec<r::AuditEvent> {
         r::AuditEvent::PermissionsChanged {
             permissions: perms(),
         },
+        r::AuditEvent::DeviceConfirmed,
+        r::AuditEvent::PendingExpired,
     ]
 }
 
@@ -594,6 +598,7 @@ fn effect_r_variant(v: &r::HubEffect) -> usize {
         r::HubEffect::Decide { .. } => 7,
         r::HubEffect::DevicePaired { .. } => 8,
         r::HubEffect::Audit { .. } => 9,
+        r::HubEffect::DeviceConfirmed { .. } => 10,
     }
 }
 
@@ -639,6 +644,7 @@ fn hub_effects() -> Vec<r::HubEffect> {
             device_id: dev(5),
         },
         r::HubEffect::DevicePaired { device: info() },
+        r::HubEffect::DeviceConfirmed { device: info() },
         r::HubEffect::Audit {
             entry: r::AuditEntry {
                 at_ms: 1,
@@ -689,12 +695,12 @@ fn remote_records_and_enums_round_trip() {
             event: e.clone(),
         });
     }
-    assert_covers(audits.iter().map(audit_variant), 14, "AuditEvent");
+    assert_covers(audits.iter().map(audit_variant), 16, "AuditEvent");
     let fx = hub_effects();
     for e in &fx {
         rt_try::<_, f::HubEffect>(e.clone());
     }
-    assert_covers(fx.iter().map(effect_r_variant), 10, "HubEffect");
+    assert_covers(fx.iter().map(effect_r_variant), 11, "HubEffect");
     // A device id from Swift must be 32 hex characters.
     let bad = f::HubEffect::CancelTask {
         device_id: "not-hex".into(),
@@ -734,6 +740,8 @@ fn server_msg_variant(v: &r::ServerMessage) -> usize {
         r::ServerMessage::Denied { .. } => 8,
         r::ServerMessage::Error { .. } => 9,
         r::ServerMessage::Pong => 10,
+        r::ServerMessage::AwaitingConfirmation => 11,
+        r::ServerMessage::Removed => 12,
     }
 }
 
@@ -801,6 +809,8 @@ fn protocol_messages_and_client_events_round_trip() {
             permissions: perms(),
         },
         r::ServerMessage::Pong,
+        r::ServerMessage::AwaitingConfirmation,
+        r::ServerMessage::Removed,
     ];
     for phase in PHASES {
         sm.push(r::ServerMessage::Progress {
@@ -823,7 +833,7 @@ fn protocol_messages_and_client_events_round_trip() {
     for m in &sm {
         rt::<_, f::ServerMessage>(m.clone());
     }
-    assert_covers(sm.iter().map(server_msg_variant), 11, "ServerMessage");
+    assert_covers(sm.iter().map(server_msg_variant), 13, "ServerMessage");
 
     let credentials = r::ClientCredentials {
         device_id: dev(7),

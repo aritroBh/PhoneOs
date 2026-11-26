@@ -169,8 +169,27 @@ impl Rig {
         (link, all_fx, Ok(all_events))
     }
 
-    /// Pairs a new device with a fresh offer; panics unless it works.
+    /// Pairs a new device with a fresh offer and confirms it on the phone (the owner's
+    /// step after comparing the check strings); panics unless it works.
     pub fn pair(&mut self, name: &str) -> (Link, ClientCredentials) {
+        let (mut link, creds) = self.pair_pending(name);
+        let fx = self.hub.confirm_device(creds.device_id, self.now).unwrap();
+        assert!(
+            fx.iter()
+                .any(|e| matches!(e, HubEffect::DeviceConfirmed { .. })),
+            "{fx:?}"
+        );
+        let welcome = deliver(&mut link, &fx);
+        assert!(
+            matches!(welcome[..], [ServerMessage::Welcome { .. }]),
+            "{welcome:?}"
+        );
+        (link, creds)
+    }
+
+    /// Pairs a new device with a fresh offer and leaves it pending (not confirmed on the
+    /// phone); panics unless the pair exchange works.
+    pub fn pair_pending(&mut self, name: &str) -> (Link, ClientCredentials) {
         let seed = self.seed();
         let offer = self.hub.open_pairing(self.now, &seed).unwrap();
         let client = RemoteClient::pair(&offer.code, name, &self.seed()).unwrap();

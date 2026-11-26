@@ -1167,6 +1167,20 @@ pub struct DeviceInfo {
     pub watch_screen: bool,
 }
 
+/// A device paired but not yet confirmed by the owner on the phone. It holds no
+/// permission. Show its name and `check` with "Confirm" and "Remove": the owner confirms
+/// only when the device they paired shows the same check string.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PendingDevice {
+    /// The device (its permissions are all off).
+    pub device: DeviceInfo,
+    /// Six digits in two groups ("123 456"), derived on each side from the pairing.
+    pub check: String,
+    /// Hub clock when it is removed unless confirmed (`nil` right after a restore, until
+    /// the hub's next call).
+    pub expires_at_ms: Option<u64>,
+}
+
 /// A skill or workflow remotes may list and run (`LocalEvent.catalogChanged`).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CatalogEntry {
@@ -1282,6 +1296,11 @@ pub enum AuditEvent {
     PermissionsChanged {
         permissions: RemotePermissions,
     },
+    /// The owner confirmed a paired device on the phone (it now has the new-device
+    /// permissions).
+    DeviceConfirmed,
+    /// A paired device was not confirmed within 10 minutes and was removed.
+    PendingExpired,
 }
 
 /// One entry of the phone's remote-control audit log (append it on `HubEffect.audit`).
@@ -1343,8 +1362,13 @@ pub enum HubEffect {
         category: RiskCategory,
         device_id: String,
     },
-    /// A device was paired (a `storeChanged` follows).
+    /// A device was paired (a `storeChanged` follows). It is pending: it holds no
+    /// permission until the owner confirms it on the phone (`JarvisRemoteHub.
+    /// pendingDevices()` lists it with its check string; `confirmDevice` or
+    /// `revokeDevice`).
     DevicePaired { device: DeviceInfo },
+    /// The owner confirmed a pending device (a `storeChanged` follows).
+    DeviceConfirmed { device: DeviceInfo },
     /// Append to the audit log.
     Audit { entry: AuditEntry },
 }
@@ -1460,6 +1484,15 @@ pub enum ServerMessage {
         code: RemoteErrorCode,
     },
     Pong,
+    /// Answer to `hello` from a device paired but not yet confirmed on the phone: it may
+    /// do nothing until the owner confirms it there. Show this device's own check string
+    /// (`JarvisRemoteClient.pairingCheck()`, kept with the pairing) and ask the owner to
+    /// confirm on the phone that it shows the same.
+    AwaitingConfirmation,
+    /// The phone's owner removed this device (or it was not confirmed in time); the
+    /// connection closes next. Authenticated, unlike a refused connection: forget the
+    /// phone and pair again.
+    Removed,
 }
 
 /// What a `JarvisRemoteClient` reports.

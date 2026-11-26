@@ -795,10 +795,9 @@ fn qr_payload_pairs_too_and_events_are_announced() {
     assert!(events
         .iter()
         .any(|e| matches!(e, ClientEvent::Paired { .. })));
-    // The client's automatic Hello confirmed the pairing and got a Welcome.
-    assert!(messages(&events)
-        .iter()
-        .any(|m| matches!(m, ServerMessage::Welcome { .. })));
+    // The client's automatic Hello kept the pairing; the device waits for the owner's
+    // confirmation on the phone and is told only that (no Welcome, no phone name).
+    assert_eq!(messages(&events), vec![ServerMessage::AwaitingConfirmation]);
     let paired = fx
         .iter()
         .find_map(|e| match e {
@@ -807,12 +806,24 @@ fn qr_payload_pairs_too_and_events_are_announced() {
         })
         .unwrap();
     assert_eq!(paired.name, "Browser");
-    assert_eq!(paired.permissions, RemotePermissions::NEW_DEVICE);
+    assert_eq!(paired.permissions, RemotePermissions::NONE);
     assert!(fx.contains(&HubEffect::StoreChanged));
     assert!(audits(&fx).contains(&AuditEvent::Paired {
         name: "Browser".into()
     }));
     assert!(!rig.hub.pairing_open());
+    // Confirmed on the phone: exactly the new-device permissions, announced and audited.
+    let fx = rig.hub.confirm_device(paired.id, rig.now).unwrap();
+    let confirmed = fx
+        .iter()
+        .find_map(|e| match e {
+            HubEffect::DeviceConfirmed { device } => Some(device.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(confirmed.permissions, RemotePermissions::NEW_DEVICE);
+    assert!(fx.contains(&HubEffect::StoreChanged));
+    assert!(audits(&fx).contains(&AuditEvent::DeviceConfirmed));
 }
 
 #[test]

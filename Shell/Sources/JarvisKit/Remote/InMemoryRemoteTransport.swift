@@ -204,6 +204,7 @@ public final class InProcessRemote: Sendable {
         var connected = false
         var deviceId: String?
         var credentials: Redacted<String>?
+        var check: String?
         var messages: [ServerMessage] = []
         var authFailed = false
     }
@@ -277,7 +278,8 @@ public final class InProcessRemote: Sendable {
             case .send:
                 break
             case .paired(let id, let json):
-                state.withLock { $0.deviceId = id; $0.credentials = Redacted(json) }
+                let check = (try? client.withLock { try $0.pairingCheck() }) ?? nil
+                state.withLock { $0.deviceId = id; $0.credentials = Redacted(json); $0.check = check }
             case .connected:
                 let id = try? client.withLock { try $0.deviceId() }
                 state.withLock { s in
@@ -308,6 +310,9 @@ public final class InProcessRemote: Sendable {
     public var deviceId: String? { state.withLock { $0.deviceId } }
     /// The credentials from pairing (SECRET: never print `reveal()`).
     public var credentials: Redacted<String>? { state.withLock { $0.credentials } }
+    /// After pairing: the check string the phone shows beside this device until its owner
+    /// confirms it there.
+    public var pairingCheck: String? { state.withLock { $0.check } }
     public var messages: [ServerMessage] { state.withLock { $0.messages } }
     public var isClosed: Bool { endpoint.isClosed }
 

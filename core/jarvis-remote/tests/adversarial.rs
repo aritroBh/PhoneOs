@@ -365,7 +365,9 @@ fn reused_and_cancelled_codes_are_rejected() {
     let (fx, _, conn) = try_pair(&mut rig, &offer.code);
     assert!(!paired(&fx));
     assert_eq!(closed(&fx, conn), Some(CloseReason::AuthFailed));
-    assert_eq!(rig.hub.devices().len(), 1);
+    // The one device paired with this code waits for the owner's confirmation.
+    assert_eq!(rig.hub.devices().len() + rig.hub.pending_devices().len(), 1);
+    assert_eq!(rig.hub.pending_devices().len(), 1);
 
     let offer = rig.hub.open_pairing(rig.now, &entropy(2)).unwrap();
     rig.hub.cancel_pairing();

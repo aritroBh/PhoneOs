@@ -38,15 +38,33 @@ public enum RemoteControllerError: Error, Sendable, Equatable, CustomStringConve
 /// not allow. This model offers only what the phone said this device may do, and survives a
 /// refusal (it is shown, never fatal).
 ///
-/// - **States** (`State.phase`): not paired → pairing (the code shown on the phone; the
-///   protocol has no short authentication string to compare: the 160-bit code itself is
-///   the secret, single use, 5 minutes) → connecting → connected → disconnected (with a
+/// - **States** (`State.phase`): not paired → pairing (the code shown on the phone: the
+///   160-bit secret, single use, 5 minutes) → connecting → connected → disconnected (with a
 ///   reason; reconnects by itself with a bounded backoff, `ControllerReconnectPolicy`).
-///   While connected the task is unknown (the phone shares nothing about it), idle,
-///   running (possibly waiting for an answer or an unlock), or ended with its outcome.
+///   Right after pairing the device is **waiting for confirmation**
+///   (`State.awaitingConfirmation`): the phone gives it nothing until its owner confirms
+///   it there, after checking that the phone shows the same check string as this device
+///   ("Confirm on the phone that it shows 123 456"). While connected the task is unknown
+///   (the phone shares nothing about it), idle, running (possibly waiting for an answer or
+///   an unlock), or ended with its outcome.
+/// - **Reconnects** are bounded: the attempt count starts again only after a connection
+///   stayed up for `healthyAfterMs`; a handshake that times out is "could not be reached",
+///   never a refusal; refused handshakes ("this phone did not accept this device": removed
+///   there, or paused after failed attempts, which a host on the network can cause) are
+///   tried again every `notAcceptedRetryDelayMs`, a bounded number of times until the
+///   owner's Reconnect. Nothing tells the owner to forget the phone on evidence a host on
+///   the network could fake.
+/// - **A question lives as long as its connection**: it is dropped whenever the
+///   connection ends (the phone sends a pending question again after the next subscribe),
+///   so a card from before a reconnect cannot be answered.
+/// - **The phone's text is sanitised by the core client** (controls, bidi characters and
+///   newlines removed, names 64 bytes, summaries 500 and screen text 4 000 characters), and
+///   Approve is offered only when the phone says so AND the core says the category can be
+///   approved remotely at all (`remotelyApprovable`).
 /// - **Pairing is persisted** in the `SecretStore` (the app: the Keychain) under
-///   `secretKey`: the core's credentials (the device key), the phone's name and address.
-///   Never printed (`description` is redacted), never anywhere else.
+///   `secretKey`: the core's credentials (the device key), the phone's name and address,
+///   this device's name and, until it is confirmed, the check string. Never printed
+///   (`description` is redacted), never anywhere else.
 /// - **Live view**: `live` follows the phone's stream ("Watch the screen layout", off by
 ///   default on the phone) into its own `LiveViewModel`; the protocol does not tell a device
 ///   whether it may watch, so the owner asks (`startWatching`) and the phone answers with a
@@ -57,8 +75,10 @@ public final class RemoteControllerModel {
     public static let secretKey = "remote-controller"
     /// Status lines kept.
     public static let maxEntries = 100
-    /// Messages kept in `received` (tests read them).
-    static let maxReceived = 2_000
+    /// Messages kept in `received` (tests read them), and the most bytes of text they may
+    /// hold together: a small, bounded tail, never a log.
+    static let maxReceived = 256
+    static let maxReceivedBytes = 256 * 1_024
 
     public enum Phase: Sendable, Equatable {
         case notPaired
@@ -75,17 +95,28 @@ public final class RemoteControllerModel {
         public var retrying: Bool
         /// Attempts made since the connection was last up.
         public var attempts: Int
+        /// The controller tries again by itself later, slowly (after the phone did not
+        /// accept this device: `notAcceptedRetryDelayMs`).
+        public var slowRetry: Bool = false
     }
 
     public enum DisconnectReason: Sendable, Equatable {
         /// The connection went (the phone closed it, Jarvis was closed there, the network).
         case connectionLost
-        /// Nothing answered at the address.
+        /// Nothing answered at the address, or the handshake did not finish in time.
         case unreachable(String)
-        /// The phone closed the connection before the handshake finished, more than once:
-        /// it no longer accepts this device (it was removed there, or it is paused after
-        /// failed attempts).
+        /// The phone closed the connection before the handshake finished, more than once.
+        /// It was removed there, or the phone paused it after failed attempts (which any
+        /// host on the network can cause), so this never says "removed": the controller
+        /// tries again later by itself.
+        case notAccepted
+        /// The phone said, in an authenticated frame (`removed`), that its owner removed
+        /// this device (or it was not confirmed in time). Only a party holding this
+        /// device's key can say that, so it is the one case that sends the owner to pair
+        /// again; nothing is retried by itself.
         case refused
+        /// The saved pairing cannot be read by the core on this device.
+        case pairingUnusable
         /// The retries were used up; the owner can try again.
         case gaveUp
         /// The owner disconnected.
@@ -95,7 +126,10 @@ public final class RemoteControllerModel {
             switch self {
             case .connectionLost: "The connection to the phone was lost."
             case .unreachable(let why): "The phone could not be reached: \(why)"
-            case .refused: "The phone no longer accepts this device. Its owner may have removed it; pair again."
+            case .notAccepted:
+                "This phone did not accept this device (removed there, or paused after failed attempts). Trying again in a while; if the phone no longer lists this device, pair again."
+            case .refused: "The phone's owner removed this device there. Forget the phone here and pair again."
+            case .pairingUnusable: "The saved pairing cannot be used on this device. Forget the phone and pair again."
             case .gaveUp: "Could not reconnect. Make sure Jarvis is open on the phone, on the same Wi-Fi, with Remote control on."
             case .byOwner: "Disconnected."
             }
@@ -171,9 +205,20 @@ public final class RemoteControllerModel {
         /// The owner wants the Live view (asked again after a reconnect).
         public var watchWanted = false
 
-        /// Public so the app can hold an empty state before the model exists (Mac run 160:
-        /// the synthesized initializer is internal).
+        /// The state before anything happened (not paired). Public: the app keeps a copy
+        /// (`AppModel.controllerState`) and starts from this one.
         public init() {}
+        /// Set while the phone says this device waits for its owner's confirmation there:
+        /// the check string this device derived at pairing ("123 456"), to compare with the
+        /// one the phone shows beside this device. The phone gives it nothing until then.
+        public var awaitingConfirmation: String?
+        /// The name this device gave the phone at pairing.
+        public var deviceName: String?
+
+        /// The line asking the owner to confirm on the phone.
+        public var confirmationPrompt: String? {
+            awaitingConfirmation.map { "Confirm on the phone that it shows \($0)" }
+        }
 
         public var isPaired: Bool {
             switch phase {
@@ -229,6 +274,7 @@ public final class RemoteControllerModel {
             case .disconnected(let d): return d.retrying ? "Reconnecting\u{2026}" : "Disconnected"
             case .connected: break
             }
+            if awaitingConfirmation != nil { return "Waiting for confirmation on the phone" }
             if question != nil { return "Waiting for an answer" }
             switch activity {
             case .unknown: return "Connected"
@@ -255,9 +301,11 @@ public final class RemoteControllerModel {
     /// Called after every change.
     public var onChange: (@MainActor () -> Void)?
 
-    /// Every message the phone sent, in order (bounded): what the tests check reached this
-    /// device.
+    /// The last messages the phone sent, in order (at most `maxReceived`, and
+    /// `maxReceivedBytes` of text): what the tests check reached this device.
     private(set) var received: [ServerMessage] = []
+    private var receivedSizes: [Int] = []
+    private var receivedBytes = 0
 
     private let secrets: any SecretStore
     private let random: any RandomSource
@@ -278,6 +326,8 @@ public final class RemoteControllerModel {
         var connection: (any RemoteConnection)?
         var authenticated = false
         var subscribed = false
+        /// The handshake did not finish in time and this side closed it.
+        var timedOut = false
     }
 
     private var link: Link?
@@ -285,6 +335,13 @@ public final class RemoteControllerModel {
     private var record: PairedPhone?
     private var attempts = 0
     private var refusals = 0
+    /// Slow retries made after the phone did not accept this device (reset by Reconnect,
+    /// `activate` on a new screen and a healthy connection).
+    private var slowRetries = 0
+    private var healthTimer: Task<Void, Never>?
+    /// The phone said (authenticated) that it removed this device: refusals after that are
+    /// read as that, not as a pause, and nothing is retried by itself.
+    private var removedByPhone = false
     private var retry: Task<Void, Never>?
     private var pinger: Task<Void, Never>?
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -321,6 +378,7 @@ public final class RemoteControllerModel {
                     record = try PairedPhone.decode(json)
                     state.phoneName = record?.phoneName
                     state.address = record?.address
+                    state.deviceName = record?.deviceName
                 }
             } catch {
                 state.lastError = "The saved pairing could not be read (\(error))."
@@ -333,31 +391,43 @@ public final class RemoteControllerModel {
             changed()
             return
         }
-        // A stored pairing connects by itself once; after a refusal, the retries running
-        // out or the owner's disconnect, only Reconnect tries again.
+        // A stored pairing connects by itself once; after the retries running out or the
+        // owner's disconnect, only Reconnect tries again. A screen that appears again
+        // allows the slow retries again.
+        slowRetries = 0
         if state.phase == .notPaired { connectNow() }
     }
 
+    /// The name this device gives the phone when it pairs (the owner may type another on
+    /// the pairing screen).
+    public var defaultDeviceName: String { deviceName }
+
     /// Pairs with the phone at `address` using the code shown on its screen (typed or
-    /// scanned). Returns once paired and connected, or once it failed (`state.lastError`).
+    /// scanned), under `name` (the owner's choice; default: this device's name). Returns
+    /// once paired, connected and answered by the phone (it has kept the device then), or
+    /// once it failed (`state.lastError`). The phone then lists this device as waiting for confirmation, with the check string shown here
+    /// (`state.awaitingConfirmation`); it gives it nothing until its owner confirms it there.
     /// A wrong code is refused by the phone the same way as any other failure (the protocol
-    /// says nothing more); after 5 wrong codes the phone pauses pairing for a while. Nothing
-    /// is retried by itself.
-    public func pair(code: Redacted<String>, address: RemotePhoneAddress) async throws {
+    /// says nothing more); after 5 wrong codes the phone pauses that pairing code for a
+    /// while. Nothing is retried by itself.
+    public func pair(code: Redacted<String>, address: RemotePhoneAddress, name: String? = nil) async throws {
         guard record == nil else { throw RemoteControllerError.busy("This device is already paired with a phone. Forget it first.") }
         guard state.phase == .notPaired else { throw RemoteControllerError.busy("A pairing is under way.") }
+        let typed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let chosen = typed.isEmpty ? deviceName : typed
         let entropy = try entropyBytes()
         let client: JarvisRemoteClient
         do {
-            client = try JarvisRemoteClient.pair(code: code.reveal(), deviceName: deviceName, entropy: entropy)
+            client = try JarvisRemoteClient.pair(code: code.reveal(), deviceName: chosen, entropy: entropy)
         } catch let error as JarvisError {
             if case .RemoteInvalidCode(let message) = error { throw fail(.invalidCode(message)) }
-            if case .RemoteInvalidName = error { throw fail(.core("This device's name cannot be used for pairing.")) }
+            if case .RemoteInvalidName = error { throw fail(.core("That name cannot be used for pairing. Type a name for this device.")) }
             throw fail(.core(CoreErrorMessage(error).message))
         }
         state.lastError = nil
         state.lastRefusal = nil
         state.address = address
+        state.deviceName = chosen
         state.phase = .pairing
         changed()
         await open(client, intent: .pair, address: address)
@@ -369,6 +439,7 @@ public final class RemoteControllerModel {
         guard record != nil else { return }
         attempts = 0
         refusals = 0
+        slowRetries = 0
         connectNow()
     }
 
@@ -392,6 +463,10 @@ public final class RemoteControllerModel {
         drop()
         try? secrets.delete(Self.secretKey)
         record = nil
+        removedByPhone = false
+        attempts = 0
+        refusals = 0
+        slowRetries = 0
         live = RemoteLiveView()
         state = State()
         changed()
@@ -495,7 +570,7 @@ public final class RemoteControllerModel {
             client = try JarvisRemoteClient.connect(credentialsJson: record.credentials, entropy: entropy)
         } catch {
             state.lastError = "The saved pairing cannot be used (\(CoreErrorMessage(error).message)). Forget the phone and pair again."
-            state.phase = .disconnected(Disconnect(reason: .refused, retrying: false, attempts: attempts))
+            state.phase = .disconnected(Disconnect(reason: .pairingUnusable, retrying: false, attempts: attempts))
             changed()
             return
         }
@@ -526,11 +601,17 @@ public final class RemoteControllerModel {
             return
         }
         link?.connection = connection
-        let timeout = handshakeTimeout
+        // A pairing is given at least 15 s: cutting it between the phone's accept and the
+        // device's first frame would leave this device holding a key the phone never kept.
+        let timeout = intent == .pair ? max(handshakeTimeout, .seconds(15)) : handshakeTimeout
         let sleep = self.sleep
         Task { @MainActor [weak self] in
             try? await sleep(timeout)
+            // A pairing never waits longer than this for the phone's answer to its hello.
+            if let self, self.generation == generation, self.link?.authenticated == true { self.resume() }
             guard let self, self.generation == generation, self.link?.authenticated == false else { return }
+            // Our own timeout, not the phone's refusal.
+            self.link?.timedOut = true
             connection.close()
         }
         Task { @MainActor [weak self] in
@@ -541,9 +622,11 @@ public final class RemoteControllerModel {
             }
             guard let self, self.generation == generation else { return }
             let authenticated = self.link?.authenticated ?? false
+            let timedOut = self.link?.timedOut ?? false
             self.link = nil
             self.stopPinging()
-            self.ended(generation: generation, intent: intent, authenticated: authenticated, unreachable: nil)
+            self.ended(generation: generation, intent: intent, authenticated: authenticated,
+                       unreachable: timedOut ? "the phone did not finish the handshake in time" : nil)
         }
         if intent == .pair {
             await withCheckedContinuation { waiters.append($0) }
@@ -556,6 +639,11 @@ public final class RemoteControllerModel {
             // The stream went with the connection; asked again after a reconnect.
             state.live = .idle
         }
+        healthTimer?.cancel()
+        healthTimer = nil
+        // A question lives only as long as the connection it came on: the phone sends a
+        // pending one again after the next subscribe.
+        state.question = nil
         if intent == .pair && record == nil {
             state.phase = .notPaired
             state.address = nil
@@ -566,18 +654,39 @@ public final class RemoteControllerModel {
             changed()
             return
         }
+        // The counts start again only once a connection stayed up (`healthTimer`), so a
+        // phone that accepts and drops at once uses up the attempts like any failure.
+        if removedByPhone {
+            state.phase = .disconnected(Disconnect(reason: .refused, retrying: false, attempts: attempts))
+            note(.connection, "The phone removed this device")
+            resume()
+            changed()
+            return
+        }
         if authenticated {
-            attempts = 0
-            refusals = 0
             note(.connection, "The connection to the phone was lost")
         } else if unreachable == nil {
             refusals += 1
         }
         if refusals >= policy.maxRefusals {
-            state.phase = .disconnected(Disconnect(reason: .refused, retrying: false, attempts: attempts))
-            note(.connection, "The phone no longer accepts this device")
+            // Removed on the phone, or paused there after failed attempts (any host on the
+            // network can cause that): tried again slowly, a bounded number of times.
+            let slow = slowRetries < policy.maxNotAcceptedRetries
+            state.phase = .disconnected(Disconnect(reason: .notAccepted, retrying: false, attempts: attempts, slowRetry: slow))
+            note(.connection, "The phone did not accept this device")
             resume()
             changed()
+            guard slow else { return }
+            slowRetries += 1
+            let sleep = self.sleep
+            let delay = policy.notAcceptedRetryDelayMs
+            retry = Task { @MainActor [weak self] in
+                do { try await sleep(.milliseconds(Int(clamping: delay))) } catch { return }
+                guard let self, !Task.isCancelled, case .disconnected(let d) = self.state.phase, d.slowRetry else { return }
+                // One more refusal brings it straight back here.
+                self.refusals = max(0, self.policy.maxRefusals - 1)
+                self.connectNow()
+            }
             return
         }
         let reason: DisconnectReason = unreachable.map { .unreachable($0) } ?? .connectionLost
@@ -604,10 +713,31 @@ public final class RemoteControllerModel {
     private func drop() {
         generation += 1
         stopPinging()
+        healthTimer?.cancel()
+        healthTimer = nil
         link?.connection?.close()
         link = nil
         if state.live == .watching || state.live == .starting { state.live = .idle }
+        // Not answerable any more: the phone sends a pending question again on the next
+        // connection.
+        state.question = nil
         resume()
+    }
+
+    /// Once the connection of this generation stayed up for `healthyAfterMs`, the attempt
+    /// and refusal counts start again.
+    private func startHealthTimer() {
+        healthTimer?.cancel()
+        let generation = self.generation
+        let sleep = self.sleep
+        let healthy = policy.healthyAfterMs
+        healthTimer = Task { @MainActor [weak self] in
+            do { try await sleep(.milliseconds(Int(clamping: healthy))) } catch { return }
+            guard let self, !Task.isCancelled, self.generation == generation, self.state.isConnected else { return }
+            self.attempts = 0
+            self.refusals = 0
+            self.slowRetries = 0
+        }
     }
 
     private func resume() {
@@ -638,7 +768,8 @@ public final class RemoteControllerModel {
     // MARK: - Bytes in
 
     private func receive(_ bytes: Data) {
-        guard let current = link, let connection = current.connection else { return }
+        // Nothing that arrives after this side gave up on the handshake is acted on.
+        guard let current = link, let connection = current.connection, !current.timedOut else { return }
         let received: ClientReceived
         do {
             received = try current.client.receiveAll(bytes: bytes)
@@ -662,8 +793,11 @@ public final class RemoteControllerModel {
                 break
             case .paired(let deviceId, let json):
                 // Kept before anything else happens on this connection.
-                let paired = PairedPhone(deviceId: deviceId, credentials: json, phoneName: nil,
+                var paired = PairedPhone(deviceId: deviceId, credentials: json, phoneName: nil,
                                          address: state.address ?? .inProcess)
+                // The string the phone shows beside this device until its owner confirms it.
+                paired.check = (try? current.client.pairingCheck()) ?? nil
+                paired.deviceName = state.deviceName
                 do {
                     try secrets.write(Self.secretKey, paired.encoded())
                     record = paired
@@ -676,15 +810,18 @@ public final class RemoteControllerModel {
             case .connected:
                 guard link?.generation == current.generation else { return }
                 link?.authenticated = true
-                attempts = 0
-                refusals = 0
+                removedByPhone = false
+                // The counts start again only once this connection stayed up.
+                startHealthTimer()
                 state.phase = .connected
                 state.lastError = nil
                 note(.connection, "Connected")
                 // A pairing client says hello by itself (it confirms the pairing).
                 if current.intent == .connect { try? send(.hello) }
                 startPinging()
-                resume()
+                // A pairing returns once the phone answered that hello (it has kept the
+                // device then); a connect returns now.
+                if current.intent == .connect { resume() }
             case .message(let message):
                 handle(message)
             case .undecodable:
@@ -694,11 +831,47 @@ public final class RemoteControllerModel {
         changed()
     }
 
-    private func handle(_ message: ServerMessage) {
+    /// Keeps `message` in the bounded `received` tail (internal for its test).
+    func keep(_ message: ServerMessage) {
+        let size = String(describing: message).utf8.count
         received.append(message)
-        if received.count > Self.maxReceived { received.removeFirst(received.count - Self.maxReceived) }
+        receivedSizes.append(size)
+        receivedBytes += size
+        while received.count > Self.maxReceived || (receivedBytes > Self.maxReceivedBytes && received.count > 1) {
+            received.removeFirst()
+            receivedBytes -= receivedSizes.removeFirst()
+        }
+    }
+
+    private func handle(_ message: ServerMessage) {
+        keep(message)
         switch message {
+        case .removed:
+            // Authenticated: the phone no longer knows this device. The connection closes
+            // next; it is not tried again by itself.
+            removedByPhone = true
+            state.awaitingConfirmation = nil
+            note(.connection, "The phone's owner removed this device")
+        case .awaitingConfirmation:
+            // Paired, not yet confirmed on the phone: the phone gives this device nothing.
+            let check = record?.check ?? "the string shown when this device paired"
+            if state.awaitingConfirmation == nil {
+                note(.connection, "Waiting for confirmation on the phone")
+            }
+            state.awaitingConfirmation = check
+            state.permissions = nil
+            resume()
         case .welcome(_, let permissions, let phoneName, let busy):
+            resume()
+            if state.awaitingConfirmation != nil || record?.check != nil {
+                // The phone only says welcome to a device its owner confirmed there.
+                if state.awaitingConfirmation != nil { note(.connection, "Confirmed on the phone") }
+                state.awaitingConfirmation = nil
+                if var r = record, r.check != nil {
+                    r.check = nil
+                    if (try? secrets.write(Self.secretKey, r.encoded())) != nil { record = r }
+                }
+            }
             apply(permissions)
             if let phoneName, phoneName != state.phoneName {
                 state.phoneName = phoneName
@@ -733,7 +906,10 @@ public final class RemoteControllerModel {
             let line = Self.line(progress)
             if line != Self.line(state.progress) { note(.progress, line) }
             state.progress = progress
-        case .confirmPending(let requestId, let category, let summary, let canApprove):
+        case .confirmPending(let requestId, let category, let summary, let phoneSaysApprovable):
+            // Defence in depth: Approve only where the core's own rule (the one the hub
+            // enforces) allows remote approval at all, whatever the phone says.
+            let canApprove = phoneSaysApprovable && (try? remotelyApprovable(category: category)) == true
             state.question = Question(requestId: requestId, category: category, summary: summary, canApprove: canApprove)
             note(.question, canApprove ? "Asks: \(summary)" : "Asks on the phone: \(summary)")
         case .confirmResolved(let requestId):
@@ -869,6 +1045,11 @@ struct PairedPhone: Codable, Sendable, Equatable, CustomStringConvertible, Custo
     var credentials: String
     var phoneName: String?
     var address: RemotePhoneAddress
+    /// The check string from pairing, while the phone has not confirmed this device
+    /// (absent in records written before the confirm step, and once confirmed).
+    var check: String?
+    /// The name this device gave the phone at pairing.
+    var deviceName: String?
 
     init(deviceId: String, credentials: String, phoneName: String?, address: RemotePhoneAddress) {
         self.deviceId = deviceId

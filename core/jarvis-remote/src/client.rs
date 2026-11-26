@@ -26,14 +26,18 @@ use crate::codec::{
     encode_record, from_hex, to_hex_secret, DeviceId, Kind, Record, RecordReader, PROTOCOL_VERSION,
 };
 use crate::crypto::{
-    auth_key, check_entropy, connect_client_mac, derive_device_key, pair_client_mac, pair_key,
-    verify_connect_phone_mac, verify_pair_phone_mac, Channel, Ephemeral, PairingSecret, Secret32,
-    Side, Transcript, MAC_LEN, NONCE_LEN, PUBLIC_LEN,
+    auth_key, check_entropy, confirm_check, confirm_commitment, connect_client_mac,
+    derive_device_id, derive_device_key, pair_client_mac, pair_key, verify_connect_phone_mac,
+    verify_pair_phone_mac, Channel, Ephemeral, PairingSecret, Secret32, Side, Transcript,
+    CONFIRM_LEN, MAC_LEN, NONCE_LEN, PUBLIC_LEN,
 };
 use crate::error::{ClientError, MessageError, PersistError};
-use crate::message::{ClientMessage, ServerMessage};
+use crate::hub::{MAX_CATALOG_ENTRIES, MAX_ID_CHARS, MAX_SCREEN_TEXT_CHARS, MAX_SUMMARY_CHARS};
+use crate::message::{CatalogEntry, ClientMessage, ServerMessage};
 use crate::pairing::parse_code;
+use crate::permissions::remotely_approvable;
 use crate::store::clean_name;
+use crate::text::clean_text;
 use crate::viewer::{ViewerEvent, ViewerMessage, ViewerRequest};
 use jarvis_viewer::delta::{peek, Admit, DeltaClass, DeltaError, StreamCursor};
 
@@ -143,6 +147,9 @@ enum State {
     AwaitPairAccept {
         t: Transcript,
         dh: Zeroizing<[u8; 32]>,
+        /// The phone's commitment to its confirmation value (absent from a phone that
+        /// predates the confirm step: such a pairing fails at `PairAccept`).
+        commitment: Option<[u8; CONFIRM_LEN]>,
     },
     AwaitConnectAccept {
         t: Transcript,
@@ -164,6 +171,8 @@ pub struct RemoteClient {
     state: State,
     reader: RecordReader,
     credentials: Option<ClientCredentials>,
+    /// The check string of a pairing made on this connection (see [`confirm_check`]).
+    pairing_check: Option<String>,
     viewer: ViewerStream,
 }
 
@@ -209,6 +218,7 @@ impl RemoteClient {
             state: State::AwaitHello,
             reader: RecordReader::new(),
             credentials: None,
+            pairing_check: None,
             viewer: ViewerStream::default(),
         })
     }
@@ -221,6 +231,15 @@ impl RemoteClient {
     /// The credentials this connection authenticated with (after pairing or connecting).
     pub fn credentials(&self) -> Option<&ClientCredentials> {
         self.credentials.as_ref()
+    }
+
+    /// After a pairing on this connection: the check string ("123 456") the phone shows
+    /// beside the new device. The owner confirms the device on the phone only when both
+    /// show the same string; until then the phone gives this device nothing. Keep it with
+    /// the credentials to show it again after a restart (it is not secret: it only lets
+    /// the owner compare). `None` for a connect with stored credentials.
+    pub fn pairing_check(&self) -> Option<&str> {
+        self.pairing_check.as_deref()
     }
 
     /// Feeds bytes from the phone. On `Err` the connection is unusable: close it. Live view
@@ -271,8 +290,8 @@ impl RemoteClient {
         let state = std::mem::replace(&mut self.state, State::Failed);
         self.state = match (state, kind) {
             (State::AwaitHello, Kind::ServerHello) => self.hello(&record.payload, events)?,
-            (State::AwaitPairAccept { t, dh }, Kind::PairAccept) => {
-                self.pair_accept(&t, &dh, &record.payload, events)?
+            (State::AwaitPairAccept { t, dh, commitment }, Kind::PairAccept) => {
+                self.pair_accept(&t, &dh, commitment, &record.payload, events)?
             }
             (State::AwaitConnectAccept { t, dh }, Kind::ConnectAccept) => {
                 self.connect_accept(&t, &dh, &record.payload, events)?
@@ -282,7 +301,7 @@ impl RemoteClient {
                     .open(&record.payload)
                     .map_err(|_| ClientError::Auth)?;
                 match ServerMessage::from_bytes(&pt) {
-                    Ok(m) => events.push(ClientEvent::Message(m)),
+                    Ok(m) => events.push(ClientEvent::Message(sanitize(m))),
                     Err(MessageError::UnknownType(t))
                         if ViewerMessage::TYPES.contains(&t.as_str()) =>
                     {
@@ -305,9 +324,17 @@ impl RemoteClient {
         payload: &[u8],
         events: &mut Vec<ClientEvent>,
     ) -> Result<State, ClientError> {
-        let (np, ep) = payload
+        // Np || Ep, then the phone's confirmation commitment (a phone that predates the
+        // confirm step sends none; a connect does not need it).
+        let (np, rest) = payload
             .split_at_checked(NONCE_LEN)
             .ok_or(ClientError::Auth)?;
+        let (ep, commitment) = rest.split_at_checked(PUBLIC_LEN).ok_or(ClientError::Auth)?;
+        let commitment: Option<[u8; CONFIRM_LEN]> = match commitment.len() {
+            0 => None,
+            CONFIRM_LEN => Some(commitment.try_into().map_err(|_| ClientError::Auth)?),
+            _ => return Err(ClientError::Auth),
+        };
         let np: [u8; NONCE_LEN] = np.try_into().map_err(|_| ClientError::Auth)?;
         let ep: [u8; PUBLIC_LEN] = ep.try_into().map_err(|_| ClientError::Auth)?;
         // The ephemeral is used exactly once; dropping it zeroizes the secret.
@@ -335,7 +362,7 @@ impl RemoteClient {
                 events.push(ClientEvent::Send {
                     bytes: encode_record(Kind::PairRequest, &body),
                 });
-                Ok(State::AwaitPairAccept { t, dh })
+                Ok(State::AwaitPairAccept { t, dh, commitment })
             }
             Intent::Connect { credentials } => {
                 let ak = auth_key(&credentials.device_key).map_err(|_| ClientError::Auth)?;
@@ -358,21 +385,33 @@ impl RemoteClient {
         &mut self,
         t: &Transcript,
         dh: &[u8; 32],
+        commitment: Option<[u8; CONFIRM_LEN]>,
         payload: &[u8],
         events: &mut Vec<ClientEvent>,
     ) -> Result<State, ClientError> {
         let Intent::Pair { secret, name } = &self.intent else {
             return Err(ClientError::Auth);
         };
-        let (id, mac) = payload.split_at_checked(16).ok_or(ClientError::Auth)?;
-        if mac.len() != MAC_LEN {
+        // device_id (16) || mac (32) || the phone's confirmation value (32).
+        let (id, rest) = payload.split_at_checked(16).ok_or(ClientError::Auth)?;
+        let (mac, confirm) = rest.split_at_checked(MAC_LEN).ok_or(ClientError::Auth)?;
+        let confirm: [u8; CONFIRM_LEN] = confirm.try_into().map_err(|_| ClientError::Auth)?;
+        let commitment = commitment.ok_or(ClientError::Auth)?;
+        if confirm_commitment(&confirm) != commitment {
             return Err(ClientError::Auth);
         }
         let device_id = DeviceId(id.try_into().map_err(|_| ClientError::Auth)?);
+        // The phone derives the id from the secret and the transcript; an id the far end
+        // chose freely would let it steer the check string.
+        if derive_device_id(secret, t).map_err(|_| ClientError::Auth)? != device_id {
+            return Err(ClientError::Auth);
+        }
         let pk = pair_key(secret).map_err(|_| ClientError::Auth)?;
         verify_pair_phone_mac(&pk, t, name, &device_id, mac).map_err(|_| ClientError::Auth)?;
         let device_key =
             derive_device_key(secret, dh, t, &device_id, name).map_err(|_| ClientError::Auth)?;
+        let check =
+            confirm_check(&device_key, &confirm, &device_id, t).map_err(|_| ClientError::Auth)?;
         let mut channel = Channel::new(Side::Remote, &device_key, dh, device_id, t)
             .map_err(|_| ClientError::Auth)?;
         let credentials = ClientCredentials {
@@ -380,6 +419,7 @@ impl RemoteClient {
             device_key,
         };
         self.credentials = Some(credentials.clone());
+        self.pairing_check = Some(check);
         events.push(ClientEvent::Paired { credentials });
         events.push(ClientEvent::Connected);
         // Confirms the pairing to the phone (see the module docs).
@@ -546,6 +586,79 @@ impl RemoteClient {
     }
 }
 
+/// The phone's text, made safe to show on the controller: the same cleaning and caps the
+/// hub applies when it sends (controls, bidi and zero-width characters removed, whitespace
+/// runs and newlines made one space, capped), so a compromised phone, or anyone holding
+/// the device key, cannot put a fake line, a reversed string or megabytes into the
+/// controller's status card, timeline or stored pairing. Approvability is clamped to the
+/// categories a remote may approve at all ([`remotely_approvable`]).
+fn sanitize(msg: ServerMessage) -> ServerMessage {
+    match msg {
+        ServerMessage::Welcome {
+            protocol_version,
+            permissions,
+            phone_name,
+            busy,
+        } => ServerMessage::Welcome {
+            protocol_version,
+            permissions,
+            phone_name: phone_name.map(|n| clean_name(&n)).filter(|n| !n.is_empty()),
+            busy,
+        },
+        ServerMessage::Progress {
+            step,
+            phase,
+            app,
+            last_action,
+            screen_text,
+            waiting_for_unlock,
+        } => ServerMessage::Progress {
+            step,
+            phase,
+            app: app.map(|a| clean_text(&a, 256, false)),
+            last_action: last_action.map(|a| clean_text(&a, 64, false)),
+            screen_text: screen_text.map(|t| clean_text(&t, MAX_SCREEN_TEXT_CHARS, false)),
+            waiting_for_unlock,
+        },
+        ServerMessage::ConfirmPending {
+            request_id,
+            category,
+            summary,
+            can_approve,
+        } => ServerMessage::ConfirmPending {
+            request_id,
+            category,
+            summary: clean_text(&summary, MAX_SUMMARY_CHARS, false),
+            can_approve: can_approve && remotely_approvable(category),
+        },
+        ServerMessage::Finished { status, summary } => ServerMessage::Finished {
+            status,
+            summary: clean_text(&summary, MAX_SUMMARY_CHARS, false),
+        },
+        ServerMessage::Skills { skills, workflows } => ServerMessage::Skills {
+            skills: clean_entries(skills),
+            workflows: clean_entries(workflows),
+        },
+        other => other,
+    }
+}
+
+/// Catalog entries as the hub keeps them: ids within [`MAX_ID_CHARS`] (left exact: they
+/// are sent back), names and summaries cleaned and capped, at most
+/// [`MAX_CATALOG_ENTRIES`].
+fn clean_entries(entries: Vec<CatalogEntry>) -> Vec<CatalogEntry> {
+    entries
+        .into_iter()
+        .filter(|e| !e.id.is_empty() && e.id.chars().count() <= MAX_ID_CHARS)
+        .take(MAX_CATALOG_ENTRIES)
+        .map(|e| CatalogEntry {
+            id: e.id,
+            name: clean_text(&e.name, 64, false),
+            summary: clean_text(&e.summary, 200, false),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -575,6 +688,7 @@ mod tests {
             state: State::Established(Box::new(remote)),
             reader: RecordReader::new(),
             credentials: None,
+            pairing_check: None,
             viewer: ViewerStream::default(),
         };
         (client, phone)

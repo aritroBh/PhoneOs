@@ -172,6 +172,8 @@ public enum RemoteAuditText {
         case .rejected(let request, let code): ("Rejected \(request ?? "a message"): \(describe(code))", true)
         case .revoked: ("Removed", false)
         case .permissionsChanged(let p): ("Permissions: \(describe(p))", false)
+        case .deviceConfirmed: ("Confirmed on this phone", false)
+        case .pendingExpired: ("Removed: not confirmed within 10 minutes", true)
         }
     }
 

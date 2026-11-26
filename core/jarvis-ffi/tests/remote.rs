@@ -264,6 +264,30 @@ fn the_full_protocol_through_the_ffi_objects() {
     assert!(events.iter().any(|e| matches!(e, ClientEvent::Connected)));
     debug_dump.push(format!("{events:?}"));
     assert!(!debug_dump.last().unwrap().contains(&credentials));
+    // The device is pending: told only that it waits for the owner's confirmation, and
+    // listed on the phone with the same check string the client shows.
+    assert_eq!(messages(events), vec![ServerMessage::AwaitingConfirmation]);
+    assert!(hub.devices().unwrap().is_empty());
+    let pending = hub.pending_devices().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].device.name, "Work Mac");
+    assert!(
+        !pending[0].device.permissions.start_tasks
+            && !pending[0].device.permissions.see_progress
+            && !pending[0].device.permissions.see_screen_text
+            && !pending[0].device.permissions.approve
+    );
+    let check = client.pairing_check().unwrap().unwrap();
+    assert_eq!(pending[0].check, check);
+    let now = phone.tick();
+    let fx = hub
+        .confirm_device(now, pending[0].device.id.clone())
+        .unwrap();
+    assert!(fx
+        .iter()
+        .any(|e| matches!(e, HubEffect::DeviceConfirmed { .. })));
+    let out = phone.apply(fx);
+    let events = pump(&mut phone, 1, &client, out);
     let welcome = messages(events);
     assert!(
         matches!(&welcome[..], [ServerMessage::Welcome { protocol_version, permissions, phone_name: Some(n), busy: Some(false) }]
@@ -699,9 +723,9 @@ fn pairing_lockout_limit_and_store_errors_are_typed_and_secret_free() {
     let other = JarvisRemoteHub::new(String::new(), "Other".into()).unwrap();
     let mut now = 1_000;
     let mut conn = 0;
-    // Five attempts with the wrong code lock pairing out.
+    // Five attempts with the wrong code lock this offer (wrong codes count per offer).
+    hub.open_pairing(now, rng.bytes()).unwrap();
     for _ in 0..5 {
-        hub.open_pairing(now, rng.bytes()).unwrap();
         let wrong = other.open_pairing(now, rng.bytes()).unwrap();
         let client =
             JarvisRemoteClient::pair(wrong.code.clone(), "Mallory".into(), rng.bytes()).unwrap();
@@ -730,14 +754,14 @@ fn pairing_lockout_limit_and_store_errors_are_typed_and_secret_free() {
     }
     let until = hub.pairing_locked_until_ms().unwrap();
     assert!(until > hub.clock_ms().unwrap());
-    let err = hub.open_pairing(now + 1, rng.bytes()).unwrap_err();
-    assert_eq!(err, JarvisError::RemotePairingLocked { until_ms: until });
-    assert!(
-        !hub.is_pairing_open().unwrap(),
-        "no offer left open while locked"
-    );
-    // Over once the lockout ends.
-    hub.open_pairing(until + 1, rng.bytes()).unwrap();
+    assert_eq!(hub.pairing_failed_attempts().unwrap(), 5);
+    // A new offer the owner opens starts clean: a host on the network without the code
+    // cannot keep the owner from pairing (controller review, finding 8).
+    hub.open_pairing(now + 1, rng.bytes()).unwrap();
+    assert!(hub.is_pairing_open().unwrap());
+    assert_eq!(hub.pairing_locked_until_ms().unwrap(), 0);
+    assert_eq!(hub.pairing_failed_attempts().unwrap(), 0);
+    hub.cancel_pairing().unwrap();
 
     // Eight devices: the limit.
     let devices: Vec<String> = (0..8)

@@ -31,19 +31,25 @@
 //!   observer sees connection timing and frame sizes); denial of service (an attacker on
 //!   the network can drop packets, fill the connection slots with half-open connections,
 //!   or lock out pairing and a known device id with wrong MACs; none of that adds a
-//!   capability beyond dropping packets); a shoulder-surfed pairing code used within its
-//!   5 minutes.
+//!   capability beyond dropping packets). A shoulder-surfed pairing code used within its
+//!   5 minutes pairs a device, but that device holds nothing until the owner confirms it
+//!   on the phone after comparing its check string (see the protocol below).
 //!
 //! # Protocol (version 2)
 //!
 //! ```text
 //! records    len u32 BE | version u8 | kind u8 | payload        (len ≤ MAX_RECORD_LEN)
-//! open       phone → ServerHello { Np, Ep }          derived from entropy + counter + clock
+//! open       phone → ServerHello { Np, Ep [, C] }    derived from entropy + counter + clock;
+//!            C = SHA-256(lp(label, confirm)), only while a pairing offer is open
 //! pair       remote → PairRequest { Nc, Er, name, HMAC(pair_key, "remote"‖v‖Np‖Nc‖Ep‖Er‖name) }
 //!            phone checks the open offer (unexpired, unused) and the MAC in constant time
-//!            phone → PairAccept { device_id, HMAC(pair_key, "phone"‖…‖name‖device_id) }
+//!            phone → PairAccept { device_id, HMAC(pair_key, "phone"‖…‖name‖device_id), confirm }
 //!            both: dh = X25519; device_key = HKDF(Np‖Nc, S‖dh, "device-key"‖device_id‖name)
-//!            the device is kept once its first authenticated frame arrives (client: Hello)
+//!            remote checks H(confirm) = C and device_id = HKDF(Np‖Nc, S, "device-id")
+//!            both: check = HKDF(Np‖Nc, device_key‖confirm, "confirm-check"‖id‖Ep‖Er‖C) mod 10^6
+//!            the device is kept, PENDING, once its first authenticated frame arrives
+//!            (client: Hello → AwaitingConfirmation); only the owner's confirm_device on the
+//!            phone gives it the new-device permissions
 //! connect    remote → ConnectRequest { device_id, Nc, Er, HMAC(auth_key, "remote"‖v‖id‖Np‖Nc‖Ep‖Er) }
 //!            phone refuses a recently seen (device_id, Nc); phone → ConnectAccept { HMAC(…"phone"…) }
 //! keys       r2p ‖ p2r = HKDF(Np‖Nc, device_key‖dh, "session"‖device_id‖Ep‖Er)  (forward secret)
@@ -53,9 +59,10 @@
 //!            the stream is ordered, so a gap means tampering); any failure closes
 //! failures   wrong code, expired/used offer, unknown device, bad MAC, bit flip, replay,
 //!            reorder, garbage: the same opaque close (CloseReason::AuthFailed)
-//! lockout    ≥ 5 failed MAC checks (pairing: one counter; connect: per claimed known
-//!            device) → that handshake refused for 5 s, doubling, max 10 min; forgotten
-//!            after 15 quiet minutes; reset by success; refusals during it are not counted
+//! lockout    ≥ 5 failed MAC checks (pairing: per offer, a new offer starts clean;
+//!            connect: per claimed known device) → that handshake refused for 5 s,
+//!            doubling, max 10 min (pairing: max 30 s, and at most 60 s in all per offer);
+//!            forgotten after 15 quiet minutes; refusals during it are not counted
 //! messages   JSON tagged with "type": ClientMessage (remote → phone), ServerMessage back
 //! ```
 //!
@@ -124,8 +131,11 @@
 //! 1. **Pairing relies on secret entropy alone** for authentication. A recorded pairing
 //!    handshake lets an attacker test guesses of the secret offline; 160 bits makes that
 //!    infeasible, but only while the code stays long and random. Never shorten it. An
-//!    active attacker who sees the code within its 5 minutes can pair (inherent without a
-//!    PAKE or an out-of-band comparison).
+//!    active attacker who sees the code within its 5 minutes can pair, or sit between the
+//!    owner's device and the phone; the confirm step (both sides show a six-digit check
+//!    string the owner compares, from a commitment scheme neither side can grind) makes
+//!    that visible: a second device is a second pending entry, a man in the middle shows
+//!    different digits on each side (1 in 10^6 to match by chance).
 //! 2. **The key schedule and transcripts** in [`crypto`] (labels, length-prefixing, what
 //!    is bound where, DH mixing), and the nonce construction (direction byte + counter
 //!    under per-direction keys).
@@ -162,8 +172,13 @@
 //!   cut.
 //! * The hub assigns confirmation ids; the shell reads [`RemoteHub::pending_request_id`]
 //!   after `ConfirmRequested` and echoes it in `ConfirmResolved`.
-//! * New pairings get [`RemotePermissions::NEW_DEVICE`] (start tasks, see progress):
-//!   pairing is an explicit owner act on the phone. Everything else defaults to off.
+//! * New pairings get [`RemotePermissions::NEW_DEVICE`] (start tasks, see progress) once
+//!   the owner confirms them on the phone ([`RemoteHub::confirm_device`]); until then they
+//!   hold nothing, and one not confirmed within [`PENDING_CONFIRM_TTL_MS`] is removed.
+//!   Everything else defaults to off.
+//! * Confirmation request ids are leased in blocks of [`REQUEST_LEASE_BLOCK`] and
+//!   persisted, so they never repeat across a hub rebuild (an old card cannot name a new
+//!   question).
 //! * The `Skills` reply drops entries from the end until it fits one frame.
 //! * A reused connection id (a shell bug) closes the old connection and refuses the new.
 
@@ -198,12 +213,13 @@ pub use codec::{
 pub use crypto::{PairingSecret, Secret32, MIN_ENTROPY_LEN};
 pub use error::{ClientError, CodeError, EntropyError, HubError, MessageError, PersistError};
 pub use hub::{
-    AuditEntry, AuditEvent, CloseReason, ConnId, HubEffect, LocalEvent, RemoteHub,
-    FAILURE_MEMORY_MS, HANDSHAKE_TIMEOUT_MS, IDLE_TIMEOUT_MS, LOCKOUT_BASE_MS, LOCKOUT_MAX_MS,
-    LOCKOUT_THRESHOLD, MAX_CATALOG_ENTRIES, MAX_CONNECTIONS, MAX_ID_CHARS, MAX_SCREEN_TEXT_CHARS,
-    MAX_SKILL_ARGS, MAX_SKILL_ARGS_TOTAL_CHARS, MAX_SKILL_ARG_KEY_CHARS, MAX_SKILL_ARG_VALUE_CHARS,
-    MAX_SUMMARY_CHARS, MAX_TASK_TEXT_CHARS, NONCE_LEASE_BLOCK, PREAUTH_AUDIT_WINDOW_MS,
-    RATE_MAX_MESSAGES, RATE_WINDOW_MS, RECENT_CONNECTS,
+    AuditEntry, AuditEvent, CloseReason, ConnId, HubEffect, LocalEvent, PendingDeviceInfo,
+    RemoteHub, FAILURE_MEMORY_MS, HANDSHAKE_TIMEOUT_MS, IDLE_TIMEOUT_MS, LOCKOUT_BASE_MS,
+    LOCKOUT_MAX_MS, LOCKOUT_THRESHOLD, MAX_CATALOG_ENTRIES, MAX_CONNECTIONS, MAX_ID_CHARS,
+    MAX_SCREEN_TEXT_CHARS, MAX_SKILL_ARGS, MAX_SKILL_ARGS_TOTAL_CHARS, MAX_SKILL_ARG_KEY_CHARS,
+    MAX_SKILL_ARG_VALUE_CHARS, MAX_SUMMARY_CHARS, MAX_TASK_TEXT_CHARS, NONCE_LEASE_BLOCK,
+    PAIR_LOCKOUT_BUDGET_MS, PAIR_LOCKOUT_MAX_MS, PENDING_CONFIRM_TTL_MS, PREAUTH_AUDIT_WINDOW_MS,
+    RATE_MAX_MESSAGES, RATE_WINDOW_MS, RECENT_CONNECTS, REQUEST_LEASE_BLOCK,
 };
 pub use message::{CatalogEntry, ClientMessage, DenyReason, ErrorCode, ServerMessage};
 pub use pairing::{
@@ -211,8 +227,8 @@ pub use pairing::{
 };
 pub use permissions::{remotely_approvable, RemotePermissions, NEVER_REMOTE_APPROVE};
 pub use store::{
-    clean_name, DeviceInfo, DeviceRecord, DeviceStore, DEVICE_STORE_VERSION, MAX_DEVICES,
-    MAX_DEVICE_NAME_BYTES,
+    clean_name, DeviceInfo, DeviceRecord, DeviceStore, PendingRecord, StoredHub,
+    DEVICE_STORE_VERSION, MAX_DEVICES, MAX_DEVICE_NAME_BYTES,
 };
 pub use viewer::{
     ViewerEndReason, ViewerEvent, ViewerMessage, ViewerRequest, MAX_DELTA_BASE64, MAX_DELTA_BYTES,

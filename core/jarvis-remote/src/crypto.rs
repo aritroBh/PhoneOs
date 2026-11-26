@@ -17,6 +17,10 @@
 //! device_id    = HKDF(salt = Np || Nc, ikm = S).expand(lp("device-id"), 16)
 //! device_key   = HKDF(salt = Np || Nc, ikm = S || dh).expand(lp("device-key", device_id, name), 32)
 //! auth_key     = HKDF(salt = "jarvis-remote v2 auth", ikm = device_key).expand("connect-auth", 32)
+//! confirm      = HKDF(salt = ENT, ikm = E).expand(lp("phone-confirm", c, t), 32)   (phone only)
+//! commitment   = SHA-256(lp("jarvis-remote v2 confirm-commit", confirm))         (in ServerHello)
+//! check        = HKDF(salt = Np || Nc, ikm = device_key || confirm)
+//!                    .expand(lp("confirm-check", device_id, Ep, Er, commitment), 8) mod 10^6
 //! r2p || p2r   = HKDF(salt = Np || Nc, ikm = device_key || dh)
 //!                    .expand(lp("session", device_id, Ep, Er), 64)
 //! nonce        = direction (1 byte: 0x52 remote→phone, 0x50 phone→remote) || 0 0 0 || counter (u64 BE)
@@ -38,7 +42,7 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{Zeroize, Zeroizing};
@@ -57,6 +61,11 @@ pub const TAG_LEN: usize = 16;
 pub const PAIRING_SECRET_LEN: usize = 20;
 /// Least entropy the shell must pass to any entry point, in bytes.
 pub const MIN_ENTROPY_LEN: usize = 32;
+/// Length of the phone's pairing confirmation value and of its commitment, in bytes.
+pub const CONFIRM_LEN: usize = 32;
+/// Digits in the pairing check string (shown as two groups of three).
+pub const CHECK_DIGITS: usize = 6;
+
 /// Least number of distinct byte values in that entropy (a sanity check, see
 /// [`check_entropy`]).
 pub const MIN_DISTINCT_ENTROPY_BYTES: usize = 16;
@@ -67,6 +76,8 @@ const ENTROPY_SALT: &[u8] = b"jarvis-remote v2 entropy";
 const PAIR_SALT: &[u8] = b"jarvis-remote v2 pair";
 /// Salt for the connect-authentication key.
 const AUTH_SALT: &[u8] = b"jarvis-remote v2 auth";
+/// Label of the confirmation commitment.
+const CONFIRM_COMMIT_LABEL: &[u8] = b"jarvis-remote v2 confirm-commit";
 
 /// Direction byte in the AEAD nonce: remote to phone.
 pub const DIR_R2P: u8 = 0x52;
@@ -194,6 +205,10 @@ pub struct Ephemeral {
     secret: StaticSecret,
     /// The public key sent in clear.
     pub public: [u8; PUBLIC_LEN],
+    /// The phone's confirmation value for the pairing check string: committed to in the
+    /// `ServerHello` ([`confirm_commitment`]) and revealed in the `PairAccept`, so neither
+    /// side can choose it after seeing the other's values (see [`confirm_check`]).
+    pub confirm: [u8; CONFIRM_LEN],
 }
 
 impl fmt::Debug for Ephemeral {
@@ -205,10 +220,18 @@ impl fmt::Debug for Ephemeral {
 }
 
 impl Ephemeral {
-    fn derive(entropy: &[u8], nonce_info: &[u8], secret_info: &[u8]) -> Result<Self, CryptoError> {
+    fn derive(
+        entropy: &[u8],
+        nonce_info: &[u8],
+        secret_info: &[u8],
+        confirm_info: &[u8],
+    ) -> Result<Self, CryptoError> {
         let hk = Hkdf::<Sha256>::new(Some(ENTROPY_SALT), entropy);
         let mut nonce = [0u8; NONCE_LEN];
         hk.expand(nonce_info, &mut nonce).map_err(|_| CryptoError)?;
+        let mut confirm = [0u8; CONFIRM_LEN];
+        hk.expand(confirm_info, &mut confirm)
+            .map_err(|_| CryptoError)?;
         let mut sk = Zeroizing::new([0u8; 32]);
         hk.expand(secret_info, sk.as_mut())
             .map_err(|_| CryptoError)?;
@@ -218,6 +241,7 @@ impl Ephemeral {
             nonce,
             secret,
             public,
+            confirm,
         })
     }
 
@@ -229,6 +253,7 @@ impl Ephemeral {
             entropy,
             &lp(&[b"phone-nonce", &c, &t]),
             &lp(&[b"phone-ephemeral", &c, &t]),
+            &lp(&[b"phone-confirm", &c, &t]),
         )
     }
 
@@ -238,6 +263,7 @@ impl Ephemeral {
             entropy,
             &lp(&[b"remote-nonce"]),
             &lp(&[b"remote-ephemeral"]),
+            &lp(&[b"remote-confirm"]),
         )
     }
 
@@ -465,6 +491,51 @@ pub fn verify_pair_phone_mac(
         &pair_transcript(b"phone", t, name, Some(device_id)),
         tag,
     )
+}
+
+/// The phone's commitment to its confirmation value, sent in every `ServerHello`:
+/// `SHA-256(lp("jarvis-remote v2 confirm-commit", confirm))`.
+pub fn confirm_commitment(confirm: &[u8; CONFIRM_LEN]) -> [u8; CONFIRM_LEN] {
+    let digest = Sha256::digest(lp(&[CONFIRM_COMMIT_LABEL, confirm]));
+    let mut out = [0u8; CONFIRM_LEN];
+    for (dst, src) in out.iter_mut().zip(digest.iter()) {
+        *dst = *src;
+    }
+    out
+}
+
+/// The pairing check string both sides show after a pair exchange: six decimal digits in
+/// two groups ("123 456"), from
+/// `HKDF(salt = Np || Nc, ikm = device_key || confirm).expand(lp("confirm-check", device_id,
+/// Ep, Er, commitment), 8)` read as a big-endian integer modulo 10^6.
+///
+/// The device key already depends on the pairing secret, both nonces, the DH result and
+/// the name; `confirm` is the phone's value, committed to before the remote chose its own
+/// and revealed after it. So a man in the middle (or a second device paired with a
+/// glimpsed code) ends up with a different device key on each side, and cannot grind
+/// either side's string to match the other: on the phone's side it does not know `confirm`
+/// when it chooses its values, on the remote's side it committed to `confirm` before the
+/// remote chose its values (and the remote checks the device id the phone assigns).
+pub fn confirm_check(
+    device_key: &Secret32,
+    confirm: &[u8; CONFIRM_LEN],
+    device_id: &DeviceId,
+    t: &Transcript,
+) -> Result<String, CryptoError> {
+    let commitment = confirm_commitment(confirm);
+    let mut okm = [0u8; 8];
+    Hkdf::<Sha256>::new(
+        Some(&t.salt()),
+        &concat_secret(device_key.as_bytes(), confirm),
+    )
+    .expand(
+        &lp(&[b"confirm-check", &device_id.0, &t.ep, &t.er, &commitment]),
+        &mut okm,
+    )
+    .map_err(|_| CryptoError)?;
+    let n = u64::from_be_bytes(okm) % 1_000_000;
+    okm.zeroize();
+    Ok(format!("{:03} {:03}", n / 1_000, n % 1_000))
 }
 
 /// The remote's connect proof (it holds the device key), bound to the transcript.

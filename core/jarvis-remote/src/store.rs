@@ -25,7 +25,9 @@ pub const MAX_DEVICES: usize = 8;
 /// Longest device name, in bytes of UTF-8.
 pub const MAX_DEVICE_NAME_BYTES: usize = 64;
 /// Current schema version of the persisted device list. Version 2 added `nonce_lease`;
-/// version 1 is not read (it was never shipped).
+/// version 1 is not read (it was never shipped). Later additions are optional fields
+/// written only when used (`watch_screen`, `pending_check`, `request_lease`), so a store
+/// that does not use them is byte for byte what older versions wrote.
 pub const DEVICE_STORE_VERSION: u32 = 2;
 
 /// One paired remote device.
@@ -80,6 +82,31 @@ impl DeviceRecord {
     }
 }
 
+/// A device paired but not yet confirmed by the owner on the phone (see
+/// [`crate::RemoteHub::confirm_device`]): it holds no permission at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingRecord {
+    /// The device (its permissions are all off while pending).
+    pub record: DeviceRecord,
+    /// The check string both sides showed after the pair exchange ("123 456").
+    pub check: String,
+}
+
+/// Everything [`crate::RemoteHub::to_json`] persists, as [`DeviceStore::from_json_full`]
+/// reads it back.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StoredHub {
+    /// Confirmed devices and the nonce lease.
+    pub store: DeviceStore,
+    /// Devices holding the `watch_screen` permission.
+    pub watch: BTreeSet<DeviceId>,
+    /// Devices waiting for the owner's confirmation.
+    pub pending: Vec<PendingRecord>,
+    /// Every confirmation request id below this value may already have been used; a
+    /// restored hub starts numbering here (0 in stores written before it existed).
+    pub request_lease: u64,
+}
+
 /// The persisted hub state: paired devices in pairing order, and the phone-nonce lease.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DeviceStore {
@@ -95,6 +122,9 @@ pub struct DeviceStore {
 struct StoreJson {
     schema_version: u32,
     nonce_lease: u64,
+    /// See [`StoredHub::request_lease`]. Absent in stores written before it existed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    request_lease: u64,
     devices: Vec<DeviceJson>,
 }
 
@@ -111,11 +141,34 @@ struct DeviceJson {
     /// store without it is byte for byte what older versions wrote.
     #[serde(default, skip_serializing_if = "is_false")]
     watch_screen: bool,
+    /// Present while the device waits for the owner's confirmation on the phone: its
+    /// check string. Absent in records written before the confirm step existed, which
+    /// load as confirmed (they were paired under the rules of their time).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_check: Option<String>,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// Whether `s` is a check string as [`crate::crypto::confirm_check`] formats it.
+fn is_check_string(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 7
+        && b.iter().enumerate().all(|(i, c)| {
+            if i == 3 {
+                *c == b' '
+            } else {
+                c.is_ascii_digit()
+            }
+        })
 }
 
 impl DeviceStore {
@@ -127,20 +180,40 @@ impl DeviceStore {
     /// [`DeviceStore::to_json`] plus the devices holding the `watch_screen` permission
     /// (kept beside [`RemotePermissions`], see [`crate::RemoteHub::watch_screen`]).
     pub fn to_json_with_watch(&self, watch_screen: &BTreeSet<DeviceId>) -> Zeroizing<String> {
+        Self::to_json_full(&StoredHub {
+            store: self.clone(),
+            watch: watch_screen.clone(),
+            pending: Vec::new(),
+            request_lease: 0,
+        })
+    }
+
+    /// Serializes everything the hub persists (see [`StoredHub`]), keys included.
+    /// Pending devices follow the confirmed ones and carry their check string.
+    pub fn to_json_full(hub: &StoredHub) -> Zeroizing<String> {
+        let json = |d: &DeviceRecord, pending_check: Option<String>| DeviceJson {
+            id: d.id,
+            name: d.name.clone(),
+            key: to_hex_secret(d.key.as_bytes()),
+            permissions: d.permissions,
+            paired_at_ms: d.paired_at_ms,
+            watch_screen: pending_check.is_none() && hub.watch.contains(&d.id),
+            pending_check,
+        };
         let doc = StoreJson {
             schema_version: DEVICE_STORE_VERSION,
-            nonce_lease: self.nonce_lease,
-            devices: self
+            nonce_lease: hub.store.nonce_lease,
+            request_lease: hub.request_lease,
+            devices: hub
+                .store
                 .devices
                 .iter()
-                .map(|d| DeviceJson {
-                    id: d.id,
-                    name: d.name.clone(),
-                    key: to_hex_secret(d.key.as_bytes()),
-                    permissions: d.permissions,
-                    paired_at_ms: d.paired_at_ms,
-                    watch_screen: watch_screen.contains(&d.id),
-                })
+                .map(|d| json(d, None))
+                .chain(
+                    hub.pending
+                        .iter()
+                        .map(|p| json(&p.record, Some(p.check.clone()))),
+                )
                 .collect(),
         };
         Zeroizing::new(serde_json::to_string(&doc).unwrap_or_else(|_| String::from("{}")))
@@ -153,8 +226,17 @@ impl DeviceStore {
     }
 
     /// [`DeviceStore::from_json`] plus the devices holding the `watch_screen` permission
-    /// (none for records written before it existed).
+    /// (none for records written before it existed). Devices still waiting for the
+    /// owner's confirmation are left out (never loaded as confirmed).
     pub fn from_json_with_watch(json: &str) -> Result<(Self, BTreeSet<DeviceId>), PersistError> {
+        Self::from_json_full(json).map(|h| (h.store, h.watch))
+    }
+
+    /// Loads everything [`DeviceStore::to_json_full`] wrote. Records without a
+    /// `pending_check` (every record written before the confirm step) are confirmed
+    /// devices; records with one stay pending. Validated like [`DeviceStore::from_json`],
+    /// across confirmed and pending devices together.
+    pub fn from_json_full(json: &str) -> Result<StoredHub, PersistError> {
         let probe: serde_json::Value =
             serde_json::from_str(json).map_err(|e| PersistError::corrupt(&e))?;
         let version = probe
@@ -169,28 +251,62 @@ impl DeviceStore {
         let doc: StoreJson =
             serde_json::from_value(probe).map_err(|e| PersistError::corrupt(&e))?;
         let mut devices: Vec<DeviceRecord> = Vec::with_capacity(doc.devices.len());
+        let mut pending: Vec<PendingRecord> = Vec::new();
         let mut watch = BTreeSet::new();
         for d in doc.devices {
-            if d.watch_screen {
-                watch.insert(d.id);
-            }
             let key_bytes: [u8; 32] = from_hex(&d.key)
                 .and_then(|b| b.as_slice().try_into().ok())
                 .ok_or_else(|| PersistError::Invalid("invalid key".into()))?;
-            devices.push(DeviceRecord {
+            let record = DeviceRecord {
                 id: d.id,
                 name: d.name,
                 key: Secret32::from_bytes(key_bytes),
                 permissions: d.permissions,
                 paired_at_ms: d.paired_at_ms,
-            });
+            };
+            match d.pending_check {
+                Some(check) => {
+                    if !is_check_string(&check) {
+                        return Err(PersistError::Invalid("invalid check string".into()));
+                    }
+                    // A pending device holds nothing, whatever the record says.
+                    pending.push(PendingRecord {
+                        record: DeviceRecord {
+                            permissions: RemotePermissions::NONE,
+                            ..record
+                        },
+                        check,
+                    });
+                }
+                None => {
+                    if d.watch_screen {
+                        watch.insert(d.id);
+                    }
+                    devices.push(record);
+                }
+            }
         }
         let store = Self {
             devices,
             nonce_lease: doc.nonce_lease,
         };
         store.validate()?;
-        Ok((store, watch))
+        let all = Self {
+            devices: store
+                .devices
+                .iter()
+                .cloned()
+                .chain(pending.iter().map(|p| p.record.clone()))
+                .collect(),
+            nonce_lease: 0,
+        };
+        all.validate()?;
+        Ok(StoredHub {
+            store,
+            watch,
+            pending,
+            request_lease: doc.request_lease,
+        })
     }
 
     /// Checks the invariants [`DeviceStore::from_json`] enforces: at most

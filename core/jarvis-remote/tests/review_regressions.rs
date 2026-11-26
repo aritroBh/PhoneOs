@@ -774,8 +774,11 @@ fn f10_device_is_kept_once_its_first_frame_arrives() {
         .position(|e| matches!(e, HubEffect::StoreChanged))
         .unwrap();
     assert!(i_paired < i_store);
-    assert_eq!(rig.hub.devices().len(), 1);
+    // Kept, and persisted, as pending: confirmed only by the owner on the phone.
+    assert!(rig.hub.devices().is_empty());
+    assert_eq!(rig.hub.pending_devices().len(), 1);
     assert!(rig.hub.to_json().contains("\"name\":\"Mac\""));
+    assert!(rig.hub.to_json().contains("\"pending_check\""));
 }
 
 // ---- F11: with_store validation -----------------------------------------------------

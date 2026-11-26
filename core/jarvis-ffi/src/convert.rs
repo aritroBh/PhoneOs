@@ -2623,6 +2623,8 @@ impl From<r::AuditEvent> for AuditEvent {
             r::AuditEvent::PermissionsChanged { permissions } => AuditEvent::PermissionsChanged {
                 permissions: permissions.into(),
             },
+            r::AuditEvent::DeviceConfirmed => AuditEvent::DeviceConfirmed,
+            r::AuditEvent::PendingExpired => AuditEvent::PendingExpired,
         }
     }
 }
@@ -2658,6 +2660,8 @@ impl From<AuditEvent> for r::AuditEvent {
             AuditEvent::PermissionsChanged { permissions } => r::AuditEvent::PermissionsChanged {
                 permissions: permissions.into(),
             },
+            AuditEvent::DeviceConfirmed => r::AuditEvent::DeviceConfirmed,
+            AuditEvent::PendingExpired => r::AuditEvent::PendingExpired,
         }
     }
 }
@@ -2754,6 +2758,9 @@ impl From<r::HubEffect> for HubEffect {
             r::HubEffect::DevicePaired { device } => HubEffect::DevicePaired {
                 device: device.into(),
             },
+            r::HubEffect::DeviceConfirmed { device } => HubEffect::DeviceConfirmed {
+                device: device.into(),
+            },
             r::HubEffect::Audit { entry } => HubEffect::Audit {
                 entry: entry.into(),
             },
@@ -2817,6 +2824,9 @@ impl TryFrom<HubEffect> for r::HubEffect {
                 device_id: device_id_from(&device_id)?,
             },
             HubEffect::DevicePaired { device } => r::HubEffect::DevicePaired {
+                device: device.try_into()?,
+            },
+            HubEffect::DeviceConfirmed { device } => r::HubEffect::DeviceConfirmed {
                 device: device.try_into()?,
             },
             HubEffect::Audit { entry } => r::HubEffect::Audit {
@@ -3015,6 +3025,8 @@ impl From<r::ServerMessage> for ServerMessage {
             },
             r::ServerMessage::Error { code } => ServerMessage::Error { code: code.into() },
             r::ServerMessage::Pong => ServerMessage::Pong,
+            r::ServerMessage::AwaitingConfirmation => ServerMessage::AwaitingConfirmation,
+            r::ServerMessage::Removed => ServerMessage::Removed,
         }
     }
 }
@@ -3081,6 +3093,8 @@ impl From<ServerMessage> for r::ServerMessage {
             },
             ServerMessage::Error { code } => r::ServerMessage::Error { code: code.into() },
             ServerMessage::Pong => r::ServerMessage::Pong,
+            ServerMessage::AwaitingConfirmation => r::ServerMessage::AwaitingConfirmation,
+            ServerMessage::Removed => r::ServerMessage::Removed,
         }
     }
 }
