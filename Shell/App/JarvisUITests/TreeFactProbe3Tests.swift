@@ -8,14 +8,16 @@ import JarvisKit
 /// Probe round 3, on the Playground's own fixture screens ("Fact probes 3",
 /// `ProbeFixtures3.swift`): facts the safety gate assumes but no real iOS 26.5 tree had shown
 /// (docs/ARCHITECTURE.md, *What real trees showed*; the audit's P2, P3, P4, P9, P10, P11), and
-/// P13 (row swipe lengths) and P14 (the runner under a hung front app).
+/// P13 (row swipe lengths), P13e-g (a second swipe or a tap on a row whose actions are revealed,
+/// and the tree while they are) and P14 (the runner under a hung front app).
 /// Conventions: `Probe3Case`. Each test RECORDS; it fails only when its own set-up cannot run
 /// (the app does not launch) and skips, after attaching the evidence, when a state cannot be
 /// produced on a simulator.
 ///
 /// Simulator time (typical, run 139 where measured): P2 ~115 s, P3 ~35 s, P4a ~25 s,
 /// P4b ~105 s, P4c ~115 s, P4d ~85 s, P9a ~70 s, P9b ~80 s, P10 ~50 s, P11a ~105 s,
-/// P11b ~55 s, P13 ~130 s, P14 ~100 s.
+/// P11b ~55 s, P13 ~130 s, P14 ~100 s; P13e ~190 s, P13f ~50 s, P13g ~35 s (estimated, not yet
+/// measured).
 final class TreeFactProbe3Tests: Probe3Case {
     /// The symbols of `Probe3SymbolsFixture.symbols`, in the same order.
     static let symbolNames = [
@@ -1227,6 +1229,667 @@ final class TreeFactProbe3Tests: Probe3Case {
         let revealedText = revealedBy.isEmpty ? "none" : revealedBy.joined(separator: "; ")
         fact("P13 \(item.set) summary: deleted by \(deletedText); revealed by \(revealedText)")
         return nil
+    }
+
+    // MARK: - P13e, P13f, P13g: a row whose actions are revealed
+
+    /// The Swipe rows, revealed screen (`Probe3SwipeRevealedFixture`) and its status line.
+    private static let revealedScreenId = "probe3.swipesRevealed"
+    private static let revealedStatusId = "probe3.swiperevealed.status"
+    /// The second drags of P13e, as shares of the row's width (0.45 is Jarvis's bound).
+    private static let secondShares = [0.10, 0.20, 0.30, 0.40, 0.45]
+
+    /// What is done to a row after a first drag of 0.30 of its width (0.40 when 0.30 revealed
+    /// nothing) revealed its actions.
+    private enum SecondMove {
+        /// A drag of `share` of the row, the way the first went, from the core's start on the
+        /// row (where `coreSwipe` starts; the core shortens its drag from there).
+        case drag(Double)
+        /// The same, from 10 pt beside the revealed buttons, on the row's content still shown.
+        case dragFromContent(Double)
+        /// The same, from the centre of the revealed button that removes the row.
+        case dragFromButton(Double)
+        /// A drag of `share` the other way, from the core's start for that way.
+        case opposite(Double)
+        /// No XCUITest drag: the runner's swipe on the row twice, 1 s apart; `bounded`: the
+        /// core's start shortened to 0.45 of the row (what Jarvis sends now), else P13a's
+        /// unshortened core swipe.
+        case runnerTwice(bounded: Bool)
+        /// A tap in the middle of the row's content still shown.
+        case tapContent
+        /// A tap on the revealed button labelled so.
+        case tapButton(String)
+    }
+
+    /// One row kind of the Swipe rows, revealed screen: its picker segment, its rows' text,
+    /// its actions (the one that removes the row first), the way the finger reveals them, and
+    /// the moves made (one fresh row each).
+    private struct RevealSet {
+        var segment: String
+        var set: String
+        var prefix: String
+        var actions: [String]
+        var rightward: Bool
+        var moves: [SecondMove]
+    }
+
+    /// A row as one snapshot shows it: its text there or not (deleted), the text's and its
+    /// Cell's frames, the action buttons in its band, the status line, an alert.
+    private struct RowState {
+        var tree: RawElement?
+        var present = false
+        var textFrame: Rect?
+        var cellFrame: Rect?
+        var buttons: [Probe3Case.Hit] = []
+        var status = "(no snapshot)"
+        var alert = false
+    }
+
+    private static let insetOneSet = RevealSet(
+        segment: "Inset 1", set: "one trailing action, full width (400 pt rows)", prefix: "Inset one row", actions: ["Delete"], rightward: false,
+        moves: secondShares.map { SecondMove.drag($0) }
+            + [SecondMove.opposite(0.45), SecondMove.dragFromContent(0.45), SecondMove.dragFromButton(0.45),
+               SecondMove.runnerTwice(bounded: false), SecondMove.runnerTwice(bounded: true)])
+    private static let edgeOneSet = RevealSet(
+        segment: "Edge 1", set: "one trailing action, edge to edge (440 pt rows)", prefix: "Edge one row", actions: ["Delete"], rightward: false,
+        moves: secondShares.map { SecondMove.drag($0) } + [SecondMove.dragFromButton(0.45)])
+    private static let insetTwoSet = RevealSet(
+        segment: "Inset 2", set: "two trailing actions, full width (400 pt rows)", prefix: "Inset two row", actions: ["Delete", "Flag"], rightward: false,
+        moves: secondShares.map { SecondMove.drag($0) }
+            + [SecondMove.opposite(0.45), SecondMove.dragFromContent(0.45), SecondMove.dragFromButton(0.45), SecondMove.runnerTwice(bounded: true)])
+    private static let leadingOneSet = RevealSet(
+        segment: "Leading", set: "one leading action, left to right (440 pt rows)", prefix: "Leading one row", actions: ["Remove"], rightward: true,
+        moves: secondShares.map { SecondMove.drag($0) } + [SecondMove.opposite(0.45), SecondMove.runnerTwice(bounded: true)])
+    private static let tapSet = RevealSet(
+        segment: "Taps", set: "button rows, two trailing actions, full width (400 pt rows)", prefix: "Tap row", actions: ["Delete", "Flag"], rightward: false,
+        moves: [SecondMove.tapContent, SecondMove.tapButton("Delete"), SecondMove.tapButton("Flag")])
+
+    @MainActor
+    func testP13e_SecondSwipeOnRevealedRow() async throws {
+        try await revealProbe("p13e-second-swipe", "P13e", [Self.insetOneSet, Self.edgeOneSet, Self.insetTwoSet, Self.leadingOneSet], treeOnly: false, allowance: 420,
+                              "After a first drag of 0.30 of the row revealed its actions (the row then rests offset by them): does a second drag of 0.10, 0.20, 0.30, 0.40 or 0.45 of the row, the same way, delete it (offsets adding up), on 400 pt rows with one trailing Delete, 440 pt edge-to-edge rows with one, 400 pt rows with Delete and Flag, and 440 pt rows with one leading Remove? What do a second drag the other way, one from the revealed Delete and one from the content still shown do, and the runner's own swipe made twice in a row?")
+    }
+
+    @MainActor
+    func testP13f_TreeWhileRevealed() async throws {
+        let sets = [Self.insetOneSet, Self.edgeOneSet, Self.insetTwoSet, Self.leadingOneSet]
+        try await revealProbe("p13f-revealed-tree", "P13f", sets, treeOnly: true, allowance: 180,
+                              "With one row's actions revealed: are the action buttons in the tree, where (inside the row's Cell, siblings, another container), with which types, labels, identifiers and frames; does the Cell's frame move or shrink; does anything on the Cell (label, value, identifier, selected) say it is swiped; what does the runner's typed tree (the core's view) show?")
+    }
+
+    @MainActor
+    func testP13g_TapOnRevealedRow() async throws {
+        try await revealProbe("p13g-revealed-tap", "P13g", [Self.tapSet], treeOnly: false, allowance: 150,
+                              "With a button row's actions (Delete, Flag) revealed: does a tap on the row's content close them or activate the row; does a tap on the revealed Delete delete at once or ask; what does a tap on the revealed Flag do?")
+    }
+
+    @MainActor
+    private func revealProbe(_ name: String, _ tag: String, _ sets: [RevealSet], treeOnly: Bool, allowance: TimeInterval, _ question: String) async throws {
+        executionTimeAllowance = allowance
+        begin(name, question)
+        let app = launchPlayground()
+        let runner = XCUITestPhoneRunner()
+        guard await openRevealedScreen(app) else {
+            fact("\(tag): could not produce (the screen \(Self.revealedScreenId) was not reached)")
+            await finish(terminating: [])
+            throw XCTSkip("the Swipe rows, revealed screen was not reached")
+        }
+        note("\(tag): the XCUITest drags pass a velocity of length / 200 ms; the runner's swipe sends press(forDuration: 0.05, thenDragTo:) at XCTest's own speed")
+        var reached = 0
+        for item in sets {
+            guard await selectKind(app, item) else {
+                fact("\(tag) \(item.set): could not produce (the picker segment \"\(item.segment)\" was not found)")
+                continue
+            }
+            reached += 1
+            if treeOnly {
+                await revealedTree(app, item, runner: runner)
+            } else {
+                await probeRevealSet(app, tag, item, runner: runner)
+            }
+        }
+        await finish(terminating: [])
+        if reached == 0 { throw XCTSkip("no row kind of the Swipe rows, revealed screen was reached") }
+    }
+
+    /// Opens Fact probes 3, then its last row, Swipe rows, revealed (scrolled to first when it
+    /// is not hittable: the index may be longer than the screen).
+    @MainActor
+    private func openRevealedScreen(_ app: XCUIApplication) async -> Bool {
+        let entry = app.buttons["playground.probes3"].firstMatch
+        guard waitFor(entry, "the Playground's Fact probes 3 row", 10) else { return false }
+        tolerant("open Fact probes 3") { entry.tap() }
+        let top = app.buttons["probe3.symbols"].firstMatch
+        guard waitFor(top, "the Fact probes 3 list", 5) else { return false }
+        let row = app.buttons[Self.revealedScreenId].firstMatch
+        if !hittableNow(row) {
+            drag(app, from: 0.8, to: 0.4, "scroll Fact probes 3 to its last rows")
+            await pause(1)
+        }
+        guard waitFor(row, "the \(Self.revealedScreenId) row", 5) else { return false }
+        guard tapFirstButton(app, [Self.revealedScreenId], "open \(Self.revealedScreenId)") != nil else { return false }
+        await pause(1)
+        let status = app.staticTexts[Self.revealedStatusId].firstMatch
+        return waitFor(status, "the revealed rows' status line", 5)
+    }
+
+    @MainActor
+    private func selectKind(_ app: XCUIApplication, _ item: RevealSet) async -> Bool {
+        let tapped = tapFirstButton(app, [item.segment], "choose the \(item.segment) rows")
+        await pause(1)
+        return tapped != nil
+    }
+
+    /// One snapshot of the row `text` (centred at `y`, `height` tall).
+    @MainActor
+    private func readRow(_ app: XCUIApplication, _ item: RevealSet, _ text: String, y: Double, height: Double, _ what: String) -> RowState {
+        var state = RowState()
+        guard let tree = snapshotTree(app, what) else { return state }
+        state.tree = tree
+        state.textFrame = Self.hits(tree) { $0.label == text }.first?.element.frame
+        state.present = state.textFrame != nil
+        state.cellFrame = Self.rowFrame(in: tree, labelled: text)
+        state.buttons = Self.revealedButtons(tree, item.actions, y: y, height: height)
+        state.status = Self.statusLabel(tree)
+        state.alert = !Self.hits(tree) { $0.elementType == XCUIElementTypeCode.alert }.isEmpty
+        return state
+    }
+
+    /// An XCUITest drag along `path` at velocity length / `ms` (P13a's drag).
+    @MainActor
+    private func xcDrag(_ app: XCUIApplication, _ path: (from: Point, to: Point), ms: UInt64 = 200, _ what: String) {
+        let travelled = max(abs(path.from.x - path.to.x), 1)
+        let velocity = CGFloat(travelled / (Double(ms) / 1_000))
+        let drag = path.from
+        let drop = path.to
+        tolerant("\(what): XCUITest drag at velocity \(Int(velocity))") {
+            let origin = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            let start = origin.withOffset(CGVector(dx: drag.x, dy: drag.y))
+            let end = origin.withOffset(CGVector(dx: drop.x, dy: drop.y))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: XCUIGestureVelocity(rawValue: velocity), thenHoldForDuration: 0)
+        }
+    }
+
+    /// A tap at a point of `app` by coordinate.
+    @MainActor
+    private func tapPoint(_ app: XCUIApplication, _ x: Double, _ y: Double, _ what: String) {
+        tolerant(what) {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: x, dy: y)).tap()
+        }
+    }
+
+    /// The first drag (0.30 of the row, from the core's start; a 0.40 one after it when 0.30
+    /// revealed nothing and left the row), then 1 s, then one snapshot.
+    @MainActor
+    private func revealFirst(_ app: XCUIApplication, _ item: RevealSet, _ text: String, frame: Rect, y: Double, screen: Size, rest: RowState) async -> (state: RowState, text: String) {
+        guard let start = Self.coreStart(frame, rightward: item.rightward, screen: screen) else {
+            return (RowState(), "not made (no core start on the row)")
+        }
+        var said: [String] = []
+        var state = RowState()
+        for share in [0.30, 0.40] {
+            let path = Self.dragPath(from: start, length: frame.width * share, rightward: item.rightward, screen: screen)
+            xcDrag(app, path, "first drag of \(Self.percent(share)) of the row on \(text)")
+            await pause(1)
+            state = readRow(app, item, text, y: y, height: frame.height, "Jarvis 1 s after the first drag")
+            said.append("drag \(Self.percent(share)) of the row \(Self.pathText(path, width: frame.width, [])) -> 1 s later \(Self.rowStateText(rest, state, text))")
+            if state.tree == nil || !state.present || !state.buttons.isEmpty { break }
+        }
+        return (state, said.joined(separator: "; then "))
+    }
+
+    /// Removes the row `text` when it is still there: with its revealed removing action, else
+    /// after a 0.40 drag reveals it (by coordinate). One try; a row left in place is noted.
+    @MainActor
+    private func removeRow(_ app: XCUIApplication, _ item: RevealSet, _ text: String, _ state: RowState, y: Double, height: Double, screen: Size) async {
+        guard state.present else { return }
+        let remove = item.actions.first ?? "Delete"
+        var current = state
+        if !current.buttons.contains(where: { $0.element.label == remove }) {
+            if let frame = current.cellFrame, let start = Self.coreStart(frame, rightward: item.rightward, screen: screen) {
+                let path = Self.dragPath(from: start, length: frame.width * 0.4, rightward: item.rightward, screen: screen)
+                xcDrag(app, path, "clean-up: reveal \(text)'s actions (0.40 of the row)")
+                await pause(1)
+                current = readRow(app, item, text, y: y, height: height, "Jarvis at the clean-up")
+                if !current.present { return }
+            }
+        }
+        guard let button = current.buttons.first(where: { $0.element.label == remove }) else {
+            note("clean-up: \(text) is still there and its \(remove) is not shown; left in place")
+            return
+        }
+        let f = button.element.frame
+        tapPoint(app, f.x + f.width / 2, f.y + f.height / 2, "clean-up: remove \(text) with its revealed \(remove) (by coordinate)")
+        await pause(0.8)
+    }
+
+    /// P13e and P13g: each move on a fresh row ("<prefix> N", N = 1, 2, …). The first drag
+    /// (or the runner's first swipe) and 1 s; one snapshot (the rest offset, the revealed
+    /// buttons); the second move; 1.1 s; one snapshot (deleted, still revealed, closed; the
+    /// status line says whether an action fired); the row is then removed. One fact per row.
+    @MainActor
+    private func probeRevealSet(_ app: XCUIApplication, _ tag: String, _ item: RevealSet, runner: XCUITestPhoneRunner) async {
+        let slug = Self.slug(item.prefix)
+        guard let rows = capture(app, Self.appBundleId, "rows-\(slug)", "The \(item.set) rows before any swipe: each row's Cell and text, frames") else {
+            fact("\(tag) \(item.set): could not produce (no snapshot of the rows)")
+            return
+        }
+        let screen = Size(width: rows.frame.width, height: rows.frame.height)
+        guard screen.width > 0, screen.height > 0 else {
+            fact("\(tag) \(item.set): could not produce (no screen size in the snapshot)")
+            return
+        }
+        var row = 0
+        var before: RawElement? = rows
+        var revealCaptured = false
+        var deleteCaptured = false
+        var byOutcome: [String: [String]] = [:]
+        for move in item.moves {
+            row += 1
+            let text = "\(item.prefix) \(row)"
+            let name = Self.moveName(move)
+            var tree = before
+            if tree == nil { tree = snapshotTree(app, "Jarvis before the first drag") }
+            before = nil
+            guard let tree, let frame = Self.rowFrame(in: tree, labelled: text) else {
+                fact("\(tag) \(item.set), \(name): could not produce (\(text) not in the snapshot)")
+                continue
+            }
+            let y = frame.y + frame.height / 2
+            guard y > screen.height * 0.1, y < screen.height * 0.85 else {
+                fact("\(tag) \(item.set), \(name): could not produce (\(text) at y \(Int(y)), outside the band a drag may use)")
+                continue
+            }
+            var rest = RowState()
+            rest.tree = tree
+            rest.present = true
+            rest.textFrame = Self.hits(tree) { $0.label == text }.first?.element.frame
+            rest.cellFrame = frame
+            rest.status = Self.statusLabel(tree)
+            let head = "\(tag) \(item.set), \(name): \(text) at rest \(Self.rectText(frame))"
+
+            // The first drag.
+            var mid = RowState()
+            var firstText = ""
+            var isRunner = false
+            if case .runnerTwice(let bounded) = move {
+                isRunner = true
+                guard let path = Self.runnerPath(frame, bounded: bounded, rightward: item.rightward, screen: screen) else {
+                    fact("\(head): could not produce (no core path on the row)")
+                    continue
+                }
+                await runnerDo(runner, .swipe(from: path.from, to: path.to, durationMs: 200), expecting: Self.appBundleId, "\(name), first, on \(text)")
+                await pause(1)
+                mid = readRow(app, item, text, y: y, height: frame.height, "Jarvis 1 s after the runner's first swipe")
+                firstText = "the runner's swipe \(Self.pathText(path, width: frame.width, [])) -> 1 s later \(Self.rowStateText(rest, mid, text))"
+            } else {
+                let first = await revealFirst(app, item, text, frame: frame, y: y, screen: screen, rest: rest)
+                mid = first.state
+                firstText = first.text
+            }
+            guard mid.tree != nil else {
+                fact("\(head); first \(firstText): could not produce (no snapshot after the first drag)")
+                continue
+            }
+            guard mid.present else {
+                fact("\(head); first \(firstText): the first drag deleted the row; no second move")
+                byOutcome["deleted by the first drag", default: []].append(Self.moveShort(move))
+                continue
+            }
+            if mid.buttons.isEmpty, !isRunner {
+                fact("\(head); first \(firstText): no action revealed; no second move")
+                byOutcome["not revealed by the first drag", default: []].append(Self.moveShort(move))
+                await removeRow(app, item, text, mid, y: y, height: frame.height, screen: screen)
+                continue
+            }
+            if !revealCaptured, !mid.buttons.isEmpty {
+                revealCaptured = true
+                capture(app, Self.appBundleId, "revealed-\(slug)-\(row)", "After the first drag on \(text): the revealed actions (type, label, identifier, frame), the row's Cell and text frames (the rest offset)")
+            }
+
+            // The second move.
+            let width = frame.width
+            let cell = mid.cellFrame ?? frame
+            let remove = item.actions.first ?? "Delete"
+            var secondText = ""
+            var missing = ""
+            switch move {
+            case .drag(let share):
+                if let start = Self.coreStart(cell, rightward: item.rightward, screen: screen) {
+                    let path = Self.dragPath(from: start, length: width * share, rightward: item.rightward, screen: screen)
+                    xcDrag(app, path, "\(name) on \(text)")
+                    secondText = Self.pathText(path, width: width, mid.buttons)
+                } else {
+                    missing = "no core start on the row's Cell"
+                }
+            case .dragFromContent(let share):
+                let edge = Self.contentEdge(cell, mid.buttons, rightward: item.rightward)
+                let start = Point(x: item.rightward ? edge + 10 : edge - 10, y: y)
+                let path = Self.dragPath(from: start, length: width * share, rightward: item.rightward, screen: screen)
+                xcDrag(app, path, "\(name) on \(text)")
+                secondText = Self.pathText(path, width: width, mid.buttons)
+            case .dragFromButton(let share):
+                if let f = mid.buttons.first(where: { $0.element.label == remove })?.element.frame {
+                    let start = Point(x: f.x + f.width / 2, y: f.y + f.height / 2)
+                    let path = Self.dragPath(from: start, length: width * share, rightward: item.rightward, screen: screen)
+                    xcDrag(app, path, "\(name) on \(text)")
+                    secondText = Self.pathText(path, width: width, mid.buttons)
+                } else {
+                    missing = "no revealed \(remove)"
+                }
+            case .opposite(let share):
+                if let start = Self.coreStart(cell, rightward: !item.rightward, screen: screen) {
+                    let path = Self.dragPath(from: start, length: width * share, rightward: !item.rightward, screen: screen)
+                    xcDrag(app, path, "\(name) on \(text)")
+                    secondText = Self.pathText(path, width: width, mid.buttons)
+                } else {
+                    missing = "no core start on the row's Cell"
+                }
+            case .runnerTwice(let bounded):
+                if let path = Self.runnerPath(cell, bounded: bounded, rightward: item.rightward, screen: screen) {
+                    await runnerDo(runner, .swipe(from: path.from, to: path.to, durationMs: 200), expecting: Self.appBundleId, "\(name), second, on \(text)")
+                    secondText = "the runner's swipe again " + Self.pathText(path, width: width, mid.buttons)
+                } else {
+                    missing = "no core path on the row's Cell"
+                }
+            case .tapContent:
+                let edge = Self.contentEdge(cell, mid.buttons, rightward: item.rightward)
+                let x = item.rightward ? (edge + cell.x + cell.width) / 2 : (cell.x + edge) / 2
+                tapPoint(app, x, y, "\(name) on \(text) (by coordinate)")
+                secondText = "a tap at \(Self.pointText(Point(x: x, y: y)))"
+            case .tapButton(let label):
+                if let f = mid.buttons.first(where: { $0.element.label == label })?.element.frame {
+                    let point = Point(x: f.x + f.width / 2, y: f.y + f.height / 2)
+                    tapPoint(app, point.x, point.y, "\(name) on \(text) (by coordinate)")
+                    secondText = "a tap at \(Self.pointText(point)) on the revealed \"\(label)\" \(Self.rectText(f))"
+                } else {
+                    missing = "no revealed \(label)"
+                }
+            }
+            guard missing.isEmpty else {
+                fact("\(head); first \(firstText); second: could not produce (\(missing))")
+                await removeRow(app, item, text, mid, y: y, height: frame.height, screen: screen)
+                continue
+            }
+            await pause(1.1)
+            let after = readRow(app, item, text, y: y, height: frame.height, "Jarvis after the second move")
+            let kind = Self.outcomeKind(after)
+            byOutcome[kind, default: []].append(Self.moveShort(move))
+            let fired = after.tree != nil && after.status != mid.status ? "an action fired (status \"\(after.status)\")" : "no action fired (status unchanged)"
+            fact("\(head); first \(firstText); second \(secondText) -> \(kind), \(fired): \(Self.rowStateText(rest, after, text))")
+            if kind == "deleted", !deleteCaptured {
+                deleteCaptured = true
+                capture(app, Self.appBundleId, "after-second-delete-\(row)", "After \(name) deleted \(text): the rows and the status line")
+            } else if Self.isTap(move) {
+                capture(app, Self.appBundleId, "after-tap-\(row)", "After \(name) on \(text): is the row there, its actions still shown, an alert up, the status line")
+            }
+            await removeRow(app, item, text, after, y: y, height: frame.height, screen: screen)
+        }
+        var parts: [String] = []
+        for kind in ["deleted", "still revealed", "closed", "unknown", "deleted by the first drag", "not revealed by the first drag"] {
+            if let names = byOutcome[kind] { parts.append("\(kind): \(names.joined(separator: ", "))") }
+        }
+        fact("\(tag) \(item.set) summary: \(parts.isEmpty ? "no move made" : parts.joined(separator: "; "))")
+    }
+
+    /// P13f: row 1 revealed by a first drag of 0.30 (0.40 when needed); one capture at rest
+    /// and one while revealed, read for where the actions sit and what changed on the Cell;
+    /// the runner's typed tree of the same moment; then the row is removed.
+    @MainActor
+    private func revealedTree(_ app: XCUIApplication, _ item: RevealSet, runner: XCUITestPhoneRunner) async {
+        let slug = Self.slug(item.prefix)
+        let text = "\(item.prefix) 1"
+        guard let before = capture(app, Self.appBundleId, "rows-\(slug)", "The \(item.set) rows at rest, before \(text) is dragged: the Cells, their texts, frames, values") else {
+            fact("P13f \(item.set): could not produce (no snapshot of the rows)")
+            return
+        }
+        let screen = Size(width: before.frame.width, height: before.frame.height)
+        guard screen.width > 0, screen.height > 0, let frame = Self.rowFrame(in: before, labelled: text) else {
+            fact("P13f \(item.set): could not produce (no screen size, or \(text) not in the snapshot)")
+            return
+        }
+        let y = frame.y + frame.height / 2
+        var rest = RowState()
+        rest.tree = before
+        rest.present = true
+        rest.textFrame = Self.hits(before) { $0.label == text }.first?.element.frame
+        rest.cellFrame = frame
+        rest.status = Self.statusLabel(before)
+        let first = await revealFirst(app, item, text, frame: frame, y: y, screen: screen, rest: rest)
+        fact("P13f \(item.set): \(text) at rest \(Self.rectText(frame)); first \(first.text)")
+        guard first.state.present, !first.state.buttons.isEmpty else {
+            fact("P13f \(item.set): could not produce (no action revealed on \(text))")
+            await removeRow(app, item, text, first.state, y: y, height: frame.height, screen: screen)
+            return
+        }
+        guard let shown = capture(app, Self.appBundleId, "revealed-\(slug)", "With \(text)'s actions revealed (\(item.actions.joined(separator: ", "))): where are the action buttons (inside the row's Cell, siblings, another container), their types, labels, identifiers, frames; does the Cell's frame move or shrink; does anything on the Cell say it is swiped?") else {
+            fact("P13f \(item.set): could not produce (no capture while revealed)")
+            await removeRow(app, item, text, first.state, y: y, height: frame.height, screen: screen)
+            return
+        }
+        let rowHeight = frame.height
+        let inBand: (RawElement) -> Bool = { e in
+            e.frame.width > 0 && e.frame.height > 0 && abs(e.frame.y + e.frame.height / 2 - y) < max(rowHeight / 2, 10)
+        }
+        for action in item.actions {
+            let all = Self.hits(shown) { $0.label == action }
+            let described: [String] = all.map { Self.buttonText($0, rowText: text) }
+            fact("P13f \(item.set): nodes labelled \"\(action)\" while revealed: \(all.count)\(described.isEmpty ? "" : ": " + described.joined(separator: "; "))")
+        }
+        let cellBefore = Self.cellOf(before, text)
+        let cellAfter = Self.cellOf(shown, text)
+        fact("P13f \(item.set): the row's Cell at rest: \(Self.cellText(cellBefore))")
+        fact("P13f \(item.set): the row's Cell while revealed: \(Self.cellText(cellAfter))")
+        let textAfter = Self.hits(shown) { $0.label == text }.first?.element.frame
+        let frameBefore = cellBefore.map { Self.rectText($0.frame) } ?? "none"
+        let frameAfter = cellAfter.map { Self.rectText($0.frame) } ?? "none"
+        fact("P13f \(item.set): the row's text at rest \(rest.textFrame.map { Self.rectText($0) } ?? "none"), while revealed \(textAfter.map { Self.rectText($0) } ?? "none"); the Cell's frame \(frameBefore) -> \(frameAfter), changed: \(Self.yesNo(frameBefore != frameAfter))")
+        fact("P13f \(item.set): what changed on the Cell itself (label, value, identifier, selected, enabled, title, children): \(Self.cellMarkers(cellBefore, cellAfter))")
+        let keysBefore = Set(Self.hits(before, inBand).map { Self.nodeKey($0.element) })
+        let added = Self.hits(shown, inBand).filter { !keysBefore.contains(Self.nodeKey($0.element)) }
+        let addedText: [String] = added.prefix(12).map { Self.buttonText($0, rowText: text) }
+        fact("P13f \(item.set): nodes in the row's band while revealed that were not there at rest (by type, label, identifier): \(added.count)\(addedText.isEmpty ? "" : ": " + addedText.joined(separator: "; "))")
+        report(shown, "P13f \(item.set): every node in the row's band while revealed", limit: 20, inBand)
+        let look = await runnerLook("P13f \(item.set), \(text)'s actions revealed", "revealed-\(slug)", runner: runner)
+        if let root = look?.root {
+            let cells = Self.findAll(root) { $0.role == .cell && Self.subtreeMentions($0, text) }
+            let cellsText: [String] = cells.prefix(3).map { Self.describeNode($0) }
+            for action in item.actions {
+                let nodes = Self.findAll(root) { ($0.label ?? "") == action }
+                let held = cells.contains { cell in !Self.findAll(cell) { ($0.label ?? "") == action }.isEmpty }
+                let described: [String] = nodes.prefix(4).map { Self.describeNode($0) }
+                fact("P13f \(item.set): the runner's typed tree (what the core reads): \"\(action)\" as \(described.isEmpty ? "nothing" : described.joined(separator: "; ")); inside a typed cell holding \(text): \(Self.yesNo(held))")
+            }
+            fact("P13f \(item.set): the runner's typed cells holding \(text): \(cellsText.isEmpty ? "none" : cellsText.joined(separator: "; "))")
+        } else {
+            fact("P13f \(item.set): the runner's typed tree: not read (the runner's snapshot failed)")
+        }
+        let now = readRow(app, item, text, y: y, height: frame.height, "Jarvis before the clean-up")
+        await removeRow(app, item, text, now, y: y, height: frame.height, screen: screen)
+    }
+
+    private static func moveName(_ move: SecondMove) -> String {
+        switch move {
+        case .drag(let share):
+            return "second drag of \(percent(share)) of the row, the same way, from the core's start"
+        case .dragFromContent(let share):
+            return "second drag of \(percent(share)) of the row, the same way, from the content beside the revealed buttons"
+        case .dragFromButton(let share):
+            return "second drag of \(percent(share)) of the row, the same way, from the revealed destructive button"
+        case .opposite(let share):
+            return "second drag of \(percent(share)) of the row the other way, from the core's start"
+        case .runnerTwice(let bounded):
+            return bounded ? "the runner's swipe shortened to 45 % of the row (as Jarvis sends it), twice" : "the runner's core swipe (P13a's), twice"
+        case .tapContent:
+            return "a tap on the row's content"
+        case .tapButton(let label):
+            return "a tap on the revealed \(label)"
+        }
+    }
+
+    private static func moveShort(_ move: SecondMove) -> String {
+        switch move {
+        case .drag(let share):
+            return percent(share)
+        case .dragFromContent(let share):
+            return "\(percent(share)) from the content"
+        case .dragFromButton(let share):
+            return "\(percent(share)) from the button"
+        case .opposite(let share):
+            return "\(percent(share)) the other way"
+        case .runnerTwice(let bounded):
+            return bounded ? "the runner's bounded swipe twice" : "the runner's core swipe twice"
+        case .tapContent:
+            return "tap on the content"
+        case .tapButton(let label):
+            return "tap on \(label)"
+        }
+    }
+
+    private static func isTap(_ move: SecondMove) -> Bool {
+        switch move {
+        case .tapContent, .tapButton:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func outcomeKind(_ after: RowState) -> String {
+        guard after.tree != nil else { return "unknown" }
+        if !after.present { return "deleted" }
+        return after.buttons.isEmpty ? "closed" : "still revealed"
+    }
+
+    /// The row in `state` against its rest: deleted, or the actions shown (type, label,
+    /// identifier, frame, inside its Cell), the text's and the Cell's frames, the status line.
+    private static func rowStateText(_ rest: RowState, _ state: RowState, _ text: String) -> String {
+        guard state.tree != nil else { return "unknown (no snapshot)" }
+        guard state.present else { return "deleted (status \"\(state.status)\"\(state.alert ? ", an alert is up" : ""))" }
+        var parts: [String] = []
+        if state.buttons.isEmpty {
+            parts.append("no action shown")
+        } else {
+            let shown: [String] = state.buttons.map { buttonText($0, rowText: text) }
+            parts.append("revealed: " + shown.joined(separator: "; "))
+        }
+        if let a = rest.textFrame, let b = state.textFrame {
+            parts.append("the row's text \(rectText(a)) -> \(rectText(b)) (moved \(Int((b.x - a.x).rounded())) pt)")
+        }
+        if let a = rest.cellFrame, let b = state.cellFrame {
+            parts.append("its Cell \(rectText(a)) -> \(rectText(b))")
+        }
+        parts.append("status \"\(state.status)\"")
+        if state.alert { parts.append("an alert is up") }
+        return parts.joined(separator: ", ")
+    }
+
+    /// `Button "Delete" id - {…}, in the row's Cell yes, parents Table > Cell > Other`.
+    static func buttonText(_ hit: Probe3Case.Hit, rowText text: String) -> String {
+        let e = hit.element
+        let inCell = hit.ancestors.contains { a in
+            a.elementType == XCUIElementTypeCode.cell && !Self.hits(a) { $0.label == text }.isEmpty
+        }
+        let id = e.identifier.isEmpty ? "-" : clip(e.identifier)
+        return "\(XCUIElementTypeCode.name(e.elementType)) \"\(clip(e.label))\" id \(id) \(rectText(e.frame)), in the row's Cell \(yesNo(inCell)), parents \(ancestry(hit, 4))"
+    }
+
+    /// Buttons labelled as one of `actions`, drawn on screen in the band of the row centred
+    /// at `y` (P13a's reading of "revealed").
+    static func revealedButtons(_ tree: RawElement, _ actions: [String], y: Double, height: Double) -> [Probe3Case.Hit] {
+        Self.hits(tree) { e in
+            e.elementType == XCUIElementTypeCode.button && actions.contains(e.label) && e.frame.width > 0
+                && abs(e.frame.y + e.frame.height / 2 - y) < max(height / 2, 10) && Self.onScreen(e.frame, tree.frame)
+        }
+    }
+
+    static func statusLabel(_ tree: RawElement) -> String {
+        Self.hits(tree) { $0.identifier == Self.revealedStatusId }.first?.element.label ?? "(no status line)"
+    }
+
+    /// The Cell holding the node labelled exactly `text`.
+    static func cellOf(_ tree: RawElement, _ text: String) -> RawElement? {
+        guard let hit = Self.hits(tree, { $0.label == text }).first else { return nil }
+        return hit.ancestors.last(where: { $0.elementType == XCUIElementTypeCode.cell })
+    }
+
+    static func cellText(_ cell: RawElement?) -> String {
+        guard let cell else { return "no Cell" }
+        let kids: [String] = cell.children.map { Self.brief($0) + " " + Self.rectText($0.frame) }
+        return "\(brief(cell)) \(rectText(cell.frame)) title \"\(clip(cell.title))\", \(cell.children.count) children: \(kids.joined(separator: " | "))"
+    }
+
+    static func cellMarkers(_ a: RawElement?, _ b: RawElement?) -> String {
+        guard let a, let b else { return "not compared (no Cell found at rest or while revealed)" }
+        var changed: [String] = []
+        if a.label != b.label { changed.append("label \"\(clip(a.label))\" -> \"\(clip(b.label))\"") }
+        if a.value != b.value { changed.append("value \"\(a.value ?? "nil")\" -> \"\(b.value ?? "nil")\"") }
+        if a.identifier != b.identifier { changed.append("identifier \"\(a.identifier)\" -> \"\(b.identifier)\"") }
+        if a.isSelected != b.isSelected { changed.append("selected \(yesNo(a.isSelected)) -> \(yesNo(b.isSelected))") }
+        if a.isEnabled != b.isEnabled { changed.append("enabled \(yesNo(a.isEnabled)) -> \(yesNo(b.isEnabled))") }
+        if a.title != b.title { changed.append("title \"\(clip(a.title))\" -> \"\(clip(b.title))\"") }
+        if a.children.count != b.children.count { changed.append("children \(a.children.count) -> \(b.children.count)") }
+        return changed.isEmpty ? "nothing" : changed.joined(separator: "; ")
+    }
+
+    static func nodeKey(_ e: RawElement) -> String {
+        "\(e.elementType)|\(e.label)|\(e.identifier)"
+    }
+
+    /// Where the row's content still shown ends: the near edge of the revealed buttons (the
+    /// leftmost left edge for trailing actions, the rightmost right edge for leading ones),
+    /// else the Cell's far edge.
+    static func contentEdge(_ cell: Rect, _ buttons: [Probe3Case.Hit], rightward: Bool) -> Double {
+        let frames: [Rect] = buttons.map { $0.element.frame }
+        if rightward {
+            let edge = frames.map { $0.x + $0.width }.max() ?? cell.x
+            return min(max(edge, cell.x), cell.x + cell.width)
+        }
+        let edge = frames.map { $0.x }.min() ?? (cell.x + cell.width)
+        return max(min(edge, cell.x + cell.width), cell.x)
+    }
+
+    /// Where the core's swipe on `frame` starts (`coreSwipe`'s first point).
+    static func coreStart(_ frame: Rect, rightward: Bool, screen: Size) -> Point? {
+        Self.coreSwipe(rightward ? "right" : "left", frame: frame, screen: screen)?.from
+    }
+
+    /// The core's swipe on `frame`; `bounded`: shortened from its start to 0.45 of the row
+    /// (`planned_drag` with `ROW_SWIPE_SHARE`).
+    static func runnerPath(_ frame: Rect, bounded: Bool, rightward: Bool, screen: Size) -> (from: Point, to: Point)? {
+        guard let core = Self.coreSwipe(rightward ? "right" : "left", frame: frame, screen: screen) else { return nil }
+        guard bounded else { return core }
+        let length = min(frame.width * 0.45, abs(core.to.x - core.from.x))
+        return Self.dragPath(from: core.from, length: length, rightward: rightward, screen: screen)
+    }
+
+    /// A drag of `length` from `start`, the finger moving right when `rightward`, kept 1 pt
+    /// inside the screen.
+    static func dragPath(from start: Point, length: Double, rightward: Bool, screen: Size) -> (from: Point, to: Point) {
+        let x = min(max(start.x, 1), screen.width - 1)
+        let end = rightward ? min(x + length, screen.width - 1) : max(x - length, 1)
+        return (Point(x: x, y: start.y), Point(x: end, y: start.y))
+    }
+
+    /// `(340, 250) -> (160, 250), 180 pt = 45 % of the row, starting on the revealed "Delete"`.
+    static func pathText(_ path: (from: Point, to: Point), width: Double, _ buttons: [Probe3Case.Hit]) -> String {
+        let travelled = abs(path.from.x - path.to.x)
+        let share = Int((travelled / max(width, 1) * 100).rounded())
+        let start = path.from
+        let on = buttons.first { b in
+            let f = b.element.frame
+            return start.x >= f.x && start.x <= f.x + f.width && start.y >= f.y && start.y <= f.y + f.height
+        }
+        let onText = on.map { "on the revealed \"\($0.element.label)\"" } ?? "not on a revealed button"
+        return "\(pointText(path.from)) -> \(pointText(path.to)), \(Int(travelled.rounded())) pt = \(share) % of the row, starting \(onText)"
+    }
+
+    static func percent(_ share: Double) -> String {
+        "\(Int((share * 100).rounded())) %"
+    }
+
+    static func slug(_ text: String) -> String {
+        text.lowercased().replacingOccurrences(of: " ", with: "-")
     }
 
     // MARK: - P14: the runner under a hung front app

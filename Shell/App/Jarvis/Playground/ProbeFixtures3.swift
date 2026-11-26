@@ -23,7 +23,7 @@ import WebKit
 /// symbol-only buttons have no `accessibilityLabel` and no identifier on purpose).
 enum Probe3Screen: String, Hashable, CaseIterable {
     case symbols, returns, modals, controls, web, pickers, permissions, system, swipes
-    case swipesNarrow, swipesColumns, swipesLeading, swipesPlain
+    case swipesNarrow, swipesColumns, swipesLeading, swipesPlain, swipesRevealed
 
     var title: String {
         switch self {
@@ -40,6 +40,7 @@ enum Probe3Screen: String, Hashable, CaseIterable {
         case .swipesColumns: "Swipe rows, two columns"
         case .swipesLeading: "Swipe rows, leading"
         case .swipesPlain: "Swipe rows, edge to edge"
+        case .swipesRevealed: "Swipe rows, revealed"
         }
     }
 }
@@ -76,6 +77,7 @@ struct Probe3Destination: View {
         case .swipesColumns: Probe3SwipeVariantFixture(variant: .columns)
         case .swipesLeading: Probe3SwipeVariantFixture(variant: .leading)
         case .swipesPlain: Probe3SwipeVariantFixture(variant: .plain)
+        case .swipesRevealed: Probe3SwipeRevealedFixture()
         }
     }
 }
@@ -595,6 +597,124 @@ struct Probe3SwipeVariantFixture: View {
             }
         }
         .listStyle(.plain)
+    }
+}
+
+/// The row kinds of the Swipe rows, revealed screen, chosen by its segmented picker.
+enum Probe3RevealKind: String, CaseIterable, Hashable {
+    case insetOne, edgeOne, insetTwo, leadingOne, taps
+
+    /// The picker's segment title (what the probe taps).
+    var segment: String {
+        switch self {
+        case .insetOne: "Inset 1"
+        case .edgeOne: "Edge 1"
+        case .insetTwo: "Inset 2"
+        case .leadingOne: "Leading"
+        case .taps: "Taps"
+        }
+    }
+
+    /// The rows' text: "<prefix> N".
+    var prefix: String {
+        switch self {
+        case .insetOne: "Inset one row"
+        case .edgeOne: "Edge one row"
+        case .insetTwo: "Inset two row"
+        case .leadingOne: "Leading one row"
+        case .taps: "Tap row"
+        }
+    }
+
+    /// An edge-to-edge (plain) list; else an inset grouped one (400 pt rows on a 440 pt screen).
+    var plain: Bool {
+        self == .edgeOne || self == .leadingOne
+    }
+
+    var edge: HorizontalEdge {
+        self == .leadingOne ? .leading : .trailing
+    }
+
+    /// The destructive action's title (it removes the row).
+    var removeTitle: String {
+        self == .leadingOne ? "Remove" : "Delete"
+    }
+
+    /// A Flag action after the destructive one.
+    var twoActions: Bool {
+        self == .insetTwo || self == .taps
+    }
+}
+
+/// P13e, P13f, P13g: sixteen fresh rows of each kind, under a status line and a segmented
+/// picker of the kind: one trailing Delete on 400 pt rows (Inset 1) and on 440 pt edge-to-edge
+/// rows (Edge 1); trailing Delete and Flag on 400 pt rows (Inset 2); one leading Remove on
+/// 440 pt rows (Leading); and rows that are buttons ("Opened tap row N") with trailing Delete
+/// and Flag (Taps). Every destructive action allows a full swipe and removes its row at once.
+/// A new screen, so the earlier P13 screens and their rows stay as they were.
+struct Probe3SwipeRevealedFixture: View {
+    @State private var kind = Probe3RevealKind.insetOne
+    @State private var rows: [Probe3RevealKind: [Int]] = Dictionary(uniqueKeysWithValues: Probe3RevealKind.allCases.map { ($0, Array(1...16)) })
+    @State private var status = "No swipe action yet"
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(status)
+                .accessibilityIdentifier("probe3.swiperevealed.status")
+                .padding(.vertical, 8)
+            Picker("Row kind", selection: $kind) {
+                ForEach(Probe3RevealKind.allCases, id: \.self) { k in
+                    Text(k.segment).tag(k)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            if kind.plain {
+                list(kind)
+                    .listStyle(.plain)
+            } else {
+                list(kind)
+                    .listStyle(.insetGrouped)
+            }
+        }
+        .navigationTitle("Swipe rows, revealed")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func list(_ k: Probe3RevealKind) -> some View {
+        List {
+            ForEach(rows[k] ?? [], id: \.self) { n in
+                row(k, n)
+                    .swipeActions(edge: k.edge, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            rows[k, default: []].removeAll { $0 == n }
+                            status = "\(k.removeTitle)d \(k.prefix.lowercased()) \(n)"
+                        } label: {
+                            Label(k.removeTitle, systemImage: "trash")
+                        }
+                        if k.twoActions {
+                            Button {
+                                status = "Flagged \(k.prefix.lowercased()) \(n)"
+                            } label: {
+                                Label("Flag", systemImage: "flag")
+                            }
+                        }
+                    }
+            }
+        }
+        .id(k)
+    }
+
+    @ViewBuilder
+    private func row(_ k: Probe3RevealKind, _ n: Int) -> some View {
+        if k == .taps {
+            Button("\(k.prefix) \(n)") {
+                status = "Opened \(k.prefix.lowercased()) \(n)"
+            }
+        } else {
+            Text("\(k.prefix) \(n)")
+        }
     }
 }
 
