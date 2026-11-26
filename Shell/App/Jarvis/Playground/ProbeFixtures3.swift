@@ -23,7 +23,7 @@ import WebKit
 /// symbol-only buttons have no `accessibilityLabel` and no identifier on purpose).
 enum Probe3Screen: String, Hashable, CaseIterable {
     case symbols, returns, modals, controls, web, pickers, permissions, system, swipes
-    case swipesNarrow, swipesColumns, swipesLeading
+    case swipesNarrow, swipesColumns, swipesLeading, swipesPlain
 
     var title: String {
         switch self {
@@ -39,6 +39,7 @@ enum Probe3Screen: String, Hashable, CaseIterable {
         case .swipesNarrow: "Swipe rows, narrow"
         case .swipesColumns: "Swipe rows, two columns"
         case .swipesLeading: "Swipe rows, leading"
+        case .swipesPlain: "Swipe rows, edge to edge"
         }
     }
 }
@@ -74,6 +75,7 @@ struct Probe3Destination: View {
         case .swipesNarrow: Probe3SwipeVariantFixture(variant: .narrow)
         case .swipesColumns: Probe3SwipeVariantFixture(variant: .columns)
         case .swipesLeading: Probe3SwipeVariantFixture(variant: .leading)
+        case .swipesPlain: Probe3SwipeVariantFixture(variant: .plain)
         }
     }
 }
@@ -265,7 +267,22 @@ struct Probe3ModalsFixture: View {
     @State private var popover = false
 
     var body: some View {
-        Form {
+        VStack(spacing: 0) {
+            // Runs 146 and 149: inside the Form's row the Menu never opened (a coordinate tap
+            // at the row's centre; then XCUITest found its label "not hittable", hit point
+            // {-1, -1}). A plain bordered Menu above the Form, outside any List row.
+            HStack {
+                Menu("Probe menu") {
+                    Button("Probe menu item") { status = "Menu item chosen" }
+                    Button("Delete from menu", role: .destructive) { status = "Deleted from the menu" }
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("probe3.modals.menu")
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+            Form {
             Text("Probe content behind")
                 .accessibilityIdentifier("probe3.modals.behind")
             Button("Show action sheet") { dialog = true }
@@ -309,19 +326,6 @@ struct Probe3ModalsFixture: View {
                     Probe3SheetContent(title: "Probe popover") { popover = false }
                         .presentationCompactAdaptation(.popover)
                 }
-            // Run 146: a coordinate tap at the row's centre did not open `Menu("Probe menu")`
-            // (its tappable label is only the text). The label now fills the row and carries
-            // its own identifier.
-            Menu {
-                Button("Probe menu item") { status = "Menu item chosen" }
-                Button("Delete from menu", role: .destructive) { status = "Deleted from the menu" }
-            } label: {
-                Text("Probe menu")
-                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .accessibilityIdentifier("probe3.modals.menulabel")
-            }
-            .accessibilityIdentifier("probe3.modals.menu")
             Text("Hold for the probe context menu")
                 .frame(maxWidth: .infinity, minHeight: 60)
                 .contentShape(Rectangle())
@@ -332,6 +336,7 @@ struct Probe3ModalsFixture: View {
                 .accessibilityIdentifier("probe3.modals.context")
             Text(status)
                 .accessibilityIdentifier("probe3.modals.status")
+            }
         }
         .navigationTitle("Modals")
     }
@@ -514,7 +519,7 @@ struct Probe3SwipeRowsFixture: View {
 }
 
 enum Probe3SwipeVariant {
-    case narrow, columns, leading
+    case narrow, columns, leading, plain
 }
 
 /// P13b: rows that are not full width (a plain list 300 pt wide; two plain lists 200 pt
@@ -536,6 +541,8 @@ struct Probe3SwipeVariantFixture: View {
             case .narrow:
                 trailingList("Narrow row", $rows)
                     .frame(width: 300)
+            case .plain:
+                trailingList("Plain row", $rows)
             case .columns:
                 HStack(spacing: 8) {
                     trailingList("Left row", $rows)
@@ -775,17 +782,55 @@ final class Probe3PermissionAsker: ObservableObject {
         }
     }
 
+    /// Browses `_jarvis-remote._tcp` (listed in NSBonjourServices; NSLocalNetworkUsageDescription
+    /// is set) and sends one mDNS query by UDP to 224.0.0.251:5353, the two attempts that
+    /// raise the local network prompt on a device. The status line keeps each state the
+    /// browser and the connection report (run 149: no prompt within 10 s).
     func browseLocalNetwork() {
         browser?.cancel()
+        connection?.cancel()
         let started = NWBrowser(for: .bonjour(type: "_jarvis-remote._tcp", domain: nil), using: .tcp)
+        started.stateUpdateHandler = { [weak self] state in
+            MainActor.assumeIsolated { self?.noteNetwork("browser \(state)") }
+        }
+        started.browseResultsChangedHandler = { [weak self] results, _ in
+            MainActor.assumeIsolated { self?.noteNetwork("browser results \(results.count)") }
+        }
         started.start(queue: .main)
         browser = started
+        let udp = NWConnection(host: NWEndpoint.Host("224.0.0.251"), port: NWEndpoint.Port(rawValue: 5353) ?? .any, using: .udp)
+        udp.stateUpdateHandler = { [weak self] state in
+            MainActor.assumeIsolated { self?.noteNetwork("udp \(state)") }
+        }
+        udp.start(queue: .main)
+        // A minimal mDNS query for _jarvis-remote._tcp.local (PTR).
+        var query: [UInt8] = [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+        for label in ["_jarvis-remote", "_tcp", "local"] {
+            query.append(UInt8(label.utf8.count))
+            query.append(contentsOf: Array(label.utf8))
+        }
+        query.append(contentsOf: [0, 0, 12, 0, 1])
+        udp.send(content: Data(query), completion: .contentProcessed { [weak self] error in
+            MainActor.assumeIsolated { self?.noteNetwork("udp send \(error.map { "\($0)" } ?? "ok")") }
+        })
+        connection = udp
+        network = []
         status = "local network browse started"
+    }
+
+    private var network: [String] = []
+    private var connection: NWConnection?
+
+    private func noteNetwork(_ event: String) {
+        network.append(event)
+        status = "local network: " + network.suffix(6).joined(separator: "; ")
     }
 
     func stopLocalNetwork() {
         browser?.cancel()
         browser = nil
+        connection?.cancel()
+        connection = nil
     }
 
     func readPasteboard() {

@@ -281,54 +281,67 @@ final class TreeFactProbe3Tests: Probe3Case {
         }
     }
 
-    /// Opens the SwiftUI Menu, trying in turn (run 146: two coordinate taps at the row's centre
-    /// {20,532 400x52} did not open it; its label text sat at {40,548 92x20}): XCUITest's tap
-    /// on the label's own identifier `probe3.modals.menulabel`, a tap at the label text's
-    /// centre, XCUITest's tap on the Menu's button, a 0.8 s press on the label (a Menu with a
-    /// primary action opens on a long press). After each, up to 2.5 s for the marker. Records
-    /// which way opened it, and the label's and the button's frames.
+    /// Opens the SwiftUI Menu without touching any of its elements (run 149: XCUITest's tap on
+    /// the Menu's label failed "Not hittable … hit point {-1, -1} after scrolling to visible"
+    /// and ended the test body). The Menu's frame comes from a snapshot (the fixture now puts
+    /// it above the Form, outside any List row); if its centre is outside the band a tap may
+    /// use, the screen is dragged to bring it to the middle. Then, in turn: a coordinate tap at
+    /// its centre in Jarvis's coordinate space, the same through SpringBoard's, a 0.8 s press
+    /// there. After each, up to 2.5 s for the menu's items in a snapshot. Records which way
+    /// opened it.
     @MainActor
     private func openMenu(_ app: XCUIApplication, _ trigger: XCUIElement, _ marker: XCUIElement, _ name: String) async -> Bool {
-        let labelById = app.descendants(matching: .any).matching(identifier: "probe3.modals.menulabel").firstMatch
-        let labelText = app.staticTexts.matching(NSPredicate(format: "label == %@", "Probe menu")).firstMatch
-        let triggerFrame = queryFrame(trigger).map { Self.frameText($0) } ?? "none"
-        let labelFrame = queryFrame(labelById).map { Self.frameText($0) } ?? "none"
-        let textFrame = queryFrame(labelText).map { Self.frameText($0) } ?? "none"
-        fact("\(name): frames by query: the Menu's button (id probe3.modals.menu) \(triggerFrame); the label (id probe3.modals.menulabel) \(labelFrame); the text \"Probe menu\" \(textFrame)")
+        guard let raw = snapshotTree(app, "Jarvis (the Menu's frame)"),
+              let hit = Self.hits(raw, { $0.identifier == "probe3.modals.menu" }).first
+                ?? Self.hits(raw, { $0.elementType == XCUIElementTypeCode.button && $0.label == "Probe menu" }).first else {
+            fact("\(name): no node for the Menu (id probe3.modals.menu or a Button \"Probe menu\") in Jarvis's snapshot")
+            return false
+        }
+        var frame = hit.element.frame
+        let screen = raw.frame
+        fact("\(name): the Menu's node: \(Self.brief(hit.element)) \(Self.rectText(frame)), ancestors \(Self.ancestry(hit, 5))")
+        let midY = frame.y + frame.height / 2
+        if midY < screen.height * 0.12 || midY > screen.height * 0.85 {
+            let to = screen.height * 0.5
+            tolerant("drag the Menu's row to the middle of the screen") {
+                let origin = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+                origin.withOffset(CGVector(dx: screen.width * 0.5, dy: min(max(midY, screen.height * 0.15), screen.height * 0.85)))
+                    .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: screen.width * 0.5, dy: to)))
+            }
+            await pause(1)
+            if let again = snapshotTree(app, "Jarvis after the drag"), let moved = Self.hits(again, { $0.identifier == "probe3.modals.menu" }).first {
+                frame = moved.element.frame
+            }
+            note("\(name): the Menu's frame after the drag \(Self.rectText(frame))")
+        }
+        let centre = CGVector(dx: frame.x + frame.width / 2, dy: frame.y + frame.height / 2)
+        let board = XCUIApplication(bundleIdentifier: Self.springboardId)
         var ways: [String] = []
-        for way in ["tap on the label by its identifier", "tap at the label text's centre", "tap on the Menu's button", "0.8 s press on the label text"] {
-            switch way {
-            case "tap on the label by its identifier":
-                guard existsNow(labelById) else { ways.append("\(way): no such element"); continue }
-                tolerant("open the \(name): \(way)") { labelById.tap() }
-            case "tap at the label text's centre":
-                guard tapCentre(app, existsNow(labelText) ? labelText : trigger, "open the \(name): \(way)") else { continue }
-            case "tap on the Menu's button":
-                tolerant("open the \(name): \(way)") { trigger.tap() }
-            default:
-                let target = existsNow(labelText) ? labelText : trigger
-                tolerant("open the \(name): \(way)") { target.press(forDuration: 0.8) }
+        for way in ["a coordinate tap at its centre (Jarvis's coordinates)", "a coordinate tap at its centre (SpringBoard's coordinates)", "a 0.8 s press at its centre"] {
+            tolerant("open the \(name): \(way)") {
+                let space = way.contains("SpringBoard") ? board : app
+                let point = space.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(centre)
+                if way.contains("press") { point.press(forDuration: 0.8) } else { point.tap() }
             }
             var up = false
             let deadline = Date().addingTimeInterval(2.5)
             while !up, Date() < deadline {
                 await pause(0.5)
-                up = existsNow(marker)
+                up = snapshotTree(app, "Jarvis (is the menu open?)").map { tree in !Self.hits(tree) { $0.label == "Probe menu item" || $0.label == "Delete from menu" }.isEmpty } ?? false
             }
             ways.append("\(way): \(up ? "opened" : "not opened")")
             if up {
                 fact("\(name): opening attempts: \(ways.joined(separator: "; "))")
                 return true
             }
-            // A Menu that opened and closed again, or a stray state: close anything first.
-            tapAt(app, 0.5, 0.06, "tap outside before the next way of opening the \(name)")
-            await pause(0.8)
+            await pause(0.5)
         }
         fact("\(name): opening attempts: \(ways.joined(separator: "; "))")
         return false
     }
 
     @MainActor
+
     private func modalFacts(_ tree: RawElement?, _ boardTree: RawElement?, _ item: ModalCase, behind: XCUIElement) {
         guard let tree else {
             fact("\(item.name): no tree (the capture failed)")
@@ -952,146 +965,175 @@ final class TreeFactProbe3Tests: Probe3Case {
         }
     }
 
-    /// P13a, on full-width rows (run 146: 240 pt, 55 % of the screen, revealed; 264 pt, 60 %,
-    /// and longer deleted).
-    private static let fullWidthAttempts: [SwipeAttempt] = [
-        SwipeAttempt("the core's swipe left (runner)", runner: true),
-        SwipeAttempt("60 % of the screen (runner)", screenShare: 0.6, runner: true),
-        SwipeAttempt("70 % of the screen (runner)", screenShare: 0.7, runner: true),
-        SwipeAttempt("80 % of the screen (runner)", screenShare: 0.8, runner: true),
-        SwipeAttempt("90 % of the screen (runner)", screenShare: 0.9, runner: true),
-        SwipeAttempt("the core's scroll right, finger left (runner)", runner: true, scroll: "right"),
-        SwipeAttempt("the core's scroll left, finger right (runner)", runner: true, scroll: "left"),
-        SwipeAttempt("60 % of the screen (XCUITest drag, 200 ms)", screenShare: 0.6),
-        SwipeAttempt("70 % of the screen (XCUITest drag, 200 ms)", screenShare: 0.7),
-        SwipeAttempt("80 % of the screen (XCUITest drag, 200 ms)", screenShare: 0.8),
-        SwipeAttempt("90 % of the screen (XCUITest drag, 200 ms)", screenShare: 0.9),
-        SwipeAttempt("120 pt (XCUITest drag, 200 ms)", points: 120),
-        SwipeAttempt("160 pt (XCUITest drag, 200 ms)", points: 160),
-        SwipeAttempt("200 pt (XCUITest drag, 200 ms)", points: 200),
-        SwipeAttempt("220 pt (XCUITest drag, 200 ms)", points: 220),
-        SwipeAttempt("250 pt (XCUITest drag, 200 ms)", points: 250),
-        SwipeAttempt("50 % of the row (XCUITest drag, 200 ms)", rowShare: 0.5),
-        SwipeAttempt("50 % of the row (XCUITest drag, 800 ms)", rowShare: 0.5, ms: 800),
-        SwipeAttempt("66 % of the row (XCUITest drag, 200 ms)", rowShare: 0.66),
-        SwipeAttempt("66 % of the row (XCUITest drag, 800 ms)", rowShare: 0.66, ms: 800),
-    ]
+    /// One row kind of P13: its screen, its rows' text, its actions (the one that removes the
+    /// row first) and the drags made on it.
+    private struct SwipeSet {
+        var id: String
+        var set: String
+        var prefix: String
+        var statusId: String
+        var actions: [String]
+        var attempts: [SwipeAttempt]
+    }
 
-    /// P13b, on narrow rows (trailing actions) and, left to right, on rows with a leading
-    /// action.
-    private static let rowShares: [Double] = [0.4, 0.5, 0.55, 0.6, 0.66, 0.75]
+    /// Runs 146 and 149 on the 400 pt rows of the Swipe rows screen: 240 pt revealed, 264 pt
+    /// deleted; the runner's and the XCUITest 60-90 %-of-screen drags agreed twice (only
+    /// the 60 % one is kept, as the reference).
+    private static let fullWidthSet = SwipeSet(
+        id: "probe3.swipes", set: "full width (400 pt rows)", prefix: "Full swipe row", statusId: "probe3.swipes.status",
+        actions: ["Delete", "Flag"],
+        attempts: [
+            SwipeAttempt("the core's swipe left (runner)", runner: true),
+            SwipeAttempt("the core's scroll right, finger left (runner)", runner: true, scroll: "right"),
+            SwipeAttempt("the core's scroll left, finger right (runner)", runner: true, scroll: "left"),
+            SwipeAttempt("60 % of the screen (XCUITest drag, 200 ms)", screenShare: 0.6),
+            SwipeAttempt("40 pt (XCUITest drag, 200 ms)", points: 40),
+            SwipeAttempt("60 pt (XCUITest drag, 200 ms)", points: 60),
+            SwipeAttempt("80 pt (XCUITest drag, 200 ms)", points: 80),
+            SwipeAttempt("100 pt (XCUITest drag, 200 ms)", points: 100),
+            SwipeAttempt("120 pt (XCUITest drag, 200 ms)", points: 120),
+            SwipeAttempt("160 pt (XCUITest drag, 200 ms)", points: 160),
+            SwipeAttempt("200 pt (XCUITest drag, 200 ms)", points: 200),
+            SwipeAttempt("220 pt (XCUITest drag, 200 ms)", points: 220),
+            SwipeAttempt("250 pt (XCUITest drag, 200 ms)", points: 250),
+            SwipeAttempt("255 pt (XCUITest drag, 200 ms)", points: 255),
+            SwipeAttempt("260 pt (XCUITest drag, 200 ms)", points: 260),
+            SwipeAttempt("264 pt (XCUITest drag, 200 ms)", points: 264),
+            SwipeAttempt("50 % of the row (XCUITest drag, 200 ms)", rowShare: 0.5),
+            SwipeAttempt("50 % of the row (XCUITest drag, 800 ms)", rowShare: 0.5, ms: 800),
+            SwipeAttempt("66 % of the row (XCUITest drag, 200 ms)", rowShare: 0.66),
+            SwipeAttempt("66 % of the row (XCUITest drag, 800 ms)", rowShare: 0.66, ms: 800),
+        ])
 
-    private static func shareAttempts(rightward: Bool) -> [SwipeAttempt] {
-        rowShares.map { share in
+    private static func shareAttempts(_ shares: [Double], rightward: Bool) -> [SwipeAttempt] {
+        shares.map { share in
             SwipeAttempt("\(Int((share * 100).rounded())) % of the row\(rightward ? ", left to right" : "") (XCUITest drag, 200 ms)", rowShare: share, rightward: rightward)
         }
     }
 
+    /// Run 149: narrow and column rows revealed at 40-66 % of the row and deleted at 75 %.
+    private static let narrowSet = SwipeSet(
+        id: "probe3.swipesNarrow", set: "a 300 pt list", prefix: "Narrow row", statusId: "probe3.swipevariant.status",
+        actions: ["Delete", "Flag"], attempts: shareAttempts([0.66, 0.69, 0.72, 0.75], rightward: false))
+    private static let columnsSet = SwipeSet(
+        id: "probe3.swipesColumns", set: "the left of two 200 pt columns", prefix: "Left row", statusId: "probe3.swipevariant.status",
+        actions: ["Delete", "Flag"], attempts: shareAttempts([0.66, 0.69, 0.72, 0.75], rightward: false))
+    /// Run 149: leading-action 440 pt rows revealed at 40-55 % and deleted at 60 %.
+    private static let leadingSet = SwipeSet(
+        id: "probe3.swipesLeading", set: "a leading action, left to right (440 pt rows)", prefix: "Leading row", statusId: "probe3.swipevariant.status",
+        actions: ["Remove", "Pin"],
+        attempts: shareAttempts([0.5, 0.55, 0.57, 0.6], rightward: true) + [SwipeAttempt("the core's swipe right (runner)", runner: true, rightward: true)])
+    private static let plainSet = SwipeSet(
+        id: "probe3.swipesPlain", set: "a trailing action, edge to edge (440 pt rows)", prefix: "Plain row", statusId: "probe3.swipevariant.status",
+        actions: ["Delete", "Flag"], attempts: shareAttempts([0.5, 0.55, 0.57, 0.6], rightward: false))
+
     @MainActor
     func testP13a_RowSwipeLengthsFullWidth() async throws {
-        executionTimeAllowance = 200
-        begin("p13a-swipe-lengths", "On full-width list rows whose trailing actions allow a full swipe (Delete, Flag): what do the core's swipe-left path, the core's horizontal scrolls, centred drags of 60-90 % of the screen (runner and XCUITest at 200 ms), of 120-250 pt, and of 50 % and 66 % of the row at 200 and 800 ms do: reveal, delete, or nothing? Where between 240 and 264 pt does reveal turn into delete, and does velocity matter?")
-        let app = launchPlayground()
-        var reason: String?
-        if await openProbe3(app, "probe3.swipes") {
-            reason = await probeSwipeSet(app, set: "full width", rowPrefix: "Full swipe row", statusId: "probe3.swipes.status",
-                                         actions: ["Delete", "Flag"], remove: "Delete", attempts: Self.fullWidthAttempts, runner: XCUITestPhoneRunner(), screen: nil)
-        } else {
-            capture(app, Self.appBundleId, "no-screen", "Why was the Swipe rows screen not reached?")
-            reason = "the Swipe rows screen was not reached"
-        }
-        await finish(terminating: [])
-        if let reason { throw XCTSkip(reason) }
+        try await swipeProbe("p13a-swipe-lengths", [Self.fullWidthSet], allowance: 200,
+                             "On full-width 400 pt list rows whose trailing actions allow a full swipe (Delete, Flag): what do the core's swipe and scrolls, and drags of 40-264 pt and of 50 % and 66 % of the row at 200 and 800 ms do: reveal, delete, or nothing? Does anything reveal below 120 pt; where between 250 and 264 pt does reveal turn into delete; does velocity matter?")
     }
 
     @MainActor
-    func testP13b_RowSwipeLengthsNarrowAndLeading() async throws {
-        executionTimeAllowance = 200
-        begin("p13b-swipe-lengths", "On rows that are not full width (a 300 pt list; the left list of two 200 pt columns) and, left to right, on full-width rows with a leading full-swipe action: what do drags of 40, 50, 55, 60, 66 and 75 % of the ROW width at 200 ms do: reveal, delete, or nothing? Is the threshold a share of the row?")
+    func testP13b_RowSwipeLengthsNarrow() async throws {
+        try await swipeProbe("p13b-swipe-narrow", [Self.narrowSet], allowance: 150,
+                             "On the rows of a 300 pt list (trailing Delete, Flag; full swipe allowed): do drags of 66, 69, 72 and 75 % of the ROW width reveal or delete?")
+    }
+
+    @MainActor
+    func testP13c_RowSwipeLengthsColumns() async throws {
+        try await swipeProbe("p13c-swipe-columns", [Self.columnsSet], allowance: 150,
+                             "On the rows of the left of two 200 pt columns (trailing Delete, Flag; full swipe allowed): do drags of 66, 69, 72 and 75 % of the ROW width reveal or delete?")
+    }
+
+    @MainActor
+    func testP13d_RowSwipeLengthsLeadingAndEdgeToEdge() async throws {
+        try await swipeProbe("p13d-swipe-leading", [Self.leadingSet, Self.plainSet], allowance: 150,
+                             "On 440 pt edge-to-edge rows: with a leading full-swipe action (Remove, Pin), left to right, and with a trailing one (Delete, Flag), right to left: do drags of 50, 55, 57 and 60 % of the row reveal or delete?")
+    }
+
+    @MainActor
+    private func swipeProbe(_ name: String, _ sets: [SwipeSet], allowance: TimeInterval, _ question: String) async throws {
+        executionTimeAllowance = allowance
+        begin(name, question)
         let app = launchPlayground()
         let runner = XCUITestPhoneRunner()
-        var screen: Size?
-        var reason: String?
-        let sets: [(id: String, set: String, prefix: String, actions: [String], remove: String, rightward: Bool)] = [
-            ("probe3.swipesNarrow", "narrow 300 pt list", "Narrow row", ["Delete", "Flag"], "Delete", false),
-            ("probe3.swipesColumns", "left of two 200 pt columns", "Left row", ["Delete", "Flag"], "Delete", false),
-            ("probe3.swipesLeading", "leading action, left to right", "Leading row", ["Remove", "Pin"], "Remove", true),
-        ]
-        var first = true
-        for item in sets {
+        var reached = 0
+        for (i, item) in sets.enumerated() {
             var opened = false
-            if first {
+            if i == 0 {
                 opened = await openProbe3(app, item.id)
             } else {
                 opened = await openSibling(app, item.id)
             }
-            first = false
             guard opened else {
                 fact("P13 \(item.set): could not produce (the screen \(item.id) was not reached)")
                 continue
             }
-            if screen == nil {
-                let look = await runnerLook("the \(item.set) rows before any swipe", "rows", runner: runner)
-                screen = look?.screenSize
-            }
-            var attempts = Self.shareAttempts(rightward: item.rightward)
-            if item.rightward { attempts.append(SwipeAttempt("the core's swipe right (runner)", runner: true, rightward: true)) }
-            let skipped = await probeSwipeSet(app, set: item.set, rowPrefix: item.prefix, statusId: "probe3.swipevariant.status",
-                                              actions: item.actions, remove: item.remove, attempts: attempts, runner: runner, screen: screen)
-            if let skipped { note("P13 \(item.set): \(skipped)") }
+            reached += 1
+            if let skipped = await probeSwipeSet(app, item, runner: runner) { note("P13 \(item.set): \(skipped)") }
         }
-        if screen == nil { reason = "no runner look (no screen size) on any Swipe rows screen" }
         await finish(terminating: [])
-        if let reason { throw XCTSkip(reason) }
+        if reached == 0 { throw XCTSkip("no Swipe rows screen was reached") }
     }
 
     /// From one probe screen to another: Back to Fact probes 3, then the row `id`.
     @MainActor
     private func openSibling(_ app: XCUIApplication, _ id: String) async -> Bool {
         let back = app.navigationBars.buttons.element(boundBy: 0)
-        tolerant("go back to Fact probes 3") { if back.exists { back.tap() } }
+        tolerant("go back to Fact probes 3") { if back.exists && back.isHittable { back.tap() } }
         await pause(1)
         let row = app.buttons[id].firstMatch
         guard waitFor(row, "the \(id) row", 5) else { return false }
-        tolerant("open \(id)") { row.tap() }
+        tolerant("open \(id)") { if row.isHittable { row.tap() } }
         await pause(1)
         return true
     }
 
-    /// Each attempt on a fresh row ("<rowPrefix> N", N = 1, 2, …): the row's frame by query,
-    /// the drag, then by query: is the row's own text gone (deleted), which of `actions` are
-    /// hittable (revealed), else nothing. A revealed row is then removed with its `remove`
-    /// action, so the next rows stay high on the screen. One fact per drag.
+    /// The frame of the Cell holding the node labelled exactly `text` (else the node's own),
+    /// from a snapshot.
+    static func rowFrame(in tree: RawElement, labelled text: String) -> Rect? {
+        guard let hit = hits(tree, { $0.label == text }).first else { return nil }
+        if let cell = hit.ancestors.last(where: { $0.elementType == XCUIElementTypeCode.cell }) { return cell.frame }
+        return hit.element.frame
+    }
+
+    /// Each attempt on a fresh row ("<prefix> N", N = 1, 2, …), with no element query in the
+    /// loop (run 149: Jarvis's queries took 9-19 s late in P13b): one snapshot gives the row's
+    /// frame, the drag is by coordinate (or the runner's), one snapshot after it says whether
+    /// the row's own text is gone (deleted), which actions are on screen in the row's band
+    /// (revealed), else nothing. A revealed row is removed with its first action (tapped by
+    /// coordinate) so the next rows stay high. One fact per drag.
     @MainActor
-    private func probeSwipeSet(_ app: XCUIApplication, set: String, rowPrefix: String, statusId: String, actions: [String], remove: String,
-                               attempts: [SwipeAttempt], runner: XCUITestPhoneRunner, screen given: Size?) async -> String? {
-        let status = app.staticTexts[statusId].firstMatch
-        guard waitFor(status, "the \(set) rows' status line", 5) else { return "the \(set) screen has no status line" }
-        capture(app, Self.appBundleId, "rows-\(rowPrefix.lowercased().replacingOccurrences(of: " ", with: "-"))", "The \(set) swipe rows before any swipe: each row's Cell and text, frames")
-        var screen = given
-        if screen == nil {
-            let look = await runnerLook("the \(set) rows before any swipe", "rows", runner: runner)
-            screen = look?.screenSize
+    private func probeSwipeSet(_ app: XCUIApplication, _ item: SwipeSet, runner: XCUITestPhoneRunner) async -> String? {
+        let status = app.staticTexts[item.statusId].firstMatch
+        guard waitFor(status, "the \(item.set) rows' status line", 5) else { return "the \(item.set) screen has no status line" }
+        let slug = item.prefix.lowercased().replacingOccurrences(of: " ", with: "-")
+        guard let first = capture(app, Self.appBundleId, "rows-\(slug)", "The \(item.set) swipe rows before any swipe: each row's Cell and text, frames") else {
+            return "no snapshot of the \(item.set) rows"
         }
-        guard let screen, screen.width > 0 else { return "no runner look (no screen size)" }
-        note("\(set): the runner's swipe sends press(forDuration: 0.05, thenDragTo:) at XCTest's own speed (the command's durationMs is not honoured); the XCUITest drags pass a velocity of length / duration")
+        let screen = Size(width: first.frame.width, height: first.frame.height)
+        guard screen.width > 0, screen.height > 0 else { return "no screen size in the snapshot" }
+        note("\(item.set): the runner's swipe sends press(forDuration: 0.05, thenDragTo:) at XCTest's own speed (durationMs is not honoured); the XCUITest drags pass a velocity of length / duration")
+        let remove = item.actions.first ?? "Delete"
         var row = 0
         var revealCaptured = false
         var deleteCaptured = false
         var deletedBy: [String] = []
         var revealedBy: [String] = []
-        for attempt in attempts {
+        var before: RawElement? = first
+        for attempt in item.attempts {
             row += 1
-            let text = "\(rowPrefix) \(row)"
-            let cell = app.cells.containing(NSPredicate(format: "label == %@", text)).firstMatch
-            guard let cg = queryFrame(cell) else {
-                fact("P13 \(set), \(attempt.name): could not produce (\(text) not found by query)")
+            let text = "\(item.prefix) \(row)"
+            var tree = before
+            if tree == nil { tree = snapshotTree(app, "Jarvis before the drag") }
+            before = nil
+            guard let tree, let frame = Self.rowFrame(in: tree, labelled: text) else {
+                fact("P13 \(item.set), \(attempt.name): could not produce (\(text) not in the snapshot)")
                 continue
             }
-            let frame = Rect(x: Double(cg.origin.x), y: Double(cg.origin.y), width: Double(cg.width), height: Double(cg.height))
             let y = frame.y + frame.height / 2
             guard y > screen.height * 0.1, y < screen.height * 0.85 else {
-                fact("P13 \(set), \(attempt.name): could not produce (\(text) at y \(Int(y)), outside the band a drag may use)")
+                fact("P13 \(item.set), \(attempt.name): could not produce (\(text) at y \(Int(y)), outside the band a drag may use)")
                 continue
             }
             var from = Point(x: 0, y: y)
@@ -1134,11 +1176,25 @@ final class TreeFactProbe3Tests: Probe3Case {
                 }
             }
             await pause(1.1)
-            let deleted = !existsNow(Self.node(in: app, labelled: text))
-            let revealed = actions.filter { hittableNow(app.buttons[$0].firstMatch) }
-            let statusText = labelNow(status)
-            var outcome = "nothing (the row in place, no action revealed)"
-            if deleted {
+            let after = snapshotTree(app, "Jarvis after the drag")
+            let deleted = after.map { tree in Self.hits(tree) { $0.label == text }.isEmpty } ?? false
+            var revealed: [String] = []
+            var removeFrame: Rect?
+            if let after {
+                for action in item.actions {
+                    let inBand = Self.hits(after) { e in
+                        e.elementType == XCUIElementTypeCode.button && e.label == action && e.frame.width > 0
+                            && abs(e.frame.y + e.frame.height / 2 - y) < max(frame.height / 2, 10) && Self.onScreen(e.frame, after.frame)
+                    }
+                    if let hit = inBand.first {
+                        revealed.append(action)
+                        if action == remove { removeFrame = hit.element.frame }
+                    }
+                }
+            }
+            let statusText = after.flatMap { tree in Self.hits(tree) { $0.identifier == item.statusId }.first?.element.label } ?? "(no snapshot)"
+            var outcome = after == nil ? "unknown (no snapshot after the drag)" : "nothing (the row in place, no action revealed)"
+            if after != nil, deleted {
                 outcome = "deleted"
                 deletedBy.append("\(Int(travelled.rounded())) pt / \(ofRow) % of the row (\(attempt.name))")
             } else if !revealed.isEmpty {
@@ -1146,28 +1202,30 @@ final class TreeFactProbe3Tests: Probe3Case {
                 revealedBy.append("\(Int(travelled.rounded())) pt / \(ofRow) % of the row")
             }
             let way = attempt.runner ? "runner, sent as \(duration) ms" : "XCUITest drag, \(duration) ms"
-            fact("P13 \(set), \(attempt.name): \(Self.pointText(from)) -> \(Self.pointText(to)) on \(text) \(Self.rectText(frame)), \(Int(travelled.rounded())) pt = \(ofRow) % of the row (\(Int(frame.width.rounded())) pt) = \(ofScreen) % of the screen, \(way) -> \(outcome); status \"\(statusText)\"")
-            if deleted && !deleteCaptured {
+            fact("P13 \(item.set), \(attempt.name): \(Self.pointText(from)) -> \(Self.pointText(to)) on \(text) \(Self.rectText(frame)), \(Int(travelled.rounded())) pt = \(ofRow) % of the row (\(Int(frame.width.rounded())) pt) = \(ofScreen) % of the screen, \(way) -> \(outcome); status \"\(statusText)\"")
+            if after != nil, deleted, !deleteCaptured {
                 deleteCaptured = true
                 capture(app, Self.appBundleId, "after-delete-\(row)", "After \(attempt.name) deleted \(text): the rows and the status line")
             }
-            if !deleted && !revealed.isEmpty {
+            if !deleted, !revealed.isEmpty {
                 if !revealCaptured {
                     revealCaptured = true
-                    let tree = capture(app, Self.appBundleId, "revealed-\(row)", "After \(attempt.name) on \(text): the revealed actions (role, label, identifier, frame)")
-                    report(tree, "revealed actions (nodes labelled \(actions.joined(separator: " or ")))") { actions.contains($0.label) }
+                    let shown = capture(app, Self.appBundleId, "revealed-\(row)", "After \(attempt.name) on \(text): the revealed actions (role, label, identifier, frame)")
+                    report(shown, "revealed actions (nodes labelled \(item.actions.joined(separator: " or ")))") { item.actions.contains($0.label) }
                 }
-                if revealed.contains(remove) {
-                    tolerant("remove \(text) with its revealed \(remove) (clean-up)") { app.buttons[remove].firstMatch.tap() }
-                } else {
-                    tolerant("tap the status line to close the actions") { status.tap() }
+                let target = removeFrame ?? after.flatMap { tree in Self.hits(tree) { $0.identifier == item.statusId }.first?.element.frame }
+                if let target {
+                    tolerant("remove \(text) with its revealed \(remove), or close the actions (clean-up, by coordinate)") {
+                        app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+                            .withOffset(CGVector(dx: target.x + target.width / 2, dy: target.y + target.height / 2)).tap()
+                    }
+                    await pause(0.8)
                 }
-                await pause(0.8)
             }
         }
         let deletedText = deletedBy.isEmpty ? "none" : deletedBy.joined(separator: "; ")
         let revealedText = revealedBy.isEmpty ? "none" : revealedBy.joined(separator: "; ")
-        fact("P13 \(set) summary: deleted by \(deletedText); revealed by \(revealedText)")
+        fact("P13 \(item.set) summary: deleted by \(deletedText); revealed by \(revealedText)")
         return nil
     }
 
@@ -1377,6 +1435,14 @@ class Probe3Case: QATestCase {
     private var began = false
     private var finished = false
     private var lastStep = "(none)"
+    /// Open while `tolerant` scopes may match issues; closed by the teardown guard.
+    let expectationGate = ExpectationGate()
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        // QATestCase stops at the first failure; a probe records and goes on.
+        continueAfterFailure = true
+    }
 
     override func tearDownWithError() throws {
         // Never leave the simulator rotated, even when a probe ended early (teardown runs on
@@ -1406,6 +1472,8 @@ class Probe3Case: QATestCase {
         tolerant("terminate Jarvis (teardown)") { if own.state != .notRunning { own.terminate() } }
         tolerant("press Home (teardown)") { XCUIDevice.shared.press(.home) }
         began = false
+        // Outside any expectation scope that can still match (see `tolerant`).
+        expectationGate.close()
         XCTFail("probe round 3 \(probe): the test body ended before finish() with no failure of its own (an early return, a swallowed throw, or XCTest stopping the test after an expected issue); last step reached: \(last)")
     }
 
@@ -1456,7 +1524,7 @@ class Probe3Case: QATestCase {
     func note(_ text: String) {
         let line = String(format: "t+%6.1f s  ", Date().timeIntervalSince(started)) + text
         lines.append(line)
-        lastStep = line.count > 300 ? String(line.prefix(300)) + "…" : line
+        if !text.hasPrefix("progress ") { lastStep = line.count > 300 ? String(line.prefix(300)) + "…" : line }
     }
 
     /// One mechanically answered fact (`question: answer`), for the facts attachment.
@@ -2085,11 +2153,22 @@ class Probe3Case: QATestCase {
     func tapFirstButton(_ app: XCUIApplication, _ labels: [String], _ what: String) -> String? {
         var tapped: String?
         tolerant(what) {
+            // Only a hittable button gets XCUITest's tap (a tap on one that is not hittable ends
+            // the test, run 149); one that exists but is not hittable is tapped at its frame
+            // centre by coordinate when that lies on the screen.
             for label in labels where tapped == nil {
                 let button = app.buttons[label].firstMatch
-                if button.exists {
+                guard button.exists else { continue }
+                if button.isHittable {
                     button.tap()
                     tapped = label
+                } else {
+                    let f = button.frame
+                    let screen = app.frame
+                    if f.width > 0, f.height > 0, screen.contains(CGPoint(x: f.midX, y: f.midY)) {
+                        app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: f.midX, dy: f.midY)).tap()
+                        tapped = label + " (by coordinate: not hittable)"
+                    }
                 }
             }
         }
@@ -2152,6 +2231,14 @@ class Probe3Case: QATestCase {
         let kind = XCUIElementTypeCode.name(alert.elementType)
         note("\(what): \(kind) in \(ownerId)'s snapshot: label \"\(Self.clip(alert.label))\", id \(alert.identifier.isEmpty ? "-" : alert.identifier), frame \(Self.rectText(alert.frame)); texts: \(texts.joined(separator: ", ")); buttons: \(rows.joined(separator: ", "))")
         return buttons.map { $0.element.label }
+    }
+
+    /// One snapshot of `app` as data, or nil (recorded).
+    @MainActor
+    func snapshotTree(_ app: XCUIApplication, _ what: String) -> RawElement? {
+        var raw: RawElement?
+        tolerant("snapshot of \(what)") { raw = SnapshotCopy.copy(try app.snapshot()) }
+        return raw
     }
 
     /// The first Alert (else Sheet) node in one snapshot of `owner`, or nil.
@@ -2317,7 +2404,14 @@ class Probe3Case: QATestCase {
         var issues: [String] = []
         let options = XCTExpectedFailure.Options()
         options.isStrict = false
+        // Run 149: an XCUITest action that cannot be performed (a tap on an element that is not
+        // hittable) records its issue and then ends the test body by an exception, from
+        // inside this block; the block never returns, its expectation scope is never closed,
+        // and it went on matching every later issue, the teardown guard's included. The gate
+        // is closed before the guard fails, so a leaked scope matches nothing any more.
+        let gate = expectationGate
         options.issueMatcher = { issue in
+            guard gate.open else { return false }
             issues.append(issue.compactDescription)
             return true
         }
@@ -2339,6 +2433,18 @@ class Probe3Case: QATestCase {
             }
         }
         return ok
+    }
+}
+
+/// Whether `tolerant`'s expected-failure matchers may still accept issues (shared with the
+/// matcher closures XCTest keeps).
+final class ExpectationGate: Sendable {
+    private let state = Mutex(true)
+
+    var open: Bool { state.withLock { $0 } }
+
+    func close() {
+        state.withLock { $0 = false }
     }
 }
 

@@ -828,53 +828,68 @@ final class TreeFactProbe3SystemTests: Probe3Case {
             if tapFirstButton(contacts, ["Continue", "Not Now"], "close a Contacts first-launch screen") == nil { break }
             await pause(1.5)
         }
+        // Run 147: two 60 s XCUITest idle waits on Contacts' edit form ("App animations
+        // complete notification not received") ran the test out of time. From here on, every
+        // frame comes from a snapshot and every tap and drag is synthesized through
+        // SpringBoard's coordinates, so no call waits for Contacts to idle.
+        guard let list = snapshotTree(contacts, "Contacts' list") else { return "no snapshot of Contacts' list" }
         var name = "John Appleseed"
-        var person = Self.node(in: contacts, labelled: name)
-        if !existsNow(person) {
+        var personFrame = Self.hits(list) { $0.label == name }.first?.element.frame
+        if personFrame == nil {
             name = "Kate Bell"
-            person = Self.node(in: contacts, labelled: name)
+            personFrame = Self.hits(list) { $0.label == name }.first?.element.frame
         }
-        guard existsNow(person) else {
+        guard let person = personFrame else {
             capture(contacts, Self.contactsId, "no-contact", "Why is no sample contact listed?")
             return "no sample contact (John Appleseed, Kate Bell) in Contacts"
         }
-        tolerant("open the contact") { person.tap() }
-        await pause(1.5)
-        guard tapFirstButton(contacts, ["Edit"], "edit the contact") != nil else { return "no Edit button on the contact" }
-        await pause(1.5)
+        boardTap(person, "open the contact \(name)")
+        await pause(2)
+        guard let card = snapshotTree(contacts, "the contact's card"),
+              let edit = Self.hits(card, { $0.elementType == XCUIElementTypeCode.button && $0.label == "Edit" }).first?.element.frame else {
+            capture(contacts, Self.contactsId, "no-edit", "Why is there no Edit button on the contact's card?")
+            return "no Edit button on the contact"
+        }
+        boardTap(edit, "edit the contact")
+        await pause(2)
         // Run 139: "Delete Contact" is a Cell (with a StaticText), not a Button.
-        let exact = NSPredicate(format: "label == %@", "Delete Contact")
-        let cell = contacts.cells.matching(exact).firstMatch
-        let label = contacts.staticTexts.matching(exact).firstMatch
+        var found: Rect?
+        var screen = Rect(x: 0, y: 0, width: 0, height: 0)
         var scrolls = 0
-        while !hittableNow(cell) && !hittableNow(label), scrolls < 6 {
-            drag(contacts, from: 0.85, to: 0.2, "scroll the edit form down")
+        while scrolls <= 6 {
+            guard let form = snapshotTree(contacts, "the edit form") else { break }
+            screen = form.frame
+            let hits = Self.hits(form) { $0.label == "Delete Contact" && ($0.elementType == XCUIElementTypeCode.cell || $0.elementType == XCUIElementTypeCode.staticText) }
+            if let hit = hits.first(where: { h in
+                let mid = h.element.frame.y + h.element.frame.height / 2
+                return mid > screen.height * 0.15 && mid < screen.height * 0.85
+            }) {
+                found = hit.element.frame
+                break
+            }
+            if scrolls == 6 { break }
+            boardScroll(from: 0.8, to: 0.3, "scroll the edit form down (through SpringBoard)")
             scrolls += 1
-            await pause(0.8)
+            await pause(1)
         }
-        let target = hittableNow(cell) ? cell : label
-        guard hittableNow(target) else {
+        guard let target = found else {
             capture(contacts, Self.contactsId, "no-delete", "Why is the Delete Contact cell not reachable?")
-            return "the Delete Contact cell was not reached"
+            return "the Delete Contact cell was not reached within 6 scrolls"
         }
-        note("the Delete Contact \(hittableNow(cell) ? "cell" : "text") is hittable after \(scrolls) scroll(s)")
-        tolerant("tap the Delete Contact cell (the form's; the confirmation is never confirmed)") { target.tap() }
+        note("the Delete Contact cell is in the middle band at \(Self.rectText(target)) after \(scrolls) scroll(s)")
+        boardTap(target, "tap the Delete Contact cell (the form's; the confirmation is never confirmed)")
         await pause(1.5)
         let tree = capture(contacts, Self.contactsId, "delete-confirmation", "Contacts' delete confirmation up: its container (Alert, Sheet, Popover, Other), its buttons' roles and labels, the card behind")
         let boardTree = capture(board, Self.springboardId, "delete-confirmation-springboard", "Contacts' delete confirmation up: does SpringBoard's tree hold it?")
         let modal = report(tree, "the confirmation: modal-like nodes", Self.modalish)
         let deletes = report(tree, "nodes labelled Delete Contact (the form's cell and the confirmation's button)") { $0.label == "Delete Contact" }
-        report(tree, "nodes labelled Cancel") { $0.label == "Cancel" }
-        let card = report(tree, "the card behind: nodes naming the contact or its edit form (\(name), add phone, Ringtone)", limit: 6) { e in
+        let cancels = report(tree, "nodes labelled Cancel") { $0.label == "Cancel" }
+        let cardNodes = report(tree, "the card behind: nodes naming the contact or its edit form (\(name), add phone, Ringtone)", limit: 6) { e in
             e.label == name || e.label == "add phone" || e.label == "Ringtone"
         }
         let inBoard = boardTree.map { tree in Self.hits(tree) { $0.label == "Delete Contact" }.count } ?? 0
-        var sheets = 0
-        var alerts = 0
-        tolerant("count sheets and alerts by query") {
-            sheets = contacts.sheets.count
-            alerts = contacts.alerts.count
-        }
+        let sheets = tree.map { Self.hits($0) { $0.elementType == XCUIElementTypeCode.sheet }.count } ?? 0
+        let alerts = tree.map { Self.hits($0) { $0.elementType == XCUIElementTypeCode.alert }.count } ?? 0
         let look = await runnerLook("Contacts' delete confirmation up", "delete-confirmation")
         let typedModal = look?.root.map { root in Self.findAll(root) { $0.role == .alert || $0.role == .sheet }.map { Self.describeNode($0) } } ?? []
         let typedDeletes = look?.root.map { root in Self.findAll(root) { ($0.label ?? "") == "Delete Contact" }.map { Self.describeNode($0) } } ?? []
@@ -884,40 +899,51 @@ final class TreeFactProbe3SystemTests: Probe3Case {
             return "\(Self.brief(hit.element)) \(Self.rectText(hit.element.frame)) (modal-like ancestor \(under); ancestors \(Self.ancestry(hit, 4)))"
         }
         let deleteText = deleteParts.joined(separator: "; ")
-        let cardParts: [String] = card.map { hit in "\(Self.brief(hit.element)) on screen \(Self.yesNo(Self.onScreen(hit.element.frame, tree?.frame ?? hit.element.frame)))" }
+        let cardParts: [String] = cardNodes.map { hit in "\(Self.brief(hit.element)) on screen \(Self.yesNo(Self.onScreen(hit.element.frame, tree?.frame ?? hit.element.frame)))" }
         let cardText = cardParts.isEmpty ? "not in the tree" : cardParts.joined(separator: "; ")
         let lookApp = look?.appBundleId ?? "?"
         let typedModalText = typedModal.isEmpty ? "none" : typedModal.joined(separator: "; ")
         let typedDeleteText = typedDeletes.isEmpty ? "none" : typedDeletes.joined(separator: "; ")
-        fact("Contacts delete confirmation: modal-like nodes \(modal.count) (\(modalText)); by query sheets \(sheets), alerts \(alerts); Delete Contact nodes: \(deleteText); in SpringBoard's tree \(inBoard)")
+        fact("Contacts delete confirmation: modal-like nodes \(modal.count) (\(modalText)); in the snapshot Sheet nodes \(sheets), Alert nodes \(alerts); Delete Contact nodes: \(deleteText); in SpringBoard's tree \(inBoard)")
         fact("Contacts delete confirmation: the card behind: \(cardText)")
         fact("Contacts delete confirmation: the runner's top layer \(lastRunnerFront), its look of \(lookApp); typed Alert/Sheet nodes: \(typedModalText); typed Delete Contact nodes: \(typedDeleteText)")
-        // Dismiss without confirming: the confirmation's Cancel, else a tap outside it. The
-        // label Delete Contact is never tapped again.
-        var dismissed = ""
-        tolerant("cancel the confirmation") {
-            let sheetCancel = contacts.sheets.firstMatch.buttons["Cancel"].firstMatch
-            let alertCancel = contacts.alerts.firstMatch.buttons["Cancel"].firstMatch
-            if sheetCancel.exists {
-                sheetCancel.tap()
-                dismissed = "the sheet's Cancel"
-            } else if alertCancel.exists {
-                alertCancel.tap()
-                dismissed = "the alert's Cancel"
-            }
+        // Dismiss without confirming: a Cancel inside the confirmation (else any Cancel), else
+        // a tap outside, all through SpringBoard. Delete Contact is never tapped again.
+        let insideCancel = cancels.first { hit in hit.ancestors.contains(where: Self.modalish) && hit.element.elementType == XCUIElementTypeCode.button }
+        let anyCancel = cancels.first { $0.element.elementType == XCUIElementTypeCode.button }
+        var dismissed = "a tap outside"
+        if let cancel = insideCancel ?? anyCancel {
+            boardTap(cancel.element.frame, "cancel the confirmation")
+            dismissed = insideCancel != nil ? "the confirmation's Cancel" : "a Cancel button"
+        } else {
+            boardTap(Rect(x: screen.width * 0.5 - 1, y: screen.height * 0.06 - 1, width: 2, height: 2), "tap outside the confirmation")
         }
-        if dismissed.isEmpty, tapFirstButton(contacts, ["Cancel"], "tap a Cancel button") != nil { dismissed = "a Cancel button" }
-        if dismissed.isEmpty {
-            tapAt(contacts, 0.5, 0.06, "tap outside the confirmation")
-            dismissed = "a tap outside"
-        }
-        await pause(1)
-        var remaining = 0
-        tolerant("count Delete Contact nodes") {
-            remaining = contacts.descendants(matching: .any).matching(exact).count
-        }
-        fact("Contacts delete confirmation: dismissed with \(dismissed); nodes labelled Delete Contact by query afterwards: \(remaining) (the form keeps its cell and text; more means the confirmation is still up); the edit form still up (its Delete Contact cell by query): \(Self.yesNo(existsNow(cell)))")
+        await pause(1.5)
+        let afterTree = snapshotTree(contacts, "Contacts after dismissing")
+        let remaining = afterTree.map { Self.hits($0) { $0.label == "Delete Contact" }.count } ?? -1
+        let formUp = afterTree.map { !Self.hits($0) { $0.elementType == XCUIElementTypeCode.cell && $0.label == "Delete Contact" }.isEmpty } ?? false
+        fact("Contacts delete confirmation: dismissed with \(dismissed); nodes labelled Delete Contact in the snapshot afterwards: \(remaining) (the form keeps its cell and text; more means the confirmation is still up); the edit form still up (its Delete Contact cell): \(Self.yesNo(formUp))")
         return nil
+    }
+
+    /// A tap at the centre of `frame` synthesized through SpringBoard's coordinates (no wait
+    /// for the app under it to idle).
+    @MainActor
+    private func boardTap(_ frame: Rect, _ what: String) {
+        tapThroughSpringBoard(CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height), what)
+    }
+
+    /// A vertical drag at mid-width between two normalised heights, synthesized through
+    /// SpringBoard's coordinates.
+    @MainActor
+    private func boardScroll(from: Double, to: Double, _ what: String) {
+        let board = XCUIApplication(bundleIdentifier: Self.springboardId)
+        tolerant(what) {
+            let start = board.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: from))
+            let end = board.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: to))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        note("\(what): dragged from \(Int(from * 100))% to \(Int(to * 100))% of the height")
     }
 
     // MARK: - P12a: badge, Notification Centre, Control Centre, App Switcher
