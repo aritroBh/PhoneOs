@@ -263,11 +263,14 @@ pub enum FlowContext {
     /// the picker's content (the owner's contacts, photo library, files) in the **host's**
     /// snapshot with screen frames, the host's own screen gone, and the runner names the
     /// host as the app in front; the host cannot see that content until something is
-    /// chosen. So the screen is this place (named `the contact picker shown over <App>`):
-    /// what is read there is the owner's data, a source distinct from the app; choosing a
-    /// row or pressing its confirm button is a full input into the app as well
-    /// ([`ScreenPlaces::destinations`]), carrying what was read; its "Cancel" stays local.
-    /// Recognised by the OS's identifiers only ([`SYSTEM_PICKER_IDS`]).
+    /// chosen. So what is read there is read from this place (named `<App> (showing the
+    /// contact picker)`), a source distinct from the app's own content — acting in the app
+    /// afterwards asks about the flow picker → app, the real hand-over. It is a **source
+    /// distinction only** (review of round 3, M2): the identifiers are author-controlled, so
+    /// every input on a picker screen goes into the app too (and, in a browser, its pages;
+    /// [`ScreenPlaces::destinations`], [`ScreenPlaces::every`]) and nothing is ever local to
+    /// the picker: forging a picker can only add questions. Recognised by the OS's identifiers
+    /// on shown nodes only ([`SYSTEM_PICKER_IDS`]).
     SystemPicker {
         /// The host app (lower-cased bundle id).
         app: String,
@@ -483,7 +486,7 @@ impl FlowContext {
             }
             FlowContext::SystemAlert => SYSTEM_ALERT.to_owned(),
             FlowContext::SystemPicker { app: b, kind } => {
-                format!("{} shown over {}", kind.name(), app(b))
+                format!("{} (showing {})", app(b), kind.name())
             }
         }
     }
@@ -831,10 +834,7 @@ fn scan_chrome(root: &UiNode, bounds: &jarvis_proto::Rect) -> Chrome {
         if share_sheet_node(n) {
             out.share_sheet = true;
         }
-        // Probe round 3 (F2): a system picker's identifiers, and a sheet's backdrop.
-        if out.picker.is_none() {
-            out.picker = picker_node(n);
-        }
+        // Probe round 3 (F2): a sheet's backdrop (shown or not: it only keeps a picker).
         out.presented |= backdrop(n, bounds);
         // An alert, sheet or banner anywhere makes a home screen a read (unchanged, fail
         // closed whether or not it is shown). Probe run 134: a banner by its identifier too.
@@ -848,6 +848,11 @@ fn scan_chrome(root: &UiNode, bounds: &jarvis_proto::Rect) -> Chrome {
             continue;
         }
         out.cell |= n.role == Role::Cell;
+        // Probe round 3 (F2; review M2): a system picker's identifier, on a shown node on
+        // screen only (a hidden node is no picker anyone sees).
+        if out.picker.is_none() {
+            out.picker = picker_node(n);
+        }
         let address = address_like(n);
         if !matches!(n.role, Role::Application | Role::Window)
             && (n.label.as_deref().is_some_and(|l| !l.trim().is_empty())
@@ -1170,6 +1175,20 @@ impl ScreenPlaces {
         }
     }
 
+    /// Probe round 3 (review M2): the places a system picker on this screen is shown over —
+    /// the app, and for a listed browser its pages with no readable address (the page that
+    /// opened a file input's picker is not on screen); none without a picker.
+    pub fn host_places(&self) -> Vec<FlowContext> {
+        let Some(host) = &self.host else {
+            return Vec::new();
+        };
+        let mut out = vec![host.clone()];
+        if let Some(app) = host.bundle().filter(|b| is_browser(b)) {
+            out.push(FlowContext::SiteUnreadable(app.to_owned()));
+        }
+        out
+    }
+
     /// Probe round 3 (F2): the raw tree holds a sheet presentation's backdrop (the session
     /// keeps a picker sticky while it does).
     pub fn shows_presentation(&self) -> bool {
@@ -1274,6 +1293,8 @@ impl ScreenPlaces {
     /// input whose place is not known may reach, and what leaving the screen leaves).
     pub fn every(&self) -> Vec<FlowContext> {
         let mut out = vec![self.base.clone()];
+        // Probe round 3 (review M2): on a picker screen the app it is shown over too.
+        out.extend(self.host_places());
         out.extend(self.embedded_places());
         // Probe run 134 (fix 3): on a thin tree, the screen Jarvis cannot read too.
         out.extend(self.unreadable.iter().cloned());
@@ -1434,34 +1455,15 @@ impl ScreenPlaces {
             | Action::Done { .. }
             | Action::Fail { .. } => out.push(self.base.clone()),
         }
-        // Probe round 3 (F2): on a system picker, every full input on the screen may choose
-        // an item (a row, the confirm button) and hand it to the app it is shown over: it is
-        // an input into that app too. Only a press of the picker's own "Cancel" (whole
-        // label) and a scroll that works no control stay in the picker.
-        if let Some(host) = &self.host {
-            if picker_hands_over(action, screen) {
-                out.push(host.clone());
-            }
-        }
+        // Probe round 3 (F2; review M2): the picker is a source distinction only. Every
+        // input on a picker screen — a look, a wait, a scroll, "Cancel", any tap, typing —
+        // is also an input into the app it is shown over (which serves the snapshot and may
+        // receive the choice), and in a browser into its pages (a file input's picker hands
+        // the choice to the site).
+        out.extend(self.host_places());
         let mut seen = BTreeSet::new();
         out.retain(|c| seen.insert(c.clone()));
         out
-    }
-}
-
-/// Probe round 3 (F2): whether `action` on a system picker may hand something to the app it
-/// is shown over — every input that touches the screen and is of the full kind
-/// ([`InputKind::of`]), except a tap or long press on a control whose whole label is
-/// "Cancel" (the picker's own dismissal: nothing is handed over).
-fn picker_hands_over(action: &Action, screen: &CompactScreen) -> bool {
-    if !actuation::touches_screen(action) || InputKind::of(action, screen) != InputKind::Full {
-        return false;
-    }
-    match action {
-        Action::Tap { element } | Action::LongPress { element, .. } => !screen
-            .get(*element)
-            .is_some_and(|e| e.label.trim().eq_ignore_ascii_case("cancel")),
-        _ => true,
     }
 }
 
@@ -1757,6 +1759,24 @@ impl InputKind {
         match actuation(action, screen) {
             Actuation::Navigation => InputKind::Scroll,
             _ => InputKind::Full,
+        }
+    }
+}
+
+impl InputKind {
+    /// Review of round 3 (M3): [`InputKind::of`] with the raw tree: a sideways scroll whose
+    /// path crosses a list row (`evaluate::crosses_list_row`, the gate's row-swipe rule) may
+    /// trigger the row's swipe action, so it is *full*, never covered by a scroll grant.
+    pub fn of_in(
+        action: &Action,
+        screen: &CompactScreen,
+        tree: Option<&ScreenTree<'_>>,
+    ) -> InputKind {
+        match InputKind::of(action, screen) {
+            InputKind::Scroll if crate::evaluate::crosses_list_row(action, screen, tree) => {
+                InputKind::Full
+            }
+            other => other,
         }
     }
 }

@@ -326,27 +326,56 @@ fn row_swipe_note() -> QuestionRow {
     row(QuestionRowKind::Note, &format!(". {ROW_SWIPE_NOTE}"))
 }
 
-/// Probe round 3 (F1): the row-swipe note of a question about `action`, when it is a
-/// sideways drag across a list row ([`crosses_list_row`]); the session's questions carry it
-/// as the gate's do.
-pub fn row_swipe_question_note(
+/// Probe round 3 (F3): the note of a question about Return on the emergency-call key.
+pub const EMERGENCY_CALL_NOTE: &str =
+    "The keyboard's Return key is its emergency-call key: pressing it may place an emergency call";
+
+fn emergency_call_note() -> QuestionRow {
+    row(QuestionRowKind::Note, &format!(". {EMERGENCY_CALL_NOTE}"))
+}
+
+/// Probe round 3 (F3): whether `action` presses Return on the keyboard's emergency-call key
+/// (`UIReturnKeyType.emergencyCall`, by its identifier `Emergency call`).
+fn emergency_return(action: &Action, screen: &CompactScreen) -> bool {
+    screen.cues.return_key_type.as_deref() == Some("emergency call")
+        && matches!(actuation(action, screen), Actuation::Return(_))
+}
+
+/// Probe round 3 (F1, F3): the notes of a question about `action` that the round-3 rules
+/// add — a sideways drag across a list row ([`crosses_list_row`]), Return on the
+/// emergency-call key; the session's questions carry them as the gate's do.
+pub fn round3_question_notes(
     action: &Action,
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
-) -> Option<QuestionRow> {
-    crosses_list_row(action, screen, tree).then(row_swipe_note)
+) -> Vec<QuestionRow> {
+    let mut out = Vec::new();
+    if crosses_list_row(action, screen, tree) {
+        out.push(row_swipe_note());
+    }
+    if emergency_return(action, screen) {
+        out.push(emergency_call_note());
+    }
+    out
 }
 
 /// Probe round 3 (run 139, p4d; F1): whether `action` is a sideways drag — a swipe or a
 /// scroll, with or without an element, as the runner will make it
 /// ([`crate::gestures::drag_gesture`], the path the command is sent) — whose path touches a
-/// row of a list in the raw tree: a `Cell` (any), or a row-sized child of a `Table` or
-/// `CollectionView`. On the real tree a full-width swipe on such a row deleted it with no
-/// tap; how far another app's row must be dragged is not measured, so every sideways drag
-/// across a row is a row swipe, whatever the verb and whatever the classifier's listed-row
-/// rule says (a carousel's cells included: stricter). Drawn nodes of the keyboard never
-/// count. `false` without the raw tree (the listed-row rule of `classify` decides alone).
-fn crosses_list_row(
+/// row of a list in the raw tree: a `Cell` (any), a row-sized child of a `Table` or
+/// `CollectionView`, or (review of round 3, M3) any drawn node of row-like height (at most
+/// [`crate::classify::MAX_LIST_ROW_SHARE`] of the screen) at least [`ROW_MIN_WIDTH_SHARE`]
+/// as wide as its nearest scrollable ancestor at any depth — a `ScrollView`, `Table`,
+/// `CollectionView` or `WebView` — which catches rows one wrapper down, React Native's
+/// `ScrollView > Other > Other` rows, SwiftUI `LazyVStack` rows and a web page's rows (and,
+/// stricter, a page's full-width lines). On the real tree a full-width swipe on such a row
+/// deleted it with no tap; how far another app's row must be dragged is not measured, so
+/// every sideways drag across a row is a row swipe, whatever the verb and whatever the
+/// classifier's listed-row rule says (a carousel's cells included: stricter). Drawn nodes of
+/// the keyboard never count. Still missed: a row narrower than that share of its scroller
+/// with no `Cell` role, and rows the tree does not hold. `false` without the raw tree (the
+/// listed-row rule of `classify` decides alone). O(nodes · log nodes), sideways drags only.
+pub(crate) fn crosses_list_row(
     action: &Action,
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
@@ -373,6 +402,34 @@ fn crosses_list_row(
     let (x0, x1) = (g.from.x.min(g.to.x), g.from.x.max(g.to.x));
     let (y0, y1) = (g.from.y.min(g.to.y), g.from.y.max(g.to.y));
     let row_height = screen.size.height * crate::classify::MAX_LIST_ROW_SHARE;
+    let scroller = |r: &Role| {
+        matches!(
+            r,
+            Role::ScrollView | Role::Table | Role::CollectionView | Role::WebView
+        )
+    };
+    // The nearest scrollable ancestor of every raw node (`u32::MAX`: none), in node order
+    // (a parent's index is below its children's).
+    let mut nearest: Vec<u32> = Vec::with_capacity(t.parents.len());
+    for (i, &p) in t.parents.iter().enumerate() {
+        let up = usize::try_from(p)
+            .ok()
+            .filter(|&k| p != u32::MAX && k < i)
+            .map_or(u32::MAX, |k| {
+                if crate::hit::raw_node(t, p).is_some_and(|n| scroller(&n.role)) {
+                    p
+                } else {
+                    nearest.get(k).copied().unwrap_or(u32::MAX)
+                }
+            });
+        nearest.push(up);
+    }
+    let parent_of = |i: u32| {
+        usize::try_from(i)
+            .ok()
+            .and_then(|k| t.parents.get(k))
+            .copied()
+    };
     t.nodes.iter().any(|n| {
         let f = n.frame;
         let touches = !n.keyboard
@@ -381,19 +438,33 @@ fn crosses_list_row(
             && f.max_x() >= x0
             && f.y <= y1
             && f.max_y() >= y0;
-        touches
-            && (n.role == Role::Cell
-                || (f.height <= row_height
-                    && usize::try_from(n.node)
-                        .ok()
-                        .and_then(|k| t.parents.get(k))
-                        .and_then(|&p| crate::hit::raw_node(t, p))
-                        .is_some_and(|p| matches!(p.role, Role::Table | Role::CollectionView))))
+        if !touches {
+            return false;
+        }
+        if n.role == Role::Cell {
+            return true;
+        }
+        if f.height > row_height {
+            return false;
+        }
+        let direct = parent_of(n.node)
+            .and_then(|p| crate::hit::raw_node(t, p))
+            .is_some_and(|p| matches!(p.role, Role::Table | Role::CollectionView));
+        direct
+            || usize::try_from(n.node)
+                .ok()
+                .and_then(|k| nearest.get(k))
+                .and_then(|&s| crate::hit::raw_node(t, s))
+                .is_some_and(|s| f.width >= s.frame.width * ROW_MIN_WIDTH_SHARE)
     })
 }
 
+/// Review of round 3 (M3): the share of its nearest scrollable ancestor's width a node of
+/// row-like height must span to be read as a list row ([`crosses_list_row`]).
+pub(crate) const ROW_MIN_WIDTH_SHARE: f64 = 0.8;
+
 /// Probe round 3 (run 139, p6b `13-basic-auth`; F6): whether `action` types into a text
-/// input that is not secure but whose raw parent also holds a drawn `SecureTextField` — the
+/// input that is not secure but whose innermost web view also holds a drawn `SecureTextField` — the
 /// user name of a sign-in pair (Safari's HTTP Basic auth dialog: `TextField
 /// placeholder="User Name"` beside `SecureTextField placeholder="Password"`, neither
 /// labelled). Structure the OS gives (the secure trait), never a label. `false` without the
@@ -412,7 +483,7 @@ fn credential_pair(action: &Action, screen: &CompactScreen, tree: Option<&Screen
 }
 
 /// Probe round 3 (F6): whether `action` presses a control whose whole label is a sign-in
-/// word ([`crate::phrases::SIGN_IN_PHRASES`]) and whose raw parent also holds a drawn
+/// word ([`crate::phrases::SIGN_IN_PHRASES`]) and whose innermost web view also holds a drawn
 /// password field — the button that sends a password form (Safari's HTTP sign-in dialog's
 /// `Button "Sign In"`).
 fn sign_in_press(action: &Action, screen: &CompactScreen, tree: Option<&ScreenTree<'_>>) -> bool {
@@ -426,23 +497,14 @@ fn sign_in_press(action: &Action, screen: &CompactScreen, tree: Option<&ScreenTr
         && beside_password(el, tree)
 }
 
-/// Probe round 3 (F6): whether `el`'s raw parent also holds a drawn `SecureTextField`
-/// other than `el` (a sign-in form's pair), inside a web view (a page's form, or the dialog
-/// Safari raises for the page: its `SFDialogView` is in the page's `WebView`). An app's own
+/// Probe round 3 (F6; review L4): whether a drawn `SecureTextField` other than `el` lies in
+/// the same innermost web view as `el` (a sign-in form's pair: a page's form, or the dialog
+/// Safari raises for the page — its `SFDialogView` is in the page's `WebView`). An app's own
 /// sign-in screen is not covered (stated). `false` without the raw tree.
 fn beside_password(el: &Element, tree: Option<&ScreenTree<'_>>) -> bool {
     let Some(t) = tree.filter(|t| !t.nodes.is_empty()) else {
         return false;
     };
-    // Only what a web view holds (a page's form, the dialog Safari shows for the page):
-    // an app's own sign-in screen keeps its rules.
-    let in_web = t
-        .ancestors(el)
-        .into_iter()
-        .any(|a| crate::hit::raw_node(t, a).is_some_and(|n| n.role == Role::WebView));
-    if !in_web {
-        return false;
-    }
     let parent_of = |i: u32| {
         usize::try_from(i)
             .ok()
@@ -450,15 +512,35 @@ fn beside_password(el: &Element, tree: Option<&ScreenTree<'_>>) -> bool {
             .copied()
             .filter(|p| *p != u32::MAX)
     };
+    // The innermost web view holding raw node `i` (bounded by the tree's size).
+    let web_of = |i: u32| {
+        let mut at = parent_of(i);
+        let mut steps = 0usize;
+        while let Some(p) = at {
+            if crate::hit::raw_node(t, p).is_some_and(|n| n.role == Role::WebView) {
+                return Some(p);
+            }
+            steps += 1;
+            if steps > t.parents.len() {
+                break;
+            }
+            at = parent_of(p);
+        }
+        None
+    };
     let Some(own) = t.source(el) else {
         return false;
     };
-    let Some(parent) = parent_of(own) else {
+    // Only what a web view holds (a page's form, the dialog Safari shows for the page): an
+    // app's own sign-in screen keeps its rules. Review of round 3 (L4): the password field
+    // anywhere in the same innermost web view, not only beside it (a page's layout — a
+    // `<div role=group>` around the user name — must not defeat the rule).
+    let Some(web) = web_of(own) else {
         return false;
     };
-    t.nodes.iter().any(|n| {
-        n.node != own && n.role == Role::SecureTextField && parent_of(n.node) == Some(parent)
-    })
+    t.nodes
+        .iter()
+        .any(|n| n.node != own && n.role == Role::SecureTextField && web_of(n.node) == Some(web))
 }
 
 /// Sixteenth review (Rule T): the note of a question about an input into a place while
@@ -832,6 +914,9 @@ pub fn evaluate_sheeted(
     // is UNCLEAR: asked whatever categories the owner relaxed, and approved on the phone
     // only. Page-controlled words never lift either.
     let mut unclear = false;
+    // Probe round 3 (L1): the row's full-swipe action is unknown (not necessarily a
+    // delete): a row swipe asks whatever the owner relaxed, phone only.
+    unclear |= row_swipe;
     // Probe round 3 (F3): Return on a keyboard whose Return key no identifier types is of
     // unknown effect: it asks, phone only.
     if screen.cues.return_key_unknown && matches!(actuation(action, screen), Actuation::Return(_)) {
@@ -863,13 +948,11 @@ pub fn evaluate_sheeted(
     // .emergencyCall`, by its identifier `Emergency call`) places a call: it asks as a call,
     // phone only, whatever the owner relaxed (a send presumed from the field yields to it;
     // anything riskier stays).
-    let emergency = screen.cues.return_key_type.as_deref() == Some("emergency call")
-        && matches!(actuation(action, screen), Actuation::Return(_));
-    if emergency
-        && crate::phrases::max_risk(category, RiskCategory::SendMessage)
-            == RiskCategory::SendMessage
-    {
-        category = RiskCategory::Call;
+    let emergency = emergency_return(action, screen);
+    if emergency {
+        // Raised, never replaced: a send presumed from the field stays a send (the note names
+        // the call).
+        category = crate::phrases::max_risk(category, RiskCategory::Call);
         unclear = true;
     }
     // Probe round 3 (F6): a credential typed beside a password asks whatever was relaxed.
@@ -963,9 +1046,7 @@ pub fn evaluate_sheeted(
             if hands_on {
                 notes.push(handoff_note(&place_name(screen)));
             }
-            if row_swipe {
-                notes.push(row_swipe_note());
-            }
+            notes.extend(round3_question_notes(action, screen, tree));
             let mut request = ConfirmRequest::from_rows(
                 category,
                 question_noted(action, screen, category, source, tree, typed, &notes),

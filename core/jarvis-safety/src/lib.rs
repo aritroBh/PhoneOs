@@ -77,7 +77,7 @@ pub use evaluate::{
     QUESTION_MARKERS, RECIPIENT_FIELD_HEADS, RECIPIENT_FIELD_NEGATIVES, RECIPIENT_FIELD_QUALIFIERS,
     RECIPIENT_FIELD_STRONG_HEADS, RECIPIENT_FIELD_WEAK_HEADS, UNVERIFIED_SCREEN_WARNING,
 };
-pub use evaluate::{row_swipe_question_note, ROW_SWIPE_NOTE};
+pub use evaluate::{round3_question_notes, EMERGENCY_CALL_NOTE, ROW_SWIPE_NOTE};
 pub use flow::{
     copy_control, edit_menu_shape, edit_menu_view, few_actionable, flow_checked, grid_cell,
     handoff_control, home_menu_row, home_view, insert_control, inside_text_input, is_browser,

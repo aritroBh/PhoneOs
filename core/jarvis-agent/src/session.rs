@@ -2585,8 +2585,9 @@ impl Session {
             // Seventeenth review: an edit-menu item that may hand the selection on.
             notes.push(handoff_note(&self.target_place_name(gate)));
         }
-        // Probe round 3 (F1): a sideways drag across a list row may trigger its swipe action.
-        notes.extend(jarvis_safety::row_swipe_question_note(
+        // Probe round 3 (F1, F3): a sideways drag across a list row may trigger its swipe
+        // action; Return on the emergency-call key may place a call.
+        notes.extend(jarvis_safety::round3_question_notes(
             gate,
             &self.current.screen,
             Some(&tree),
@@ -3687,7 +3688,8 @@ impl Session {
         // screen the action will act on (the one `prepare` and `gate_return` gate on) by
         // the one function that also decides what an approval keeps (below): a scroll that
         // names a control, starts on one or crosses one that reacts is a full input.
-        let kind = InputKind::of(gate, &self.current.screen);
+        // Review of round 3 (M3): a sideways scroll across a list row is a full input.
+        let kind = InputKind::of_in(gate, &self.current.screen, Some(&self.tree()));
         // A launch from the home screen of a known installed app (an icon or an app result
         // the core resolves to a known app): the home screen's own content is not counted as
         // a source for the app it opens; a banner or an alert read there is, at the first

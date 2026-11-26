@@ -36,7 +36,8 @@ use jarvis_proto::{
 use jarvis_safety::gestures::{drag_gesture, GestureKind, MAX_SIDEWAYS_SHARE};
 use jarvis_safety::{
     evaluate_sheeted, home_view, identifier_symbol_risk, max_risk, observed_places, summary_with,
-    Decision, FlowContext, PickerKind, ScreenPlaces, ScreenSource, ScreenTree, ROW_SWIPE_NOTE,
+    Decision, FlowContext, InputKind, PickerKind, ScreenPlaces, ScreenSource, ScreenTree,
+    EMERGENCY_CALL_NOTE, ROW_SWIPE_NOTE,
 };
 
 /// What `ios` (the observe tests' parser) uses to print a compact screen.
@@ -494,6 +495,103 @@ fn f1_the_revealed_delete_asks_as_delete() {
     );
 }
 
+/// The real list with its rows retyped the way other UI stacks report them: the
+/// `CollectionView` a `ScrollView`, each `Cell` an `Other` one wrapper down (React Native's
+/// `ScrollView > Other > Other` rows, a SwiftUI `LazyVStack`), and "No action" stretched to
+/// lie on the element-less drag's path (y 468.4).
+fn retyped_rows() -> Screen {
+    let mut s = parse(P4D_BEFORE);
+    edit(&mut s.root, &mut |n| {
+        if n.role == Role::CollectionView {
+            n.role = Role::ScrollView;
+            let rows = std::mem::take(&mut n.children);
+            let size = n.frame;
+            n.children = vec![UiNode::new(Role::Other("Other".into()), size).with_children(rows)];
+        }
+        if n.role == Role::Cell {
+            n.role = Role::Other("Other".into());
+            if (n.frame.y - 399.3).abs() < 0.01 {
+                n.frame.height = 80.0;
+            }
+        }
+    });
+    s
+}
+
+/// Review of round 3 (M3): a row is also any node of row height spanning most of its
+/// nearest scrollable ancestor at any depth: on the retyped list a swipe on a row's text
+/// asks as `Delete`, and an element-less sideways scroll across a row is a *full* input
+/// (never covered by a scroll grant) and asks (fails on 9ae7aeb: no `Cell`, no direct child
+/// of a table: allowed, and the scroll was of the scroll kind).
+#[test]
+fn f1_rows_of_any_ui_stack_are_rows() {
+    let s = retyped_rows();
+    let v = compact_view(&s);
+    let row = v
+        .screen
+        .elements
+        .iter()
+        .find(|e| e.label == "Swipe row 2")
+        .unwrap();
+    assert_ne!(row.role, Role::Cell);
+    let d = decide(
+        &default_policy(),
+        &Action::Swipe {
+            direction: Direction::Left,
+            element: Some(row.index),
+        },
+        &s,
+    );
+    assert_eq!(asked(&d), Some(RiskCategory::Delete), "{d:?}");
+    let scroll = Action::Scroll {
+        direction: Direction::Right,
+        element: None,
+    };
+    assert_eq!(InputKind::of(&scroll, &v.screen), InputKind::Scroll);
+    assert_eq!(
+        InputKind::of_in(&scroll, &v.screen, Some(&tree(&v))),
+        InputKind::Full
+    );
+    assert_eq!(
+        asked(&decide(&default_policy(), &scroll, &s)),
+        Some(RiskCategory::Delete)
+    );
+    // A vertical scroll stays a scroll.
+    let down = Action::Scroll {
+        direction: Direction::Down,
+        element: None,
+    };
+    assert_eq!(
+        InputKind::of_in(&down, &v.screen, Some(&tree(&v))),
+        InputKind::of(&down, &v.screen)
+    );
+}
+
+/// Review of round 3 (L1): the row's full-swipe action is unknown, so a row swipe asks
+/// phone only, also for an owner who relaxed `Delete` (fails on 9ae7aeb: allowed for them).
+#[test]
+fn f1_a_row_swipe_asks_an_owner_who_relaxed_delete() {
+    let s = parse(P4D_BEFORE);
+    let row = index(&s, "Swipe row 1");
+    let policy = Policy {
+        confirm: default_policy()
+            .confirm
+            .into_iter()
+            .filter(|c| *c != RiskCategory::Delete)
+            .collect(),
+        ..default_policy()
+    };
+    let d = decide(
+        &policy,
+        &Action::Swipe {
+            direction: Direction::Left,
+            element: Some(row),
+        },
+        &s,
+    );
+    assert!(matches!(&d, Decision::Confirm(r) if r.phone_only), "{d:?}");
+}
+
 // ---- F2: out-of-process pickers -------------------------------------------------------------
 
 const PICKERS: &[(&str, &str, PickerKind)] = &[
@@ -529,8 +627,10 @@ fn f2_each_real_picker_is_a_place_of_its_own() {
         assert_eq!(p.read_places(), vec![want.clone()], "{what}");
         assert_eq!(p.picker(), Some(*kind), "{what}");
         assert!(p.shows_presentation(), "{what}");
+        // Review M2 (c): the app leads the name.
         assert!(
-            want.display(name).ends_with(" picker shown over Jarvis"),
+            want.display(name).starts_with("Jarvis (showing the ")
+                && want.display(name).ends_with(" picker)"),
             "{}",
             want.display(name)
         );
@@ -543,30 +643,159 @@ fn f2_each_real_picker_is_a_place_of_its_own() {
     assert_eq!(p.picker(), None);
 }
 
-/// Choosing a row hands it to the app (an input into both places); the picker's "Cancel"
-/// and a plain scroll stay in the picker.
+/// Review of round 3 (M2): the picker is a source distinction only — every input on a
+/// picker screen (a row, "Cancel", a plain scroll, typing, a look, a wait) is an input into
+/// the picker's place **and** the app it is shown over, and the app stays on the screen's
+/// places (fails on 9ae7aeb: "Cancel", the scroll and the look went to the picker alone).
 #[test]
-fn f2_choosing_hands_over_and_cancel_is_local() {
+fn f2_every_input_on_a_picker_reaches_the_app() {
     let s = parse(CONTACT_PICKER);
     let v = compact_view(&s);
     let p = places_of(&s, &v);
     let picker = p.base().clone();
     let app = FlowContext::app("dev.jarvis.app");
+    let both = vec![picker.clone(), app.clone()];
     let dest = |a: &Action| p.destinations(a, &v.screen, Some(&tree(&v)));
-    let row = tap(&s, "John Appleseed");
-    assert_eq!(dest(&row), vec![picker.clone(), app.clone()]);
-    assert_eq!(dest(&tap(&s, "Cancel")), vec![picker.clone()]);
-    let scroll = Action::Scroll {
-        direction: Direction::Down,
-        element: None,
+    let search = Action::Type {
+        element: Some(index(&s, "Search")),
+        text: "Kate".into(),
+        submit: false,
     };
-    assert_eq!(dest(&scroll), vec![picker.clone()]);
-    // A look and a wait are seen by the picker only (the app cannot see its screen).
-    assert_eq!(dest(&Action::Look), vec![picker]);
+    for a in [
+        tap(&s, "John Appleseed"),
+        tap(&s, "Cancel"),
+        Action::Scroll {
+            direction: Direction::Down,
+            element: None,
+        },
+        search,
+        Action::Look,
+        Action::Wait { ms: 1000 },
+    ] {
+        assert_eq!(dest(&a), both, "{a:?}");
+    }
+    assert_eq!(p.every(), both);
+    assert!(p.observers(&[picker]).contains(&app));
+    // A picker over a listed browser also reaches its pages (a file input's picker hands
+    // the choice to the site, which is not on screen).
+    let mut safari = parse(FILE_PICKER);
+    safari.app_bundle_id = "com.apple.mobilesafari".into();
+    let v = compact_view(&safari);
+    let p = places_of(&safari, &v);
+    assert_eq!(
+        p.destinations(&tap(&safari, "Cancel"), &v.screen, Some(&tree(&v))),
+        vec![
+            FlowContext::SystemPicker {
+                app: "com.apple.mobilesafari".into(),
+                kind: PickerKind::Files
+            },
+            FlowContext::app("com.apple.mobilesafari"),
+            FlowContext::SiteUnreadable("com.apple.mobilesafari".into()),
+        ]
+    );
+}
+
+/// The decisions and flow questions a session makes for `script` on `screen` (the app's
+/// display name "Acme").
+fn session_on(screen: Screen, script: &[&str]) -> Run {
+    let mut c = config();
+    c.known_apps.push(AppInfo::new("com.example.acme", "Acme"));
+    run(
+        c,
+        "Help me with this screen",
+        MemoryStore::new(),
+        Phone::still(screen),
+        Script::model(script).decisions(&[true; 12]),
+    )
+}
+
+/// Review of round 3 (M2): a forged picker gains nothing. A third-party app adds a node
+/// with the contact picker's identifier and a backdrop-sized node to its own screen: shown,
+/// the screen is read as a picker over the app, and every step asks at least what it asks
+/// on the same tree without the forged nodes (each question a superset, nothing more sent),
+/// naming the app first; hidden, the identifier makes no picker at all (fails on 9ae7aeb: a
+/// hidden identifier made a picker, and its "Cancel" and scrolls were local).
+#[test]
+fn f2_a_forged_picker_gains_nothing() {
+    let mut plain = parse(MODAL_BASE);
+    plain.app_bundle_id = "com.example.acme".into();
+    plain.app_name = Some("Acme".into());
+    plain.root.label = Some("Acme".into());
+    let forge = |hidden: bool| {
+        let mut s = plain.clone();
+        let size = jarvis_proto::Rect::new(0.0, 0.0, 440.0, 956.0);
+        let mut id = UiNode::new(Role::Other("Other".into()), size);
+        id.identifier = Some("ContactsListView".into());
+        id.visible = !hidden;
+        let back = UiNode::new(
+            Role::Other("Other".into()),
+            jarvis_proto::Rect::new(-440.0, -956.0, 1320.0, 2868.0),
+        );
+        s.root.children[0].children.insert(0, id);
+        s.root.children[0].children.insert(0, back);
+        s
+    };
+    let hidden = forge(true);
+    let v = compact_view(&hidden);
+    assert_eq!(places_of(&hidden, &v).picker(), None);
+    let forged = forge(false);
+    let v = compact_view(&forged);
+    let p = places_of(&forged, &v);
+    assert_eq!(p.picker(), Some(PickerKind::Contacts));
+    assert!(p.every().contains(&FlowContext::app("com.example.acme")));
+    let c = compact_view(&plain).screen;
+    let cancel = c
+        .elements
+        .iter()
+        .find(|e| e.role == Role::Button)
+        .map(|e| e.index)
+        .unwrap();
+    let script = [
+        r#"{"action":"look"}"#,
+        r#"{"action":"scroll","direction":"down"}"#,
+        &format!(r#"{{"action":"tap","element":{cancel}}}"#),
+        r#"{"action":"done","summary":"ok"}"#,
+    ];
+    let a = session_on(plain.clone(), &script);
+    let b = session_on(forged, &script);
+    assert!(b.confirms.len() >= a.confirms.len(), "{:#?}", b.confirms);
+    assert!(b.acts.len() <= a.acts.len(), "{:?} vs {:?}", b.acts, a.acts);
+    assert!(
+        b.confirms.iter().all(|q| !q.summary.contains("picker")
+            || q.summary.contains("Acme (showing the contact picker)")),
+        "{:#?}",
+        b.confirms
+    );
+}
+
+/// Review of round 3 (M2): the contact picker inside Jarvis's own app while it is not
+/// driven (`agent_bundle_ids`): the model gets the stub, nothing of the picker reaches a
+/// prompt, and the session asks no flow question for it.
+#[test]
+fn f2_a_picker_in_jarvis_own_app_stays_hidden() {
+    let mut c = jarvis_config();
+    c.agent_bundle_ids = vec!["dev.jarvis.app".into()];
+    let r = run(
+        c,
+        "Look at the screen",
+        MemoryStore::new(),
+        Phone::still(parse(CONTACT_PICKER)),
+        Script::model(&[
+            r#"{"action":"look"}"#,
+            r#"{"action":"done","summary":"ok"}"#,
+        ]),
+    );
+    let all = r.all_prompt_text();
+    assert!(
+        !all.contains("John Appleseed") && !all.contains("Kate Bell"),
+        "{all}"
+    );
+    assert!(flows(&r).is_empty(), "{:#?}", r.confirms);
 }
 
 /// A session on the real contact picker: tapping a contact asks the flow question naming
-/// the picker as what was read (the name is handed to the app); "Cancel" asks nothing.
+/// the picker as what was read (the name is handed to the app); review M2: "Cancel" asks
+/// too (nothing on a picker screen is local to it).
 #[test]
 fn f2_a_session_asks_before_handing_a_contact_to_the_app() {
     let s = parse(CONTACT_PICKER);
@@ -582,23 +811,15 @@ fn f2_a_session_asks_before_handing_a_contact_to_the_app() {
             &format!(r#"{{"action":"tap","element":{cancel}}}"#),
             r#"{"action":"done","summary":"ok"}"#,
         ])
-        .decisions(&[false; 4]),
+        .decisions(&[true; 6]),
     );
     let fq = flows(&r);
-    assert_eq!(fq.len(), 1, "{fq:#?}");
+    assert_eq!(fq.len(), 2, "{fq:#?}");
     assert!(fq[0].starts_with("Tap \"John Appleseed\""), "{}", fq[0]);
-    assert!(
-        fq[0].contains("the contact picker shown over Jarvis"),
-        "{}",
-        fq[0]
-    );
-    // Declined: no tap on John; Cancel was tapped unasked.
-    let taps = r
-        .acts
-        .iter()
-        .filter(|a| matches!(a, RunnerCommand::Tap { .. }))
-        .count();
-    assert_eq!(taps, 1, "{:?}", r.acts);
+    assert!(fq[1].starts_with("Tap \"Cancel\""), "{}", fq[1]);
+    for q in &fq {
+        assert!(q.contains("Jarvis (showing the contact picker)"), "{q}");
+    }
 }
 
 /// The picker without its own identifiers (another of its screens) while its sheet's
@@ -653,12 +874,12 @@ fn f2_the_picker_is_sticky_and_a_read_name_typed_into_the_app_asks() {
     let fq = flows(&r);
     assert!(
         fq.iter().any(|q| q.starts_with("Tap \"Kate Bell\"")
-            && q.contains("the contact picker shown over Jarvis")),
+            && q.contains("Jarvis (showing the contact picker)")),
         "{fq:#?}"
     );
     assert!(
         fq.iter()
-            .any(|q| q.starts_with("Type") && q.contains("the contact picker shown over Jarvis")),
+            .any(|q| q.starts_with("Type") && q.contains("Jarvis (showing the contact picker)")),
         "{fq:#?}"
     );
 }
@@ -770,13 +991,35 @@ fn f3_a_return_key_of_unknown_type_asks() {
         &emergency,
         owner,
     );
-    assert_eq!(asked(&d), Some(RiskCategory::Call), "{d:?}");
+    // Review M1: the call raises, never replaces: the field's presumed send stays (at least
+    // `SendMessage`), the note names the call, phone only.
+    let c = asked(&d).unwrap();
+    assert_eq!(max_risk(c, RiskCategory::SendMessage), c, "{d:?}");
+    assert!(summary(&d).contains(EMERGENCY_CALL_NOTE), "{}", summary(&d));
+    assert!(matches!(&d, Decision::Confirm(r) if r.phone_only));
     let send = parse(RETURN_KEYS[7].0);
     let d = decide_owned(&default_policy(), &return_in(&send, "hello"), &send, owner);
     assert_eq!(asked(&d), Some(RiskCategory::SendMessage), "{d:?}");
     // The German go key is typed, not unknown.
     let go = parse(GERMAN_GO);
     assert!(!compact_view(&go).screen.cues.return_key_unknown);
+}
+
+/// Review of round 3 (M1): an owner who denies sending is refused a Return on the
+/// emergency-call key of a field that sends (fails on 9ae7aeb: the category was replaced by
+/// `Call`, so it asked instead of refusing); an owner who relaxed everything is still asked.
+#[test]
+fn f3_the_emergency_call_key_never_hides_a_send() {
+    let emergency = parse(RETURN_KEYS[11].0);
+    let a = return_in(&emergency, "hello");
+    let deny = Policy {
+        deny_categories: vec![RiskCategory::SendMessage],
+        ..default_policy()
+    };
+    let d = decide_owned(&deny, &a, &emergency, "type hello");
+    assert!(matches!(d, Decision::Deny(_)), "{d:?}");
+    let d = decide_owned(&relaxed(), &a, &emergency, "type hello");
+    assert!(asked(&d).is_some(), "{d:?}");
 }
 
 // ---- F4: the labels the OS gives icon-only controls -----------------------------------------
@@ -988,6 +1231,40 @@ fn f6_the_http_sign_in_dialog() {
         asked(&decide(&default_policy(), &tap(&s, "Cancel"), &s)),
         None
     );
+}
+
+/// Review of round 3 (L4): the page's layout cannot defeat the sign-in rules — the user name
+/// wrapped in a group of its own (a `<div role=group>`) still lies in the password's web view
+/// (fails on 9ae7aeb: "same raw parent" was required).
+#[test]
+fn f6_a_wrapped_user_name_is_still_a_credential() {
+    let mut s = parse(BASIC_AUTH);
+    let mut done = false;
+    edit(&mut s.root, &mut |n| {
+        if done {
+            return;
+        }
+        if let Some(i) = n
+            .children
+            .iter()
+            .position(|c| c.placeholder.as_deref() == Some("User Name"))
+        {
+            done = true;
+            let field = n.children.remove(i);
+            let frame = field.frame;
+            n.children.insert(
+                i,
+                UiNode::new(Role::Other("Other".into()), frame).with_children(vec![field]),
+            );
+        }
+    });
+    let user = Action::Type {
+        element: Some(index(&s, "User Name")),
+        text: "ada".into(),
+        submit: false,
+    };
+    let d = decide_owned(&relaxed(), &user, &s, "sign in as ada");
+    assert_eq!(asked(&d), Some(RiskCategory::Credential), "{d:?}");
 }
 
 /// JavaScript `confirm()` and `prompt()`: the dialog (`Other id=SFDialogView` in the page's
