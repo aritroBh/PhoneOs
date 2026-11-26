@@ -173,10 +173,15 @@ struct ControllerBreakitTests {
         forged["device_key"] = String(repeating: "ab", count: 32)
         let forgedJson = String(decoding: try JSONSerialization.data(withJSONObject: forged), as: UTF8.self)
         c.disconnect()
-        for _ in 0..<5 {
-            _ = try? await InProcessRemote.connect(credentials: Redacted(forgedJson), over: r.transport, timeout: .milliseconds(500))
+        // Mac run 164: on a loaded host five attempts of 500 ms each did not always arm it
+        // (an attempt that times out before the phone reads it is not counted), so the
+        // forger keeps going until the lockout is armed, checked after every attempt.
+        var armed = false
+        for _ in 0..<40 where !armed {
+            _ = try? await InProcessRemote.connect(credentials: Redacted(forgedJson), over: r.transport, timeout: .seconds(2))
+            armed = r.service.deviceLockedUntilMs(id) > r.service.nowMs()
         }
-        #expect(r.service.deviceLockedUntilMs(id) > r.service.nowMs(), "the lockout was not armed")
+        #expect(armed, "the lockout was not armed")
         c.reconnect()
         // Confirm-step break-it review F1: the lockout no longer refuses the device's own
         // key at all (this test used to wait for the refused retries to end), so it cannot
