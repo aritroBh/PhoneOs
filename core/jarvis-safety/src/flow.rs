@@ -257,6 +257,104 @@ pub enum FlowContext {
     /// observer (the session's `observes`); a full input into it (pressing one of its
     /// buttons) keeps Rule T's rules, and R4 decides what its buttons ask.
     SystemAlert,
+    /// Probe round 3 (Mac run 139, p2; F2): a system picker another process draws over an
+    /// app (lower-cased bundle id) — `CNContactPickerViewController`,
+    /// `PHPickerViewController`, `UIDocumentPickerViewController`. Real iOS 26.5 trees put
+    /// the picker's content (the owner's contacts, photo library, files) in the **host's**
+    /// snapshot with screen frames, the host's own screen gone, and the runner names the
+    /// host as the app in front; the host cannot see that content until something is
+    /// chosen. So the screen is this place (named `the contact picker shown over <App>`):
+    /// what is read there is the owner's data, a source distinct from the app; choosing a
+    /// row or pressing its confirm button is a full input into the app as well
+    /// ([`ScreenPlaces::destinations`]), carrying what was read; its "Cancel" stays local.
+    /// Recognised by the OS's identifiers only ([`SYSTEM_PICKER_IDS`]).
+    SystemPicker {
+        /// The host app (lower-cased bundle id).
+        app: String,
+        /// Which picker.
+        kind: PickerKind,
+    },
+}
+
+/// Probe round 3 (F2): which system picker a [`FlowContext::SystemPicker`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PickerKind {
+    /// `CNContactPickerViewController`.
+    Contacts,
+    /// `PHPickerViewController`.
+    Photos,
+    /// `UIDocumentPickerViewController`.
+    Files,
+}
+
+impl PickerKind {
+    /// How a question names it.
+    pub fn name(self) -> &'static str {
+        match self {
+            PickerKind::Contacts => "the contact picker",
+            PickerKind::Photos => "the photo picker",
+            PickerKind::Files => "the file picker",
+        }
+    }
+
+    /// The Apple app whose own screens are this UI (there the content is the app's own:
+    /// no picker is shown over it).
+    fn owner(self) -> &'static str {
+        match self {
+            PickerKind::Contacts => "com.apple.mobileaddressbook",
+            PickerKind::Photos => "com.apple.mobileslideshow",
+            PickerKind::Files => "com.apple.documentsapp",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            PickerKind::Contacts => "contacts",
+            PickerKind::Photos => "photos",
+            PickerKind::Files => "files",
+        }
+    }
+}
+
+/// Probe round 3 (Mac run 139, p2; F2): the identifiers the OS gives the system pickers'
+/// own nodes in the host's tree (exact, or a prefix where marked), each seen in the
+/// captures: the contact picker's `Other id=ContactsListView` (wrapping its list); the photo
+/// picker's `ScrollView id=photosView_content_scroll_view` (its library) and `Image
+/// id=PickerOnboardingHeaderViewIcon` (its first-use header); the document picker's `Other
+/// id=DOC.browsingRoot Source: …, Title: …` (prefix), `NavigationBar
+/// id=FullDocumentManagerViewControllerNavigationBar` and `TabBar id=DOC.browsingModeTabBar`.
+/// None of the three trees holds a remote-view container or any other structural marker
+/// (unlike the share sheet's `ShareSheet.RemoteContainerView`); their frames are screen
+/// coordinates (snapshot equal to query). **Stated limit**: such lists are incomplete by
+/// nature (another iOS version, another picker screen may carry none of them), and the
+/// other remote sheets — Apple Pay, StoreKit, mail and message compose, passkey sheets —
+/// have no capture and no identifier here.
+pub const SYSTEM_PICKER_IDS: &[(&str, PickerKind, bool)] = &[
+    ("ContactsListView", PickerKind::Contacts, false),
+    ("photosView_content_scroll_view", PickerKind::Photos, false),
+    ("PickerOnboardingHeaderViewIcon", PickerKind::Photos, false),
+    ("DOC.browsingRoot", PickerKind::Files, true),
+    (
+        "FullDocumentManagerViewControllerNavigationBar",
+        PickerKind::Files,
+        false,
+    ),
+    ("DOC.browsingModeTabBar", PickerKind::Files, false),
+];
+
+/// Probe round 3 (F2): the system picker a raw node's identifier names, if any.
+pub fn picker_node(n: &UiNode) -> Option<PickerKind> {
+    let id = n.identifier.as_deref()?.trim();
+    SYSTEM_PICKER_IDS
+        .iter()
+        .find(|(name, _, prefix)| {
+            if *prefix {
+                id.starts_with(name)
+            } else {
+                id == *name
+            }
+        })
+        .map(|(_, kind, _)| *kind)
 }
 
 impl FlowContext {
@@ -279,7 +377,9 @@ impl FlowContext {
             | FlowContext::Unknown
             | FlowContext::ScreenPicture
             | FlowContext::UnreadableScreen(_)
-            | FlowContext::SystemAlert => None,
+            | FlowContext::SystemAlert
+            // Probe round 3 (F2): a picker's content is the owner's data, not the app's.
+            | FlowContext::SystemPicker { .. } => None,
         }
     }
 
@@ -333,6 +433,7 @@ impl FlowContext {
             FlowContext::ScreenPicture => "screen-picture".to_owned(),
             FlowContext::UnreadableScreen(a) => format!("unreadable-screen:{a}"),
             FlowContext::SystemAlert => "system-alert".to_owned(),
+            FlowContext::SystemPicker { app, kind } => format!("picker:{} {app}", kind.key()),
         }
     }
 
@@ -381,6 +482,9 @@ impl FlowContext {
                 )
             }
             FlowContext::SystemAlert => SYSTEM_ALERT.to_owned(),
+            FlowContext::SystemPicker { app: b, kind } => {
+                format!("{} shown over {}", kind.name(), app(b))
+            }
         }
     }
 
@@ -427,6 +531,14 @@ struct Chrome {
     /// Twentieth review (R20-B): a raw `Sheet` outside every web view whose subtree holds the
     /// OS's "AirDrop" node — shown, hidden, scrolled away or wholly off the screen.
     share_sheet: bool,
+    /// Probe round 3 (F2): a node outside every web view with a system picker's identifier
+    /// ([`picker_node`]), shown or not (the first found).
+    picker: Option<PickerKind>,
+    /// Probe round 3 (F2): a node of a sheet presentation's backdrop — an `Other` whose frame
+    /// is three screens wide and tall, centred on the screen (`{{-440, -956}, {1320, 2868}}`
+    /// on the 440 × 956 screen: every real picker, full sheet and half sheet of run 139, no
+    /// screen without a presented sheet). Keeps a picker sticky; never exempts.
+    presented: bool,
     /// Run 122: the frame of each address field on screen that is Safari's minimized bar
     /// (an `Other`, [`minimized_address`]), to tell its listed element (which carries no
     /// identifier) from any other `Other` labelled as the address.
@@ -719,6 +831,11 @@ fn scan_chrome(root: &UiNode, bounds: &jarvis_proto::Rect) -> Chrome {
         if share_sheet_node(n) {
             out.share_sheet = true;
         }
+        // Probe round 3 (F2): a system picker's identifiers, and a sheet's backdrop.
+        if out.picker.is_none() {
+            out.picker = picker_node(n);
+        }
+        out.presented |= backdrop(n, bounds);
         // An alert, sheet or banner anywhere makes a home screen a read (unchanged, fail
         // closed whether or not it is shown). Probe run 134: a banner by its identifier too.
         if alert_like(n) {
@@ -752,6 +869,20 @@ fn scan_chrome(root: &UiNode, bounds: &jarvis_proto::Rect) -> Chrome {
         }
     }
     out
+}
+
+/// Probe round 3 (F2): whether `n` is a sheet presentation's backdrop ([`Chrome::presented`]):
+/// an `Other` whose frame is `{{-w, -h}, {3w, 3h}}` for the screen `bounds` (within a point).
+fn backdrop(n: &UiNode, bounds: &jarvis_proto::Rect) -> bool {
+    let near = |a: f64, b: f64| (a - b).abs() <= 1.0;
+    let (w, h) = (bounds.width, bounds.height);
+    matches!(n.role, Role::Other(_))
+        && w > 0.0
+        && h > 0.0
+        && near(n.frame.x, bounds.x - w)
+        && near(n.frame.y, bounds.y - h)
+        && near(n.frame.width, 3.0 * w)
+        && near(n.frame.height, 3.0 * h)
 }
 
 impl Chrome {
@@ -1002,6 +1133,12 @@ pub struct ScreenPlaces {
     /// Probe run 134 (fix 3): the tree is thin ([`thin_tree`]): every input on the screen
     /// goes to this [`FlowContext::UnreadableScreen`] instead of the place of its target.
     unreadable: Option<FlowContext>,
+    /// Probe round 3 (F2): a system picker is shown over the app: `base` is its
+    /// [`FlowContext::SystemPicker`] and this is the app it is shown over, the place a
+    /// choice is handed to ([`Self::destinations`]).
+    host: Option<FlowContext>,
+    /// Probe round 3 (F2): the raw tree holds a sheet presentation's backdrop.
+    presented: bool,
 }
 
 impl Default for ScreenPlaces {
@@ -1018,11 +1155,50 @@ impl Default for ScreenPlaces {
             sheet: false,
             share_sheet: false,
             unreadable: None,
+            host: None,
+            presented: false,
         }
     }
 }
 
 impl ScreenPlaces {
+    /// Probe round 3 (F2): the system picker shown on this screen, if any.
+    pub fn picker(&self) -> Option<PickerKind> {
+        match &self.base {
+            FlowContext::SystemPicker { kind, .. } if self.host.is_some() => Some(*kind),
+            _ => None,
+        }
+    }
+
+    /// Probe round 3 (F2): the raw tree holds a sheet presentation's backdrop (the session
+    /// keeps a picker sticky while it does).
+    pub fn shows_presentation(&self) -> bool {
+        self.presented
+    }
+
+    /// Probe round 3 (F2): reads this screen as the picker `kind` shown over its app — its
+    /// place becomes the picker's, the app the place a choice is handed to. Only for a
+    /// screen whose own place is an app (no browser's site, no system alert, not the Home
+    /// Screen or Spotlight, not the Apple app whose own UI the picker is), and only once.
+    /// The session calls it to keep a picker sticky; [`observed_places`] for its identifiers.
+    pub fn keep_picker(&mut self, kind: PickerKind) {
+        if self.host.is_some() {
+            return;
+        }
+        let FlowContext::App(app) = &self.base else {
+            return;
+        };
+        if app.is_empty() || is_springboard(app) || is_spotlight(app) || app == kind.owner() {
+            return;
+        }
+        let host = self.base.clone();
+        self.base = FlowContext::SystemPicker {
+            app: app.clone(),
+            kind,
+        };
+        self.host = Some(host);
+        self.read = true;
+    }
     /// Probe run 134 (fix 3): the unreadable screen every input here goes to, when the
     /// tree is thin ([`thin_tree`]).
     pub fn unreadable(&self) -> Option<&FlowContext> {
@@ -1258,9 +1434,34 @@ impl ScreenPlaces {
             | Action::Done { .. }
             | Action::Fail { .. } => out.push(self.base.clone()),
         }
+        // Probe round 3 (F2): on a system picker, every full input on the screen may choose
+        // an item (a row, the confirm button) and hand it to the app it is shown over: it is
+        // an input into that app too. Only a press of the picker's own "Cancel" (whole
+        // label) and a scroll that works no control stay in the picker.
+        if let Some(host) = &self.host {
+            if picker_hands_over(action, screen) {
+                out.push(host.clone());
+            }
+        }
         let mut seen = BTreeSet::new();
         out.retain(|c| seen.insert(c.clone()));
         out
+    }
+}
+
+/// Probe round 3 (F2): whether `action` on a system picker may hand something to the app it
+/// is shown over — every input that touches the screen and is of the full kind
+/// ([`InputKind::of`]), except a tap or long press on a control whose whole label is
+/// "Cancel" (the picker's own dismissal: nothing is handed over).
+fn picker_hands_over(action: &Action, screen: &CompactScreen) -> bool {
+    if !actuation::touches_screen(action) || InputKind::of(action, screen) != InputKind::Full {
+        return false;
+    }
+    match action {
+        Action::Tap { element } | Action::LongPress { element, .. } => !screen
+            .get(*element)
+            .is_some_and(|e| e.label.trim().eq_ignore_ascii_case("cancel")),
+        _ => true,
     }
 }
 
@@ -1279,6 +1480,12 @@ pub fn observed_places(
     let mut places = places_of(raw, compact, source, view, &chrome);
     places.sheet = chrome.sheet;
     places.share_sheet = chrome.share_sheet;
+    places.presented = chrome.presented;
+    // Probe round 3 (F2): a system picker's identifier makes the screen the picker's place.
+    // Runner text is forgeable: identifiers there are no OS facts.
+    if let Some(kind) = chrome.picker.filter(|_| source == ScreenSource::Typed) {
+        places.keep_picker(kind);
+    }
     // Probe run 134 (fix 3): a tree too thin to describe the screen.
     if thin_tree(compact) {
         places.unreadable = Some(FlowContext::UnreadableScreen(
@@ -1436,6 +1643,8 @@ fn places_of(
         sheet: false,
         share_sheet: false,
         unreadable: None,
+        host: None,
+        presented: false,
     }
 }
 

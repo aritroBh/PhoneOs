@@ -1,0 +1,302 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p4c-modals (`probe3-p4c-modals-01-base-tree.txt`), verbatim below this line.
+Q: The Modals screen with nothing up: the baseline the modal captures compare with.
+capture 01 (base): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 1: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 144, XCUITest snapshot 297 ms
+types without a core role: Other×105
+note: probe round 3 p4c-modals, capture 01: base
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Modals {{0, 62}, {440, 106}}
+                            Button "Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText "Modals" {{20.0, 119.7}, {115.7, 40.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  CollectionView {{0, 0}, {440, 956}}
+                                    Other(Other) {{-20, -1744}, {480, 4402}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Cell {{20, 168}, {400, 52}}
+                                      Other(Other) {{20, 168}, {400, 52}}
+                                        Other(Other) {{20, 168}, {400, 52}}
+                                      Other(Other) {{20, 168}, {400, 52}}
+                                        Other(Other) {{20, 168}, {400, 52}}
+                                          Other(Other) {{20, 168}, {400, 52}}
+                                            StaticText "Probe content behind" id=probe3.modals.behind {{20, 168}, {400, 52}}
+                                    Cell {{20, 220}, {400, 52}}
+                                      Other(Other) {{20, 220}, {400, 52}}
+                                        Other(Other) {{20, 220}, {400, 52}}
+                                      Other(Other) {{20, 220}, {400, 52}}
+                                        Other(Other) {{20, 220}, {400, 52}}
+                                          Other(Other) {{20, 220}, {400, 52}}
+                                            Button "Show action sheet" id=probe3.modals.dialog {{20, 220}, {400, 52}}
+                                    Other(Other) {{40, 219}, {360, 1}}
+                                    Cell {{20, 272}, {400, 52}}
+                                      Other(Other) {{20, 272}, {400, 52}}
+                                        Other(Other) {{20, 272}, {400, 52}}
+                                      Other(Other) {{20, 272}, {400, 52}}
+                                        Other(Other) {{20, 272}, {400, 52}}
+                                          Other(Other) {{20, 272}, {400, 52}}
+                                            Button "Show alert with field" id=probe3.modals.alert {{20, 272}, {400, 52}}
+                                    Other(Other) {{40, 271}, {360, 1}}
+                                    Cell {{20, 324}, {400, 52}}
+                                      Other(Other) {{20, 324}, {400, 52}}
+                                        Other(Other) {{20, 324}, {400, 52}}
+                                      Other(Other) {{20, 324}, {400, 52}}
+                                        Other(Other) {{20, 324}, {400, 52}}
+                                          Other(Other) {{20, 324}, {400, 52}}
+                                            Button "Show sheet" id=probe3.modals.sheet {{20, 324}, {400, 52}}
+                                    Other(Other) {{40, 323}, {360, 1}}
+                                    Cell {{20, 376}, {400, 52}}
+                                      Other(Other) {{20, 376}, {400, 52}}
+                                        Other(Other) {{20, 376}, {400, 52}}
+                                      Other(Other) {{20, 376}, {400, 52}}
+                                        Other(Other) {{20, 376}, {400, 52}}
+                                          Other(Other) {{20, 376}, {400, 52}}
+                                            Button "Show half sheet" id=probe3.modals.half {{20, 376}, {400, 52}}
+                                    Other(Other) {{40, 375}, {360, 1}}
+                                    Cell {{20, 428}, {400, 52}}
+                                      Other(Other) {{20, 428}, {400, 52}}
+                                        Other(Other) {{20, 428}, {400, 52}}
+                                      Other(Other) {{20, 428}, {400, 52}}
+                                        Other(Other) {{20, 428}, {400, 52}}
+                                          Other(Other) {{20, 428}, {400, 52}}
+                                            Button "Show cover" id=probe3.modals.cover {{20, 428}, {400, 52}}
+                                    Other(Other) {{40, 427}, {360, 1}}
+                                    Cell {{20, 480}, {400, 52}}
+                                      Other(Other) {{20, 480}, {400, 52}}
+                                        Other(Other) {{20, 480}, {400, 52}}
+                                      Other(Other) {{20, 480}, {400, 52}}
+                                        Other(Other) {{20, 480}, {400, 52}}
+                                          Other(Other) {{20, 480}, {400, 52}}
+                                            Button "Show popover" id=probe3.modals.popover {{20, 480}, {400, 52}}
+                                    Other(Other) {{40, 479}, {360, 1}}
+                                    Cell {{20, 532}, {400, 52}}
+                                      Other(Other) {{20, 532}, {400, 52}}
+                                        Other(Other) {{20, 532}, {400, 52}}
+                                      Other(Other) {{20, 532}, {400, 52}}
+                                        Other(Other) {{20, 532}, {400, 52}}
+                                          Other(Other) {{20, 532}, {400, 52}}
+                                            Button "Probe menu" id=probe3.modals.menu {{20, 532}, {400, 52}}
+                                              Button {{40, 548}, {92.3, 20.3}}
+                                                StaticText "Probe menu" {{40, 547.8}, {92.3, 20.3}}
+                                    Other(Other) {{40, 531}, {360, 1}}
+                                    Cell {{20, 584}, {400, 90}}
+                                      Other(Other) {{20, 584}, {400, 90}}
+                                        Other(Other) {{20, 584}, {400, 90}}
+                                      Other(Other) {{20, 584}, {400, 90}}
+                                        Other(Other) {{20, 584}, {400, 90}}
+                                          Other(Other) {{20, 584}, {400, 90}}
+                                            StaticText "Hold for the probe context menu" id=probe3.modals.context {{20, 584}, {400, 90}}
+                                    Other(Other) {{40, 583}, {360, 1}}
+                                    Cell {{20, 674}, {400, 52}}
+                                      Other(Other) {{20, 674}, {400, 52}}
+                                        Other(Other) {{20, 674}, {400, 52}}
+                                      Other(Other) {{20, 674}, {400, 52}}
+                                        Other(Other) {{20, 674}, {400, 52}}
+                                          Other(Other) {{20, 674}, {400, 52}}
+                                            StaticText "No modal yet" id=probe3.modals.status {{20, 674}, {400, 52}}
+                                    Other(Other) {{96.3, 673}, {303.7, 1}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 246}, {3, 624}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 246}, {3, 624}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image "sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button "Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 0}, {440, 956}}
+                          NavigationBar(21) id=Modals {{0, 62}, {440, 106}}
+                            Button(9) label="Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText(48) label="Modals" {{20.0, 119.7}, {115.7, 40.7}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+                              Other(1) {{0, 0}, {440, 956}}
+                                Other(1) {{0, 0}, {440, 956}}
+                                  CollectionView(32) {{0, 0}, {440, 956}}
+                                    Other(1) {{-20, -1744}, {480, 4402}}
+                                    Other(1) {{0, 0}, {440, 956}}
+                                    Other(1) {{0, 0}, {440, 956}}
+                                    Cell(75) {{20, 168}, {400, 52}}
+                                      Other(1) {{20, 168}, {400, 52}}
+                                        Other(1) {{20, 168}, {400, 52}}
+                                      Other(1) {{20, 168}, {400, 52}}
+                                        Other(1) {{20, 168}, {400, 52}}
+                                          Other(1) {{20, 168}, {400, 52}}
+                                            StaticText(48) label="Probe content behind" id=probe3.modals.behind {{20, 168}, {400, 52}}
+                                    Cell(75) {{20, 220}, {400, 52}}
+                                      Other(1) {{20, 220}, {400, 52}}
+                                        Other(1) {{20, 220}, {400, 52}}
+                                      Other(1) {{20, 220}, {400, 52}}
+                                        Other(1) {{20, 220}, {400, 52}}
+                                          Other(1) {{20, 220}, {400, 52}}
+                                            Button(9) label="Show action sheet" id=probe3.modals.dialog {{20, 220}, {400, 52}}
+                                    Other(1) {{40, 219}, {360, 1}}
+                                    Cell(75) {{20, 272}, {400, 52}}
+                                      Other(1) {{20, 272}, {400, 52}}
+                                        Other(1) {{20, 272}, {400, 52}}
+                                      Other(1) {{20, 272}, {400, 52}}
+                                        Other(1) {{20, 272}, {400, 52}}
+                                          Other(1) {{20, 272}, {400, 52}}
+                                            Button(9) label="Show alert with field" id=probe3.modals.alert {{20, 272}, {400, 52}}
+                                    Other(1) {{40, 271}, {360, 1}}
+                                    Cell(75) {{20, 324}, {400, 52}}
+                                      Other(1) {{20, 324}, {400, 52}}
+                                        Other(1) {{20, 324}, {400, 52}}
+                                      Other(1) {{20, 324}, {400, 52}}
+                                        Other(1) {{20, 324}, {400, 52}}
+                                          Other(1) {{20, 324}, {400, 52}}
+                                            Button(9) label="Show sheet" id=probe3.modals.sheet {{20, 324}, {400, 52}}
+                                    Other(1) {{40, 323}, {360, 1}}
+                                    Cell(75) {{20, 376}, {400, 52}}
+                                      Other(1) {{20, 376}, {400, 52}}
+                                        Other(1) {{20, 376}, {400, 52}}
+                                      Other(1) {{20, 376}, {400, 52}}
+                                        Other(1) {{20, 376}, {400, 52}}
+                                          Other(1) {{20, 376}, {400, 52}}
+                                            Button(9) label="Show half sheet" id=probe3.modals.half {{20, 376}, {400, 52}}
+                                    Other(1) {{40, 375}, {360, 1}}
+                                    Cell(75) {{20, 428}, {400, 52}}
+                                      Other(1) {{20, 428}, {400, 52}}
+                                        Other(1) {{20, 428}, {400, 52}}
+                                      Other(1) {{20, 428}, {400, 52}}
+                                        Other(1) {{20, 428}, {400, 52}}
+                                          Other(1) {{20, 428}, {400, 52}}
+                                            Button(9) label="Show cover" id=probe3.modals.cover {{20, 428}, {400, 52}}
+                                    Other(1) {{40, 427}, {360, 1}}
+                                    Cell(75) {{20, 480}, {400, 52}}
+                                      Other(1) {{20, 480}, {400, 52}}
+                                        Other(1) {{20, 480}, {400, 52}}
+                                      Other(1) {{20, 480}, {400, 52}}
+                                        Other(1) {{20, 480}, {400, 52}}
+                                          Other(1) {{20, 480}, {400, 52}}
+                                            Button(9) label="Show popover" id=probe3.modals.popover {{20, 480}, {400, 52}}
+                                    Other(1) {{40, 479}, {360, 1}}
+                                    Cell(75) {{20, 532}, {400, 52}}
+                                      Other(1) {{20, 532}, {400, 52}}
+                                        Other(1) {{20, 532}, {400, 52}}
+                                      Other(1) {{20, 532}, {400, 52}}
+                                        Other(1) {{20, 532}, {400, 52}}
+                                          Other(1) {{20, 532}, {400, 52}}
+                                            Button(9) label="Probe menu" id=probe3.modals.menu {{20, 532}, {400, 52}}
+                                              Button(9) {{40, 548}, {92.3, 20.3}}
+                                                StaticText(48) label="Probe menu" {{40, 547.8}, {92.3, 20.3}}
+                                    Other(1) {{40, 531}, {360, 1}}
+                                    Cell(75) {{20, 584}, {400, 90}}
+                                      Other(1) {{20, 584}, {400, 90}}
+                                        Other(1) {{20, 584}, {400, 90}}
+                                      Other(1) {{20, 584}, {400, 90}}
+                                        Other(1) {{20, 584}, {400, 90}}
+                                          Other(1) {{20, 584}, {400, 90}}
+                                            StaticText(48) label="Hold for the probe context menu" id=probe3.modals.context {{20, 584}, {400, 90}}
+                                    Other(1) {{40, 583}, {360, 1}}
+                                    Cell(75) {{20, 674}, {400, 52}}
+                                      Other(1) {{20, 674}, {400, 52}}
+                                        Other(1) {{20, 674}, {400, 52}}
+                                      Other(1) {{20, 674}, {400, 52}}
+                                        Other(1) {{20, 674}, {400, 52}}
+                                          Other(1) {{20, 674}, {400, 52}}
+                                            StaticText(48) label="No modal yet" id=probe3.modals.status {{20, 674}, {400, 52}}
+                                    Other(1) {{96.3, 673}, {303.7, 1}}
+                                    Other(1) label="Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 757}}
+                                      Other(1) {{434, 246}, {3, 624}}
+                                    Other(1) label="Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 757}}
+                                      Other(1) {{434, 246}, {3, 624}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 873}, {440, 83}}
+                Other(1) {{0, 0}, {440, 956}}
+                  TabBar(22) label="Tab Bar" {{0, 873}, {440, 83}}
+                    Other(1) {{21, 873}, {398, 62}}
+                      Other(1) {{21, 873}, {89.7, 54}}
+                      Other(1) {{21, 873}, {398, 62}}
+                        Button(9) label="Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image(43) label="hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button(9) label="Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image(43) label="message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button(9) label="Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image(43) label="sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button(9) label="Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image(43) label="grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button(9) label="Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image(43) label="edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(1) {{25, 877}, {89.7, 54}}
+                        Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                                Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                Other(1) {{0, 873}, {440, 83}}
+                  Other(1) {{0, 873}, {440, 83}}
+                    Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}
+                          Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}

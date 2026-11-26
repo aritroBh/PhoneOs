@@ -130,6 +130,26 @@ fn span(region_lo: f64, region_hi: f64, safe_lo: f64, safe_hi: f64) -> (f64, f64
     (lo, hi)
 }
 
+/// Probe round 3 (Mac run 139, p4d; F1): the longest sideways travel, as a share of the
+/// screen width. On the real iOS 26.5 list (a 400-pt row on a 440-pt screen) the core's own
+/// row swipe — 240 pt, 200 ms, (340, y) → (100, y), i.e. 240/440 of the width — only revealed
+/// the row's actions ("Flag", "Delete"), while a swipe from one edge of the safe area to the
+/// other (422.4 → 17.6) **deleted** the row with no tap. Every sideways scroll or swipe Jarvis
+/// sends is capped at that measured path (the element-less one was 242.9 pt). Other apps'
+/// full-swipe thresholds are not measured: a sideways drag across a row still asks
+/// (`jarvis_safety`'s row-swipe rule); this cap only keeps Jarvis's own drag at the
+/// measured-safe length. Relative to the width, so it holds in landscape too.
+pub const MAX_SIDEWAYS_SHARE: f64 = 240.0 / 440.0;
+
+/// `lo..hi` shrunk around its centre to at most `max` long.
+fn capped(lo: f64, hi: f64, max: f64) -> (f64, f64) {
+    if !(max.is_finite() && max > 0.0) || hi - lo <= max {
+        return (lo, hi);
+    }
+    let centre = (lo + hi) / 2.0;
+    (centre - max / 2.0, centre + max / 2.0)
+}
+
 /// Computes a scroll or swipe on `frame` (or the whole screen when `None`).
 pub fn gesture(
     kind: GestureKind,
@@ -155,6 +175,9 @@ pub fn gesture(
         }
         Direction::Left | Direction::Right => {
             let (left, right) = span(region.x, region.max_x(), safe.x, safe.max_x());
+            // Probe round 3 (F1): never a longer sideways drag than the one measured to
+            // reveal a list row's actions without triggering them.
+            let (left, right) = capped(left, right, size.width * MAX_SIDEWAYS_SHARE);
             if finger == Direction::Left {
                 (Point::new(right, c.y), Point::new(left, c.y))
             } else {

@@ -318,6 +318,149 @@ pub fn not_owner_note() -> QuestionRow {
     row(QuestionRowKind::Note, &format!(". {MARK_NOT_OWNER}"))
 }
 
+/// Probe round 3 (F1): the note of a question about a sideways drag across a list row.
+pub const ROW_SWIPE_NOTE: &str =
+    "The drag crosses a list row: it may trigger the row's swipe action (a long one can delete it)";
+
+fn row_swipe_note() -> QuestionRow {
+    row(QuestionRowKind::Note, &format!(". {ROW_SWIPE_NOTE}"))
+}
+
+/// Probe round 3 (F1): the row-swipe note of a question about `action`, when it is a
+/// sideways drag across a list row ([`crosses_list_row`]); the session's questions carry it
+/// as the gate's do.
+pub fn row_swipe_question_note(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> Option<QuestionRow> {
+    crosses_list_row(action, screen, tree).then(row_swipe_note)
+}
+
+/// Probe round 3 (run 139, p4d; F1): whether `action` is a sideways drag — a swipe or a
+/// scroll, with or without an element, as the runner will make it
+/// ([`crate::gestures::drag_gesture`], the path the command is sent) — whose path touches a
+/// row of a list in the raw tree: a `Cell` (any), or a row-sized child of a `Table` or
+/// `CollectionView`. On the real tree a full-width swipe on such a row deleted it with no
+/// tap; how far another app's row must be dragged is not measured, so every sideways drag
+/// across a row is a row swipe, whatever the verb and whatever the classifier's listed-row
+/// rule says (a carousel's cells included: stricter). Drawn nodes of the keyboard never
+/// count. `false` without the raw tree (the listed-row rule of `classify` decides alone).
+fn crosses_list_row(
+    action: &Action,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> bool {
+    use crate::gestures::{drag_gesture, finger_direction, GestureKind};
+    let (kind, direction, element) = match action {
+        Action::Scroll { direction, element } => (GestureKind::Scroll, *direction, *element),
+        Action::Swipe { direction, element } => (GestureKind::Swipe, *direction, *element),
+        _ => return false,
+    };
+    if !matches!(
+        finger_direction(kind, direction),
+        jarvis_proto::Direction::Left | jarvis_proto::Direction::Right
+    ) {
+        return false;
+    }
+    let Some(t) = tree.filter(|t| !t.nodes.is_empty()) else {
+        return false;
+    };
+    let target = element.and_then(|i| screen.get(i));
+    let Ok(g) = drag_gesture(kind, direction, target.map(|e| e.frame), screen) else {
+        return false;
+    };
+    let (x0, x1) = (g.from.x.min(g.to.x), g.from.x.max(g.to.x));
+    let (y0, y1) = (g.from.y.min(g.to.y), g.from.y.max(g.to.y));
+    let row_height = screen.size.height * crate::classify::MAX_LIST_ROW_SHARE;
+    t.nodes.iter().any(|n| {
+        let f = n.frame;
+        let touches = !n.keyboard
+            && !f.is_empty()
+            && f.x <= x1
+            && f.max_x() >= x0
+            && f.y <= y1
+            && f.max_y() >= y0;
+        touches
+            && (n.role == Role::Cell
+                || (f.height <= row_height
+                    && usize::try_from(n.node)
+                        .ok()
+                        .and_then(|k| t.parents.get(k))
+                        .and_then(|&p| crate::hit::raw_node(t, p))
+                        .is_some_and(|p| matches!(p.role, Role::Table | Role::CollectionView))))
+    })
+}
+
+/// Probe round 3 (run 139, p6b `13-basic-auth`; F6): whether `action` types into a text
+/// input that is not secure but whose raw parent also holds a drawn `SecureTextField` — the
+/// user name of a sign-in pair (Safari's HTTP Basic auth dialog: `TextField
+/// placeholder="User Name"` beside `SecureTextField placeholder="Password"`, neither
+/// labelled). Structure the OS gives (the secure trait), never a label. `false` without the
+/// raw tree.
+fn credential_pair(action: &Action, screen: &CompactScreen, tree: Option<&ScreenTree<'_>>) -> bool {
+    let Action::Type { element, .. } = action else {
+        return false;
+    };
+    let Some(field) = type_target(*element, screen) else {
+        return false;
+    };
+    if field.secure || !field.role.is_text_input() || field.role == Role::SecureTextField {
+        return false;
+    }
+    beside_password(field, tree)
+}
+
+/// Probe round 3 (F6): whether `action` presses a control whose whole label is a sign-in
+/// word ([`crate::phrases::SIGN_IN_PHRASES`]) and whose raw parent also holds a drawn
+/// password field — the button that sends a password form (Safari's HTTP sign-in dialog's
+/// `Button "Sign In"`).
+fn sign_in_press(action: &Action, screen: &CompactScreen, tree: Option<&ScreenTree<'_>>) -> bool {
+    let el = match actuation(action, screen) {
+        Actuation::Press(e) => e,
+        _ => return false,
+    };
+    let words = crate::text::tokens(&el.label);
+    crate::phrases::match_whole(&words, &[crate::phrases::SIGN_IN_PHRASES]).category
+        != RiskCategory::None
+        && beside_password(el, tree)
+}
+
+/// Probe round 3 (F6): whether `el`'s raw parent also holds a drawn `SecureTextField`
+/// other than `el` (a sign-in form's pair), inside a web view (a page's form, or the dialog
+/// Safari raises for the page: its `SFDialogView` is in the page's `WebView`). An app's own
+/// sign-in screen is not covered (stated). `false` without the raw tree.
+fn beside_password(el: &Element, tree: Option<&ScreenTree<'_>>) -> bool {
+    let Some(t) = tree.filter(|t| !t.nodes.is_empty()) else {
+        return false;
+    };
+    // Only what a web view holds (a page's form, the dialog Safari shows for the page):
+    // an app's own sign-in screen keeps its rules.
+    let in_web = t
+        .ancestors(el)
+        .into_iter()
+        .any(|a| crate::hit::raw_node(t, a).is_some_and(|n| n.role == Role::WebView));
+    if !in_web {
+        return false;
+    }
+    let parent_of = |i: u32| {
+        usize::try_from(i)
+            .ok()
+            .and_then(|k| t.parents.get(k))
+            .copied()
+            .filter(|p| *p != u32::MAX)
+    };
+    let Some(own) = t.source(el) else {
+        return false;
+    };
+    let Some(parent) = parent_of(own) else {
+        return false;
+    };
+    t.nodes.iter().any(|n| {
+        n.node != own && n.role == Role::SecureTextField && parent_of(n.node) == Some(parent)
+    })
+}
+
 /// Sixteenth review (Rule T): the note of a question about an input into a place while
 /// `places` (display names of the contexts read in this task and not yet allowed into it,
 /// most recently read first) could flow there: `. Jarvis has read Messages, example.com and
@@ -665,12 +808,37 @@ pub fn evaluate_sheeted(
     // or of an image inside it raises the category, whatever its label says or in which
     // language (risk only: never an exemption).
     category = crate::phrases::max_risk(category, symbol_identifier_risk(action, screen, tree));
+    // Probe round 3 (F1): a sideways drag whose path crosses a row of a list may trigger
+    // the row's swipe action (a long one deleted a real row with no tap), whatever verb the
+    // model used: at least `Delete`.
+    let row_swipe = crosses_list_row(action, screen, tree);
+    if row_swipe {
+        category = crate::phrases::max_risk(category, RiskCategory::Delete);
+    }
+    // Probe round 3 (F6): text typed into the field beside a password (Safari's HTTP sign-in
+    // dialog: `TextField placeholder="User Name"` next to `SecureTextField`) is a credential,
+    // and it always asks.
+    let credential = credential_pair(action, screen, tree);
+    if credential {
+        category = crate::phrases::max_risk(category, RiskCategory::Credential);
+    }
+    // Probe round 3 (F6): the button that sends a password form is an account action.
+    if sign_in_press(action, screen, tree) {
+        category = crate::phrases::max_risk(category, RiskCategory::AccountChange);
+    }
     // Fourteenth review (Rule C): how the category was established. A category the
     // control's own words or role gave (`read`) is READ; one the gate guessed — a presumed
     // submit, a send-by-label whose form may hold an amount, a link the owner did not give —
     // is UNCLEAR: asked whatever categories the owner relaxed, and approved on the phone
     // only. Page-controlled words never lift either.
     let mut unclear = false;
+    // Probe round 3 (F3): Return on a keyboard whose Return key no identifier types is of
+    // unknown effect: it asks, phone only.
+    if screen.cues.return_key_unknown && matches!(actuation(action, screen), Actuation::Return(_)) {
+        category = crate::phrases::max_risk(category, RiskCategory::Unverified);
+        unclear = true;
+    }
+    unclear |= credential;
     let presumed = presumed_submit_owned(action, screen, tree, typed, owner);
     // Only a presumed submit or a send needs the control's own words (the cheap test first).
     let read = if presumed || SENDING_CATEGORIES.contains(&category) {
@@ -691,7 +859,21 @@ pub fn evaluate_sheeted(
     // Fourteenth review (Rule A): every way the model's own text becomes a navigation —
     // `open_url`, Return (or the keyboard's Go key) in any field holding a link, a link in a
     // tool's arguments — passes the owner-gave-the-link gate (thirteenth review, M3).
-    let mut forced = false;
+    // Probe round 3 (F3): Return on the keyboard's emergency-call key (`UIReturnKeyType
+    // .emergencyCall`, by its identifier `Emergency call`) places a call: it asks as a call,
+    // phone only, whatever the owner relaxed (a send presumed from the field yields to it;
+    // anything riskier stays).
+    let emergency = screen.cues.return_key_type.as_deref() == Some("emergency call")
+        && matches!(actuation(action, screen), Actuation::Return(_));
+    if emergency
+        && crate::phrases::max_risk(category, RiskCategory::SendMessage)
+            == RiskCategory::SendMessage
+    {
+        category = RiskCategory::Call;
+        unclear = true;
+    }
+    // Probe round 3 (F6): a credential typed beside a password asks whatever was relaxed.
+    let mut forced = credential || emergency;
     for url in navigated_links(action, screen) {
         if !owner_gave_url(&url, owner) {
             // A call link stays `Call` (it asks as one); any other link sends.
@@ -780,6 +962,9 @@ pub fn evaluate_sheeted(
             }
             if hands_on {
                 notes.push(handoff_note(&place_name(screen)));
+            }
+            if row_swipe {
+                notes.push(row_swipe_note());
             }
             let mut request = ConfirmRequest::from_rows(
                 category,
@@ -4822,7 +5007,8 @@ struct Sent<'a> {
 /// always submit; a multi-line text view's only with a submit key — by its type
 /// (identifier, audit C1) or its label.
 fn submit_return(field: &Element, screen: &CompactScreen) -> bool {
-    if field.role != Role::TextView {
+    // Probe round 3 (F3): a Return key of unknown type may submit.
+    if field.role != Role::TextView || screen.cues.return_key_unknown {
         return true;
     }
     screen

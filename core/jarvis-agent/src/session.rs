@@ -606,6 +606,12 @@ pub struct Session {
     /// Twentieth review (R20-B): the app (lower-cased bundle id) whose look last showed a
     /// share sheet in the raw tree; cleared by a look that shows no `Sheet` at all.
     share_sticky: Option<String>,
+    /// Probe round 3 (F2): the app (lower-cased bundle id) whose look last showed a system
+    /// picker by its identifiers, and which picker; while later looks in that app still hold
+    /// a sheet presentation's backdrop, they are that picker too (a picker screen whose own
+    /// identifiers are not in the tree — another tab, a scrolled list — is still not the
+    /// app's own screen). Cleared by a look in another app or one with no backdrop.
+    picker_sticky: Option<(String, jarvis_safety::PickerKind)>,
     /// Twentieth review (R20-B): the current look is a share sheet — its raw tree holds one,
     /// or it still shows a `Sheet` in the app of [`Self::share_sticky`].
     share_here: bool,
@@ -785,6 +791,7 @@ impl Session {
             prior_approval: None,
             action_allowed: Vec::new(),
             share_sticky: None,
+            picker_sticky: None,
             edit_menu_sticky: None,
             share_here: false,
         }
@@ -2448,6 +2455,24 @@ impl Session {
         if self.own_hidden {
             self.places.clear_unreadable();
         }
+        // Probe round 3 (F2): a system picker is decided by its identifiers, and stays one
+        // while later looks in the same app still hold a sheet's backdrop.
+        let picker_front = obs.screen.app_bundle_id.trim().to_lowercase();
+        if let Some(kind) = self.places.picker() {
+            self.picker_sticky = Some((picker_front, kind));
+        } else {
+            match self.picker_sticky.take() {
+                Some((app, kind))
+                    if app == picker_front
+                        && self.places.shows_presentation()
+                        && self.incoming_source == ScreenSource::Typed =>
+                {
+                    self.places.keep_picker(kind);
+                    self.picker_sticky = Some((app, kind));
+                }
+                _ => {}
+            }
+        }
         self.here = self.places.base().clone();
         // Twentieth review (R20-B): a share sheet is decided from the raw tree, and stays one
         // while a `Sheet` is up in the same app (cell reuse can drop its AirDrop row from the
@@ -2560,6 +2585,12 @@ impl Session {
             // Seventeenth review: an edit-menu item that may hand the selection on.
             notes.push(handoff_note(&self.target_place_name(gate)));
         }
+        // Probe round 3 (F1): a sideways drag across a list row may trigger its swipe action.
+        notes.extend(jarvis_safety::row_swipe_question_note(
+            gate,
+            &self.current.screen,
+            Some(&tree),
+        ));
         // A question asked for the flow alone states the action as one of no risk.
         let category = match flow {
             Some(f) if f.only => RiskCategory::None,

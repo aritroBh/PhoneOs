@@ -708,22 +708,25 @@ const RETURN_KEY_LABELS: &[&str] = &[
 
 /// Audit of real trees (C1): the identifiers iOS gives the Return key — the
 /// `UIReturnKeyType` case names, compared whole and case-insensitively — and the type word
-/// each stands for (`ScreenCues::return_key_type`). iOS 26.5 trees show `Return`
-/// (`login_keyboard`), `Go` (Safari's form, Spotlight) and `Search` (Spotlight, run 137);
-/// the others are UIKit's names, not yet seen in a real tree.
+/// each stands for (`ScreenCues::return_key_type`). Probe round 3 (run 139, p4b: all twelve
+/// `UIReturnKeyType`s captured on iOS 26.5) gave the real identifiers, which are **not** all
+/// the type names: `Return`, `Go`, `Google` (label "search"), `Join:` and `Next:` (with a
+/// trailing colon), `Route`, `Search`, `Send`, `Yahoo` (label "search"), `Done` and
+/// `Emergency call` (with a space; label "Emergency\nCall"); `.continue`'s key has **no**
+/// identifier (label "continue"), so it has no entry: its Return is of unknown effect
+/// (`ScreenCues::return_key_unknown`). Every entry is evidenced by that capture.
 const RETURN_KEY_TYPES: &[(&str, &str)] = &[
     ("return", "return"),
     ("go", "go"),
     ("google", "google"),
-    ("join", "join"),
-    ("next", "next"),
+    ("join:", "join"),
+    ("next:", "next"),
     ("route", "route"),
     ("search", "search"),
     ("send", "send"),
     ("yahoo", "yahoo"),
     ("done", "done"),
-    ("continue", "continue"),
-    ("emergencycall", "emergency call"),
+    ("emergency call", "emergency call"),
 ];
 
 /// The Return-key type an identifier names ([`RETURN_KEY_TYPES`]), if any.
@@ -777,7 +780,46 @@ pub(crate) fn return_key(keyboard: &UiNode) -> Option<ReturnKey> {
         }
         stack.extend(n.children.iter().rev().map(|c| (c, depth + 1)));
     }
-    by_label
+    by_label.or_else(|| corner_key(keyboard))
+}
+
+/// Probe round 3 (run 139, F3): the key at the keyboard's bottom-right — where the Return
+/// key sat in all twelve `UIReturnKeyType` captures and under German (`Button "Öffnen"
+/// id=Go {{329.3, 830}, {108.3, 56}}` in `Keyboard {{0, 655}, {440, 243}}`): the labelled key
+/// or button of the `Keyboard` subtree whose frame reaches furthest right and down, when its
+/// centre lies in the keyboard's bottom-right quarter. Used only to **find** the key whose
+/// label the question quotes (no type: [`ReturnKey::kind`] stays `None`, so its Return is of
+/// unknown effect and asks); never to exempt anything.
+fn corner_key(keyboard: &UiNode) -> Option<ReturnKey> {
+    let area = keyboard.frame;
+    if area.is_empty() {
+        return None;
+    }
+    let mid = area.center();
+    let mut best: Option<(f64, String)> = None;
+    let mut stack: Vec<(&UiNode, usize)> = vec![(keyboard, 0)];
+    while let Some((n, depth)) = stack.pop() {
+        if is_pruned(n) || depth > MAX_DEPTH {
+            continue;
+        }
+        stack.extend(n.children.iter().map(|c| (c, depth + 1)));
+        if !matches!(n.role, Role::Key | Role::Button) || n.frame.is_empty() {
+            continue;
+        }
+        let c = n.frame.center();
+        let label = clean_opt(&n.label);
+        if label.is_empty() || c.x <= mid.x || c.y <= mid.y {
+            continue;
+        }
+        let reach = n.frame.max_x() + n.frame.max_y();
+        if best.as_ref().is_none_or(|(r, _)| reach > *r) {
+            best = Some((reach, label.chars().take(MAX_RETURN_KEY_CHARS).collect()));
+        }
+    }
+    best.map(|(_, label)| ReturnKey {
+        label: Some(label),
+        kind: None,
+    })
 }
 
 fn round(f: &Rect) -> [i64; 4] {
@@ -1074,6 +1116,9 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         cues: ScreenCues {
             return_key: return_key.label,
             return_key_type: return_key.kind.map(str::to_owned),
+            // Probe round 3 (F3): a keyboard is up whose Return key's type no identifier
+            // gives: what Return does is unknown (fail closed).
+            return_key_unknown: layout.keyboard.is_some() && return_key.kind.is_none(),
             ..cues(alert.unwrap_or(&screen.root), bounds, &layout)
         },
     };

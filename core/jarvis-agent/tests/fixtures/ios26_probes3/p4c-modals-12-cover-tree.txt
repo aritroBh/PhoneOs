@@ -1,0 +1,36 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p4c-modals (`probe3-p4c-modals-12-cover-tree.txt`), verbatim below this line.
+Q: With the fullScreenCover up: is there an Alert/Sheet/dialog-like node, is the content behind still in the tree, is anything marking it covered, what role do destructive buttons have?
+capture 12 (cover): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 12: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 11, XCUITest snapshot 107 ms
+types without a core role: Other×5
+note: probe round 3 p4c-modals, capture 12: cover
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          StaticText "Probe cover" {{163.2, 427.5}, {113.7, 26.3}}
+          StaticText "Probe cover body text" {{136.2, 477.8}, {167.7, 20.3}}
+          Button "Close Probe cover" id=probe3.modals.close {{138.7, 522}, {163.0, 34.7}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          StaticText(48) label="Probe cover" {{163.2, 427.5}, {113.7, 26.3}}
+          StaticText(48) label="Probe cover body text" {{136.2, 477.8}, {167.7, 20.3}}
+          Button(9) label="Close Probe cover" id=probe3.modals.close {{138.7, 522}, {163.0, 34.7}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}

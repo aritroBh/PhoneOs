@@ -247,8 +247,15 @@ fn a_localized_send_key_is_a_send_return() {
     let plain = class(&note_with_keyboard("return", Some("Return")));
     assert_ne!(english, plain, "the fixture must tell them apart");
     assert_eq!(class(&localized), english);
-    // Without the identifier a localized label says nothing (the second way is English).
-    assert_eq!(class(&note_with_keyboard("Senden", None)), plain);
+    // Without the identifier a localized label says nothing (the second way is English);
+    // probe round 3 (F3): the key's type is then unknown, so its Return is at least
+    // `Unverified` (it asks) instead of reading like a plain Return.
+    let unknown = class(&note_with_keyboard("Senden", None));
+    assert_ne!(unknown, plain);
+    assert_eq!(
+        jarvis_safety::max_risk(unknown, RiskCategory::Unverified),
+        unknown
+    );
     // The question quotes the key as the owner sees it.
     let v = compact_view(&localized);
     let q = summary_with(

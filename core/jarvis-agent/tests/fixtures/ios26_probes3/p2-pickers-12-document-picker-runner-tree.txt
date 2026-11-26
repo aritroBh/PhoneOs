@@ -1,0 +1,167 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p2-pickers (`probe3-p2-pickers-12-document-picker-runner-tree.txt`), verbatim below this line.
+Q: What does Jarvis's runner (XCUITestPhoneRunner, the code the agent runs) report: the UIDocumentPickerViewController up? Compare with the raw captures next to it.
+capture 12: the runner's own observation 1, of dev.jarvis.app (the process it chose as the top layer), 77 nodes
+
+observation 1: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 77, XCUITest snapshot 207 ms
+types without a core role: Other×58
+note: lock signals: notify(com.apple.springboard.lockstate)=false, lock screen=not checked, front=dev.jarvis.app -> unlocked
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{-440, -956}, {1320, 2868}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) "Cancel" {{327.3, 96}, {36.7, 36}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 72}, {440, 884}}
+                              Image {{-150, -78}, {740, 1184}}
+                              Other(Other) {{0, 72}, {440, 884}}
+                                Other(Other) {{0, 72}, {440, 884}}
+                                  Other(Other) {{0, 72}, {440, 884}}
+                                    Other(Other) {{0, 72}, {440, 884}}
+                                      Other(Other) {{0, 72}, {440, 884}}
+                                        Other(Other) {{0, 72}, {440, 884}}
+                                        Other(Other) {{0, 72}, {440, 884}}
+                                          Other(Other) {{0, 72}, {440, 884}}
+                                            Other(Other) {{0, 72}, {440, 884}}
+                                              Other(Other) {{0, 72}, {440, 884}}
+                                                Other(Other) {{0, 72}, {440, 884}}
+                                                Other(Other) id=DOC.browsingRoot Source: com.apple.DocumentManager.RecentDocuments, Title: Recents {{0, 72}, {440, 884}}
+                                                  NavigationBar id=FullDocumentManagerViewControllerNavigationBar {{0, 92}, {440, 114}}
+                                                    StaticText "Recents" {{187.7, 103.7}, {64.7, 20.7}}
+                                                    Button "Cancel" {{327.3, 96}, {36.7, 36}}
+                                                    Button "More" id=OverflowBarButtonItem {{380, 96}, {36, 36}}
+                                                    SearchField "Search" placeholder="Search" {{20, 147}, {400, 44}}
+                                                      Image "Search" id=magnifyingglass {{32, 159}, {20.7, 19.3}}
+                                                  Other(Other) {{0, 72}, {440, 884}}
+                                                    Other(Other) {{0, 72}, {440, 884}}
+                                                      Other(Other) {{0, 72}, {440, 884}}
+                                                        Other(Other) {{0, 72}, {440, 884}}
+                                                          Other(Other) {{0, 72}, {440, 884}}
+                                                            Other(Other) {{0, 72}, {440, 884}}
+                                                              Image "clock" id=clock.fill {{191.7, 481}, {56.7, 54.7}}
+                                                              StaticText "No Recents" {{161, 550.7}, {118, 26.3}}
+                                                              StaticText "Recently opened documents will appear here." {{63.7, 580}, {312.7, 18}}
+                                                  Other(Other) {{0, 72}, {440, 884}}
+                                                    Other(Other) {{0, 72}, {440, 884}}
+                                          Other(Other) {{0, 873}, {440, 83}}
+                                            Other(Other) {{0, 72}, {440, 884}}
+                                              TabBar "Tab Bar" id=DOC.browsingModeTabBar {{0, 873}, {440, 83}}
+                                                Other(Other) {{83, 873}, {274, 62}}
+                                                  Other(Other) {{83, 873}, {94, 54}}
+                                                  Other(Other) {{83, 873}, {274, 62}}
+                                                    Button "Recents" {{87, 877}, {94, 54}} [selected]
+                                                      Image "clock" id=clock.fill {{120, 883.3}, {27.3, 27.3}}
+                                                    Button "Shared" {{173, 877}, {94, 54}}
+                                                      Image "Shared Folder" id=folder.fill.badge.person.crop {{204, 882.3}, {35, 27}}
+                                                    Button "Browse" {{259, 877}, {94, 54}}
+                                                      Image "move" id=folder.fill {{290, 884.3}, {32, 25}}
+                                                  Other(Other) {{87, 877}, {94, 54}}
+                                                    Other(Other) {{87, 877}, {94, 54}}
+                                                      Other(Other) {{87, 877}, {94, 54}}
+                                                      Other(Other) {{87, 877}, {94, 54}}
+                                                        Other(Other) {{87, 877}, {94, 54}}
+                                                          Other(Other) {{87, 877}, {94, 54}}
+                                                            Other(Other) {{87, 877}, {94, 54}}
+                                                          Other(Other) {{87, 877}, {94, 54}}
+                                                        Other(Other) {{87, 877}, {94, 54}}
+                                            Other(Other) {{0, 873}, {440, 83}}
+                                              Other(Other) {{0, 873}, {440, 83}}
+                                                Other(Other) {{0, 873}, {440, 83}}
+                                                  Other(Other) {{0, 873}, {440, 83}}
+                                                    Other(Other) {{0, 873}, {440, 83}}
+                                                      Other(Other) {{0, 873}, {440, 83}}
+                                                  Other(Other) {{0, 873}, {440, 83}}
+                                                    Other(Other) {{0, 873}, {440, 83}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{-440, -956}, {1320, 2868}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) label="Cancel" {{327.3, 96}, {36.7, 36}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 0}, {440, 956}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 72}, {440, 884}}
+                              Image(43) {{-150, -78}, {740, 1184}}
+                              Other(1) {{0, 72}, {440, 884}}
+                                Other(1) {{0, 72}, {440, 884}}
+                                  Other(1) {{0, 72}, {440, 884}}
+                                    Other(1) {{0, 72}, {440, 884}}
+                                      Other(1) {{0, 72}, {440, 884}}
+                                        Other(1) {{0, 72}, {440, 884}}
+                                        Other(1) {{0, 72}, {440, 884}}
+                                          Other(1) {{0, 72}, {440, 884}}
+                                            Other(1) {{0, 72}, {440, 884}}
+                                              Other(1) {{0, 72}, {440, 884}}
+                                                Other(1) {{0, 72}, {440, 884}}
+                                                Other(1) id=DOC.browsingRoot Source: com.apple.DocumentManager.RecentDocuments, Title: Recents {{0, 72}, {440, 884}}
+                                                  NavigationBar(21) id=FullDocumentManagerViewControllerNavigationBar {{0, 92}, {440, 114}}
+                                                    StaticText(48) label="Recents" {{187.7, 103.7}, {64.7, 20.7}}
+                                                    Button(9) label="Cancel" {{327.3, 96}, {36.7, 36}}
+                                                    Button(9) label="More" id=OverflowBarButtonItem {{380, 96}, {36, 36}}
+                                                    SearchField(45) label="Search" placeholder="Search" {{20, 147}, {400, 44}}
+                                                      Image(43) label="Search" id=magnifyingglass {{32, 159}, {20.7, 19.3}}
+                                                  Other(1) {{0, 72}, {440, 884}}
+                                                    Other(1) {{0, 72}, {440, 884}}
+                                                      Other(1) {{0, 72}, {440, 884}}
+                                                        Other(1) {{0, 72}, {440, 884}}
+                                                          Other(1) {{0, 72}, {440, 884}}
+                                                            Other(1) {{0, 72}, {440, 884}}
+                                                              Image(43) label="clock" id=clock.fill {{191.7, 481}, {56.7, 54.7}}
+                                                              StaticText(48) label="No Recents" {{161, 550.7}, {118, 26.3}}
+                                                              StaticText(48) label="Recently opened documents will appear here." {{63.7, 580}, {312.7, 18}}
+                                                  Other(1) {{0, 72}, {440, 884}}
+                                                    Other(1) {{0, 72}, {440, 884}}
+                                          Other(1) {{0, 873}, {440, 83}}
+                                            Other(1) {{0, 72}, {440, 884}}
+                                              TabBar(22) label="Tab Bar" id=DOC.browsingModeTabBar {{0, 873}, {440, 83}}
+                                                Other(1) {{83, 873}, {274, 62}}
+                                                  Other(1) {{83, 873}, {94, 54}}
+                                                  Other(1) {{83, 873}, {274, 62}}
+                                                    Button(9) label="Recents" {{87, 877}, {94, 54}} [selected]
+                                                      Image(43) label="clock" id=clock.fill {{120, 883.3}, {27.3, 27.3}}
+                                                    Button(9) label="Shared" {{173, 877}, {94, 54}}
+                                                      Image(43) label="Shared Folder" id=folder.fill.badge.person.crop {{204, 882.3}, {35, 27}}
+                                                    Button(9) label="Browse" {{259, 877}, {94, 54}}
+                                                      Image(43) label="move" id=folder.fill {{290, 884.3}, {32, 25}}
+                                                  Other(1) {{87, 877}, {94, 54}}
+                                                    Other(1) {{87, 877}, {94, 54}}
+                                                      Other(1) {{87, 877}, {94, 54}}
+                                                      Other(1) {{87, 877}, {94, 54}}
+                                                        Other(1) {{87, 877}, {94, 54}}
+                                                          Other(1) {{87, 877}, {94, 54}}
+                                                            Other(1) {{87, 877}, {94, 54}}
+                                                          Other(1) {{87, 877}, {94, 54}}
+                                                        Other(1) {{87, 877}, {94, 54}}
+                                            Other(1) {{0, 873}, {440, 83}}
+                                              Other(1) {{0, 873}, {440, 83}}
+                                                Other(1) {{0, 873}, {440, 83}}
+                                                  Other(1) {{0, 873}, {440, 83}}
+                                                    Other(1) {{0, 873}, {440, 83}}
+                                                      Other(1) {{0, 873}, {440, 83}}
+                                                  Other(1) {{0, 873}, {440, 83}}
+                                                    Other(1) {{0, 873}, {440, 83}}

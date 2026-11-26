@@ -1,0 +1,152 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p6a-safari (`probe3-p6a-safari-page-07-js-confirm-tree.txt`), verbatim below this line.
+Q: After Probe confirm: does com.apple.mobilesafari's tree hold the JavaScript dialog, with what roles?
+capture 07 (js-confirm): the raw tree of com.apple.mobilesafari by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 7: com.apple.mobilesafari
+screen 440x956 pt, keyboard hidden
+nodes 69, XCUITest snapshot 113 ms
+types without a core role: Other×51
+note: probe round 3 p6a-safari-page, capture 07: js-confirm
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Safari" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) id=SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=F10E5F3E-DA8E-426D-8A90-6C271C5315DF&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=true {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 0}, {440, 49}}
+                            Other(Other) {{0, 0}, {440, 49}}
+                            Other(Other) {{0, 0}, {440, 49}}
+                          Other(Other) {{0, 0}, {440, 62}}
+                          ScrollView {{0, 0}, {440, 956}}
+                            Other(Other) id=TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=10CDCA3B-8011-4F7F-8E06-57CC0739EFCE&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=55572 {{0, 0}, {440, 956}}
+                              WebView id=WebView {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  Other(Other) {{0, 62}, {440, 796}}
+                                  Other(Other) id=SFDialogView {{20, 411.7}, {400, 97}}
+                                    StaticText id=SFDialogViewMessageText {{20, 411.7}, {400, 54}}
+                                      TextView value="Probe confirm text" {{20, 411.7}, {400, 54}}
+                                        TextView "Probe confirm text" {{40, 427.7}, {140.8, 22}}
+                                        Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387, 411.7}, {30, 54}}
+                                          Other(Other) {{414, 414.7}, {3, 48}}
+                                        Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{20, 435.7}, {400, 27}}
+                                          Other(Other) {{23, 459.7}, {394, 3}}
+                                    Button "Cancel" {{297, 465.7}, {53, 33}}
+                                      StaticText "Cancel" {{297, 471.7}, {53, 21}}
+                                    Button "OK" {{370, 465.7}, {30, 33}}
+                                      StaticText "OK" {{372.7, 471.7}, {25, 21}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(Other) {{65, 950}, {310, 3}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(Other) {{65, 950}, {310, 3}}
+                      Other(Other) id=CapsuleViewController {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 858}, {440, 98}}
+                          Other(Other) {{0, 858}, {440, 98}}
+                            Other(Other) {{0, 858}, {440, 98}}
+                              Other(Other) {{0, 858}, {440, 98}}
+                                Other(Other) {{0, 858}, {440, 98}}
+                                  Other(Other) {{0, 858}, {440, 98}}
+                                    Other(Other) {{0, 858}, {440, 98}}
+                                Other(Other) {{0, 858}, {440, 98}}
+                                  Other(Other) {{0, 858}, {440, 98}}
+                          Other(Other) {{34, 874}, {48, 48}}
+                            Other(Other) {{34, 874}, {48, 48}}
+                              Button "Back" id=BackButton {{34, 874}, {48, 48}} [disabled]
+                          Other(Other) {{90, 874}, {260, 48}}
+                            Other(Other) {{90, 874}, {260, 48}}
+                              Other(Other) {{90, 874}, {260, 48}}
+                                Other(Other) id=CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false {{90, 874}, {260, 48}} [selected]
+                                  Button "Page Menu" id=PageFormatMenuButton {{94, 878}, {40, 40}}
+                                    StaticText {{94, 878}, {0, 0}} [hidden]
+                                  TextField "Address" value="‎127.0.0.1" id=TabBarItemTitle {{187, 888}, {66, 20.3}}
+                                  Button "refresh" id=ReloadButton {{319.3, 887.7}, {17.7, 21}}
+                          Other(Other) {{358, 874}, {48, 48}}
+                            Other(Other) {{358, 874}, {48, 48}}
+                              Button "More" id=MoreMenuButton {{358, 874}, {48, 48}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Safari" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) id=SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=F10E5F3E-DA8E-426D-8A90-6C271C5315DF&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=true {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 0}, {440, 956}}
+                          Other(1) {{0, 0}, {440, 49}}
+                            Other(1) {{0, 0}, {440, 49}}
+                            Other(1) {{0, 0}, {440, 49}}
+                          Other(1) {{0, 0}, {440, 62}}
+                          ScrollView(46) {{0, 0}, {440, 956}}
+                            Other(1) id=TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=10CDCA3B-8011-4F7F-8E06-57CC0739EFCE&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=55572 {{0, 0}, {440, 956}}
+                              WebView(58) id=WebView {{0, 0}, {440, 956}}
+                                Other(1) {{0, 0}, {440, 956}}
+                                  Other(1) {{0, 62}, {440, 796}}
+                                  Other(1) id=SFDialogView {{20, 411.7}, {400, 97}}
+                                    StaticText(48) id=SFDialogViewMessageText {{20, 411.7}, {400, 54}}
+                                      TextView(52) value="Probe confirm text" {{20, 411.7}, {400, 54}}
+                                        TextView(52) label="Probe confirm text" {{40, 427.7}, {140.8, 22}}
+                                        Other(1) label="Vertical scroll bar, 1 page" value="0%" {{387, 411.7}, {30, 54}}
+                                          Other(1) {{414, 414.7}, {3, 48}}
+                                        Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{20, 435.7}, {400, 27}}
+                                          Other(1) {{23, 459.7}, {394, 3}}
+                                    Button(9) label="Cancel" {{297, 465.7}, {53, 33}}
+                                      StaticText(48) label="Cancel" {{297, 471.7}, {53, 21}}
+                                    Button(9) label="OK" {{370, 465.7}, {30, 33}}
+                                      StaticText(48) label="OK" {{372.7, 471.7}, {25, 21}}
+                            Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(1) {{65, 950}, {310, 3}}
+                            Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(1) {{65, 950}, {310, 3}}
+                      Other(1) id=CapsuleViewController {{0, 0}, {440, 956}}
+                        Other(1) {{0, 858}, {440, 98}}
+                          Other(1) {{0, 858}, {440, 98}}
+                            Other(1) {{0, 858}, {440, 98}}
+                              Other(1) {{0, 858}, {440, 98}}
+                                Other(1) {{0, 858}, {440, 98}}
+                                  Other(1) {{0, 858}, {440, 98}}
+                                    Other(1) {{0, 858}, {440, 98}}
+                                Other(1) {{0, 858}, {440, 98}}
+                                  Other(1) {{0, 858}, {440, 98}}
+                          Other(1) {{34, 874}, {48, 48}}
+                            Other(1) {{34, 874}, {48, 48}}
+                              Button(9) label="Back" id=BackButton {{34, 874}, {48, 48}} [disabled]
+                          Other(1) {{90, 874}, {260, 48}}
+                            Other(1) {{90, 874}, {260, 48}}
+                              Other(1) {{90, 874}, {260, 48}}
+                                Other(1) id=CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false {{90, 874}, {260, 48}} [selected]
+                                  Button(9) label="Page Menu" id=PageFormatMenuButton {{94, 878}, {40, 40}}
+                                    StaticText(48) {{94, 878}, {0, 0}}
+                                  TextField(49) label="Address" value="‎127.0.0.1" id=TabBarItemTitle {{187, 888}, {66, 20.3}}
+                                  Button(9) label="refresh" id=ReloadButton {{319.3, 887.7}, {17.7, 21}}
+                          Other(1) {{358, 874}, {48, 48}}
+                            Other(1) {{358, 874}, {48, 48}}
+                              Button(9) label="More" id=MoreMenuButton {{358, 874}, {48, 48}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}

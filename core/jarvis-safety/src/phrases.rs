@@ -715,6 +715,44 @@ pub const SF_SYMBOLS: &[(&str, RiskCategory)] = &[
     ("banknote", Payment),
 ];
 
+/// Probe round 3 (Mac run 139; F4, F6): labels the OS gives controls, matched only against
+/// the **whole** label of the control pressed (`classify`'s own-label rule; never as part of
+/// a longer label, never as screen context), so they cannot over-match ("Card number",
+/// "Gift card balance", "Recycle bin" are untouched). The captures (p4a, p10) show the
+/// descriptions iOS 26.5 puts on icon-only controls whose symbol [`SF_SYMBOLS`] names a
+/// risk; with no identifier (a UIKit `UIButton`) the label is all there is, so each is at
+/// least its symbol's risk by label alone:
+///
+/// * `cart` — SwiftUI "Shopping Cart" (en-GB "Shopping Trolley"), UIKit "shopping cart";
+///   `bag` — "Shopping Bag" / "shopping bag"; `creditcard` — "Card" / "card": `Purchase`.
+/// * `trash` — en-GB SwiftUI "Bin" (en-US "Trash", UIKit "trash": already phrases): `Delete`.
+/// * `arrow.up.circle.fill` — "Arrow Up Circle" (SwiftUI and UIKit): `SendMessage`.
+///
+/// The rest of the captured descriptions already ask by the action phrases ("Send",
+/// "send", "Call", "Share", "Remove", "remove", "Trash", toolbar "Delete", "Reply"), or name
+/// no risky symbol ("Close", "Add", "Selected", "Add People/Follow", "Compose", "Done",
+/// "Cancel", "Save").
+pub const WHOLE_LABEL_PHRASES: &[Phrase] = &[
+    p("shopping cart", Purchase),
+    p("shopping trolley", Purchase),
+    p("shopping bag", Purchase),
+    p("card", Purchase),
+    p("bin", Delete),
+    p("arrow up circle", SendMessage),
+];
+
+/// Probe round 3 (run 139, p6b `13-basic-auth`; F6): whole labels of the button that sends
+/// a password form — read only on a control whose raw parent also holds a password field
+/// (`jarvis_safety`'s evaluate: Safari's HTTP sign-in dialog's `Button "Sign In"` beside its
+/// `SecureTextField`), where pressing it is an account action (`AccountChange`). A "Sign
+/// In" elsewhere (a button that opens a sign-in screen) is unchanged.
+pub const SIGN_IN_PHRASES: &[Phrase] = &[
+    p("sign in", AccountChange),
+    p("log in", AccountChange),
+    p("login", AccountChange),
+    p("signin", AccountChange),
+];
+
 /// What an [`AppRule`] applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleTarget {
@@ -858,6 +896,8 @@ fn compiled_tables() -> &'static [(&'static [Phrase], Compiled)] {
             NAVIGATION_PHRASES,
             PRICE_VERB_PHRASES,
             SHARE_SAFE_PHRASES,
+            WHOLE_LABEL_PHRASES,
+            SIGN_IN_PHRASES,
         ];
         all.extend(APP_PHRASES.iter().map(|(_, t)| *t));
         all.into_iter().map(|t| (t, compile(t))).collect()

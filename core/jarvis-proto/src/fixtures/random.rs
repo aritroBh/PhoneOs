@@ -318,6 +318,7 @@ pub fn random_compact_screen(seed: u64) -> CompactScreen {
             return_key_type: r
                 .chance(30)
                 .then(|| (*r.pick(&["return", "send", "go", "search"])).to_owned()),
+            return_key_unknown: false,
             covered,
             unplaced: Vec::new(),
         },

@@ -1,0 +1,422 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p4d-controls (`probe3-p4d-controls-03-row1-after-runner-swipe-tree.txt`), verbatim below this line.
+Q: After the runner's swipe left on a row whose trailing actions allow a full swipe: is the row still there, which actions were revealed (role, label, identifier)?
+capture 03 (row1-after-runner-swipe): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 3: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 204, XCUITest snapshot 293 ms
+types without a core role: DatePicker×1, Other×140, SegmentedControl×1
+note: probe round 3 p4d-controls, capture 03: row1-after-runner-swipe
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Controls 2 {{0, 62}, {440, 106}}
+                            Button "Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText "Controls 2" {{20, 119.7}, {163.7, 40.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  CollectionView {{0, 0}, {440, 956}}
+                                    Other(Other) {{-20, -1744}, {480, 2126}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                      Other(Other) {{0, 808.2}, {440, 147.8}}
+                                        Image id=AdditionalDimmingOverlay {{-120, 813}, {680, 286}}
+                                        Other(Other) {{0, 808.2}, {440, 147.8}}
+                                          Other(Other) {{0, 808.2}, {440, 147.8}}
+                                        Other(Other) {{0, 808.2}, {440, 147.8}}
+                                          Other(Other) {{0, 808.2}, {440, 147.8}}
+                                          Other(Other) {{0, 808.2}, {440, 147.8}}
+                                    Cell {{20, 168}, {400, 40.3}}
+                                      Other(Other) {{20, 168}, {400, 40.3}}
+                                      Other(Other) {{20, 168}, {400, 40.3}}
+                                        Other(Other) {{20, 168}, {400, 40.3}}
+                                          Other(Other) {{20, 168}, {400, 40.3}}
+                                            StaticText "Swipe rows" {{20, 168}, {400, 40.3}}
+                                    Cell {{-184.7, 208.3}, {400, 52.0}}
+                                      Other(Other) {{-184.7, 208.3}, {400, 52.0}}
+                                      Other(Other) {{-184.7, 208.3}, {400, 52.0}}
+                                        Other(Other) {{-184.7, 208.3}, {400, 52.0}}
+                                      Other(Other) {{-184.7, 208.3}, {400, 52.0}}
+                                        Other(Other) {{-184.7, 208.3}, {400, 52.0}}
+                                          Other(Other) {{-184.7, 208.3}, {400, 52.0}}
+                                            StaticText "Swipe row 1" {{-184.7, 208.3}, {400, 52.0}}
+                                    Other(Other) {{20, 208.3}, {400, 52.0}}
+                                      Other(Other) {{215.3, 208.3}, {204.7, 52.0}}
+                                        Other(Other) {{215.3, 208.3}, {204.7, 52.0}}
+                                          Other(Other) {{225.3, 208.3}, {87.3, 52.0}}
+                                            Button "Flag" id=flag {{225.3, 212.3}, {87, 44.0}}
+                                              StaticText "Flag" {{265.3, 226.3}, {25.7, 15.7}}
+                                          Other(Other) {{322.7, 208.3}, {87.3, 52.0}}
+                                            Button "Delete" id=trash {{322.7, 212.3}, {87, 44.0}}
+                                              StaticText "Delete" {{355.3, 226.3}, {39.3, 15.7}}
+                                    Cell {{20, 260.3}, {400, 52}}
+                                      Other(Other) {{20, 260.3}, {400, 52}}
+                                        Other(Other) {{20, 260.3}, {400, 52}}
+                                      Other(Other) {{20, 260.3}, {400, 52}}
+                                        Other(Other) {{20, 260.3}, {400, 52}}
+                                          Other(Other) {{20, 260.3}, {400, 52}}
+                                            StaticText "Swipe row 2" {{20, 260.3}, {400, 52}}
+                                    Cell {{20, 312.3}, {400, 52}}
+                                      Other(Other) {{20, 312.3}, {400, 52}}
+                                        Other(Other) {{20, 312.3}, {400, 52}}
+                                      Other(Other) {{20, 312.3}, {400, 52}}
+                                        Other(Other) {{20, 312.3}, {400, 52}}
+                                          Other(Other) {{20, 312.3}, {400, 52}}
+                                            StaticText "Swipe row 3" {{20, 312.3}, {400, 52}}
+                                    Other(Other) {{40, 311.3}, {360, 1}}
+                                    Other(Other) {{-20, 382}, {480, 87}}
+                                    Cell {{20, 399.3}, {400, 52}}
+                                      Other(Other) {{20, 399.3}, {400, 52}}
+                                        Other(Other) {{20, 399.3}, {400, 52}}
+                                      Other(Other) {{20, 399.3}, {400, 52}}
+                                        Other(Other) {{20, 399.3}, {400, 52}}
+                                          Other(Other) {{20, 399.3}, {400, 52}}
+                                            StaticText "No action" id=probe3.controls.status {{20, 399.3}, {400, 52}}
+                                    Other(Other) {{-20, 469}, {480, 275}}
+                                    Cell {{20, 469}, {400, 40.3}}
+                                      Other(Other) {{20, 469}, {400, 40.3}}
+                                      Other(Other) {{20, 469}, {400, 40.3}}
+                                        Other(Other) {{20, 469}, {400, 40.3}}
+                                          Other(Other) {{20, 469}, {400, 40.3}}
+                                            StaticText "Segmented and links" {{20, 469}, {400, 40.3}}
+                                    Cell {{20, 509.3}, {400, 61.0}}
+                                      Other(Other) {{20, 509.3}, {400, 61.0}}
+                                        Other(Other) {{20, 509.3}, {400, 61.0}}
+                                      Other(Other) {{20, 509.3}, {400, 61.0}}
+                                        Other(Other) {{20, 509.3}, {400, 61.0}}
+                                          Other(Other) {{20, 509.3}, {400, 61.0}}
+                                            Other(SegmentedControl) {{40, 524.3}, {360, 31}}
+                                              Button "One" {{40, 524.3}, {120, 32}}
+                                              Button "Two" {{160, 524.3}, {120, 32}} [selected]
+                                              Button "Three" {{280, 524.3}, {120, 32}}
+                                    Cell {{20, 570.3}, {400, 52}}
+                                      Other(Other) {{20, 570.3}, {400, 52}}
+                                        Other(Other) {{20, 570.3}, {400, 52}}
+                                      Other(Other) {{20, 570.3}, {400, 52}}
+                                        Other(Other) {{20, 570.3}, {400, 52}}
+                                          Other(Other) {{20, 570.3}, {400, 52}}
+                                            Button "Probe link" {{20, 570.3}, {400, 52}}
+                                    Other(Other) {{40, 569.3}, {360, 1}}
+                                    Cell {{20, 622.3}, {400, 52}}
+                                      Other(Other) {{20, 622.3}, {400, 52}}
+                                        Other(Other) {{20, 622.3}, {400, 52}}
+                                      Other(Other) {{20, 622.3}, {400, 52}}
+                                        Other(Other) {{20, 622.3}, {400, 52}}
+                                          Other(Other) {{20, 622.3}, {400, 52}}
+                                            Button "Probe navigation link" {{20, 622.3}, {400, 52}}
+                                              StaticText "Probe navigation link" {{40, 638.2}, {158, 20.3}}
+                                              Image id=chevron.forward {{390.7, 642.3}, {7, 12}}
+                                    Other(Other) {{40, 621.3}, {360, 1}}
+                                    Cell {{20, 674.3}, {400, 52}}
+                                      Other(Other) {{20, 674.3}, {400, 52}}
+                                        Other(Other) {{20, 674.3}, {400, 52}}
+                                      Other(Other) {{20, 674.3}, {400, 52}}
+                                        Other(Other) {{20, 674.3}, {400, 52}}
+                                          Other(Other) {{20, 674.3}, {400, 52}}
+                                            Button "Show tabs" id=probe3.controls.tabs {{20, 674.3}, {400, 52}}
+                                    Other(Other) {{40, 673.3}, {360, 1}}
+                                    Other(Other) {{-20, 743.7}, {480, 382.7}}
+                                    Cell {{20, 743.7}, {400, 40.3}}
+                                      Other(Other) {{20, 743.7}, {400, 40.3}}
+                                      Other(Other) {{20, 743.7}, {400, 40.3}}
+                                        Other(Other) {{20, 743.7}, {400, 40.3}}
+                                          Other(Other) {{20, 743.7}, {400, 40.3}}
+                                            StaticText "Values" {{20, 743.7}, {400, 40.3}}
+                                    Cell {{20, 784}, {400, 52}}
+                                      Other(Other) {{20, 784}, {400, 52}}
+                                        Other(Other) {{20, 784}, {400, 52}}
+                                      Other(Other) {{20, 784}, {400, 52}}
+                                        Other(Other) {{20, 784}, {400, 52}}
+                                          Other(Other) {{20, 784}, {400, 52}}
+                                            StaticText "Probe stepper 2" {{40, 799.8}, {122.3, 20.3}}
+                                            Button "Probe stepper 2" value="2" {{40, 794}, {360, 32}}
+                                              Button "Probe stepper 2, Decrement" value="2" id=Decrement {{306, 794}, {47, 32}}
+                                              Button "Probe stepper 2, Increment" value="2" id=Increment {{353, 794}, {47, 32}}
+                                    Cell {{20, 836}, {400, 64.7}}
+                                      Other(Other) {{20, 836}, {400, 64.7}}
+                                        Other(Other) {{20, 836}, {400, 64.7}}
+                                      Other(Other) {{20, 836}, {400, 64.7}}
+                                        Other(Other) {{20, 836}, {400, 64.7}}
+                                          Other(Other) {{20, 836}, {400, 64.7}}
+                                            StaticText "Probe compact date" {{40, 858.2}, {154.7, 20.3}}
+                                            Other(DatePicker) id=probe3.controls.compactdate {{279.3, 851}, {120.7, 34.3}}
+                                              Button "Date Picker" value="Jan 15, 2027" {{279.3, 851}, {120.7, 34.3}}
+                                    Other(Other) {{40, 835}, {360, 1}}
+                                    Cell {{20, 900.7}, {400, 52}}
+                                      Other(Other) {{20, 900.7}, {400, 52}}
+                                        Other(Other) {{20, 900.7}, {400, 52}}
+                                      Other(Other) {{20, 900.7}, {400, 52}}
+                                        Other(Other) {{20, 900.7}, {400, 52}}
+                                          Other(Other) {{20, 900.7}, {400, 52}}
+                                            Switch "Probe toggle" value="1" {{20, 900.7}, {400, 52}}
+                                              StaticText "Probe toggle" {{40, 916.5}, {97.7, 20.3}}
+                                              Switch value="1" {{339, 912.7}, {63, 28}}
+                                    Other(Other) {{40, 899.7}, {360, 1}}
+                                    Cell {{20, 952.7}, {400, 52}}
+                                      Other(Other) {{20, 952.7}, {400, 52}}
+                                        Other(Other) {{20, 952.7}, {400, 52}}
+                                      Other(Other) {{20, 952.7}, {400, 52}}
+                                        Other(Other) {{20, 952.7}, {400, 52}}
+                                          Other(Other) {{20, 952.7}, {400, 52}}
+                                            SecureTextField placeholder="Probe empty secret" {{40, 968.3}, {360, 21}} [secure, hidden]
+                                    Other(Other) {{40, 951.7}, {360, 1}}
+                                    Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 119}, {3, 445.7}}
+                                    Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 119}, {3, 445.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image "sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button "Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 0}, {440, 956}}
+                          NavigationBar(21) id=Controls 2 {{0, 62}, {440, 106}}
+                            Button(9) label="Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText(48) label="Controls 2" {{20, 119.7}, {163.7, 40.7}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+                              Other(1) {{0, 0}, {440, 956}}
+                                Other(1) {{0, 0}, {440, 956}}
+                                  CollectionView(32) {{0, 0}, {440, 956}}
+                                    Other(1) {{-20, -1744}, {480, 2126}}
+                                    Other(1) {{0, 0}, {440, 956}}
+                                    Other(1) {{0, 0}, {440, 956}}
+                                      Other(1) {{0, 808.2}, {440, 147.8}}
+                                        Image(43) id=AdditionalDimmingOverlay {{-120, 813}, {680, 286}}
+                                        Other(1) {{0, 808.2}, {440, 147.8}}
+                                          Other(1) {{0, 808.2}, {440, 147.8}}
+                                        Other(1) {{0, 808.2}, {440, 147.8}}
+                                          Other(1) {{0, 808.2}, {440, 147.8}}
+                                          Other(1) {{0, 808.2}, {440, 147.8}}
+                                    Cell(75) {{20, 168}, {400, 40.3}}
+                                      Other(1) {{20, 168}, {400, 40.3}}
+                                      Other(1) {{20, 168}, {400, 40.3}}
+                                        Other(1) {{20, 168}, {400, 40.3}}
+                                          Other(1) {{20, 168}, {400, 40.3}}
+                                            StaticText(48) label="Swipe rows" {{20, 168}, {400, 40.3}}
+                                    Cell(75) {{-184.7, 208.3}, {400, 52.0}}
+                                      Other(1) {{-184.7, 208.3}, {400, 52.0}}
+                                      Other(1) {{-184.7, 208.3}, {400, 52.0}}
+                                        Other(1) {{-184.7, 208.3}, {400, 52.0}}
+                                      Other(1) {{-184.7, 208.3}, {400, 52.0}}
+                                        Other(1) {{-184.7, 208.3}, {400, 52.0}}
+                                          Other(1) {{-184.7, 208.3}, {400, 52.0}}
+                                            StaticText(48) label="Swipe row 1" {{-184.7, 208.3}, {400, 52.0}}
+                                    Other(1) {{20, 208.3}, {400, 52.0}}
+                                      Other(1) {{215.3, 208.3}, {204.7, 52.0}}
+                                        Other(1) {{215.3, 208.3}, {204.7, 52.0}}
+                                          Other(1) {{225.3, 208.3}, {87.3, 52.0}}
+                                            Button(9) label="Flag" id=flag {{225.3, 212.3}, {87, 44.0}}
+                                              StaticText(48) label="Flag" {{265.3, 226.3}, {25.7, 15.7}}
+                                          Other(1) {{322.7, 208.3}, {87.3, 52.0}}
+                                            Button(9) label="Delete" id=trash {{322.7, 212.3}, {87, 44.0}}
+                                              StaticText(48) label="Delete" {{355.3, 226.3}, {39.3, 15.7}}
+                                    Cell(75) {{20, 260.3}, {400, 52}}
+                                      Other(1) {{20, 260.3}, {400, 52}}
+                                        Other(1) {{20, 260.3}, {400, 52}}
+                                      Other(1) {{20, 260.3}, {400, 52}}
+                                        Other(1) {{20, 260.3}, {400, 52}}
+                                          Other(1) {{20, 260.3}, {400, 52}}
+                                            StaticText(48) label="Swipe row 2" {{20, 260.3}, {400, 52}}
+                                    Cell(75) {{20, 312.3}, {400, 52}}
+                                      Other(1) {{20, 312.3}, {400, 52}}
+                                        Other(1) {{20, 312.3}, {400, 52}}
+                                      Other(1) {{20, 312.3}, {400, 52}}
+                                        Other(1) {{20, 312.3}, {400, 52}}
+                                          Other(1) {{20, 312.3}, {400, 52}}
+                                            StaticText(48) label="Swipe row 3" {{20, 312.3}, {400, 52}}
+                                    Other(1) {{40, 311.3}, {360, 1}}
+                                    Other(1) {{-20, 382}, {480, 87}}
+                                    Cell(75) {{20, 399.3}, {400, 52}}
+                                      Other(1) {{20, 399.3}, {400, 52}}
+                                        Other(1) {{20, 399.3}, {400, 52}}
+                                      Other(1) {{20, 399.3}, {400, 52}}
+                                        Other(1) {{20, 399.3}, {400, 52}}
+                                          Other(1) {{20, 399.3}, {400, 52}}
+                                            StaticText(48) label="No action" id=probe3.controls.status {{20, 399.3}, {400, 52}}
+                                    Other(1) {{-20, 469}, {480, 275}}
+                                    Cell(75) {{20, 469}, {400, 40.3}}
+                                      Other(1) {{20, 469}, {400, 40.3}}
+                                      Other(1) {{20, 469}, {400, 40.3}}
+                                        Other(1) {{20, 469}, {400, 40.3}}
+                                          Other(1) {{20, 469}, {400, 40.3}}
+                                            StaticText(48) label="Segmented and links" {{20, 469}, {400, 40.3}}
+                                    Cell(75) {{20, 509.3}, {400, 61.0}}
+                                      Other(1) {{20, 509.3}, {400, 61.0}}
+                                        Other(1) {{20, 509.3}, {400, 61.0}}
+                                      Other(1) {{20, 509.3}, {400, 61.0}}
+                                        Other(1) {{20, 509.3}, {400, 61.0}}
+                                          Other(1) {{20, 509.3}, {400, 61.0}}
+                                            SegmentedControl(37) {{40, 524.3}, {360, 31}}
+                                              Button(9) label="One" value="" {{40, 524.3}, {120, 32}}
+                                              Button(9) label="Two" value="" {{160, 524.3}, {120, 32}} [selected]
+                                              Button(9) label="Three" value="" {{280, 524.3}, {120, 32}}
+                                    Cell(75) {{20, 570.3}, {400, 52}}
+                                      Other(1) {{20, 570.3}, {400, 52}}
+                                        Other(1) {{20, 570.3}, {400, 52}}
+                                      Other(1) {{20, 570.3}, {400, 52}}
+                                        Other(1) {{20, 570.3}, {400, 52}}
+                                          Other(1) {{20, 570.3}, {400, 52}}
+                                            Button(9) label="Probe link" {{20, 570.3}, {400, 52}}
+                                    Other(1) {{40, 569.3}, {360, 1}}
+                                    Cell(75) {{20, 622.3}, {400, 52}}
+                                      Other(1) {{20, 622.3}, {400, 52}}
+                                        Other(1) {{20, 622.3}, {400, 52}}
+                                      Other(1) {{20, 622.3}, {400, 52}}
+                                        Other(1) {{20, 622.3}, {400, 52}}
+                                          Other(1) {{20, 622.3}, {400, 52}}
+                                            Button(9) label="Probe navigation link" {{20, 622.3}, {400, 52}}
+                                              StaticText(48) label="Probe navigation link" {{40, 638.2}, {158, 20.3}}
+                                              Image(43) id=chevron.forward {{390.7, 642.3}, {7, 12}}
+                                    Other(1) {{40, 621.3}, {360, 1}}
+                                    Cell(75) {{20, 674.3}, {400, 52}}
+                                      Other(1) {{20, 674.3}, {400, 52}}
+                                        Other(1) {{20, 674.3}, {400, 52}}
+                                      Other(1) {{20, 674.3}, {400, 52}}
+                                        Other(1) {{20, 674.3}, {400, 52}}
+                                          Other(1) {{20, 674.3}, {400, 52}}
+                                            Button(9) label="Show tabs" id=probe3.controls.tabs {{20, 674.3}, {400, 52}}
+                                    Other(1) {{40, 673.3}, {360, 1}}
+                                    Other(1) {{-20, 743.7}, {480, 382.7}}
+                                    Cell(75) {{20, 743.7}, {400, 40.3}}
+                                      Other(1) {{20, 743.7}, {400, 40.3}}
+                                      Other(1) {{20, 743.7}, {400, 40.3}}
+                                        Other(1) {{20, 743.7}, {400, 40.3}}
+                                          Other(1) {{20, 743.7}, {400, 40.3}}
+                                            StaticText(48) label="Values" {{20, 743.7}, {400, 40.3}}
+                                    Cell(75) {{20, 784}, {400, 52}}
+                                      Other(1) {{20, 784}, {400, 52}}
+                                        Other(1) {{20, 784}, {400, 52}}
+                                      Other(1) {{20, 784}, {400, 52}}
+                                        Other(1) {{20, 784}, {400, 52}}
+                                          Other(1) {{20, 784}, {400, 52}}
+                                            StaticText(48) label="Probe stepper 2" {{40, 799.8}, {122.3, 20.3}}
+                                            Stepper(79) label="Probe stepper 2" value="2" {{40, 794}, {360, 32}}
+                                              Button(9) label="Probe stepper 2, Decrement" value="2" id=Decrement {{306, 794}, {47, 32}}
+                                              Button(9) label="Probe stepper 2, Increment" value="2" id=Increment {{353, 794}, {47, 32}}
+                                    Cell(75) {{20, 836}, {400, 64.7}}
+                                      Other(1) {{20, 836}, {400, 64.7}}
+                                        Other(1) {{20, 836}, {400, 64.7}}
+                                      Other(1) {{20, 836}, {400, 64.7}}
+                                        Other(1) {{20, 836}, {400, 64.7}}
+                                          Other(1) {{20, 836}, {400, 64.7}}
+                                            StaticText(48) label="Probe compact date" {{40, 858.2}, {154.7, 20.3}}
+                                            DatePicker(51) id=probe3.controls.compactdate {{279.3, 851}, {120.7, 34.3}}
+                                              Button(9) label="Date Picker" value="Jan 15, 2027" {{279.3, 851}, {120.7, 34.3}}
+                                    Other(1) {{40, 835}, {360, 1}}
+                                    Cell(75) {{20, 900.7}, {400, 52}}
+                                      Other(1) {{20, 900.7}, {400, 52}}
+                                        Other(1) {{20, 900.7}, {400, 52}}
+                                      Other(1) {{20, 900.7}, {400, 52}}
+                                        Other(1) {{20, 900.7}, {400, 52}}
+                                          Other(1) {{20, 900.7}, {400, 52}}
+                                            Switch(40) label="Probe toggle" value="1" {{20, 900.7}, {400, 52}}
+                                              StaticText(48) label="Probe toggle" {{40, 916.5}, {97.7, 20.3}}
+                                              Switch(40) value="1" {{339, 912.7}, {63, 28}}
+                                    Other(1) {{40, 899.7}, {360, 1}}
+                                    Cell(75) {{20, 952.7}, {400, 52}}
+                                      Other(1) {{20, 952.7}, {400, 52}}
+                                        Other(1) {{20, 952.7}, {400, 52}}
+                                      Other(1) {{20, 952.7}, {400, 52}}
+                                        Other(1) {{20, 952.7}, {400, 52}}
+                                          Other(1) {{20, 952.7}, {400, 52}}
+                                            SecureTextField(50) placeholder="Probe empty secret" {{40, 968.3}, {360, 21}}
+                                    Other(1) {{40, 951.7}, {360, 1}}
+                                    Other(1) label="Vertical scroll bar, 2 pages" value="0%" {{407, 116}, {30, 757}}
+                                      Other(1) {{434, 119}, {3, 445.7}}
+                                    Other(1) label="Vertical scroll bar, 2 pages" value="0%" {{407, 116}, {30, 757}}
+                                      Other(1) {{434, 119}, {3, 445.7}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 873}, {440, 83}}
+                Other(1) {{0, 0}, {440, 956}}
+                  TabBar(22) label="Tab Bar" {{0, 873}, {440, 83}}
+                    Other(1) {{21, 873}, {398, 62}}
+                      Other(1) {{21, 873}, {89.7, 54}}
+                      Other(1) {{21, 873}, {398, 62}}
+                        Button(9) label="Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image(43) label="hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button(9) label="Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image(43) label="message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button(9) label="Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image(43) label="sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button(9) label="Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image(43) label="grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button(9) label="Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image(43) label="edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(1) {{25, 877}, {89.7, 54}}
+                        Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                                Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                Other(1) {{0, 873}, {440, 83}}
+                  Other(1) {{0, 873}, {440, 83}}
+                    Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}
+                          Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}

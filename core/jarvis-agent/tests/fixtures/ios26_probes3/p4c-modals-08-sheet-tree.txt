@@ -1,0 +1,44 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p4c-modals (`probe3-p4c-modals-08-sheet-tree.txt`), verbatim below this line.
+Q: With the full sheet up: is there an Alert/Sheet/dialog-like node, is the content behind still in the tree, is anything marking it covered, what role do destructive buttons have?
+capture 08 (sheet): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 8: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 15, XCUITest snapshot 88 ms
+types without a core role: Other×9
+note: probe round 3 p4c-modals, capture 08: sheet
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{-440, -956}, {1320, 2868}}
+      Other(Other) {{0, 62}, {440, 894}}
+        Other(Other) {{0, 62}, {440, 894}}
+          Other(Other) {{0, 62}, {440, 894}}
+            Other(Other) {{0, 62}, {440, 894}}
+              Other(Other) {{0, 62}, {440, 894}}
+                StaticText "Probe full sheet" {{146.2, 427.5}, {147.7, 26.3}}
+                StaticText "Probe full sheet body text" {{122.5, 477.8}, {195, 20.3}}
+                Button "Close Probe full sheet" id=probe3.modals.close {{124.7, 522.3}, {190.7, 34.3}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{-440, -956}, {1320, 2868}}
+      Other(1) {{0, 62}, {440, 894}}
+        Other(1) {{0, 62}, {440, 894}}
+          Other(1) {{0, 62}, {440, 894}}
+            Other(1) {{0, 62}, {440, 894}}
+              Other(1) {{0, 62}, {440, 894}}
+                StaticText(48) label="Probe full sheet" {{146.2, 427.5}, {147.7, 26.3}}
+                StaticText(48) label="Probe full sheet body text" {{122.5, 477.8}, {195, 20.3}}
+                Button(9) label="Close Probe full sheet" id=probe3.modals.close {{124.7, 522.3}, {190.7, 34.3}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}

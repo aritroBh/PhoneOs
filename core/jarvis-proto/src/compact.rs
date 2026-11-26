@@ -91,6 +91,14 @@ pub struct ScreenCues {
     /// (only words of `jarvis_observe`'s fixed list are set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_key_type: Option<String>,
+    /// Probe round 3 (run 139, F3): a `Keyboard` is up and its Return key's type is not
+    /// identified — no key of the keyboard carries a `UIReturnKeyType` identifier (the real
+    /// `.continue` key is `Button "continue"` with none; a German "Weiter" would have neither
+    /// cue). What Return does there is unknown: pressing it asks (fail closed). The key's
+    /// label, if one was found (by a known label, or by its place at the keyboard's
+    /// bottom-right), stays in [`Self::return_key`] for the question; it never exempts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub return_key_unknown: bool,
     /// Listed controls a tap would be refused for because something covers them (no free
     /// tap spot: `jarvis_safety::tap_spot` returns `Err`), by ascending element index.
     /// Roles only, never screen text. The rendered line says so (`jarvis_observe::render`).
@@ -114,6 +122,7 @@ impl ScreenCues {
             && self.page.is_none()
             && self.return_key.is_none()
             && self.return_key_type.is_none()
+            && !self.return_key_unknown
             && self.covered.is_empty()
             && self.unplaced.is_empty()
     }

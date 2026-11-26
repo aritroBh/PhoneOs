@@ -1,0 +1,210 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p2-pickers (`probe3-p2-pickers-01-photo-picker-tree.txt`), verbatim below this line.
+Q: With the PHPickerViewController up over the Playground: is the host's content still in the host's snapshot, is the sheet's content there, and are its frames screen coordinates?
+capture 01 (photo-picker): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 1: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 98, XCUITest snapshot 1598 ms
+types without a core role: Other×71, SegmentedControl×1
+note: probe round 3 p2-pickers, capture 01: photo-picker
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{-440, -956}, {1320, 2868}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 72}, {440, 884}}
+                          Image {{-150, -78}, {740, 1184}}
+                          Other(Other) {{0, 72}, {440, 884}}
+                            Other(Other) {{0, 72}, {440, 884}}
+                              Other(Other) {{0, 72}, {440, 884}}
+                                Other(Other) {{0, 72}, {440, 884}}
+                                  Other(Other) {{0, 72}, {440, 884}}
+                                    Other(Other) {{0, 72}, {440, 884}}
+                                      Other(Other) {{0, 72}, {440, 884}}
+                                        Other(Other) {{0, 72}, {440, 884}}
+                                          Other(Other) {{0, 72}, {440, 884}}
+                                            NavigationBar id=Photos {{0, 92}, {440, 62}}
+                                              Button "Cancel" id=Cancel {{24, 96}, {36, 36}}
+                                              Other(SegmentedControl) "Photos" {{125, 90}, {190, 48}}
+                                                Button "Photos" {{125, 90}, {95, 48}} [selected]
+                                                Button "Collections" {{220, 90}, {95, 48}}
+                                            Other(Other) {{0, 72}, {440, 884}}
+                                              Other(Other) {{0, 72}, {440, 884}}
+                                                Other(Other) {{0, 72}, {440, 884}}
+                                                  Other(Other) "Photos" {{0, 72}, {440, 884}}
+                                                    Other(Other) {{0, 72}, {440, 884}}
+                                                      ScrollView id=photosView_content_scroll_view {{0, 72}, {440, 884}}
+                                                        Other(Other) id=photos_layout {{0, 154}, {440, 455}}
+                                                          Other(Other) {{0, 72}, {440, 884}}
+                                                          Other(Other) {{0, 72}, {440, 884}}
+                                                          Other(Other) {{0, 72}, {440, 884}}
+                                                          Other(Other) id=PXGSingleViewLayout-Group {{0, 154}, {440, 162}}
+                                                            Other(Other) "Private Access to Photos, Your photo library is shown here, but “Jarvis” can only access the items you select." id=PXGSingleViewContainerView_AX {{0, 154}, {440, 162}}
+                                                              Image id=PickerOnboardingHeaderViewIcon {{32, 164}, {38, 38}}
+                                                              Button "Close" {{388, 162}, {30, 22}}
+                                                              Button "Learn More…" {{82, 271.7}, {99.7, 20.3}}
+                                                                StaticText "Learn More…" {{82, 271.7}, {99.7, 20.3}}
+                                                          Other(Other) "Private Access to Photos, Your photo library is shown here, but “Jarvis” can only access the items you select." {{0, 154}, {440, 162}}
+                                                            Image id=PickerOnboardingHeaderViewIcon {{32, 164}, {38, 38}}
+                                                            Button "Close" {{388, 162}, {30, 22}}
+                                                            Button "Learn More…" {{82, 271.7}, {99.7, 20.3}}
+                                                              StaticText "Learn More…" {{82, 271.7}, {99.7, 20.3}}
+                                                          Other(Other) id=photos_sectioned_layout {{0, 316}, {440, 293}}
+                                                            Other(Other) id=PXAssetsSectionLayout-Group {{0, 316}, {440, 293}}
+                                                              Other(Other) id=PXZoomablePhotosLayout-Group {{0, 316}, {440, 293}}
+                                                                Other(Other) id=PXGZoomLayout-Group {{0, 316}, {440, 293}}
+                                                                  Other(Other) id=PXGDecoratingLayout-Group {{0, 316}, {440, 293}}
+                                                                    Other(Other) "Photo, March 30, 2018, 7:14 PM, Photo, August 08, 2012, 9:55 PM, Photo, August 08, 2012, 9:29 PM, Photo, August 08, 2012, 6:52 PM, Photo, March 13, 2011, 12:17 AM, Photo, October 09, 2009, 9:09 PM" id=PXGGridLayout-Group {{0, 316}, {440, 293}}
+                                                                      Image "Photo, March 30, 2018, 7:14 PM" id=PXGGridLayout-Info {{-0.0, 316.0}, {145.6, 145.7}}
+                                                                      Image "Photo, August 08, 2012, 9:55 PM" id=PXGGridLayout-Info {{147.2, 316.0}, {145.6, 145.7}}
+                                                                      Image "Photo, August 08, 2012, 9:29 PM" id=PXGGridLayout-Info {{294.4, 316.0}, {145.6, 145.7}}
+                                                                      Image "Photo, August 08, 2012, 6:52 PM" id=PXGGridLayout-Info {{-0.0, 463.3}, {145.6, 145.7}}
+                                                                      Image "Photo, March 13, 2011, 12:17 AM" id=PXGGridLayout-Info {{147.2, 463.3}, {145.6, 145.7}}
+                                                                      Image "Photo, October 09, 2009, 9:09 PM" id=PXGGridLayout-Info {{294.4, 463.3}, {145.6, 145.7}}
+                                                                Other(Other) id=PXZoomableInlineHeadersLayout-Group {{0, 316}, {440, 0}} [hidden]
+                                                          Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 154}, {30, 716}}
+                                                            Other(Other) {{434, 418}, {3, 449}}
+                                                          Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{56, 837}, {328, 30}}
+                                                            Other(Other) {{59, 864}, {322, 3}}
+                                                        Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 154}, {30, 716}}
+                                                          Other(Other) {{434, 418}, {3, 449}}
+                                                        Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{56, 837}, {328, 30}}
+                                                          Other(Other) {{59, 864}, {322, 3}}
+                                            Other(Other) {{0, 72}, {440, 884}}
+                                              Other(Other) {{0, 72}, {440, 884}}
+                                                Toolbar "Toolbar" id=Toolbar {{0, 870}, {440, 86}}
+                                                  Other(Other) {{28, 880}, {384, 48}}
+                                                    Other(Other) {{28, 880}, {384, 48}}
+                                                      Other(Other) {{28, 880}, {0, 0}} [hidden]
+                                                        Other(Other) {{28, 880}, {48, 48}}
+                                                          Other(Other) {{28, 880}, {48, 48}}
+                                                            Other(Other) {{33, 885}, {38, 38}}
+                                                              Other(Other) {{33, 885}, {38, 38}}
+                                                                Button "Sort and Filter" id=Sort and Filter {{33, 885}, {38, 38}}
+                                                        Other(Other) {{364, 880}, {48, 48}}
+                                                          Other(Other) {{364, 880}, {48, 48}}
+                                                            Other(Other) {{369, 885}, {38, 38}}
+                                                              Other(Other) {{369, 885}, {38, 38}}
+                                                                Button "Search" {{369, 885}, {38, 38}}
+                                                    Other(Other) {{28, 880}, {384, 48}}
+                                                      Other(Other) {{28, 880}, {0, 0}} [hidden]
+                                                        Other(Other) {{134.7, 880}, {171.0, 48}}
+                                                          Other(Other) {{134.7, 880}, {171.0, 48}}
+                                                            Other(Other) {{139.7, 895}, {161.0, 18}}
+                                                              Other(Other) {{139.7, 895}, {161.0, 18}}
+                                                                Other(Other) {{139.7, 895}, {161.0, 18}}
+                                                                  Other(Other) {{139.7, 895}, {161.0, 18}}
+                                                                    StaticText " Location Is Included" {{139.7, 895}, {161.0, 18}}
+                                      Other(Other) {{0, 72}, {440, 884}}
+                                        Other(Other) {{0, 72}, {440, 884}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{-440, -956}, {1320, 2868}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 72}, {440, 884}}
+                          Image(43) {{-150, -78}, {740, 1184}}
+                          Other(1) {{0, 72}, {440, 884}}
+                            Other(1) {{0, 72}, {440, 884}}
+                              Other(1) {{0, 72}, {440, 884}}
+                                Other(1) {{0, 72}, {440, 884}}
+                                  Other(1) {{0, 72}, {440, 884}}
+                                    Other(1) {{0, 72}, {440, 884}}
+                                      Other(1) {{0, 72}, {440, 884}}
+                                        Other(1) {{0, 72}, {440, 884}}
+                                          Other(1) {{0, 72}, {440, 884}}
+                                            NavigationBar(21) id=Photos {{0, 92}, {440, 62}}
+                                              Button(9) label="Cancel" id=Cancel {{24, 96}, {36, 36}}
+                                              SegmentedControl(37) label="Photos" {{125, 90}, {190, 48}}
+                                                Button(9) label="Photos" value="" {{125, 90}, {95, 48}} [selected]
+                                                Button(9) label="Collections" value="" {{220, 90}, {95, 48}}
+                                            Other(1) {{0, 72}, {440, 884}}
+                                              Other(1) {{0, 72}, {440, 884}}
+                                                Other(1) {{0, 72}, {440, 884}}
+                                                  Other(1) label="Photos" {{0, 72}, {440, 884}}
+                                                    Other(1) {{0, 72}, {440, 884}}
+                                                      ScrollView(46) id=photosView_content_scroll_view {{0, 72}, {440, 884}}
+                                                        Other(1) id=photos_layout {{0, 154}, {440, 455}}
+                                                          Other(1) {{0, 72}, {440, 884}}
+                                                          Other(1) {{0, 72}, {440, 884}}
+                                                          Other(1) {{0, 72}, {440, 884}}
+                                                          Other(1) id=PXGSingleViewLayout-Group {{0, 154}, {440, 162}}
+                                                            Other(1) label="Private Access to Photos, Your photo library is shown here, but “Jarvis” can only access the items you select." id=PXGSingleViewContainerView_AX {{0, 154}, {440, 162}}
+                                                              Image(43) id=PickerOnboardingHeaderViewIcon {{32, 164}, {38, 38}}
+                                                              Button(9) label="Close" {{388, 162}, {30, 22}}
+                                                              Button(9) label="Learn More…" {{82, 271.7}, {99.7, 20.3}}
+                                                                StaticText(48) label="Learn More…" {{82, 271.7}, {99.7, 20.3}}
+                                                          Other(1) label="Private Access to Photos, Your photo library is shown here, but “Jarvis” can only access the items you select." {{0, 154}, {440, 162}}
+                                                            Image(43) id=PickerOnboardingHeaderViewIcon {{32, 164}, {38, 38}}
+                                                            Button(9) label="Close" {{388, 162}, {30, 22}}
+                                                            Button(9) label="Learn More…" {{82, 271.7}, {99.7, 20.3}}
+                                                              StaticText(48) label="Learn More…" {{82, 271.7}, {99.7, 20.3}}
+                                                          Other(1) id=photos_sectioned_layout {{0, 316}, {440, 293}}
+                                                            Other(1) id=PXAssetsSectionLayout-Group {{0, 316}, {440, 293}}
+                                                              Other(1) id=PXZoomablePhotosLayout-Group {{0, 316}, {440, 293}}
+                                                                Other(1) id=PXGZoomLayout-Group {{0, 316}, {440, 293}}
+                                                                  Other(1) id=PXGDecoratingLayout-Group {{0, 316}, {440, 293}}
+                                                                    Other(1) label="Photo, March 30, 2018, 7:14 PM, Photo, August 08, 2012, 9:55 PM, Photo, August 08, 2012, 9:29 PM, Photo, August 08, 2012, 6:52 PM, Photo, March 13, 2011, 12:17 AM, Photo, October 09, 2009, 9:09 PM" id=PXGGridLayout-Group {{0, 316}, {440, 293}}
+                                                                      Image(43) label="Photo, March 30, 2018, 7:14 PM" id=PXGGridLayout-Info {{-0.0, 316.0}, {145.6, 145.7}}
+                                                                      Image(43) label="Photo, August 08, 2012, 9:55 PM" id=PXGGridLayout-Info {{147.2, 316.0}, {145.6, 145.7}}
+                                                                      Image(43) label="Photo, August 08, 2012, 9:29 PM" id=PXGGridLayout-Info {{294.4, 316.0}, {145.6, 145.7}}
+                                                                      Image(43) label="Photo, August 08, 2012, 6:52 PM" id=PXGGridLayout-Info {{-0.0, 463.3}, {145.6, 145.7}}
+                                                                      Image(43) label="Photo, March 13, 2011, 12:17 AM" id=PXGGridLayout-Info {{147.2, 463.3}, {145.6, 145.7}}
+                                                                      Image(43) label="Photo, October 09, 2009, 9:09 PM" id=PXGGridLayout-Info {{294.4, 463.3}, {145.6, 145.7}}
+                                                                Other(1) id=PXZoomableInlineHeadersLayout-Group {{0, 316}, {440, 0}}
+                                                          Other(1) label="Vertical scroll bar, 1 page" value="0%" {{407, 154}, {30, 716}}
+                                                            Other(1) {{434, 418}, {3, 449}}
+                                                          Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{56, 837}, {328, 30}}
+                                                            Other(1) {{59, 864}, {322, 3}}
+                                                        Other(1) label="Vertical scroll bar, 1 page" value="0%" {{407, 154}, {30, 716}}
+                                                          Other(1) {{434, 418}, {3, 449}}
+                                                        Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{56, 837}, {328, 30}}
+                                                          Other(1) {{59, 864}, {322, 3}}
+                                            Other(1) {{0, 72}, {440, 884}}
+                                              Other(1) {{0, 72}, {440, 884}}
+                                                Toolbar(24) label="Toolbar" id=Toolbar {{0, 870}, {440, 86}}
+                                                  Other(1) {{28, 880}, {384, 48}}
+                                                    Other(1) {{28, 880}, {384, 48}}
+                                                      Other(1) {{28, 880}, {0, 0}}
+                                                        Other(1) {{28, 880}, {48, 48}}
+                                                          Other(1) {{28, 880}, {48, 48}}
+                                                            Other(1) {{33, 885}, {38, 38}}
+                                                              Other(1) {{33, 885}, {38, 38}}
+                                                                Button(9) label="Sort and Filter" id=Sort and Filter {{33, 885}, {38, 38}}
+                                                        Other(1) {{364, 880}, {48, 48}}
+                                                          Other(1) {{364, 880}, {48, 48}}
+                                                            Other(1) {{369, 885}, {38, 38}}
+                                                              Other(1) {{369, 885}, {38, 38}}
+                                                                Button(9) label="Search" {{369, 885}, {38, 38}}
+                                                    Other(1) {{28, 880}, {384, 48}}
+                                                      Other(1) {{28, 880}, {0, 0}}
+                                                        Other(1) {{134.7, 880}, {171.0, 48}}
+                                                          Other(1) {{134.7, 880}, {171.0, 48}}
+                                                            Other(1) {{139.7, 895}, {161.0, 18}}
+                                                              Other(1) {{139.7, 895}, {161.0, 18}}
+                                                                Other(1) {{139.7, 895}, {161.0, 18}}
+                                                                  Other(1) {{139.7, 895}, {161.0, 18}}
+                                                                    StaticText(48) label=" Location Is Included" {{139.7, 895}, {161.0, 18}}
+                                      Other(1) {{0, 72}, {440, 884}}
+                                        Other(1) {{0, 72}, {440, 884}}

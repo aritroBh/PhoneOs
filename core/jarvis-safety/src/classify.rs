@@ -13,7 +13,7 @@ use crate::phrases::{
     sf_symbol_risk, LabelRisk, Phrase, RuleTarget, ACTION_PHRASES, APP_RULES,
     COMPOSE_FIELD_PHRASES, CONTEXT_PHRASES, CREDENTIAL_FIELD_PHRASES, NAVIGATION_PHRASES,
     PRICE_VERB_PHRASES, SETTINGS_ACTION_PHRASES, SETTINGS_BUNDLE_ID, SETTINGS_CONTEXT_PHRASES,
-    SHARE_SAFE_PHRASES,
+    SHARE_SAFE_PHRASES, WHOLE_LABEL_PHRASES,
 };
 use crate::redact::contains_secret;
 use crate::text::{
@@ -480,7 +480,13 @@ fn own_label_risk(el: &Element, toks: &[String], screen: &CompactScreen) -> (Lab
             generic,
         );
     }
-    let lr = match_tokens(toks, &action_tables(&screen.app_bundle_id));
+    let mut lr = match_tokens(toks, &action_tables(&screen.app_bundle_id));
+    // Probe round 3 (F4, F6): the OS's own whole labels (`WHOLE_LABEL_PHRASES`), read on
+    // the whole label of a pressable control only (a text "Card" is no icon-only control).
+    if is_pressable(&el.role) {
+        let whole = match_whole(&tokens(&el.label), &[WHOLE_LABEL_PHRASES]);
+        lr.category = max_risk(lr.category, whole.category);
+    }
     (lr, toks.is_empty())
 }
 
@@ -687,6 +693,12 @@ fn return_key_risk(target: Option<&Element>, r: &Reader<'_>) -> RiskCategory {
     if generic {
         risk = max_risk(risk, r.context(target.map(|t| t.index)).risk);
     }
+    // Probe round 3 (F3): a keyboard is up whose Return key no identifier types (the real
+    // `.continue` key, any key whose type the table does not know): what Return does is
+    // unknown, so it is at least `Unverified` (fail closed; its label still counts above).
+    if screen.cues.return_key_unknown {
+        risk = max_risk(risk, UNREADABLE_RISK);
+    }
     risk
 }
 
@@ -712,7 +724,9 @@ fn submit_risk(target: Option<&Element>, text: &str, r: &Reader<'_>) -> RiskCate
     // In a multi-line text view a Return key that is not a submit label inserts a line
     // break: the typed text is content there, not a command (a note "buy milk"). Audit C1:
     // neither its type by identifier nor its label may be a submit.
+    // Probe round 3 (F3): a Return key of unknown type may submit (no leniency).
     let line_break = target.is_some_and(|t| t.role == Role::TextView)
+        && !r.screen.cues.return_key_unknown
         && r.screen
             .cues
             .return_key_words()

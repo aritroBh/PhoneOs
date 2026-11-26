@@ -1,0 +1,666 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p7-landscape (`probe3-p7-landscape-04-landscape-after-tree.txt`), verbatim below this line.
+Q: Safari in landscape after the runner's tap and typing
+capture 04 (landscape-after): the raw tree of com.apple.mobilesafari by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 4: com.apple.mobilesafari
+screen 956x440 pt, keyboard visible
+nodes 326, XCUITest snapshot 386 ms
+types without a core role: Other×197
+note: probe round 3 p7-landscape, capture 04: landscape-after
+note: app state 4, device orientation 3
+
+== typed tree (what the core receives) ==
+Application "Safari" {{0, 0}, {956, 440}}
+  Window {{0, 0}, {956, 440}}
+    Other(Other) {{0, 0}, {956, 440}}
+      Other(Other) {{0, 0}, {956, 440}}
+        Other(Other) {{0, 0}, {956, 440}}
+          Other(Other) {{0, 0}, {956, 440}}
+            Other(Other) {{0, 0}, {956, 440}}
+              Other(Other) {{0, 0}, {956, 440}}
+                Other(Other) {{0, 0}, {956, 440}}
+                  Other(Other) {{0, 0}, {956, 440}}
+                    Other(Other) id=SafariWindow?View=Regular&BarsKeptMinimized=false&UUID=F10E5F3E-DA8E-426D-8A90-6C271C5315DF&UsingLoweredBar=false&IsSecure=false&IsTabBarAvailable=true {{0, 0}, {956, 440}}
+                      Other(Other) {{0, 0}, {956, 5}}
+                      Other(Other) {{0, 0}, {956, 440}}
+                        Other(Other) {{0, 0}, {956, 440}}
+                          Other(Other) id=Toolbar {{0, 0}, {956, 110}}
+                            Other(Other) {{0, 0}, {956, 110}}
+                            Other(Other) {{0, 0}, {956, 110}}
+                              Other(Other) {{0, 0}, {956, 110}}
+                                Other(Other) {{0, 0}, {956, 110}}
+                                  Other(Other) {{0, 0}, {956, 110}}
+                                    Other(Other) {{0, 0}, {956, 110}}
+                                      Other(Other) {{0, 0}, {956, 110}}
+                                        Other(Other) {{0, 0}, {956, 110}}
+                                    Other(Other) {{0, 0}, {956, 110}}
+                                      Other(Other) {{0, 0}, {956, 110}}
+                              Other(Other) {{72, 10}, {100, 44}}
+                                Other(Other) {{72, 10}, {44, 44}}
+                                  Other(Other) {{72, 10}, {44, 44}}
+                                    Button "Back" id=BackButton {{72, 10}, {44, 44}} [disabled]
+                                      Other(Other) {{72, 10}, {44, 44}}
+                                        Image "Back" id=chevron.backward {{72, 9.0}, {44, 46.3}}
+                                      StaticText {{72, 10}, {0, 0}} [hidden]
+                                Button "Bookmarks" id=SidebarButton {{128, 10}, {44, 44}}
+                                  Other(Other) {{128, 10}, {44, 44}}
+                                    Other(Other) {{128, 10}, {44, 44}}
+                                      Image "bookmark" id=book {{128, 8.3}, {44, 47.7}}
+                                  StaticText {{128, 10}, {0, 0}} [hidden]
+                              Other(Other) {{184, 10}, {556, 44}}
+                                ScrollView {{184, 10}, {556, 44}}
+                                  Other(Other) {{184, 10}, {556, 44}}
+                                  Button "Address" value="‎127.0.0.1" id=SearchFieldItemView?isActive=true&UUID=AD3C0E8D-431B-4EDC-90D9-DBCA7C62D121&isPinned=false&isDistractionControlOverlayUp=false {{298, 10}, {360, 44}} [selected]
+                                    Image {{478, 32}, {0, 0}} [hidden]
+                                    Other(Other) {{298, 10}, {360, 44}}
+                                      Other(Other) {{298, 10}, {360, 44}}
+                                        TextField "Address" value="‎127.0.0.1" id=TabBarItemTitleContainer {{298, 10}, {360, 44}}
+                                        Button "Page Menu" id=PageFormatMenuButton {{302, 14}, {38.3, 36}}
+                                        Button "Reload Page" id=ReloadButton {{619.3, 10}, {29.7, 44}}
+                                      Other(Other) {{298, 10}, {360, 44}}
+                                    StaticText {{298, 10}, {0, 0}} [hidden]
+                              Other(Other) {{752, 10}, {132, 44}}
+                                Other(Other) {{752, 10}, {132, 44}}
+                                  Other(Other) {{752, 10}, {132, 44}}
+                                    Button "Share" id=ShareButton {{752, 10}, {44, 44}}
+                                      Other(Other) {{752, 10}, {44, 44}}
+                                        Image "Share" id=square.and.arrow.up {{752, 3.7}, {44, 53.7}}
+                                      StaticText {{752, 10}, {0, 0}} [hidden]
+                                    Button "New tab" id=NewTabButton {{796, 10}, {44, 44}}
+                                      Other(Other) {{796, 10}, {44, 44}}
+                                        Image "add" id=plus {{796, 9.3}, {44, 45.7}}
+                                      StaticText {{796, 10}, {0, 0}} [hidden]
+                                    Button "Tabs" id=TabOverviewButton {{840, 10}, {44, 44}}
+                                      Other(Other) {{840, 10}, {44, 44}}
+                                        Image "Tabs" id=square.on.square {{840, 7.0}, {44, 50.3}}
+                                      StaticText {{840, 10}, {0, 0}} [hidden]
+                            Other(Other) id=TabBar?isSeparate=true {{0, 64}, {956, 36}}
+                              ScrollView {{2, 66}, {952, 32}}
+                                Other(Other) {{2, 66}, {956, 36}}
+                                Button {{72, 64}, {812, 36}}
+                                  Image {{478, 82}, {0, 0}} [hidden]
+                                  Other(Other) {{70, 62}, {816, 40}}
+                                  Other(Other) {{70, 62}, {816, 40}}
+                                    Other(Other) {{70, 62}, {816, 40}}
+                                  Other(Other) {{72, 64}, {812, 36}}
+                                    Other(Other) {{72, 64}, {812, 36}}
+                                  Other(Other) {{72, 64}, {812, 36}}
+                                    Button value="Start Page" id=TabBarTab?isActive=false&UUID=5A6CCECD-C5E9-4BE9-9648-68F65954CF76&isPinned=false&isDistractionControlOverlayUp=false {{74, 66}, {132, 32}}
+                                      Image {{140, 82}, {0, 0}} [hidden]
+                                      Other(Other) {{72, 64}, {136, 36}}
+                                      Other(Other) {{72, 64}, {136, 36}}
+                                        Other(Other) {{72, 64}, {136, 36}}
+                                      Other(Other) {{74, 66}, {132, 32}}
+                                      Other(Other) {{74, 66}, {132, 32}}
+                                        TextField "Address" value="Start Page" id=TabBarItemTitleContainer {{74, 66}, {132, 32}}
+                                      Other(Other) {{72, 69}, {1, 26}}
+                                        Other(Other) {{72, 69}, {1, 26}}
+                                        Other(Other) {{72, 69}, {1, 26}}
+                                      Other(Other) {{207, 69}, {1, 26}}
+                                        Other(Other) {{207, 69}, {1, 26}}
+                                        Other(Other) {{207, 69}, {1, 26}}
+                                      StaticText {{74, 66}, {0, 0}} [hidden]
+                                    Other(Other) {{74, 66}, {812, 36}}
+                                    Button value="Received" id=TabBarTab?isActive=false&UUID=09334BD8-ADB1-420D-86A6-778624AA5679&isPinned=false&isDistractionControlOverlayUp=false {{209, 66}, {132.3, 32}}
+                                      Image {{275, 82}, {0, 0}} [hidden]
+                                      Other(Other) {{207, 64}, {136.3, 36}}
+                                      Other(Other) {{207, 64}, {136.3, 36}}
+                                        Other(Other) {{207, 64}, {136.3, 36}}
+                                      Other(Other) {{209, 66}, {132.3, 32}}
+                                      Other(Other) {{209, 66}, {132.3, 32}}
+                                        TextField "Address" value="Received" id=TabBarItemTitleContainer {{209, 66}, {132.3, 32}}
+                                      Other(Other) {{207, 68.2}, {1, 27.6}}
+                                        Other(Other) {{207, 68.2}, {1, 27.3}}
+                                        Other(Other) {{207, 68.2}, {1, 27.3}}
+                                      Other(Other) {{342.3, 68.2}, {1, 27.6}}
+                                        Other(Other) {{342.3, 68.2}, {1, 27.3}}
+                                        Other(Other) {{342.3, 68.2}, {1, 27.3}}
+                                      StaticText {{209, 66}, {0, 0}} [hidden]
+                                    Button value="Probe3 web" id=TabBarTab?isActive=false&UUID=10CDCA3B-8011-4F7F-8E06-57CC0739EFCE&isPinned=false&isDistractionControlOverlayUp=false {{344.3, 66}, {132, 32}}
+                                      Image {{410.3, 82}, {0, 0}} [hidden]
+                                      Other(Other) {{342.3, 64}, {136, 36}}
+                                      Other(Other) {{342.3, 64}, {136, 36}}
+                                        Other(Other) {{342.3, 64}, {136, 36}}
+                                      Other(Other) {{344.3, 66}, {132, 32}}
+                                      Other(Other) {{344.3, 66}, {132, 32}}
+                                        TextField "Address" value="Probe3 web" id=TabBarItemTitleContainer {{344.3, 66}, {132, 32}}
+                                      Other(Other) {{342.3, 67}, {1, 30}}
+                                        Other(Other) {{342.3, 67}, {1, 30}}
+                                        Other(Other) {{342.3, 67}, {1, 30}}
+                                      Other(Other) {{477.3, 67}, {1, 30}}
+                                        Other(Other) {{477.3, 67}, {1, 30}}
+                                        Other(Other) {{477.3, 67}, {1, 30}}
+                                      StaticText {{344.3, 66}, {0, 0}} [hidden]
+                                    Button value="Received" id=TabBarTab?isActive=false&UUID=31B43E56-7C0A-4743-9B16-B657E0E7ABA1&isPinned=false&isDistractionControlOverlayUp=false {{479.3, 66}, {132.3, 32}}
+                                      Image {{545.3, 82}, {0, 0}} [hidden]
+                                      Other(Other) {{477.3, 64}, {136.3, 36}}
+                                      Other(Other) {{477.3, 64}, {136.3, 36}}
+                                        Other(Other) {{477.3, 64}, {136.3, 36}}
+                                      Other(Other) {{479.3, 66}, {132.3, 32}}
+                                      Other(Other) {{479.3, 66}, {132.3, 32}}
+                                        TextField "Address" value="Received" id=TabBarItemTitleContainer {{479.3, 66}, {132.3, 32}}
+                                      Other(Other) {{477.3, 67}, {1, 30}}
+                                        Other(Other) {{477.3, 67}, {1, 30}}
+                                        Other(Other) {{477.3, 67}, {1, 30}}
+                                      Other(Other) {{612.7, 67}, {1, 30}}
+                                        Other(Other) {{612.7, 67}, {1, 30}}
+                                        Other(Other) {{612.7, 67}, {1, 30}}
+                                      StaticText {{479.3, 66}, {0, 0}} [hidden]
+                                    Button value="127.0.0.1" id=TabBarTab?isActive=false&UUID=7DC72B97-C2F1-47A6-BF14-0A7B5FBBCF29&isPinned=false&isDistractionControlOverlayUp=false {{614.7, 66}, {132, 32}}
+                                      Image {{680.7, 82}, {0, 0}} [hidden]
+                                      Other(Other) {{612.7, 64}, {136, 36}}
+                                      Other(Other) {{612.7, 64}, {136, 36}}
+                                        Other(Other) {{612.7, 64}, {136, 36}}
+                                      Other(Other) {{614.7, 66}, {132, 32}}
+                                      Other(Other) {{614.7, 66}, {132, 32}}
+                                        TextField "Address" value="127.0.0.1" id=TabBarItemTitleContainer {{614.7, 66}, {132, 32}}
+                                      Other(Other) {{612.7, 69}, {1, 26}}
+                                        Other(Other) {{612.7, 69}, {1, 26}}
+                                        Other(Other) {{612.7, 69}, {1, 26}}
+                                      Other(Other) {{747.7, 69}, {1, 26}}
+                                        Other(Other) {{747.7, 69}, {1, 26}}
+                                        Other(Other) {{747.7, 69}, {1, 26}}
+                                      StaticText {{614.7, 66}, {0, 0}} [hidden]
+                                    Button value="Probe3 web" id=TabBarTab?isActive=true&UUID=AD3C0E8D-431B-4EDC-90D9-DBCA7C62D121&isPinned=false&isDistractionControlOverlayUp=false {{749.7, 66}, {132.3, 32}} [selected]
+                                      Image {{815.7, 82}, {0, 0}} [hidden]
+                                      Other(Other) {{749.7, 66}, {132.3, 32}}
+                                      Other(Other) {{749.7, 66}, {132.3, 32}}
+                                        Other(Other) {{749.7, 66}, {132.3, 32}}
+                                      Other(Other) {{749.7, 66}, {132.3, 32}}
+                                        Other(Other) {{749.7, 66}, {132.3, 32}}
+                                          TextField "Address" value="Probe3 web" id=TabBarItemTitleContainer {{749.7, 66}, {132.3, 32}}
+                                          Button "Close" id=CloseTabBarItemButton {{749.7, 66}, {32, 32}}
+                                        Other(Other) {{749.7, 66}, {132.3, 32}}
+                                          Other(Other) {{749.7, 66}, {132.3, 32}}
+                                            Other(Other) {{749.7, 66}, {132.3, 32}}
+                                              Other(Other) {{749.7, 66}, {132.3, 32}}
+                                                Other(Other) {{749.7, 66}, {132.3, 32}}
+                                                  Other(Other) {{749.7, 66}, {132.3, 32}}
+                                              Other(Other) {{749.7, 66}, {132.3, 32}}
+                                                Other(Other) {{749.7, 66}, {132.3, 32}}
+                                      Other(Other) {{747.7, 67}, {1, 30}}
+                                        Other(Other) {{747.7, 67}, {1, 30}}
+                                        Other(Other) {{747.7, 67}, {1, 30}}
+                                      Other(Other) {{883.0, 67}, {1, 30}}
+                                        Other(Other) {{883.0, 67}, {1, 30}}
+                                        Other(Other) {{883.0, 67}, {1, 30}}
+                                      StaticText {{749.7, 66}, {0, 0}} [hidden]
+                                  StaticText {{72, 64}, {0, 0}} [hidden]
+                          ScrollView {{0, 0}, {956, 440}}
+                            Other(Other) id=TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=AD3C0E8D-431B-4EDC-90D9-DBCA7C62D121&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=61385 {{0, 0}, {956, 440}}
+                              WebView id=WebView {{0, 0}, {956, 440}}
+                                WebView {{0, 0}, {956, 440}}
+                                  Other(Other) {{0, 0}, {956, 440}}
+                                  WebView {{0, 0}, {956, 440}}
+                                    Other(Other) {{0, 0}, {956, 440}}
+                                      Other(Other) {{0, 0}, {956, 440}}
+                                        Other(Other) {{62, 20}, {956, 440}}
+                                          Other(Other) "Probe3 web" {{62, 20}, {832, 471}}
+                                            Other(Other) "Web probe" value="1" {{72, 30}, {812, 27}}
+                                              StaticText "Web probe" value="Web probe" {{72, 30}, {111, 27}}
+                                            Other(Other) {{72, 62}, {812, 35}}
+                                              Button "Probe tap target" {{72, 65}, {152, 29}}
+                                              StaticText "taps:1" value="taps:1" {{228, 63}, {59, 28}}
+                                            Other(Other) {{72, 102}, {812, 37}}
+                                              TextField "Probe mirror" value="land" placeholder="Probe mirror" {{72, 105}, {216, 31}} [focused]
+                                              StaticText "typed:land" value="typed:land" {{291, 104}, {106, 29}}
+                                            Other(Other) {{72, 143}, {812, 29}}
+                                              Link "Probe plain link" {{72, 143}, {150, 29}}
+                                                StaticText "Probe plain link" value="Probe plain link" {{72, 143}, {150, 29}}
+                                              StaticText "and" value=" and " {{221, 143}, {49, 29}}
+                                              Link "Probe external link" {{269, 143}, {183, 29}}
+                                                StaticText "Probe external link" value="Probe external link" {{269, 143}, {183, 29}}
+                                            Other(Other) "Probe frame" {{72, 176}, {302, 113}}
+                                              Other(Other) {{73, 177}, {300, 110}}
+                                                Other(Other) "Probe frame" {{73, 177}, {300, 119}}
+                                                  Other(Other) {{79, 192}, {288, 19}}
+                                                    StaticText "Probe frame text" value="Probe frame text" {{79, 192}, {115, 19}}
+                                                  Button "Probe frame button" {{79, 227}, {126, 20}}
+                                                  TextField "Probe frame field" placeholder="Probe frame field" {{209, 227}, {154, 20}}
+                                                  Other(Other) {{79, 262}, {288, 19}}
+                                                    StaticText "frame idle" value="frame idle" {{79, 262}, {69, 19}}
+                                            Other(Other) {{72, 297}, {812, 36}}
+                                              Button "Probe alert" {{72, 300}, {114, 30}}
+                                              Button "Probe confirm" {{189, 300}, {138, 30}}
+                                              Button "Probe prompt" {{330, 300}, {135, 30}}
+                                              Button "Probe dialog" {{468, 300}, {126, 30}}
+                                            Other(Other) {{72, 337}, {812, 29}}
+                                              StaticText "result:none" value="result:none" {{72, 337}, {110, 29}}
+                                            Other(Other) {{72, 370}, {812, 38}}
+                                              Other(Other) "Probe select" value="Beta" {{72, 374}, {91, 30}}
+                                              Other(Other) "Probe date" value="Nov 25, 2026" {{167, 373}, {121, 32}}
+                                            Other(Other) {{72, 412}, {812, 29}}
+                                              Button "Probe file" value="no file selected" {{72, 415}, {372, 23}}
+                                            Other(Other) "form" {{72, 445}, {812, 37}} [hidden]
+                                              TextField "Probe name" placeholder="Probe name" {{72, 448}, {216, 31}} [hidden]
+                                              Button "Probe submit" {{291, 449}, {131, 30}} [hidden]
+                                  Other(Other) {{0, 0}, {956, 440}}
+                                    Other(Other) {{0, 0}, {956, 110}}
+                                      Other(Other) {{0, 0}, {956, 98}}
+                                      Other(Other) {{0, 0}, {956, 110}}
+                                      Other(Other) {{0, 0}, {956, 110}}
+                                        Other(Other) {{0, 0}, {956, 110}}
+                                  Other(Other) "Vertical scroll bar, 2 pages" value="24%" {{923, 110}, {30, 98}}
+                                    Other(Other) {{950, 123.3}, {3, 49.7}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 175}, {832, 30}}
+                                    Other(Other) {{65, 202}, {826, 3}}
+                                  Other(Other) "Vertical scroll bar, 2 pages" value="24%" {{923, 110}, {30, 98}}
+                                    Other(Other) {{950, 123.3}, {3, 49.7}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 175}, {832, 30}}
+                                    Other(Other) {{65, 202}, {826, 3}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                              Other(Other) {{581, 434}, {310, 3}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                              Other(Other) {{581, 434}, {310, 3}}
+                Other(Other) {{0, 0}, {956, 440}}
+                  Other(Other) {{0, 0}, {956, 440}}
+          Other(Other) {{0, 0}, {956, 440}}
+            Other(Other) {{0, 0}, {956, 440}}
+  Window {{0, 0}, {956, 440}}
+    Other(Other) {{0, 0}, {956, 440}}
+      Other(Other) {{0, 0}, {956, 440}}
+      Other(Other) {{0, 208}, {956, 232}}
+        Other(Other) {{0, 208}, {956, 68}}
+          Other(Other) {{0, 208}, {956, 68}}
+            Toolbar "Toolbar" id=Toolbar {{0, 218}, {956, 48}}
+              Other(Other) {{0, 218}, {956, 48}}
+                Other(Other) {{132, 218}, {692, 44}}
+                  Other(Other) {{132, 218}, {692, 44}}
+                    Other(Other) {{132, 218}, {0, 0}} [hidden]
+                      Other(Other) {{132, 218}, {692, 44}}
+                        Other(Other) {{132, 218}, {46, 44}}
+                          Other(Other) {{136, 222}, {38, 36}}
+                            Other(Other) {{136, 222}, {38, 36}}
+                              Button "Previous" {{136, 222}, {38, 36}} [disabled]
+                        Other(Other) {{186, 218}, {46, 44}}
+                          Other(Other) {{190, 222}, {38, 36}}
+                            Other(Other) {{190, 222}, {38, 36}}
+                              Button "Next" {{190, 222}, {38, 36}}
+                        Other(Other) {{778, 218}, {46, 44}}
+                          Other(Other) {{782, 222}, {38, 36}}
+                            Other(Other) {{782, 222}, {38, 36}}
+                              Button "Done" {{782, 222}, {38, 36}}
+        Other(Other) id=inputView {{117, 276}, {722, 164}}
+  Window {{0, 0}, {956, 440}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {232, 956}}
+        Other(Other) {{164, 0}, {68, 956}}
+        Other(Other) {{0, 0}, {164, 956}}
+          Other(Other) {{0, 0}, {164, 956}}
+            Other(Other) {{0, 0}, {164, 956}}
+        Other(Other) {{0, 0}, {164, 956}}
+          Button "Emoji" {{-3.4, 2.5}, {68.7, 80.1}}
+            StaticText {{65.3, 2.5}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{-3.1, 873.4}, {68.7, 80.1}} [hidden]
+            StaticText {{65.6, 873.4}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{-3.1, 873.4}, {68.7, 80.1}} [hidden]
+            StaticText {{65.6, 873.4}, {0, 0}} [hidden]
+        Other(Other) {{2, 117}, {162, 722}}
+          Keyboard {{2, 117}, {162, 722}}
+            Other(Other) {{2, 117}, {162, 722}}
+              Other(Other) id=UIKeyboardLayoutStar Preview {{2, 117}, {162, 722}}
+                Key "Padding-Left" {{164, 117}, {0, 0}} [hidden]
+                Key "Padding-Right" {{164, 117}, {0, 0}} [hidden]
+                Key "Padding-Left" {{164, 117}, {0, 0}} [hidden]
+                Key "Padding-Right" {{164, 117}, {0, 0}} [hidden]
+                Key "Padding-Left" {{164, 117}, {0, 0}} [hidden]
+                Key "Padding-Right" {{164, 117}, {0, 0}} [hidden]
+                Key "q" {{123.7, 119}, {35.3, 72}}
+                Key "w" {{123.7, 191}, {35.3, 72}}
+                Key "e" {{123.7, 263}, {35.3, 72}}
+                Key "r" {{123.7, 335}, {35.3, 72}}
+                Key "t" {{123.7, 407}, {35.3, 72}}
+                Key "y" {{123.7, 479}, {35.3, 72}} [hidden]
+                Key "u" {{123.7, 551}, {35.3, 72}} [hidden]
+                Key "i" {{123.7, 623}, {35.3, 72}} [hidden]
+                Key "o" {{123.7, 695}, {35.3, 72}} [hidden]
+                Key "p" {{123.7, 767}, {35.3, 72}} [hidden]
+                Key "a" {{88.3, 155}, {35.3, 72}}
+                Key "s" {{88.3, 227}, {35.3, 72}}
+                Key "d" {{88.3, 299}, {35.3, 72}}
+                Key "f" {{88.3, 371}, {35.3, 72}}
+                Key "g" {{88.3, 443}, {35.3, 72}} [hidden]
+                Key "h" {{88.3, 515}, {35.3, 72}} [hidden]
+                Key "j" {{88.3, 587}, {35.3, 72}} [hidden]
+                Key "k" {{88.3, 659}, {35.3, 72}} [hidden]
+                Key "l" {{88.3, 731}, {35.3, 72}} [hidden]
+                Button "shift" id=shift {{53.3, 119}, {35, 93.7}}
+                Key "z" {{53.3, 227}, {35, 72}}
+                Key "x" {{53.3, 299}, {35, 72}}
+                Key "c" {{53.3, 371}, {35, 72}}
+                Key "v" {{53.3, 443}, {35, 72}} [hidden]
+                Key "b" {{53.3, 515}, {35, 72}} [hidden]
+                Key "n" {{53.3, 587}, {35, 72}} [hidden]
+                Key "m" {{53.3, 659}, {35, 72}} [hidden]
+                Key "delete" id=delete {{53.3, 745.3}, {35, 93.7}} [hidden]
+                Key "numbers" id=more {{18, 119}, {35.3, 144}}
+                Key " " id=space {{18, 263}, {35.3, 432}}
+                Button "return" id=Return {{18, 695}, {35.3, 144}} [hidden]
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Safari" {{0, 0}, {956, 440}}
+  Window(4) {{0, 0}, {956, 440}}
+    Other(1) {{0, 0}, {956, 440}}
+      Other(1) {{0, 0}, {956, 440}}
+        Other(1) {{0, 0}, {956, 440}}
+          Other(1) {{0, 0}, {956, 440}}
+            Other(1) {{0, 0}, {956, 440}}
+              Other(1) {{0, 0}, {956, 440}}
+                Other(1) {{0, 0}, {956, 440}}
+                  Other(1) {{0, 0}, {956, 440}}
+                    Other(1) id=SafariWindow?View=Regular&BarsKeptMinimized=false&UUID=F10E5F3E-DA8E-426D-8A90-6C271C5315DF&UsingLoweredBar=false&IsSecure=false&IsTabBarAvailable=true {{0, 0}, {956, 440}}
+                      Other(1) {{0, 0}, {956, 5}}
+                      Other(1) {{0, 0}, {956, 440}}
+                        Other(1) {{0, 0}, {956, 440}}
+                          Other(1) id=Toolbar {{0, 0}, {956, 110}}
+                            Other(1) {{0, 0}, {956, 110}}
+                            Other(1) {{0, 0}, {956, 110}}
+                              Other(1) {{0, 0}, {956, 110}}
+                                Other(1) {{0, 0}, {956, 110}}
+                                  Other(1) {{0, 0}, {956, 110}}
+                                    Other(1) {{0, 0}, {956, 110}}
+                                      Other(1) {{0, 0}, {956, 110}}
+                                        Other(1) {{0, 0}, {956, 110}}
+                                    Other(1) {{0, 0}, {956, 110}}
+                                      Other(1) {{0, 0}, {956, 110}}
+                              Other(1) {{72, 10}, {100, 44}}
+                                Other(1) {{72, 10}, {44, 44}}
+                                  Other(1) {{72, 10}, {44, 44}}
+                                    Button(9) label="Back" id=BackButton {{72, 10}, {44, 44}} [disabled]
+                                      Other(1) {{72, 10}, {44, 44}}
+                                        Image(43) label="Back" id=chevron.backward {{72, 9.0}, {44, 46.3}}
+                                      StaticText(48) {{72, 10}, {0, 0}}
+                                Button(9) label="Bookmarks" id=SidebarButton {{128, 10}, {44, 44}}
+                                  Other(1) {{128, 10}, {44, 44}}
+                                    Other(1) {{128, 10}, {44, 44}}
+                                      Image(43) label="bookmark" id=book {{128, 8.3}, {44, 47.7}}
+                                  StaticText(48) {{128, 10}, {0, 0}}
+                              Other(1) {{184, 10}, {556, 44}}
+                                ScrollView(46) {{184, 10}, {556, 44}}
+                                  Other(1) {{184, 10}, {556, 44}}
+                                  Button(9) label="Address" value="‎127.0.0.1" id=SearchFieldItemView?isActive=true&UUID=AD3C0E8D-431B-4EDC-90D9-DBCA7C62D121&isPinned=false&isDistractionControlOverlayUp=false {{298, 10}, {360, 44}} [selected]
+                                    Image(43) {{478, 32}, {0, 0}}
+                                    Other(1) {{298, 10}, {360, 44}}
+                                      Other(1) {{298, 10}, {360, 44}}
+                                        TextField(49) label="Address" value="‎127.0.0.1" id=TabBarItemTitleContainer {{298, 10}, {360, 44}}
+                                        Button(9) label="Page Menu" id=PageFormatMenuButton {{302, 14}, {38.3, 36}}
+                                        Button(9) label="Reload Page" id=ReloadButton {{619.3, 10}, {29.7, 44}}
+                                      Other(1) {{298, 10}, {360, 44}}
+                                    StaticText(48) {{298, 10}, {0, 0}}
+                              Other(1) {{752, 10}, {132, 44}}
+                                Other(1) {{752, 10}, {132, 44}}
+                                  Other(1) {{752, 10}, {132, 44}}
+                                    Button(9) label="Share" id=ShareButton {{752, 10}, {44, 44}}
+                                      Other(1) {{752, 10}, {44, 44}}
+                                        Image(43) label="Share" id=square.and.arrow.up {{752, 3.7}, {44, 53.7}}
+                                      StaticText(48) {{752, 10}, {0, 0}}
+                                    Button(9) label="New tab" id=NewTabButton {{796, 10}, {44, 44}}
+                                      Other(1) {{796, 10}, {44, 44}}
+                                        Image(43) label="add" id=plus {{796, 9.3}, {44, 45.7}}
+                                      StaticText(48) {{796, 10}, {0, 0}}
+                                    Button(9) label="Tabs" id=TabOverviewButton {{840, 10}, {44, 44}}
+                                      Other(1) {{840, 10}, {44, 44}}
+                                        Image(43) label="Tabs" id=square.on.square {{840, 7.0}, {44, 50.3}}
+                                      StaticText(48) {{840, 10}, {0, 0}}
+                            Other(1) id=TabBar?isSeparate=true {{0, 64}, {956, 36}}
+                              ScrollView(46) {{2, 66}, {952, 32}}
+                                Other(1) {{2, 66}, {956, 36}}
+                                Button(9) {{72, 64}, {812, 36}}
+                                  Image(43) {{478, 82}, {0, 0}}
+                                  Other(1) {{70, 62}, {816, 40}}
+                                  Other(1) {{70, 62}, {816, 40}}
+                                    Other(1) {{70, 62}, {816, 40}}
+                                  Other(1) {{72, 64}, {812, 36}}
+                                    Other(1) {{72, 64}, {812, 36}}
+                                  Other(1) {{72, 64}, {812, 36}}
+                                    Button(9) value="Start Page" id=TabBarTab?isActive=false&UUID=5A6CCECD-C5E9-4BE9-9648-68F65954CF76&isPinned=false&isDistractionControlOverlayUp=false {{74, 66}, {132, 32}}
+                                      Image(43) {{140, 82}, {0, 0}}
+                                      Other(1) {{72, 64}, {136, 36}}
+                                      Other(1) {{72, 64}, {136, 36}}
+                                        Other(1) {{72, 64}, {136, 36}}
+                                      Other(1) {{74, 66}, {132, 32}}
+                                      Other(1) {{74, 66}, {132, 32}}
+                                        TextField(49) label="Address" value="Start Page" id=TabBarItemTitleContainer {{74, 66}, {132, 32}}
+                                      Other(1) {{72, 69}, {1, 26}}
+                                        Other(1) {{72, 69}, {1, 26}}
+                                        Other(1) {{72, 69}, {1, 26}}
+                                      Other(1) {{207, 69}, {1, 26}}
+                                        Other(1) {{207, 69}, {1, 26}}
+                                        Other(1) {{207, 69}, {1, 26}}
+                                      StaticText(48) {{74, 66}, {0, 0}}
+                                    Other(1) {{74, 66}, {812, 36}}
+                                    Button(9) value="Received" id=TabBarTab?isActive=false&UUID=09334BD8-ADB1-420D-86A6-778624AA5679&isPinned=false&isDistractionControlOverlayUp=false {{209, 66}, {132.3, 32}}
+                                      Image(43) {{275, 82}, {0, 0}}
+                                      Other(1) {{207, 64}, {136.3, 36}}
+                                      Other(1) {{207, 64}, {136.3, 36}}
+                                        Other(1) {{207, 64}, {136.3, 36}}
+                                      Other(1) {{209, 66}, {132.3, 32}}
+                                      Other(1) {{209, 66}, {132.3, 32}}
+                                        TextField(49) label="Address" value="Received" id=TabBarItemTitleContainer {{209, 66}, {132.3, 32}}
+                                      Other(1) {{207, 68.2}, {1, 27.6}}
+                                        Other(1) {{207, 68.2}, {1, 27.3}}
+                                        Other(1) {{207, 68.2}, {1, 27.3}}
+                                      Other(1) {{342.3, 68.2}, {1, 27.6}}
+                                        Other(1) {{342.3, 68.2}, {1, 27.3}}
+                                        Other(1) {{342.3, 68.2}, {1, 27.3}}
+                                      StaticText(48) {{209, 66}, {0, 0}}
+                                    Button(9) value="Probe3 web" id=TabBarTab?isActive=false&UUID=10CDCA3B-8011-4F7F-8E06-57CC0739EFCE&isPinned=false&isDistractionControlOverlayUp=false {{344.3, 66}, {132, 32}}
+                                      Image(43) {{410.3, 82}, {0, 0}}
+                                      Other(1) {{342.3, 64}, {136, 36}}
+                                      Other(1) {{342.3, 64}, {136, 36}}
+                                        Other(1) {{342.3, 64}, {136, 36}}
+                                      Other(1) {{344.3, 66}, {132, 32}}
+                                      Other(1) {{344.3, 66}, {132, 32}}
+                                        TextField(49) label="Address" value="Probe3 web" id=TabBarItemTitleContainer {{344.3, 66}, {132, 32}}
+                                      Other(1) {{342.3, 67}, {1, 30}}
+                                        Other(1) {{342.3, 67}, {1, 30}}
+                                        Other(1) {{342.3, 67}, {1, 30}}
+                                      Other(1) {{477.3, 67}, {1, 30}}
+                                        Other(1) {{477.3, 67}, {1, 30}}
+                                        Other(1) {{477.3, 67}, {1, 30}}
+                                      StaticText(48) {{344.3, 66}, {0, 0}}
+                                    Button(9) value="Received" id=TabBarTab?isActive=false&UUID=31B43E56-7C0A-4743-9B16-B657E0E7ABA1&isPinned=false&isDistractionControlOverlayUp=false {{479.3, 66}, {132.3, 32}}
+                                      Image(43) {{545.3, 82}, {0, 0}}
+                                      Other(1) {{477.3, 64}, {136.3, 36}}
+                                      Other(1) {{477.3, 64}, {136.3, 36}}
+                                        Other(1) {{477.3, 64}, {136.3, 36}}
+                                      Other(1) {{479.3, 66}, {132.3, 32}}
+                                      Other(1) {{479.3, 66}, {132.3, 32}}
+                                        TextField(49) label="Address" value="Received" id=TabBarItemTitleContainer {{479.3, 66}, {132.3, 32}}
+                                      Other(1) {{477.3, 67}, {1, 30}}
+                                        Other(1) {{477.3, 67}, {1, 30}}
+                                        Other(1) {{477.3, 67}, {1, 30}}
+                                      Other(1) {{612.7, 67}, {1, 30}}
+                                        Other(1) {{612.7, 67}, {1, 30}}
+                                        Other(1) {{612.7, 67}, {1, 30}}
+                                      StaticText(48) {{479.3, 66}, {0, 0}}
+                                    Button(9) value="127.0.0.1" id=TabBarTab?isActive=false&UUID=7DC72B97-C2F1-47A6-BF14-0A7B5FBBCF29&isPinned=false&isDistractionControlOverlayUp=false {{614.7, 66}, {132, 32}}
+                                      Image(43) {{680.7, 82}, {0, 0}}
+                                      Other(1) {{612.7, 64}, {136, 36}}
+                                      Other(1) {{612.7, 64}, {136, 36}}
+                                        Other(1) {{612.7, 64}, {136, 36}}
+                                      Other(1) {{614.7, 66}, {132, 32}}
+                                      Other(1) {{614.7, 66}, {132, 32}}
+                                        TextField(49) label="Address" value="127.0.0.1" id=TabBarItemTitleContainer {{614.7, 66}, {132, 32}}
+                                      Other(1) {{612.7, 69}, {1, 26}}
+                                        Other(1) {{612.7, 69}, {1, 26}}
+                                        Other(1) {{612.7, 69}, {1, 26}}
+                                      Other(1) {{747.7, 69}, {1, 26}}
+                                        Other(1) {{747.7, 69}, {1, 26}}
+                                        Other(1) {{747.7, 69}, {1, 26}}
+                                      StaticText(48) {{614.7, 66}, {0, 0}}
+                                    Button(9) value="Probe3 web" id=TabBarTab?isActive=true&UUID=AD3C0E8D-431B-4EDC-90D9-DBCA7C62D121&isPinned=false&isDistractionControlOverlayUp=false {{749.7, 66}, {132.3, 32}} [selected]
+                                      Image(43) {{815.7, 82}, {0, 0}}
+                                      Other(1) {{749.7, 66}, {132.3, 32}}
+                                      Other(1) {{749.7, 66}, {132.3, 32}}
+                                        Other(1) {{749.7, 66}, {132.3, 32}}
+                                      Other(1) {{749.7, 66}, {132.3, 32}}
+                                        Other(1) {{749.7, 66}, {132.3, 32}}
+                                          TextField(49) label="Address" value="Probe3 web" id=TabBarItemTitleContainer {{749.7, 66}, {132.3, 32}}
+                                          Button(9) label="Close" id=CloseTabBarItemButton {{749.7, 66}, {32, 32}}
+                                        Other(1) {{749.7, 66}, {132.3, 32}}
+                                          Other(1) {{749.7, 66}, {132.3, 32}}
+                                            Other(1) {{749.7, 66}, {132.3, 32}}
+                                              Other(1) {{749.7, 66}, {132.3, 32}}
+                                                Other(1) {{749.7, 66}, {132.3, 32}}
+                                                  Other(1) {{749.7, 66}, {132.3, 32}}
+                                              Other(1) {{749.7, 66}, {132.3, 32}}
+                                                Other(1) {{749.7, 66}, {132.3, 32}}
+                                      Other(1) {{747.7, 67}, {1, 30}}
+                                        Other(1) {{747.7, 67}, {1, 30}}
+                                        Other(1) {{747.7, 67}, {1, 30}}
+                                      Other(1) {{883.0, 67}, {1, 30}}
+                                        Other(1) {{883.0, 67}, {1, 30}}
+                                        Other(1) {{883.0, 67}, {1, 30}}
+                                      StaticText(48) {{749.7, 66}, {0, 0}}
+                                  StaticText(48) {{72, 64}, {0, 0}}
+                          ScrollView(46) {{0, 0}, {956, 440}}
+                            Other(1) id=TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=AD3C0E8D-431B-4EDC-90D9-DBCA7C62D121&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=61385 {{0, 0}, {956, 440}}
+                              WebView(58) id=WebView {{0, 0}, {956, 440}}
+                                WebView(58) {{0, 0}, {956, 440}}
+                                  Other(1) {{0, 0}, {956, 440}}
+                                  WebView(58) {{0, 0}, {956, 440}}
+                                    Other(1) {{0, 0}, {956, 440}}
+                                      Other(1) {{0, 0}, {956, 440}}
+                                        Other(1) value="" {{62, 20}, {956, 440}}
+                                          Other(1) label="Probe3 web" value="" {{62, 20}, {832, 471}}
+                                            Other(1) label="Web probe" value="1" {{72, 30}, {812, 27}}
+                                              StaticText(48) label="Web probe" value="Web probe" {{72, 30}, {111, 27}}
+                                            Other(1) value="" {{72, 62}, {812, 35}}
+                                              Button(9) label="Probe tap target" value="" {{72, 65}, {152, 29}}
+                                              StaticText(48) label="taps:1" value="taps:1" {{228, 63}, {59, 28}}
+                                            Other(1) value="" {{72, 102}, {812, 37}}
+                                              TextField(49) label="Probe mirror" value="land" placeholder="Probe mirror" {{72, 105}, {216, 31}} [focus]
+                                              StaticText(48) label="typed:land" value="typed:land" {{291, 104}, {106, 29}}
+                                            Other(1) value="" {{72, 143}, {812, 29}}
+                                              Link(42) label="Probe plain link" value="" {{72, 143}, {150, 29}}
+                                                StaticText(48) label="Probe plain link" value="Probe plain link" {{72, 143}, {150, 29}}
+                                              StaticText(48) label="and" value=" and " {{221, 143}, {49, 29}}
+                                              Link(42) label="Probe external link" value="" {{269, 143}, {183, 29}}
+                                                StaticText(48) label="Probe external link" value="Probe external link" {{269, 143}, {183, 29}}
+                                            Other(1) label="Probe frame" value="" {{72, 176}, {302, 113}}
+                                              Other(1) value="" {{73, 177}, {300, 110}}
+                                                Other(1) label="Probe frame" value="" {{73, 177}, {300, 119}}
+                                                  Other(1) value="" {{79, 192}, {288, 19}}
+                                                    StaticText(48) label="Probe frame text" value="Probe frame text" {{79, 192}, {115, 19}}
+                                                  Button(9) label="Probe frame button" value="" {{79, 227}, {126, 20}}
+                                                  TextField(49) label="Probe frame field" value="Probe frame field" placeholder="Probe frame field" {{209, 227}, {154, 20}}
+                                                  Other(1) value="" {{79, 262}, {288, 19}}
+                                                    StaticText(48) label="frame idle" value="frame idle" {{79, 262}, {69, 19}}
+                                            Other(1) value="" {{72, 297}, {812, 36}}
+                                              Button(9) label="Probe alert" value="" {{72, 300}, {114, 30}}
+                                              Button(9) label="Probe confirm" value="" {{189, 300}, {138, 30}}
+                                              Button(9) label="Probe prompt" value="" {{330, 300}, {135, 30}}
+                                              Button(9) label="Probe dialog" value="" {{468, 300}, {126, 30}}
+                                            Other(1) value="" {{72, 337}, {812, 29}}
+                                              StaticText(48) label="result:none" value="result:none" {{72, 337}, {110, 29}}
+                                            Other(1) value="" {{72, 370}, {812, 38}}
+                                              Other(1) label="Probe select" value="Beta" {{72, 374}, {91, 30}}
+                                              Other(1) label="Probe date" value="Nov 25, 2026" {{167, 373}, {121, 32}}
+                                            Other(1) value="" {{72, 412}, {812, 29}}
+                                              Button(9) label="Probe file" value="no file selected" {{72, 415}, {372, 23}}
+                                            Other(1) label="form" value="" {{72, 445}, {812, 37}}
+                                              TextField(49) label="Probe name" value="Probe name" placeholder="Probe name" {{72, 448}, {216, 31}}
+                                              Button(9) label="Probe submit" value="" {{291, 449}, {131, 30}}
+                                  Other(1) {{0, 0}, {956, 440}}
+                                    Other(1) {{0, 0}, {956, 110}}
+                                      Other(1) {{0, 0}, {956, 98}}
+                                      Other(1) {{0, 0}, {956, 110}}
+                                      Other(1) {{0, 0}, {956, 110}}
+                                        Other(1) {{0, 0}, {956, 110}}
+                                  Other(1) label="Vertical scroll bar, 2 pages" value="24%" {{923, 110}, {30, 98}}
+                                    Other(1) {{950, 123.3}, {3, 49.7}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 175}, {832, 30}}
+                                    Other(1) {{65, 202}, {826, 3}}
+                                  Other(1) label="Vertical scroll bar, 2 pages" value="24%" {{923, 110}, {30, 98}}
+                                    Other(1) {{950, 123.3}, {3, 49.7}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 175}, {832, 30}}
+                                    Other(1) {{65, 202}, {826, 3}}
+                            Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                              Other(1) {{581, 434}, {310, 3}}
+                            Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                              Other(1) {{581, 434}, {310, 3}}
+                Other(1) {{0, 0}, {956, 440}}
+                  Other(1) {{0, 0}, {956, 440}}
+          Other(1) {{0, 0}, {956, 440}}
+            Other(1) {{0, 0}, {956, 440}}
+  Window(4) {{0, 0}, {956, 440}}
+    Other(1) {{0, 0}, {956, 440}}
+      Other(1) {{0, 0}, {956, 440}}
+      Other(1) {{0, 208}, {956, 232}}
+        Other(1) {{0, 208}, {956, 68}}
+          Other(1) {{0, 208}, {956, 68}}
+            Toolbar(24) label="Toolbar" id=Toolbar {{0, 218}, {956, 48}}
+              Other(1) {{0, 218}, {956, 48}}
+                Other(1) {{132, 218}, {692, 44}}
+                  Other(1) {{132, 218}, {692, 44}}
+                    Other(1) {{132, 218}, {0, 0}}
+                      Other(1) {{132, 218}, {692, 44}}
+                        Other(1) {{132, 218}, {46, 44}}
+                          Other(1) {{136, 222}, {38, 36}}
+                            Other(1) {{136, 222}, {38, 36}}
+                              Button(9) label="Previous" {{136, 222}, {38, 36}} [disabled]
+                        Other(1) {{186, 218}, {46, 44}}
+                          Other(1) {{190, 222}, {38, 36}}
+                            Other(1) {{190, 222}, {38, 36}}
+                              Button(9) label="Next" {{190, 222}, {38, 36}}
+                        Other(1) {{778, 218}, {46, 44}}
+                          Other(1) {{782, 222}, {38, 36}}
+                            Other(1) {{782, 222}, {38, 36}}
+                              Button(9) label="Done" {{782, 222}, {38, 36}}
+        Other(1) id=inputView {{117, 276}, {722, 164}}
+  Window(4) {{0, 0}, {956, 440}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {232, 956}}
+        Other(1) {{164, 0}, {68, 956}}
+        Other(1) {{0, 0}, {164, 956}}
+          Other(1) {{0, 0}, {164, 956}}
+            Other(1) {{0, 0}, {164, 956}}
+        Other(1) {{0, 0}, {164, 956}}
+          Button(9) label="Emoji" {{-3.4, 2.5}, {68.7, 80.1}}
+            StaticText(48) {{65.3, 2.5}, {0, 0}}
+          Button(9) label="Dictate" id=dictation {{-3.1, 873.4}, {68.7, 80.1}}
+            StaticText(48) {{65.6, 873.4}, {0, 0}}
+          Button(9) label="Dictate" id=dictation {{-3.1, 873.4}, {68.7, 80.1}}
+            StaticText(48) {{65.6, 873.4}, {0, 0}}
+        Other(1) {{2, 117}, {162, 722}}
+          Keyboard(19) {{2, 117}, {162, 722}}
+            Other(1) {{2, 117}, {162, 722}}
+              Other(1) id=UIKeyboardLayoutStar Preview {{2, 117}, {162, 722}}
+                Key(20) label="Padding-Left" {{164, 117}, {0, 0}}
+                Key(20) label="Padding-Right" {{164, 117}, {0, 0}}
+                Key(20) label="Padding-Left" {{164, 117}, {0, 0}}
+                Key(20) label="Padding-Right" {{164, 117}, {0, 0}}
+                Key(20) label="Padding-Left" {{164, 117}, {0, 0}}
+                Key(20) label="Padding-Right" {{164, 117}, {0, 0}}
+                Key(20) label="q" {{123.7, 119}, {35.3, 72}}
+                Key(20) label="w" {{123.7, 191}, {35.3, 72}}
+                Key(20) label="e" {{123.7, 263}, {35.3, 72}}
+                Key(20) label="r" {{123.7, 335}, {35.3, 72}}
+                Key(20) label="t" {{123.7, 407}, {35.3, 72}}
+                Key(20) label="y" {{123.7, 479}, {35.3, 72}}
+                Key(20) label="u" {{123.7, 551}, {35.3, 72}}
+                Key(20) label="i" {{123.7, 623}, {35.3, 72}}
+                Key(20) label="o" {{123.7, 695}, {35.3, 72}}
+                Key(20) label="p" {{123.7, 767}, {35.3, 72}}
+                Key(20) label="a" {{88.3, 155}, {35.3, 72}}
+                Key(20) label="s" {{88.3, 227}, {35.3, 72}}
+                Key(20) label="d" {{88.3, 299}, {35.3, 72}}
+                Key(20) label="f" {{88.3, 371}, {35.3, 72}}
+                Key(20) label="g" {{88.3, 443}, {35.3, 72}}
+                Key(20) label="h" {{88.3, 515}, {35.3, 72}}
+                Key(20) label="j" {{88.3, 587}, {35.3, 72}}
+                Key(20) label="k" {{88.3, 659}, {35.3, 72}}
+                Key(20) label="l" {{88.3, 731}, {35.3, 72}}
+                Button(9) label="shift" id=shift {{53.3, 119}, {35, 93.7}}
+                Key(20) label="z" {{53.3, 227}, {35, 72}}
+                Key(20) label="x" {{53.3, 299}, {35, 72}}
+                Key(20) label="c" {{53.3, 371}, {35, 72}}
+                Key(20) label="v" {{53.3, 443}, {35, 72}}
+                Key(20) label="b" {{53.3, 515}, {35, 72}}
+                Key(20) label="n" {{53.3, 587}, {35, 72}}
+                Key(20) label="m" {{53.3, 659}, {35, 72}}
+                Key(20) label="delete" id=delete {{53.3, 745.3}, {35, 93.7}}
+                Key(20) label="numbers" id=more {{18, 119}, {35.3, 144}}
+                Key(20) label=" " id=space {{18, 263}, {35.3, 432}}
+                Button(9) label="return" id=Return {{18, 695}, {35.3, 144}}

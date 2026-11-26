@@ -1,0 +1,94 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p4c-modals (`probe3-p4c-modals-18-context-menu-tree.txt`), verbatim below this line.
+Q: With the contextMenu up: is there an Alert/Sheet/dialog-like node, is the content behind still in the tree, is anything marking it covered, what role do destructive buttons have?
+capture 18 (context-menu): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 18: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 40, XCUITest snapshot 164 ms
+types without a core role: Other×32
+note: probe round 3 p4c-modals, capture 18: context-menu
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{95, 440}, {250, 124}}
+          Other(Other) {{95, 440}, {250, 124}}
+            Other(Other) {{95, 440}, {250, 124}}
+              Other(Other) {{95, 440}, {250, 124}}
+              CollectionView {{95, 440}, {250, 956}}
+                Cell {{95, 450}, {250, 42}}
+                  Button "Probe context item" {{95, 450}, {250, 42}}
+                Cell {{95, 492}, {250, 62}}
+                  Button "Delete from context menu" {{95, 492}, {250, 62}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{312, 470}, {30, 64}}
+                  Other(Other) {{339, 473}, {3, 58}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{157, 501}, {188, 30}}
+                  Other(Other) {{160, 528}, {182, 3}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{312, 470}, {30, 64}}
+                  Other(Other) {{339, 473}, {3, 58}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{157, 501}, {188, 30}}
+                  Other(Other) {{160, 528}, {182, 3}}
+            Other(Other) {{95, 440}, {250, 124}}
+              Other(Other) {{95, 440}, {250, 124}}
+                Other(Other) {{95, 440}, {250, 124}}
+                  Other(Other) {{95, 440}, {250, 124}}
+                    Other(Other) {{95, 440}, {250, 124}}
+                      Other(Other) {{95, 440}, {250, 44}}
+                  Other(Other) {{95, 440}, {250, 124}}
+                    Other(Other) {{95, 440}, {250, 44}}
+        Other(Other) "Preview" {{20, 584}, {400, 90}}
+          Other(Other) {{20, 584}, {400, 90}}
+            Other(Other) {{-30, 584}, {500, 90}}
+          Other(Other) {{20, 584}, {400, 90}}
+            Other(Other) {{20, 584}, {400, 90}}
+              Other(Other) {{20, 584}, {400, 90}}
+                Other(Other) "Hold for the probe context menu" {{20, 584}, {400, 90}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{95, 440}, {250, 124}}
+          Other(1) {{95, 440}, {250, 124}}
+            Other(1) {{95, 440}, {250, 124}}
+              Other(1) {{95, 440}, {250, 124}}
+              CollectionView(32) {{95, 440}, {250, 956}}
+                Cell(75) {{95, 450}, {250, 42}}
+                  Button(9) label="Probe context item" {{95, 450}, {250, 42}}
+                Cell(75) {{95, 492}, {250, 62}}
+                  Button(9) label="Delete from context menu" {{95, 492}, {250, 62}}
+                Other(1) label="Vertical scroll bar, 1 page" value="0%" {{312, 470}, {30, 64}}
+                  Other(1) {{339, 473}, {3, 58}}
+                Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{157, 501}, {188, 30}}
+                  Other(1) {{160, 528}, {182, 3}}
+                Other(1) label="Vertical scroll bar, 1 page" value="0%" {{312, 470}, {30, 64}}
+                  Other(1) {{339, 473}, {3, 58}}
+                Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{157, 501}, {188, 30}}
+                  Other(1) {{160, 528}, {182, 3}}
+            Other(1) {{95, 440}, {250, 124}}
+              Other(1) {{95, 440}, {250, 124}}
+                Other(1) {{95, 440}, {250, 124}}
+                  Other(1) {{95, 440}, {250, 124}}
+                    Other(1) {{95, 440}, {250, 124}}
+                      Other(1) {{95, 440}, {250, 44}}
+                  Other(1) {{95, 440}, {250, 124}}
+                    Other(1) {{95, 440}, {250, 44}}
+        Other(1) label="Preview" {{20, 584}, {400, 90}}
+          Other(1) {{20, 584}, {400, 90}}
+            Other(1) {{-30, 584}, {500, 90}}
+          Other(1) {{20, 584}, {400, 90}}
+            Other(1) {{20, 584}, {400, 90}}
+              Other(1) {{20, 584}, {400, 90}}
+                Other(1) label="Hold for the probe context menu" {{20, 584}, {400, 90}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
