@@ -3035,6 +3035,16 @@ impl Session {
             RequestKind::Vision | RequestKind::Text => None,
         };
         let vision = screenshot.is_some();
+        // Review pass 33: a look that came back without a screenshot (the runner took none,
+        // or one too large to send was left out) is decided on the element list, as a
+        // text request; the model is told no picture came.
+        if matches!(kind, RequestKind::Vision)
+            && !vision
+            && !self.own_hidden
+            && !self.notes.iter().any(|n| n == prompt::NO_SCREENSHOT_NOTE)
+        {
+            self.notes.push(prompt::NO_SCREENSHOT_NOTE.to_owned());
+        }
         // Eighteenth review (E1): a screenshot given to the model is a read of the whole
         // display — banners, the Dynamic Island, Live Activities drawn over the app — a place
         // of its own, whatever path attached it (a `look`, the thin-tree vision fallback).

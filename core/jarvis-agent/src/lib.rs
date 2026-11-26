@@ -39,7 +39,7 @@ pub mod typing;
 /// so the classifier reads the very path the command will take.
 pub use jarvis_safety::gestures;
 pub use parser::{parse_model_output, ParseError, Parsed};
-pub use prompt::{system_prompt, ACTION_MAX_TOKENS};
+pub use prompt::{system_prompt, ACTION_MAX_TOKENS, NO_SCREENSHOT_NOTE};
 pub use schema::{action_examples, action_gbnf, action_json_schema, action_names};
 pub use session::{
     Session, APPROVAL_SETTLE_MS, MAX_MODEL_RETRIES, MAX_REPLANS, MAX_STALE_APPROVALS,

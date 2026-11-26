@@ -294,6 +294,8 @@ pub fn encode_reply(id: u64, reply: &Reply) -> Result<Vec<u8>, MessageError> {
         Reply::ViewerScreenshot(shot) => {
             w.u8(REP_VIEWER_SHOT);
             w.u64(id);
+            // A viewer screenshot larger than the wire carries is still refused (the server
+            // answers an error; the Live view shows no frame): only a snapshot's is left out.
             write_opt_screenshot(&mut w, shot.as_ref())?;
         }
         Reply::FrontBundleId(front) => {
@@ -526,9 +528,14 @@ fn read_lock(r: &mut Reader<'_>) -> Result<LockState, MessageError> {
 // Snapshots and screenshots.
 // ---------------------------------------------------------------------------------------
 
+/// Review pass 33: the note a snapshot carries in place of a screenshot larger than
+/// [`MAX_SCREENSHOT_BYTES`] (the encoder leaves such a screenshot out; the tree is sent).
+pub const SCREENSHOT_TOO_LARGE_NOTE: &str =
+    "the screenshot was too large to send; this observation has no screenshot";
+
 /// The bytes [`write_opt_screenshot`] writes for a snapshot's screenshot.
-fn screenshot_len(s: &Snapshot) -> usize {
-    s.screenshot.as_ref().map_or(1, |shot| {
+fn screenshot_len(shot: Option<&Screenshot>) -> usize {
+    shot.map_or(1, |shot| {
         1 + 4 + shot.mime_type.len() + 4 + 4 + shot.scale.map_or(1, |_| 9) + 4 + shot.data.len()
     })
 }
@@ -613,20 +620,33 @@ fn write_snapshot(w: &mut Writer, s: &Snapshot) -> Result<(), MessageError> {
     if s.notes.len() > MAX_NOTES {
         return Err(MessageError::Limit("notes"));
     }
+    // Review pass 33: a screenshot larger than the wire carries is left out (the snapshot
+    // goes without pixels, as when none was taken) and a note says so; the tree is sent.
+    // Before, the encoder refused the snapshot and every look with a screenshot failed.
+    let shot = s
+        .screenshot
+        .as_ref()
+        .filter(|shot| shot.data.len() <= MAX_SCREENSHOT_BYTES);
+    let mut notes: Vec<&str> = s.notes.iter().map(String::as_str).collect();
+    if s.screenshot.is_some() && shot.is_none() {
+        // The note is kept even when the notes are full (it takes the last one's place).
+        notes.truncate(MAX_NOTES - 1);
+        notes.push(SCREENSHOT_TOO_LARGE_NOTE);
+    }
     // Review pass 32 (F2): what the tree may take of the frame — the frame's body less the
     // seal, the headroom, what is written so far (and the cut flag) and what the notes and
     // the screenshot take after it.
-    let rest = 1 + 4 + s.notes.iter().map(|n| 4 + n.len()).sum::<usize>() + screenshot_len(s);
+    let rest = 1 + 4 + notes.iter().map(|n| 4 + n.len()).sum::<usize>() + screenshot_len(shot);
     let budget = crate::MAX_SERVER_FRAME
         .saturating_sub(crate::channel::DATA_OVERHEAD + WIRE_HEADROOM + w.buf.len() + rest);
     // Review pass 31 (L1): the cut, decided before anything of the tree is written.
     let plan = plan_tree(&s.root, budget);
     w.bool(s.tree_cut || plan.cut);
-    w.length(s.notes.len(), "notes")?;
-    for note in &s.notes {
+    w.length(notes.len(), "notes")?;
+    for note in notes {
         w.str(note)?;
     }
-    write_opt_screenshot(w, s.screenshot.as_ref())?;
+    write_opt_screenshot(w, shot)?;
     write_planned(w, &plan)
 }
 

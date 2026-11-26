@@ -148,25 +148,38 @@ fn span(region_lo: f64, region_hi: f64, safe_lo: f64, safe_hi: f64) -> (f64, f64
 /// measured-safe length. Relative to the width, so it holds in landscape too.
 pub const MAX_SIDEWAYS_SHARE: f64 = 240.0 / 440.0;
 
-/// Runs 146 and 149 (Mac, probes P13, P13a, P13b; P05b Reminders agrees): the longest
-/// sideways travel across a list row, as a share of the **row's** width. Measured at 200 ms
-/// (800 ms behaved the same at the same length), the largest drag that only revealed the
+/// Runs 146, 149 and 154 (Mac, probes P13, P13a, P13b; P05b Reminders agrees): the longest
+/// sideways travel across a list row, as a share of the **row's** width. Run 154 (iOS 26.5
+/// simulator) measured finer steps than before; 200 ms and 800 ms drags behaved the same,
+/// and a 40-pt drag already revealed the actions. The largest drag that only revealed the
 /// row's actions and the smallest that deleted the row:
 ///
 /// | row | width | only revealed up to | deleted from |
 /// |---|---|---|---|
-/// | full width, trailing actions `{20, 278} 400 x 52` | 400 | 250 pt (0.625; 120–250 all revealed) | 264 pt (0.66) |
-/// | narrow list `{70, 204} 300 x 52` | 300 | 198 pt (0.66) | 225 pt (0.75) |
-/// | left of two columns `{16, 204} 200 x 52` | 200 | 132 pt (0.66) | 150 pt (0.75) |
-/// | leading action, dragged left to right `{0, 204} 440 x 52` | 440 | 242 pt (0.55) | 264 pt (0.60) |
+/// | full width, trailing actions `{20, 278} 400 x 52` | 400 | 260 pt (0.65) | 264 pt (0.66) |
+/// | narrow list `{70, 204} 300 x 52`, trailing | 300 | 198 pt (0.66) | 207 pt (0.69) |
+/// | left of two 200-pt columns `{16, 204} 200 x 52`, trailing | 200 | 132 pt (0.66) | 138 pt (0.69) |
+/// | leading action, dragged left to right `{0, 204} 440 x 52` | 440 | 251 pt (0.57) | 264 pt (0.60) |
+/// | trailing, edge to edge `{0, 204} 440 x 52` | 440 | 251 pt (0.57) | 264 pt (0.60) |
 ///
 /// The delete threshold is not a constant share of the row: the lowest that deleted is 0.60
-/// (the leading action), where 0.55 is the largest known to reveal only. 0.45 is 0.10 below
-/// that, 0.15 below 0.60, and above the 0.40 that revealed the actions on every row tested
-/// (0.30 on the 400-pt row). A row too narrow for [`MIN_TRAVEL`] within this share (under
-/// 80 / 0.45 ≈ 178 pt) gets no drag at all ([`GestureError::RowTooNarrow`]); the 200-pt
-/// column gets 90 pt.
+/// (the 440-pt edge-to-edge rows), where 0.57 is the largest known to reveal only on them.
+/// 0.45 is 0.12 below that, 0.15 below 0.60, and above the 0.40 that revealed the actions on
+/// every row tested (0.30 on the 400-pt row). A list row too narrow for [`MIN_TRAVEL`]
+/// within this share (under 80 / 0.45 ≈ 178 pt) gets no drag at all
+/// ([`GestureError::RowTooNarrow`]); the 200-pt column gets 90 pt. No real list row in the
+/// 305 trees captured by run 154 is narrower than 0.8 of its list (inset SwiftUI rows are
+/// 0.91); rows are `Cell`s directly under a `CollectionView` or a `Table`.
 pub const ROW_SWIPE_SHARE: f64 = 0.45;
+
+/// Review pass 33 (F1): the longest travel across an **inset** row (a row narrower than 0.8
+/// of its list, `jarvis_safety::planned_drag`), as a share of the row's width, once
+/// [`MIN_TRAVEL`] lifts the [`ROW_SWIPE_SHARE`] bound: 0.55, below the smallest share
+/// measured to delete (0.60, run 154, the 440-pt rows) and below the largest measured to
+/// only reveal on the row kind that deletes earliest (0.57). An inset row for which
+/// `MIN_TRAVEL` would be more than this share of it (under 80 / 0.55 ≈ 145 pt) gets no drag
+/// ([`GestureError::RowTooNarrow`]), as a narrow list row does.
+pub const INSET_ROW_MAX_SHARE: f64 = 0.55;
 
 /// `g` with its travel at most `max` long: the start kept (it is where the gate read the
 /// drag from), the end moved towards it.

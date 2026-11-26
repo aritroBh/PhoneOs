@@ -314,7 +314,7 @@ fn a_session_refuses_a_narrow_row_swipe_and_bounds_a_wide_one() {
         "{:#?}",
         r.confirms
     );
-    assert!(ROW_SWIPE_NOTE.contains("0.60 to 0.75 of the row deleted it"));
+    assert!(ROW_SWIPE_NOTE.contains("0.60 to 0.69 of the row deleted it"));
     let sent: Vec<f64> = r
         .acts
         .iter()

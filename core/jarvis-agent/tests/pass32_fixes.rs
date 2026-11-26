@@ -27,7 +27,7 @@ use jarvis_observe::{compact_view, CompactView};
 use jarvis_proto::fixtures::{rect, IPHONE_SIZE};
 use jarvis_proto::{Direction, Key, Rect, Role, RunnerCommand, Screen, UiNode};
 use jarvis_safety::gestures::{
-    drag_gesture, GestureError, GestureKind, MIN_TRAVEL, ROW_SWIPE_SHARE,
+    drag_gesture, GestureError, GestureKind, INSET_ROW_MAX_SHARE, MIN_TRAVEL, ROW_SWIPE_SHARE,
 };
 use jarvis_safety::{planned_drag, ScreenTree};
 
@@ -159,8 +159,10 @@ fn left_bound() -> f64 {
 // ---------------------------------------------------------------------------------------
 
 /// Every inset of the real P13 rows from 0.79 of the list down to 0.30: the element and the
-/// element-less swipe travel at most 0.45 of the row (never less than `MIN_TRAVEL`: a cell
-/// that is no list row is not refused), from the start the gate read.
+/// element-less swipe travel at most 0.45 of the row (never less than `MIN_TRAVEL`), from
+/// the start the gate read. Review pass 33 (F1): a row for which `MIN_TRAVEL` is more than
+/// `INSET_ROW_MAX_SHARE` of it (under about 145 pt) is refused, as a narrow list row is
+/// (pass 32 never refused it: that drag was 0.61 of the 132-pt row, past the measured 0.60).
 #[test]
 fn f1_padded_rows_of_every_inset_are_bounded_at_their_own_width() {
     for pct in 30..=79u32 {
@@ -169,8 +171,20 @@ fn f1_padded_rows_of_every_inset_are_bounded_at_their_own_width() {
         let s = rows_at((440.0 - width) / 2.0, width);
         for frame in [Some(frame_of(&s, "Full swipe row 1")), None] {
             let (planned, reach) = swipe(&s, frame);
+            if INSET_ROW_MAX_SHARE * width < MIN_TRAVEL {
+                assert_eq!(
+                    planned,
+                    Err(GestureError::RowTooNarrow),
+                    "{share} {frame:?}"
+                );
+                continue;
+            }
             let t = planned.unwrap_or_else(|e| panic!("{share} {frame:?}: {e}"));
             let bound = (ROW_SWIPE_SHARE * width).max(MIN_TRAVEL);
+            assert!(
+                t <= INSET_ROW_MAX_SHARE * width + 1e-6,
+                "{share} {frame:?}: {t}"
+            );
             assert!(t <= bound + 1e-6, "{share} {frame:?}: {t} > {bound}");
             assert!(t <= reach + 1e-6);
             if ROW_SWIPE_SHARE * width >= MIN_TRAVEL {
@@ -183,7 +197,12 @@ fn f1_padded_rows_of_every_inset_are_bounded_at_their_own_width() {
 /// The control of the forgeries below: two alike cells side by side in the band of the
 /// swipe, both visible and uncovered, each under half the list — a grid: the drag keeps
 /// its reach (the screen-cap path, still asked). Without the neighbour the left row is an
-/// inset row, bounded at 0.45 of its 190 pt.
+/// inset row, bounded at 0.45 of its 190 pt. Review pass 33 (F2): a 190 x 52 cell is
+/// row-shaped (3.65 times as wide as tall, as the measured two-column rows): never a grid
+/// cell, so with the neighbour too it is bounded at 0.45 of its width; the grid control is
+/// now made of squarish cells (150 x 52, 2.88): alone bounded at `MIN_TRAVEL`, with an
+/// alike neighbour the reach (the forgeries against the grid signal on squarish cells are
+/// in `pass33_fixes.rs`).
 #[test]
 fn f1_two_alike_cells_side_by_side_are_a_grid() {
     let lone = rows_at(LEFT.0, LEFT.1);
@@ -194,6 +213,17 @@ fn f1_two_alike_cells_side_by_side_are_a_grid() {
     let grid = beside_row1(
         rows_at(LEFT.0, LEFT.1),
         vec![cell(Rect::new(230.0, 278.0, 190.0, 52.0), "Right column")],
+    );
+    let (t, reach) = swipe(&grid, Some(f));
+    assert!((t.unwrap() - left_bound()).abs() < 1e-6, "{t:?} {reach}");
+    // Squarish cells: the grid control.
+    let lone = rows_at(20.0, 150.0);
+    let f = frame_of(&lone, "Full swipe row 1");
+    let (t, reach) = swipe(&lone, Some(f));
+    assert!((t.unwrap() - MIN_TRAVEL).abs() < 1e-6 && reach > MIN_TRAVEL + 5.0);
+    let grid = beside_row1(
+        rows_at(20.0, 150.0),
+        vec![cell(Rect::new(180.0, 278.0, 150.0, 52.0), "Right column")],
     );
     let (t, reach) = swipe(&grid, Some(f));
     assert!((t.unwrap() - reach).abs() < 1e-6, "{t:?} {reach}");

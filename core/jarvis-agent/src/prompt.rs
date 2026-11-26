@@ -165,6 +165,10 @@ pub(crate) const RESULT_FLOW_DECLINED: &str =
 pub(crate) const RESULT_NO_VISION: &str = "not available: this model reads the element list only";
 /// History result when `look` takes a screenshot.
 pub(crate) const RESULT_LOOKED: &str = "screenshot taken";
+/// Review pass 33: the note when a look came back without a screenshot (the runner took
+/// none, or one too large to send was left out): the request is decided on the elements.
+pub const NO_SCREENSHOT_NOTE: &str =
+    "No screenshot came back for this look (none could be taken or sent); decide from the element list";
 /// History result when the stuck hint replaced the action.
 pub(crate) const RESULT_STUCK: &str = "not done: repeated action";
 /// History result: the phone locked before the action ran; it will be decided again.
