@@ -934,7 +934,7 @@ final class TopLayerRunnerTests: QATestCase {
             XCTAssertEqual(settings.state, .runningForeground, "\(name): Settings is no longer in the foreground after the refused tap")
 
             // (iv) Home dismisses it; a fresh look is Settings or the Home Screen.
-            let home = try await runner.perform(.pressKey(.home), expect: nil)
+            let home = try await runner.perform(.pressKey(key: .home), expect: nil)
             note("\(name): Home through the runner: ok \(home.ok) \(home.error ?? "")")
             XCTAssertTrue(home.ok, "\(name): Home was refused: \(home.error ?? "")")
             var gone = false
