@@ -241,6 +241,11 @@ pub struct RawNode {
     /// exempts anything. Kept inside the keyboard too (no text of it is listed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<crate::RiskCategory>,
+    /// Review pass 29 (M3): a raw ancestor at any depth has the role `Cell`, drawn or not
+    /// (its frame may be zero, off screen, negative or not a number): the node is on that
+    /// list row (`jarvis_safety`'s row-swipe rule).
+    #[serde(default)]
+    pub in_cell: bool,
 }
 
 /// A text input of the raw tree a compact screen was built from, listed or not (eighth

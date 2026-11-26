@@ -989,6 +989,7 @@ fn case(seed: u64) -> Case {
                 banner: false,
                 grid_cell: false,
                 symbol: None,
+                in_cell: false,
             });
             scroller = Some(id);
         }

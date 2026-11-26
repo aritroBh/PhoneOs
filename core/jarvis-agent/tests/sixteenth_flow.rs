@@ -1070,8 +1070,11 @@ fn paste_after_copy_names_the_source() {
         "Open https://news.example/",
         MemoryStore::new(),
         // Seventeenth review: the page comes to front while Jarvis waits.
+        // Run 146: the model's wait, not the verify settle wait after the copy.
         phone(m, vec![(SAFARI, p.clone())], move |c, _| match c {
-            RunnerCommand::Wait { .. } => Transition::Go(p.clone()),
+            RunnerCommand::Wait { ms } if *ms != jarvis_agent::VERIFY_SETTLE_MS => {
+                Transition::Go(p.clone())
+            }
             _ => Transition::Stay,
         }),
         Script::model(&[&tap(copy), WAIT, &tap(paste), DONE]).decisions(&[false]),

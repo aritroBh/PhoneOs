@@ -925,6 +925,56 @@ fn home_icons_only(screen: &CompactScreen) -> bool {
     })
 }
 
+/// Run 146 (P15): a state of SpringBoard that is not the plain Home Screen although its tree
+/// still holds the Home Screen's icon container, recognised by SpringBoard's own identifiers
+/// (an OS process: not author-controlled; never read from inside a widget, whose content is
+/// a third party's — none of these is a widget's). Each identifier is in its state's captures
+/// and in no other of the 45 older SpringBoard captures, P12a's or P15's other states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HomeScreenMode {
+    /// The App Library (`dewey-search-field`, `dewey-pod-view`).
+    AppLibrary,
+    /// An open folder (its name field: a `TextField` whose identifier ends `, Folder name`).
+    Folder,
+    /// The Home Screen's edit mode, "jiggle mode" (`DeleteButton` on its icons).
+    EditMode,
+}
+
+impl HomeScreenMode {
+    /// What the shell's note calls it.
+    pub fn name(self) -> &'static str {
+        match self {
+            HomeScreenMode::AppLibrary => "the App Library",
+            HomeScreenMode::Folder => "an open folder",
+            HomeScreenMode::EditMode => "the Home Screen's edit mode",
+        }
+    }
+}
+
+/// Run 146 (P15): the mode SpringBoard's raw tree `root` shows, if any ([`HomeScreenMode`]).
+/// Hidden nodes count (as for the shell's Home Screen identifier); iterative.
+pub fn home_screen_mode(root: &UiNode) -> Option<HomeScreenMode> {
+    let mut found = None;
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        let id = n.identifier.as_deref().map(str::trim).unwrap_or("");
+        let mode = match id {
+            "DeleteButton" => Some(HomeScreenMode::EditMode),
+            "dewey-search-field" | "dewey-pod-view" => Some(HomeScreenMode::AppLibrary),
+            _ if id.ends_with(", Folder name") => Some(HomeScreenMode::Folder),
+            _ => None,
+        };
+        // Edit mode wins (deleting an app is the riskiest thing these states offer).
+        match mode {
+            Some(HomeScreenMode::EditMode) => return mode,
+            Some(_) if found.is_none() => found = mode,
+            _ => {}
+        }
+        stack.extend(n.children.iter());
+    }
+    found
+}
+
 /// Sixteenth review, home screen rule: what a widget shows is not shown to the model.
 ///
 /// On a SpringBoard screen (bundle id `com.apple.springboard`, an OS fact) this returns the

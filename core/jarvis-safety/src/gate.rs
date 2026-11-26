@@ -20,6 +20,20 @@ pub enum Gate {
 pub const TRUSTED_ALLOWED: &[RiskCategory] =
     &[RiskCategory::SystemSetting, RiskCategory::Unverified];
 
+/// Categories only the phone itself may approve (never a remote device): money, purchases,
+/// credentials, account changes, deletions, and controls the phrase net could not read
+/// (`jarvis_remote::NEVER_REMOTE_APPROVE` is this list). Review pass 29 (M1): a request that
+/// carries any of them beside the category it shows is asked phone only (remote
+/// approvability is the AND over every carried category).
+pub const NEVER_REMOTE_APPROVE: [RiskCategory; 6] = [
+    RiskCategory::Payment,
+    RiskCategory::Purchase,
+    RiskCategory::Credential,
+    RiskCategory::AccountChange,
+    RiskCategory::Delete,
+    RiskCategory::Unverified,
+];
+
 /// The gate for `category` under `policy`: `None` is allowed, categories in
 /// `policy.deny_categories` are denied, categories in `policy.confirm` need confirmation,
 /// others are allowed.

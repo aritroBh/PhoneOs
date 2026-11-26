@@ -68,6 +68,13 @@ pub enum GestureError {
         "the keyboard is up and this drag would start or end on its keys; dismiss the keyboard first"
     )]
     OnKeyboard,
+    /// Run 146 (P13): the drag crosses a list row so narrow that the longest sideways travel
+    /// kept safe on it ([`ROW_SWIPE_SHARE`] of the row) is shorter than a drag needs to
+    /// register ([`MIN_TRAVEL`]): nothing is sent.
+    #[error(
+        "the drag crosses a list row too narrow to swipe safely: a swipe long enough to register could trigger the row's full-swipe action (such as delete); nothing was sent, use the row's own buttons instead"
+    )]
+    RowTooNarrow,
 }
 
 /// Share of the screen height, from the bottom, that an element-less drag leaves to the
@@ -140,6 +147,32 @@ fn span(region_lo: f64, region_hi: f64, safe_lo: f64, safe_hi: f64) -> (f64, f64
 /// (`jarvis_safety`'s row-swipe rule); this cap only keeps Jarvis's own drag at the
 /// measured-safe length. Relative to the width, so it holds in landscape too.
 pub const MAX_SIDEWAYS_SHARE: f64 = 240.0 / 440.0;
+
+/// Run 146 (Mac, probe P13; P05b Reminders agrees): the longest sideways travel across a
+/// list row, as a share of the **row's** width. On a 400-pt row (`Cell {{20, 278}, {400,
+/// 52}}` on a 440-pt screen) a 240-pt drag (0.60 of the row) only revealed the row's actions,
+/// and every drag of 264 pt (0.66) or more deleted the row — through the runner and as an
+/// XCUITest drag at 200 ms. 0.55 of the row (220 pt there) stays below the length measured
+/// to reveal only, 0.11 of the row (17 %) below the measured delete threshold: the margin
+/// covers a threshold that is a share of the row (UIKit's full swipe is) on a narrower row,
+/// and a drag landing a few points long. A row too narrow for [`MIN_TRAVEL`] within this
+/// share (under about 145 pt) gets no drag at all ([`GestureError::RowTooNarrow`]).
+pub const ROW_SWIPE_SHARE: f64 = 0.55;
+
+/// `g` with its travel at most `max` long: the start kept (it is where the gate read the
+/// drag from), the end moved towards it.
+pub fn shortened(g: Gesture, max: f64) -> Gesture {
+    let (dx, dy) = (g.to.x - g.from.x, g.to.y - g.from.y);
+    let len = dx.hypot(dy);
+    if !(max.is_finite() && max >= 0.0 && len > max) {
+        return g;
+    }
+    let k = max / len;
+    Gesture {
+        to: Point::new(g.from.x + dx * k, g.from.y + dy * k),
+        ..g
+    }
+}
 
 /// `lo..hi` shrunk around its centre to at most `max` long.
 fn capped(lo: f64, hi: f64, max: f64) -> (f64, f64) {

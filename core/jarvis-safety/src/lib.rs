@@ -77,19 +77,21 @@ pub use evaluate::{
     QUESTION_MARKERS, RECIPIENT_FIELD_HEADS, RECIPIENT_FIELD_NEGATIVES, RECIPIENT_FIELD_QUALIFIERS,
     RECIPIENT_FIELD_STRONG_HEADS, RECIPIENT_FIELD_WEAK_HEADS, UNVERIFIED_SCREEN_WARNING,
 };
-pub use evaluate::{round3_question_notes, EMERGENCY_CALL_NOTE, ROW_SWIPE_NOTE};
+pub use evaluate::{planned_drag, round3_question_notes, EMERGENCY_CALL_NOTE, ROW_SWIPE_NOTE};
 pub use flow::{
     copy_control, edit_menu_shape, edit_menu_view, few_actionable, flow_checked, grid_cell,
-    handoff_control, home_menu_row, home_view, insert_control, inside_text_input, is_browser,
-    notification_banner, observed_context, observed_places, remote_container, share_sheet_control,
-    spotlight_app_icon, thin_tree, unplaced_target, url_destination, Confinement, EditMenuShape,
-    FlowContext, InputKind, ScreenPlaces, BROWSERS, COVERS_ALL, COVERS_ALL_PREFIX,
-    EDIT_MENU_OS_LABELS, HOME_SCREEN_READ, LOCAL_MENU_ITEMS, MIN_ACTIONABLE, SCREEN_PICTURE,
-    SHARE_SHEET_IDS, SPOTLIGHT, SYSTEM_ALERT, SYSTEM_BROWSER, UNIDENTIFIED_APP,
-    UNREADABLE_SCREEN_PREFIX, UNREADABLE_SCREEN_SUFFIX,
+    handoff_control, home_menu_row, home_screen_mode, home_view, insert_control, inside_text_input,
+    is_browser, notification_banner, observed_context, observed_places, remote_container,
+    share_sheet_control, spotlight_app_icon, thin_tree, unplaced_target, url_destination,
+    Confinement, EditMenuShape, FlowContext, HomeScreenMode, InputKind, ScreenPlaces, BROWSERS,
+    COVERS_ALL, COVERS_ALL_PREFIX, EDIT_MENU_OS_LABELS, HOME_SCREEN_READ, LOCAL_MENU_ITEMS,
+    MIN_ACTIONABLE, SCREEN_PICTURE, SHARE_SHEET_IDS, SPOTLIGHT, SYSTEM_ALERT, SYSTEM_BROWSER,
+    UNIDENTIFIED_APP, UNREADABLE_SCREEN_PREFIX, UNREADABLE_SCREEN_SUFFIX,
 };
 pub use flow::{picker_node, PickerKind, SYSTEM_PICKER_IDS};
-pub use gate::{changes_state, gate, gate_in, gate_on, gate_owned, Gate, TRUSTED_ALLOWED};
+pub use gate::{
+    changes_state, gate, gate_in, gate_on, gate_owned, Gate, NEVER_REMOTE_APPROVE, TRUSTED_ALLOWED,
+};
 pub use hit::{
     control_at, point_is_clear, system_bar, takes_taps, tap_spot, tap_spot_under, Bar, Covered,
     CoveredBy, Edge, OccluderRule, PointError, GRID as TAP_GRID, OCCLUDER_RULE,

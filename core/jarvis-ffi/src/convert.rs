@@ -172,23 +172,63 @@ impl From<Role> for p::Role {
     }
 }
 
-impl From<p::UiNode> for UiNode {
-    fn from(v: p::UiNode) -> Self {
-        let p::UiNode {
-            role,
-            label,
-            value,
-            identifier,
-            placeholder,
-            frame,
-            enabled,
-            visible,
-            hittable,
-            focused,
-            selected,
-            secure,
-            children,
-        } = v;
+/// Review pass 29 (depth): a tree converted without recursion (an explicit stack), so the
+/// conversion's own frames never grow with the tree's depth (a 256-deep tree, the runner
+/// wire's limit, overflowed a 512 KB thread stack in a debug build).
+fn convert_tree<S, D>(root: S, one: fn(S) -> (D, Vec<S>), set: fn(&mut D, Vec<D>)) -> D {
+    struct Frame<S, D> {
+        node: D,
+        pending: std::vec::IntoIter<S>,
+        done: Vec<D>,
+    }
+    let frame = |v: S| {
+        let (node, children) = one(v);
+        let done = Vec::with_capacity(children.len());
+        Frame {
+            node,
+            pending: children.into_iter(),
+            done,
+        }
+    };
+    let mut stack = vec![frame(root)];
+    loop {
+        let Some(top) = stack.last_mut() else {
+            unreachable!("the stack holds the root until it is returned")
+        };
+        if let Some(child) = top.pending.next() {
+            stack.push(frame(child));
+            continue;
+        }
+        let Some(Frame { mut node, done, .. }) = stack.pop() else {
+            unreachable!("the stack is not empty here")
+        };
+        set(&mut node, done);
+        match stack.last_mut() {
+            Some(parent) => parent.done.push(node),
+            None => return node,
+        }
+    }
+}
+
+/// One node of a `p::UiNode` tree as a `UiNode` without its children, and the children still to
+/// convert.
+fn ffi_node(v: p::UiNode) -> (UiNode, Vec<p::UiNode>) {
+    let p::UiNode {
+        role,
+        label,
+        value,
+        identifier,
+        placeholder,
+        frame,
+        enabled,
+        visible,
+        hittable,
+        focused,
+        selected,
+        secure,
+        children,
+    } = v;
+    (
         UiNode {
             role: role.into(),
             label,
@@ -202,28 +242,31 @@ impl From<p::UiNode> for UiNode {
             focused,
             selected,
             secure,
-            children: children.into_iter().map(Into::into).collect(),
-        }
-    }
+            children: Vec::new(),
+        },
+        children,
+    )
 }
 
-impl From<UiNode> for p::UiNode {
-    fn from(v: UiNode) -> Self {
-        let UiNode {
-            role,
-            label,
-            value,
-            identifier,
-            placeholder,
-            frame,
-            enabled,
-            visible,
-            hittable,
-            focused,
-            selected,
-            secure,
-            children,
-        } = v;
+/// One node of a `UiNode` tree as a `p::UiNode` without its children, and the children still to
+/// convert.
+fn proto_node(v: UiNode) -> (p::UiNode, Vec<UiNode>) {
+    let UiNode {
+        role,
+        label,
+        value,
+        identifier,
+        placeholder,
+        frame,
+        enabled,
+        visible,
+        hittable,
+        focused,
+        selected,
+        secure,
+        children,
+    } = v;
+    (
         p::UiNode {
             role: role.into(),
             label,
@@ -237,8 +280,21 @@ impl From<UiNode> for p::UiNode {
             focused,
             selected,
             secure,
-            children: children.into_iter().map(Into::into).collect(),
-        }
+            children: Vec::new(),
+        },
+        children,
+    )
+}
+
+impl From<p::UiNode> for UiNode {
+    fn from(v: p::UiNode) -> Self {
+        convert_tree(v, ffi_node, |n, c| n.children = c)
+    }
+}
+
+impl From<UiNode> for p::UiNode {
+    fn from(v: UiNode) -> Self {
+        convert_tree(v, proto_node, |n, c| n.children = c)
     }
 }
 

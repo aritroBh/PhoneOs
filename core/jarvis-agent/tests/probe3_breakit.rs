@@ -695,3 +695,226 @@ fn forged_picker_content_is_asked_like_the_apps() {
         assert!(c.summary.contains("Acme"), "{}", c.summary);
     }
 }
+
+// ---------------------------------------------------------------------------------------
+// Review pass 29: four findings, each with its regression test.
+// ---------------------------------------------------------------------------------------
+
+fn policy_without(cats: &[RiskCategory]) -> Policy {
+    let mut p = default_policy();
+    p.confirm.retain(|c| !cats.contains(c));
+    p
+}
+
+/// Pass 29 (M1): the confirm side of the carried set. An owner relaxed `Delete` (not
+/// `SendMessage`). A button whose OS symbol is a paper plane (a send) asks; forged to read
+/// "Delete" it ran unasked (the riskiest category, relaxed, was the only one consulted).
+#[test]
+fn relaxed_max_category_hides_a_carried_send() {
+    let s = parse(fixture!("p4a-symbols-01-symbols-tree.txt"));
+    let p = policy_without(&[RiskCategory::Delete]);
+    let mk = |label: &str| {
+        let mut m = s.clone();
+        edit(&mut m.root, &mut |n| {
+            if n.identifier.as_deref() == Some("paperplane") {
+                n.label = Some(label.into());
+            }
+        });
+        m
+    };
+    let plain = mk("Plane");
+    let d0 = decide(&p, &tap(&plain, "Plane"), &plain);
+    assert!(asked(&d0).is_some(), "{d0:?}");
+    for label in ["Delete", "Remove", "Send"] {
+        let forged = mk(label);
+        let d1 = decide(&p, &tap(&forged, label), &forged);
+        assert!(rank(&d1) >= rank(&d0), "{label}: {d0:?} -> {d1:?}");
+        assert_eq!(
+            asked(&d1),
+            Some(RiskCategory::SendMessage),
+            "{label}: {d1:?}"
+        );
+    }
+    // The riskier relaxed category is named, and the question is phone only (a carried
+    // `Delete` is never approved remotely).
+    let forged = mk("Delete");
+    match decide(&p, &tap(&forged, "Delete"), &forged) {
+        Decision::Confirm(r) => {
+            assert!(
+                r.summary.contains("It also reads as: Delete"),
+                "{}",
+                r.summary
+            );
+            assert!(r.phone_only);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// "Total due $900.00" on the symbols screen, and with `fake_kb` a 1 x 1 `Keyboard` node an
+/// app draws at y 590.
+fn symbols_with_money(fake_kb: bool) -> Screen {
+    let mut s = parse(fixture!("p4a-symbols-01-symbols-tree.txt"));
+    edit(&mut s.root, &mut |n| {
+        if n.role == Role::StaticText && n.label.as_deref() == Some("UIKit toolbar items") {
+            n.label = Some("Total due $900.00".into());
+        }
+    });
+    if fake_kb {
+        let at = Rect::new(439.0, 590.0, 1.0, 1.0);
+        let kb = UiNode::new(Role::Keyboard, at);
+        let last = s.root.children[0].children.len();
+        s.root.children[0].children.insert(last, kb);
+    }
+    s
+}
+
+/// Pass 29 (M2): a 1 x 1 `Keyboard` node made the strip from its top to the screen's bottom
+/// the keyboard's area, which hid "Total due $900.00" from R3: Confirm(Payment, phone only)
+/// became Confirm(SendMessage), or Allow with sends relaxed. Now only a plausible system
+/// keyboard gets the strip (the odd one makes Return of unknown effect), and R3 reads drawn
+/// raw text too, so covering it cannot lower the decision; a `Keyboard` node above the
+/// screen hides nothing either.
+#[test]
+fn fake_keyboard_hides_money_from_r3() {
+    for p in [
+        default_policy(),
+        policy_without(&[RiskCategory::SendMessage]),
+    ] {
+        let s0 = symbols_with_money(false);
+        let s1 = symbols_with_money(true);
+        let d0 = decide(&p, &tap(&s0, "Send"), &s0);
+        let d1 = decide(&p, &tap(&s1, "Send"), &s1);
+        assert_eq!(asked(&d0), Some(RiskCategory::Payment), "{d0:?}");
+        assert!(rank(&d1) >= rank(&d0), "{d0:?}\n->\n{d1:?}");
+        assert_eq!(asked(&d1), asked(&d0), "{d1:?}");
+    }
+    let s1 = symbols_with_money(true);
+    let c = compact_view(&s1).screen;
+    assert!(
+        c.cues.return_key_unknown,
+        "an odd keyboard: Return of unknown effect"
+    );
+    assert!(
+        c.elements.iter().any(|e| e.label.contains("900")),
+        "the 1 x 1 node no longer covers the strip below it"
+    );
+    // A `Keyboard` node above the screen.
+    let mut s2 = symbols_with_money(false);
+    s2.root.children[0].children.push(UiNode::new(
+        Role::Keyboard,
+        Rect::new(0.0, -10.0, 440.0, 20.0),
+    ));
+    let c2 = compact_view(&s2).screen;
+    assert!(c2.elements.iter().any(|e| e.label.contains("900")));
+    let d2 = decide(&default_policy(), &tap(&s2, "Send"), &s2);
+    assert_eq!(asked(&d2), Some(RiskCategory::Payment), "{d2:?}");
+    // The real keyboards keep their area (portrait and the rotated landscape one).
+    for text in [PLAIN, SEND, EMERGENCY, CONTINUE] {
+        let v = compact_view(&parse(text));
+        let kb = v.nodes.iter().find(|n| n.role == Role::Keyboard).unwrap();
+        assert!(
+            kb.frame.max_y() >= 955.0 && kb.frame.y <= 655.0,
+            "{:?}",
+            kb.frame
+        );
+    }
+    let landscape = compact_view(&parse(fixture!("p7-landscape-04-landscape-after-tree.txt")));
+    let kb = landscape
+        .nodes
+        .iter()
+        .find(|n| n.role == Role::Keyboard)
+        .unwrap();
+    assert!(
+        kb.frame.max_y() >= 440.0 && kb.frame.x <= 0.0,
+        "{:?}",
+        kb.frame
+    );
+}
+
+/// Pass 29 (M3): Cell ancestry from every raw node's role. A `Cell` whose frame is not
+/// drawable (zero, off screen, below the screen, negative-sized, not a number) lost its
+/// role, and with its content inset below 0.8 of the scroller the swipe on "Two" went from
+/// Confirm(Delete) to Allow.
+#[test]
+fn cell_undrawable_frames_with_inset_content() {
+    let base = parse(P4D_BEFORE);
+    let d0 = decide(
+        &default_policy(),
+        &swipe(Direction::Left, Some(index(&base, "Two"))),
+        &base,
+    );
+    assert_eq!(asked(&d0), Some(RiskCategory::Delete), "{d0:?}");
+    let frames = [
+        ("zero", Rect::new(0.0, 0.0, 0.0, 0.0)),
+        ("offscreen-left", Rect::new(-1000.0, 509.3, 400.0, 61.0)),
+        ("below-screen", Rect::new(0.0, 5000.0, 440.0, 61.0)),
+        ("negative-size", Rect::new(440.0, 570.3, -440.0, -61.0)),
+        ("nan", Rect::new(f64::NAN, f64::NAN, f64::NAN, f64::NAN)),
+    ];
+    for (name, fr) in frames {
+        let m = mutate_two_cell(|n| {
+            n.frame = fr;
+            for c in &mut n.children {
+                edit(c, &mut |k| {
+                    if k.frame.width > 340.0 {
+                        k.frame.x = 50.0;
+                        k.frame.width = 340.0;
+                    }
+                });
+            }
+        });
+        let d = decide(
+            &default_policy(),
+            &swipe(Direction::Left, Some(index(&m, "Two"))),
+            &m,
+        );
+        assert!(rank(&d) >= rank(&d0), "{name}: {d0:?} -> {d:?}");
+        assert_eq!(asked(&d), Some(RiskCategory::Delete), "{name}: {d:?}");
+    }
+}
+
+/// `k` shown `Keyboard` nodes on the plain Return-key screen.
+fn many_keyboards(k: usize) -> Screen {
+    let mut s = parse(PLAIN);
+    let kids: Vec<UiNode> = (0..k)
+        .map(|i| {
+            UiNode::new(
+                Role::Keyboard,
+                Rect::new((i % 400) as f64, 700.0, 10.0, 10.0),
+            )
+            .with_children(vec![btn(
+                "return",
+                Some("Return"),
+                Rect::new(0.0, 700.0, 5.0, 5.0),
+            )])
+        })
+        .collect();
+    s.root.children[0].children.extend(kids);
+    s
+}
+
+/// Pass 29 (L1): `keyboard_area` walked the whole tree once per keyboard (4000 forged
+/// keyboards: 3.3 s, 16x the input took 123x the time). The input hosts are collected once:
+/// 16x the keyboards takes well under 48x the time (best of three, so a busy machine does
+/// not decide), and Return stays of unknown effect.
+#[test]
+fn many_keyboards_compact_in_linear_time() {
+    let time = |k: usize| {
+        let s = many_keyboards(k);
+        (0..3)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                let v = compact_view(&s);
+                assert!(v.screen.cues.return_key_unknown);
+                t.elapsed().as_secs_f64()
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+    let small = time(250);
+    let large = time(4000);
+    assert!(
+        large < small * 48.0 + 0.05,
+        "250: {small:.4}s, 4000: {large:.4}s"
+    );
+}

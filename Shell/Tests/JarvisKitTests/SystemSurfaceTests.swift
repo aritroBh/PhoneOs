@@ -151,7 +151,10 @@ struct SystemSurfaceTests {
         #expect(SystemSurface.up(present: [sw, nc], lockScreen: false) == .appSwitcher)
         #expect(SystemSurface.up(present: ["SBSwitcherWindow:Main", "AppSwitcherContentView", "card:com.apple.Preferences:sceneID:x"], lockScreen: false) == nil)
         // The runner's one existence query asks for all of them and the banner.
-        #expect(Set(SystemLayers.triggerIdentifiers) == [BannerCover.identifier, cc, nc, sw])
+        // Run 146 (P15): and the Home Screen's edit mode and the App Library (whole), the open
+        // folder's name field (its end).
+        #expect(Set(SystemLayers.triggerIdentifiers) == [BannerCover.identifier, cc, nc, sw, "DeleteButton", "dewey-pod-view"])
+        #expect(SystemLayers.triggerSuffixes == [", Folder name"])
     }
 
     @Test("the top layer: alert, then system surface, then Spotlight, then the app; a surface is the unidentified layer, named")
@@ -164,7 +167,13 @@ struct SystemSurfaceTests {
             #expect(over == D(bundleId: FrontApp.unidentified, surface: surface, surfaceOver: settings))
             #expect(FrontApp.isUnidentified(over.bundleId))
             #expect(over.note == surface.note(over: settings))
-            #expect(over.note?.lowercased().contains("\(surface.name.lowercased()) is up over \(settings.lowercased())") == true)
+            // The surfaces over an app name it; SpringBoard's own states (run 146) are never over
+            // an app and say Home leaves them.
+            if [SystemSurface.controlCentre, .notificationCentre, .appSwitcher].contains(surface) {
+                #expect(over.note?.lowercased().contains("\(surface.name.lowercased()) is up over \(settings.lowercased())") == true)
+            } else {
+                #expect(over.note?.contains("Home leaves it") == true)
+            }
             // An alert over the surface is still an alert.
             #expect(TopLayer.decide(systemAlertUp: true, systemSurface: surface, spotlightInFront: false,
                                     foreground: settings, springBoard: .other) == D(bundleId: sb, alertOver: settings, systemAlert: true))

@@ -215,7 +215,18 @@ fn a_refused_first_command_sets_the_action_aside_and_refunds_its_step() {
             Effect::Act(_)
         ));
         s.step(ev(71 + t * 10, Event::ActResult(RunnerResult::ok())));
-        expect_infer(s.step(ev(72 + t * 10, observed(settings_screen()))));
+        // Run 146: no change on the first look: one settle wait, one more look.
+        assert_eq!(
+            s.step(ev(72 + t * 10, observed(settings_screen()))),
+            Effect::Act(RunnerCommand::Wait {
+                ms: jarvis_agent::VERIFY_SETTLE_MS
+            })
+        );
+        assert_eq!(
+            s.step(ev(73 + t * 10, Event::ActResult(RunnerResult::ok()))),
+            Effect::Observe { screenshot: false }
+        );
+        expect_infer(s.step(ev(74 + t * 10, observed(settings_screen()))));
     }
 }
 

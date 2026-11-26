@@ -8,7 +8,7 @@ use jarvis_proto::{
 use crate::actuation::{actuation, Actuation};
 use crate::app::{app_level, check_app, is_springboard, mode_level, Verdict};
 use crate::classify::{classify, type_target};
-use crate::gate::{changes_state, gate_owned, Gate};
+use crate::gate::{changes_state, gate_owned, Gate, NEVER_REMOTE_APPROVE};
 use crate::redact::{contains_secret, credential_like_field, redact, redact_screen};
 use crate::sanitize::sanitize_screen_text_with_limit;
 use crate::shape::{
@@ -320,7 +320,7 @@ pub fn not_owner_note() -> QuestionRow {
 
 /// Probe round 3 (F1): the note of a question about a sideways drag across a list row.
 pub const ROW_SWIPE_NOTE: &str =
-    "The drag crosses a list row: it may trigger the row's swipe action (a long one can delete it)";
+    "The drag crosses a list row: it may trigger the row's swipe action (on a measured list, a swipe of two thirds of the row deleted it)";
 
 fn row_swipe_note() -> QuestionRow {
     row(QuestionRowKind::Note, &format!(". {ROW_SWIPE_NOTE}"))
@@ -388,30 +388,102 @@ pub fn round3_question_notes(
 /// the keyboard never count. Still missed: a row narrower than that share of its scroller
 /// with no `Cell` role, and rows the tree does not hold. `false` without the raw tree (the
 /// listed-row rule of `classify` decides alone). O(nodes · log nodes), sideways drags only.
+///
+/// Review pass 29 (M3): a node is on a cell's row when ANY raw ancestor has the role `Cell`
+/// (`RawNode::in_cell`, from every raw node's role in the pass that builds the compact view),
+/// drawn or not — a cell whose frame is zero, off screen, below the screen, negative-sized
+/// or not a number keeps its row.
 pub(crate) fn crosses_list_row(
     action: &Action,
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
 ) -> bool {
-    use crate::gestures::{drag_gesture, finger_direction, GestureKind};
+    let Some((kind, direction, element)) = sideways_drag(action) else {
+        return false;
+    };
+    let target = element.and_then(|i| screen.get(i));
+    let Ok(g) = crate::gestures::drag_gesture(kind, direction, target.map(|e| e.frame), screen)
+    else {
+        return false;
+    };
+    crossed_row_width(g, screen, tree).is_some()
+}
+
+/// The gesture kind, direction and element of a scroll or swipe whose finger moves
+/// sideways; `None` for anything else.
+fn sideways_drag(
+    action: &Action,
+) -> Option<(
+    crate::gestures::GestureKind,
+    jarvis_proto::Direction,
+    Option<u32>,
+)> {
+    use crate::gestures::{finger_direction, GestureKind};
     let (kind, direction, element) = match action {
         Action::Scroll { direction, element } => (GestureKind::Scroll, *direction, *element),
         Action::Swipe { direction, element } => (GestureKind::Swipe, *direction, *element),
-        _ => return false,
+        _ => return None,
     };
+    matches!(
+        finger_direction(kind, direction),
+        jarvis_proto::Direction::Left | jarvis_proto::Direction::Right
+    )
+    .then_some((kind, direction, element))
+}
+
+/// Run 146 (P13): the drag the runner is sent for a scroll or swipe — the one computation
+/// the commands (`jarvis_agent`'s `plan`) and the gate's row rule ([`crosses_list_row`])
+/// share. It is [`crate::gestures::drag_gesture`]'s path (the *reach*, which the gate reads);
+/// when that path is sideways and crosses a list row ([`crossed_row_width`], the gate's own
+/// notion of a row), its travel is cut to [`crate::gestures::ROW_SWIPE_SHARE`] of the
+/// narrowest crossed row's width, its start kept (so the sent path is part of the path the
+/// gate read: every rule read on the reach holds for it). A row too narrow for
+/// [`crate::gestures::MIN_TRAVEL`] within that share refuses the drag
+/// ([`crate::gestures::GestureError::RowTooNarrow`]). A drag that crosses no row keeps the
+/// screen-share cap alone.
+pub fn planned_drag(
+    kind: crate::gestures::GestureKind,
+    direction: jarvis_proto::Direction,
+    frame: Option<jarvis_proto::Rect>,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> Result<crate::gestures::Gesture, crate::gestures::GestureError> {
+    use crate::gestures::{
+        drag_gesture, finger_direction, shortened, GestureError, MIN_TRAVEL, ROW_SWIPE_SHARE,
+    };
+    let g = drag_gesture(kind, direction, frame, screen)?;
     if !matches!(
         finger_direction(kind, direction),
         jarvis_proto::Direction::Left | jarvis_proto::Direction::Right
     ) {
-        return false;
+        return Ok(g);
     }
-    let Some(t) = tree.filter(|t| !t.nodes.is_empty()) else {
-        return false;
-    };
-    let target = element.and_then(|i| screen.get(i));
-    let Ok(g) = drag_gesture(kind, direction, target.map(|e| e.frame), screen) else {
-        return false;
-    };
+    match crossed_row_width(g, screen, tree) {
+        None => Ok(g),
+        Some(width) => {
+            let bound = ROW_SWIPE_SHARE * width;
+            // Not a number, or too short to register: no drag.
+            if bound.is_nan() || bound < MIN_TRAVEL {
+                return Err(GestureError::RowTooNarrow);
+            }
+            Ok(shortened(g, bound))
+        }
+    }
+}
+
+/// Run 146 (P13): the width of the narrowest list row the sideways path `g` touches in the
+/// raw tree ([`crosses_list_row`]'s rows), `None` when it touches none (or without the raw
+/// tree). A row's width: a `Cell`'s own frame; for a node a `Cell` holds, the nearest drawn
+/// `Cell` ancestor's frame, or — when no drawn ancestor cell is known (its frame is not
+/// drawable, review pass 29 M3) — the node's own frame (narrower: stricter); for a row by
+/// shape (a row-sized child of a `Table` or `CollectionView`, a row-height node spanning its
+/// scroller), the node's own frame.
+fn crossed_row_width(
+    g: crate::gestures::Gesture,
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+) -> Option<f64> {
+    let t = tree.filter(|t| !t.nodes.is_empty())?;
     let (x0, x1) = (g.from.x.min(g.to.x), g.from.x.max(g.to.x));
     let (y0, y1) = (g.from.y.min(g.to.y), g.from.y.max(g.to.y));
     let row_height = screen.size.height * crate::classify::MAX_LIST_ROW_SHARE;
@@ -425,8 +497,10 @@ pub(crate) fn crosses_list_row(
     // (a parent's index is below its children's).
     // Review pass 28 (M2): and whether a drawn `Cell` holds it (at any depth): a node on a
     // cell's row is on the row whatever frame the cell itself reports.
+    // Run 146: and the width of the nearest drawn `Cell` holding it (`NaN`: none known).
     let mut nearest: Vec<u32> = Vec::with_capacity(t.parents.len());
     let mut in_cell: Vec<bool> = Vec::with_capacity(t.parents.len());
+    let mut cell_width: Vec<f64> = Vec::with_capacity(t.parents.len());
     for (i, &p) in t.parents.iter().enumerate() {
         let parent = usize::try_from(p).ok().filter(|&k| p != u32::MAX && k < i);
         let drawn = parent.and_then(|_| crate::hit::raw_node(t, p));
@@ -440,8 +514,14 @@ pub(crate) fn crosses_list_row(
         let cell = parent.is_some_and(|k| {
             drawn.is_some_and(|n| n.role == Role::Cell) || in_cell.get(k).copied().unwrap_or(false)
         });
+        let width = match (parent, drawn) {
+            (Some(_), Some(n)) if n.role == Role::Cell => n.frame.width,
+            (Some(k), _) => cell_width.get(k).copied().unwrap_or(f64::NAN),
+            (None, _) => f64::NAN,
+        };
         nearest.push(up);
         in_cell.push(cell);
+        cell_width.push(width);
     }
     let parent_of = |i: u32| {
         usize::try_from(i)
@@ -449,7 +529,8 @@ pub(crate) fn crosses_list_row(
             .and_then(|k| t.parents.get(k))
             .copied()
     };
-    t.nodes.iter().any(|n| {
+    let mut narrowest: Option<f64> = None;
+    for n in t.nodes {
         let f = n.frame;
         let touches = !n.keyboard
             && !f.is_empty()
@@ -458,29 +539,39 @@ pub(crate) fn crosses_list_row(
             && f.y <= y1
             && f.max_y() >= y0;
         if !touches {
-            return false;
+            continue;
         }
-        let held = usize::try_from(n.node)
-            .ok()
-            .and_then(|k| in_cell.get(k))
-            .copied()
-            .unwrap_or(false);
-        if n.role == Role::Cell || held {
-            return true;
+        let k = usize::try_from(n.node).ok();
+        let held = n.in_cell || k.and_then(|k| in_cell.get(k)).copied().unwrap_or(false);
+        let width = if n.role == Role::Cell {
+            Some(f.width)
+        } else if held {
+            // The nearest drawn cell's width; none known (its frame is not drawable): the
+            // node's own.
+            Some(
+                k.and_then(|k| cell_width.get(k))
+                    .copied()
+                    .filter(|w| w.is_finite() && *w > 0.0)
+                    .unwrap_or(f.width),
+            )
+        } else if f.height > row_height {
+            None
+        } else {
+            let direct = parent_of(n.node)
+                .and_then(|p| crate::hit::raw_node(t, p))
+                .is_some_and(|p| matches!(p.role, Role::Table | Role::CollectionView));
+            let spans = || {
+                k.and_then(|k| nearest.get(k))
+                    .and_then(|&s| crate::hit::raw_node(t, s))
+                    .is_some_and(|s| f.width >= s.frame.width * ROW_MIN_WIDTH_SHARE)
+            };
+            (direct || spans()).then_some(f.width)
+        };
+        if let Some(w) = width {
+            narrowest = Some(narrowest.map_or(w, |m: f64| m.min(w)));
         }
-        if f.height > row_height {
-            return false;
-        }
-        let direct = parent_of(n.node)
-            .and_then(|p| crate::hit::raw_node(t, p))
-            .is_some_and(|p| matches!(p.role, Role::Table | Role::CollectionView));
-        direct
-            || usize::try_from(n.node)
-                .ok()
-                .and_then(|k| nearest.get(k))
-                .and_then(|&s| crate::hit::raw_node(t, s))
-                .is_some_and(|s| f.width >= s.frame.width * ROW_MIN_WIDTH_SHARE)
-    })
+    }
+    narrowest
 }
 
 /// Review of round 3 (M3): the share of its nearest scrollable ancestor's width a node of
@@ -1004,7 +1095,7 @@ pub fn evaluate_sheeted(
     // element's text or value money-shaped or an amount) is a guess; with a payment
     // context on the screen it is a payment.
     if !unclear && matches!(read, RiskCategory::SendMessage | RiskCategory::PublicPost) {
-        if let Some(payment) = screen_shows_money(screen) {
+        if let Some(payment) = screen_shows_money(screen, tree) {
             unclear = true;
             if payment {
                 category = carry(&mut carried, category, RiskCategory::Payment);
@@ -1060,25 +1151,69 @@ pub fn evaluate_sheeted(
         return Decision::Deny(format!("{denied:?} actions are not allowed"));
     }
     // Rule P (and the hand-on items) ask whatever the owner relaxed (only a denial refuses).
-    let gate = gate_owned(
-        policy,
-        category,
-        level,
-        action,
-        screen,
-        runner_text,
-        unclear,
-        forced,
-    );
+    let gate_of = |c: RiskCategory| {
+        gate_owned(
+            policy,
+            c,
+            level,
+            action,
+            screen,
+            runner_text,
+            unclear,
+            forced,
+        )
+    };
+    // Review pass 29 (M1): the owner's gate applies to EVERY carried category, and the
+    // strictest result wins (Deny > Confirm > Allow; phone only is the request's own): an
+    // owner who relaxed `Delete` but not `SendMessage` is asked about a send button whose
+    // label reads "Delete". The question shows the riskiest category that still asks (the
+    // riskiest overall, unless the owner relaxed it), the others it carries in a note.
+    let mut shown = category;
+    let mut gate = gate_of(category);
+    if gate == Gate::Allow {
+        let mut asking: Option<RiskCategory> = None;
+        for c in carried.iter().copied().filter(|c| *c != RiskCategory::None) {
+            match gate_of(c) {
+                Gate::Deny => {
+                    gate = Gate::Deny;
+                    shown = c;
+                    asking = None;
+                    break;
+                }
+                Gate::Confirm => {
+                    asking = Some(asking.map_or(c, |a| crate::phrases::max_risk(a, c)))
+                }
+                Gate::Allow => {}
+            }
+        }
+        if let Some(c) = asking {
+            gate = Gate::Confirm;
+            shown = c;
+        }
+    }
     match gate {
         Gate::Allow => Decision::Allow,
-        Gate::Deny => Decision::Deny(format!("{category:?} actions are not allowed")),
+        Gate::Deny => Decision::Deny(format!("{shown:?} actions are not allowed")),
         Gate::Confirm => {
+            let category = shown;
             let mut notes = if not_owner {
                 vec![not_owner_note()]
             } else {
                 Vec::new()
             };
+            // Review pass 29 (M1): the riskier categories the owner relaxed, named.
+            let others: Vec<String> = carried
+                .iter()
+                .filter(|c| **c != RiskCategory::None && **c != category)
+                .filter(|c| crate::phrases::max_risk(category, **c) == **c)
+                .map(|c| format!("{c:?}"))
+                .collect();
+            if !others.is_empty() {
+                notes.push(row(
+                    QuestionRowKind::Note,
+                    &format!(". It also reads as: {}", others.join(", ")),
+                ));
+            }
             if inserts.is_some() {
                 notes.push(paste_note(&place_name(screen), &[]));
             }
@@ -1092,7 +1227,10 @@ pub fn evaluate_sheeted(
                 affected_app,
             );
             request.verb = verb_of(action);
-            request.phone_only = unclear;
+            request.phone_only = unclear
+                || carried
+                    .iter()
+                    .any(|c| *c != category && NEVER_REMOTE_APPROVE.contains(c));
             Decision::Confirm(request)
         }
     }
@@ -1370,12 +1508,29 @@ fn presumed_money(action: &Action, screen: &CompactScreen, tree: Option<&ScreenT
     // Amounts shown inside the form (a typed tree only: without one the form is the whole
     // screen, and a price elsewhere on it says nothing about this form).
     match (tree, form.root) {
-        (Some(t), Some(root)) => screen.elements.iter().any(|e| {
-            !e.role.is_text_input()
-                && e.role != Role::Key
-                && t.inside(e, root)
-                && has_money(&crate::classify::element_text(e))
-        }),
+        (Some(t), Some(root)) => {
+            screen.elements.iter().any(|e| {
+                !e.role.is_text_input()
+                    && e.role != Role::Key
+                    && t.inside(e, root)
+                    && has_money(&crate::classify::element_text(e))
+            }) || {
+                // Review pass 29 (M2): a drawn text of the form covered by an occluder (not
+                // listed) still shows the amount.
+                let end = usize::try_from(root)
+                    .ok()
+                    .and_then(|i| t.ends.get(i))
+                    .copied()
+                    .unwrap_or(0);
+                t.nodes.iter().any(|n| {
+                    !n.keyboard
+                        && !n.role.is_text_input()
+                        && n.node > root
+                        && n.node < end
+                        && n.label.as_deref().is_some_and(has_money)
+                })
+            }
+        }
         _ => false,
     }
 }
@@ -1550,39 +1705,62 @@ const MAX_MONEY_TEXT_CHARS: usize = 200;
 /// Fifteenth review (R3): whether anything on `screen` — every element's label and value,
 /// static texts included — is money by shape ([`money_shaped`], [`has_money`]); `Some(true)`
 /// when an element also names a payment context ("Amount", "Network fee", "Total").
-fn screen_shows_money(screen: &CompactScreen) -> Option<bool> {
-    screen_money(screen, true)
+///
+/// Review pass 29 (M2): with the raw tree, also the label of every drawn raw node outside
+/// the keyboard and the value of every non-secure text input the digest hashes (listed or
+/// not): text covered by an occluder — a node typed `Keyboard`, a banner, a sheet — is
+/// still on screen for this rule, so covering it can never lower the decision.
+fn screen_shows_money(screen: &CompactScreen, tree: Option<&ScreenTree<'_>>) -> Option<bool> {
+    screen_money(screen, tree, true)
 }
 
 /// [`screen_shows_money`] with the payment context read only when `want_context`; without it
 /// the scan stops at the first money found (the answer is then `Some(false)` at least).
-fn screen_money(screen: &CompactScreen, want_context: bool) -> Option<bool> {
-    let mut money = false;
-    let mut context = false;
-    for e in &screen.elements {
-        if is_secure_input(e) {
-            continue;
-        }
-        for t in [Some(e.label.as_str()), e.value.as_deref()]
-            .into_iter()
-            .flatten()
-            .map(|t| t.get(..t.len().min(MAX_MONEY_TEXT_CHARS)).unwrap_or(t))
-        {
-            if t.is_empty() {
-                continue;
-            }
-            money |= money_shaped(t) || has_money(t) || crate::shape::symbol_amount(t);
-            if !context && (want_context || !money) {
-                context = crate::text::tokens(t)
+fn screen_money(
+    screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
+    want_context: bool,
+) -> Option<bool> {
+    let listed = screen
+        .elements
+        .iter()
+        .filter(|e| !is_secure_input(e))
+        .flat_map(|e| [Some(e.label.as_str()), e.value.as_deref()]);
+    let drawn = tree.into_iter().flat_map(|t| {
+        t.nodes
+            .iter()
+            .filter(|n| !n.keyboard)
+            .map(|n| n.label.as_deref())
+            .chain(
+                t.inputs
                     .iter()
-                    .any(|w| PAYMENT_CONTEXT_WORDS.contains(&w.as_str()));
-            }
-            if money && (context || !want_context) {
-                return Some(context);
-            }
-        }
+                    .filter(|i| !i.secure)
+                    .map(|i| i.value.as_deref()),
+            )
+    });
+    // Each distinct text once (a raw node's label is usually its listed element's too, and a
+    // page repeats texts): money first, then — only when there is money — the context.
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let texts: Vec<&str> = listed
+        .chain(drawn)
+        .flatten()
+        .map(|t| t.get(..t.len().min(MAX_MONEY_TEXT_CHARS)).unwrap_or(t))
+        .filter(|t| !t.is_empty() && seen.insert(t))
+        .collect();
+    let money = texts
+        .iter()
+        .any(|t| money_shaped(t) || has_money(t) || crate::shape::symbol_amount(t));
+    if !money {
+        return None;
     }
-    money.then_some(context)
+    if !want_context {
+        return Some(false);
+    }
+    Some(texts.iter().any(|t| {
+        crate::text::tokens(t)
+            .iter()
+            .any(|w| PAYMENT_CONTEXT_WORDS.contains(&w.as_str()))
+    }))
 }
 
 /// A control inside an alert, a system sheet or a notification banner (R4).
@@ -4585,7 +4763,7 @@ pub fn question_noted(
 ) -> Vec<QuestionRow> {
     let mut notes = notes.to_vec();
     notes.extend(alert_rows(action, screen, tree));
-    amount_noted(screen, category, notes, |notes| {
+    amount_noted(screen, tree, category, notes, |notes| {
         with_source(source, |max| {
             noted(max, notes, |room| {
                 summarize_with(
@@ -4604,6 +4782,7 @@ pub fn question_noted(
 /// complete without one.
 fn amount_noted(
     screen: &CompactScreen,
+    tree: Option<&ScreenTree<'_>>,
     category: RiskCategory,
     mut notes: Vec<QuestionRow>,
     build: impl Fn(&[QuestionRow]) -> Vec<QuestionRow>,
@@ -4623,10 +4802,10 @@ fn amount_noted(
                 .elements
                 .iter()
                 .any(|e| !is_secure_input(e) && e.label.chars().any(crate::text::is_digit))
-                || screen_money(screen, false).is_some()
+                || screen_money(screen, tree, false).is_some()
         }
         RiskCategory::SendMessage | RiskCategory::PublicPost => {
-            screen_money(screen, false).is_some()
+            screen_money(screen, tree, false).is_some()
         }
         _ => false,
     };
@@ -4728,7 +4907,7 @@ pub fn return_question_noted(
         text: text.to_owned(),
         submit: true,
     };
-    amount_noted(screen, category, notes.to_vec(), |notes| {
+    amount_noted(screen, tree, category, notes.to_vec(), |notes| {
         with_source(source, |max| {
             noted(max, notes, |room| {
                 summarize_with(

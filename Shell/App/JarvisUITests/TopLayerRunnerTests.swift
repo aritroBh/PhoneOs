@@ -809,7 +809,10 @@ final class TopLayerRunnerTests: QATestCase {
     /// identifiers of `SystemSurface`; the simulator is unlocked).
     @MainActor
     private func surfaceUp(_ board: XCUIApplication, _ surface: SystemSurface) -> Bool {
-        board.descendants(matching: .any).matching(identifier: surface.identifier).firstMatch.exists
+        let match = surface.identifierIsSuffix
+            ? NSPredicate(format: "identifier ENDSWITH %@", surface.identifier)
+            : NSPredicate(format: "identifier == %@", surface.identifier)
+        return board.descendants(matching: .any).matching(match).firstMatch.exists
     }
 
     /// Where a touch planned on Settings would land on the surface: a notification row, the
@@ -824,7 +827,7 @@ final class TopLayerRunnerTests: QATestCase {
         case .appSwitcher:
             target = board.descendants(matching: .any)
                 .matching(NSPredicate(format: "identifier BEGINSWITH %@", "card:\(Self.settingsId):")).firstMatch
-        case .controlCentre:
+        case .controlCentre, .homeEditMode, .appLibrary, .openFolder:
             target = nil
         }
         if let target, target.exists, !target.frame.isEmpty {
@@ -963,5 +966,147 @@ final class TopLayerRunnerTests: QATestCase {
         note("surfaces produced: \(produced) of \(Self.surfaceCases.count)")
         await finish("system-surfaces", terminating: [Self.settingsId])
         if produced == 0 { throw XCTSkip("the simulator produced none of Control Centre, Notification Centre, the App Switcher") }
+    }
+
+    // MARK: - 6. SpringBoard's own states that still hold the Home Screen's icons (run 146, P15)
+
+    /// A horizontal drag across SpringBoard at mid-height, as probe P15 makes it.
+    @MainActor
+    private func boardDrag(_ board: XCUIApplication, from: Double, to: Double) {
+        let start = board.coordinate(withNormalizedOffset: CGVector(dx: from, dy: 0.5))
+        let end = board.coordinate(withNormalizedOffset: CGVector(dx: to, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
+    /// The page indicator's value ("Page 1 of 2"), or "" when it is not in the tree.
+    @MainActor
+    private func pageText(_ board: XCUIApplication) -> String {
+        let indicator = board.pageIndicators.firstMatch
+        return indicator.exists ? ((indicator.value as? String) ?? "") : ""
+    }
+
+    /// Home, twice if needed, until the first page shows (P15's `backHome`).
+    @MainActor
+    private func backHome(_ board: XCUIApplication) async throws {
+        XCUIDevice.shared.press(.home)
+        try await Task.sleep(for: .seconds(1.5))
+        if !pageText(board).hasPrefix("Page 1 ") {
+            XCUIDevice.shared.press(.home)
+            try await Task.sleep(for: .seconds(1.5))
+        }
+        note("back home: \(pageText(board))")
+    }
+
+    /// One state up (its identifier in SpringBoard's tree): the runner reports the
+    /// unidentified layer with the state named and nothing of it, and a tap planned on the
+    /// plain Home Screen is stale (at the status bar: harmless if it went through). `false`
+    /// when the simulator did not produce the state (recorded, skipped).
+    @MainActor
+    private func checkHomeState(_ runner: XCUITestPhoneRunner, _ board: XCUIApplication, _ state: SystemSurface) async throws -> Bool {
+        let name = state.name
+        guard surfaceUp(board, state) else {
+            note("\(name): \(state.identifier) is not in SpringBoard's tree; skipped (the simulator did not produce it)")
+            return false
+        }
+        let askedAt = Date()
+        let front = try await runner.frontBundleId()
+        note("\(name): frontBundleId() \(front ?? "nil") in \(Self.seconds(Date().timeIntervalSince(askedAt))) s (recorded only)")
+        XCTAssertEqual(front, FrontApp.unidentified, "\(name): not reported as the unidentified layer")
+        let lookAt = Date()
+        let look = try await runner.snapshot(includeScreenshot: false)
+        let children = look.root?.children.count ?? 0
+        note("\(name): look \(look.appBundleId), \(children) children, in \(Self.seconds(Date().timeIntervalSince(lookAt))) s; notes: \(look.notes.joined(separator: " | "))")
+        XCTAssertEqual(look.appBundleId, FrontApp.unidentified, "\(name): the look is not of the unidentified layer")
+        XCTAssertEqual(children, 0, "\(name): the look has content")
+        XCTAssertTrue(look.notes.contains(state.note(over: nil)), "\(name): no note names it: \(look.notes)")
+        let tappedAt = Date()
+        let stale = try await runner.perform(.tap(x: look.screenSize.width / 2, y: 20),
+                                             expect: CommandExpect(bundleId: Self.springboardId))
+        note("\(name): tap planned on the Home Screen: ok \(stale.ok), failure \(String(describing: stale.failure)), \(stale.error ?? "") in \(Self.seconds(Date().timeIntervalSince(tappedAt))) s")
+        XCTAssertFalse(stale.ok, "\(name): the tap planned on the Home Screen was carried out")
+        XCTAssertEqual(stale.failure, RunnerFailure.stale)
+        return true
+    }
+
+    /// Run 146 (P15): the App Library, an open folder and the Home Screen's edit mode are not
+    /// the Home Screen (the unidentified layer, named; a tap planned on the Home Screen is
+    /// stale there); the Today view still is (its widgets are the core's stubs). Each state is
+    /// opened the way probe P15 opens it (`TreeFactProbe3SystemTests.testP15_SpringBoardStates`);
+    /// the phone ends on the plain Home Screen. Timings are recorded, not asserted.
+    /// Timing (expected): ~60 s.
+    @MainActor
+    func testF_HomeScreenStatesAreNotTheHomeScreen() async throws {
+        continueAfterFailure = true
+        started = Date()
+        await SystemAppAgentTests.startOnHomeScreen(terminating: [])
+        let board = XCUIApplication(bundleIdentifier: Self.springboardId)
+        try await backHome(board)
+        let runner = XCUITestPhoneRunner()
+        let plain = try await runner.snapshot(includeScreenshot: false)
+        note("the plain Home Screen: \(plain.appBundleId); notes: \(plain.notes.joined(separator: " | "))")
+        XCTAssertEqual(plain.appBundleId, Self.springboardId, "the plain Home Screen is not reported as SpringBoard")
+        let pages = Int(pageText(board).split(separator: " ").last ?? "2") ?? 2
+        var produced = 0
+
+        // The Today view: still the Home Screen.
+        boardDrag(board, from: 0.15, to: 0.9)
+        try await Task.sleep(for: .seconds(1.5))
+        let today = try await runner.snapshot(includeScreenshot: false)
+        note("the Today view: \(today.appBundleId); notes: \(today.notes.joined(separator: " | "))")
+        XCTAssertEqual(today.appBundleId, Self.springboardId, "the Today view is not reported as SpringBoard")
+        try await backHome(board)
+
+        // The App Library: past the last page.
+        for _ in 0..<pages {
+            boardDrag(board, from: 0.85, to: 0.1)
+            try await Task.sleep(for: .seconds(1.2))
+        }
+        if try await checkHomeState(runner, board, .appLibrary) { produced += 1 }
+        try await backHome(board)
+
+        // An open folder.
+        let folder = board.icons.matching(NSPredicate(format: "label ENDSWITH %@", "folder")).firstMatch
+        if folder.exists {
+            var swipes = 0
+            while !folder.isHittable, swipes < pages - 1 {
+                boardDrag(board, from: 0.85, to: 0.1)
+                swipes += 1
+                try await Task.sleep(for: .seconds(1.2))
+            }
+            if folder.isHittable {
+                folder.tap()
+                try await Task.sleep(for: .seconds(1.5))
+                if try await checkHomeState(runner, board, .openFolder) { produced += 1 }
+            } else {
+                note("an open folder: the folder icon is not hittable; skipped")
+            }
+            try await backHome(board)
+        } else {
+            note("an open folder: no icon labelled \"… folder\"; skipped")
+        }
+
+        // Edit mode: a long press on empty wallpaper of the last page.
+        for _ in 0..<max(pages - 1, 0) {
+            boardDrag(board, from: 0.85, to: 0.1)
+            try await Task.sleep(for: .seconds(1.2))
+        }
+        board.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62)).press(forDuration: 1.5)
+        try await Task.sleep(for: .seconds(1.5))
+        if try await checkHomeState(runner, board, .homeEditMode) { produced += 1 }
+        let done = board.buttons["Done"].firstMatch
+        if done.exists, done.isHittable {
+            done.tap()
+        } else {
+            XCUIDevice.shared.press(.home)
+        }
+        try await Task.sleep(for: .seconds(1.5))
+        try await backHome(board)
+        XCTAssertFalse(surfaceUp(board, .homeEditMode), "the edit mode is still up at the end")
+        let after = try await runner.snapshot(includeScreenshot: false)
+        note("afterwards: \(after.appBundleId); \(pageText(board))")
+        XCTAssertEqual(after.appBundleId, Self.springboardId, "the phone does not end on the plain Home Screen")
+        note("states produced: \(produced) of 3")
+        await finish("home-screen-states", terminating: [])
+        if produced == 0 { throw XCTSkip("the simulator produced none of the App Library, an open folder, the edit mode") }
     }
 }

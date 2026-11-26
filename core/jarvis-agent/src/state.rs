@@ -93,6 +93,9 @@ pub(crate) struct Pending {
     /// is no input: `wait`, `look`, the text of `done`/`fail`/`ask_user`). A recorded step
     /// stores them (`FlowStep::place`).
     pub places: Vec<jarvis_safety::FlowContext>,
+    /// Run 146: the verification already took its one settle look (a look that showed no
+    /// change after [`crate::session::VERIFY_SETTLE_MS`]); the next reading concludes.
+    pub settle_looked: bool,
 }
 
 /// Sixteenth review (Rule T): a flow an action's question asks the owner to allow.
@@ -189,6 +192,7 @@ impl std::fmt::Debug for Pending {
             .field("expect_change", &self.expect_change)
             .field("exec", &exec)
             .field("check", &self.check)
+            .field("settle_looked", &self.settle_looked)
             .finish_non_exhaustive()
     }
 }
@@ -296,6 +300,10 @@ pub(crate) enum Chosen {
     /// The verify look of an action whose plan sent nothing (cannot happen for validated
     /// actions). Refused: a failed step.
     NothingSent,
+    /// Run 146: the one more look, after a settle wait, at the screen after an action that
+    /// was expected to change it and did not yet (`Session::verify`). Refused (checked
+    /// before the wait is sent, and again before the look): the first reading concludes.
+    VerifySettle,
 }
 
 /// Why the session is waiting for an observation.
@@ -336,6 +344,10 @@ pub(crate) struct FocusCheck {
     pub queue: VecDeque<RunnerCommand>,
     /// The action.
     pub pending: Box<Pending>,
+    /// Run 147: the one settle wait and look taken because no input showed focus yet.
+    pub settled: bool,
+    /// Run 147: the one repeated focusing tap sent (the field had still not taken focus).
+    pub retapped: bool,
 }
 
 /// A screen-touching action the model (or a flow) chose, held while the session looks
@@ -435,6 +447,20 @@ pub(crate) enum State {
         /// The typing under verification (its check holds the readings so far).
         pending: Box<Pending>,
     },
+    /// Run 146: `Effect::Act` is outstanding for the settle wait before the one more look at
+    /// the screen after an action that showed no change yet (see `Session::verify`). A
+    /// `Verify` observation follows unless the look is refused.
+    AwaitingVerifyWait {
+        /// The action under verification (`settle_looked` set).
+        pending: Box<Pending>,
+    },
+    /// Run 147: `Effect::Act` is outstanding for the settle wait, or the one repeated
+    /// focusing tap, of a typing whose field showed no focus after its focusing tap (see
+    /// `Session::after_focus_tap`). A `Focus` observation follows.
+    AwaitingFocusRetry {
+        /// The typing held before its text.
+        check: Box<FocusCheck>,
+    },
     /// `Effect::CallTool` is outstanding.
     AwaitingTool {
         /// The call being executed.
@@ -480,7 +506,9 @@ impl State {
             State::AwaitingModel { .. } => "waiting for the model",
             State::AwaitingAct { .. }
             | State::AwaitingRelook { .. }
-            | State::AwaitingTypeWait { .. } => "waiting for the runner",
+            | State::AwaitingTypeWait { .. }
+            | State::AwaitingVerifyWait { .. }
+            | State::AwaitingFocusRetry { .. } => "waiting for the runner",
             State::AwaitingTool { .. } => "waiting for a tool result",
             State::AwaitingConfirm { .. } => "waiting for a confirmation",
             State::AwaitingAnswer { .. } => "waiting for an answer",
@@ -496,7 +524,8 @@ impl State {
             State::AwaitingObservation {
                 purpose: ObservePurpose::Verify(_),
             } => Phase::Verifying,
-            State::AwaitingTypeWait { .. } => Phase::Verifying,
+            State::AwaitingTypeWait { .. } | State::AwaitingVerifyWait { .. } => Phase::Verifying,
+            State::AwaitingFocusRetry { .. } => Phase::Acting,
             State::AwaitingObservation { .. } | State::AwaitingRelook { .. } => Phase::Observing,
             State::AwaitingModel { .. } => Phase::Thinking,
             State::AwaitingAct { .. } => Phase::Acting,

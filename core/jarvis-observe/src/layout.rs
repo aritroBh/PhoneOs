@@ -305,41 +305,106 @@ fn bounding(a: Rect, b: Rect) -> Rect {
 /// and every drawn input host ([`INPUT_HOST_ID`], not excluded) whose frame holds the
 /// keyboard's — clipped to the screen. The identifier only ever enlarges the area (an app
 /// can set any identifier: at worst more of its screen counts as keyboard, fail closed).
-fn keyboard_area(screen: &Screen, k: &UiNode, excluded: &HashSet<usize>) -> Rect {
+///
+/// Review pass 29 (M2): only a keyboard that is plausibly the system's ([`system_keyboard`])
+/// gets the strip and the input hosts; any other `Keyboard` node (a 1 × 1 node an app draws
+/// anywhere, one above the screen) counts with its own frame only — it can no longer hide
+/// the screen under a strip — and makes Return of unknown effect ([`Layout::odd_keyboards`]).
+/// Review pass 29 (L1): the input hosts are collected once per screen (`hosts`), not once
+/// per keyboard.
+fn keyboard_area(screen: &Screen, k: &UiNode, hosts: &[Rect]) -> Rect {
     let kb = k.frame;
     let bounds = screen.bounds();
     let mut area = kb;
-    if !bounds.is_empty() && kb.y < bounds.max_y() {
-        let top = kb.y.max(bounds.y);
-        area = bounding(
-            area,
-            Rect::new(bounds.x, top, bounds.width, bounds.max_y() - top),
-        );
-    }
-    let holds = |f: &Rect| {
-        f.x <= kb.x + HOST_TOLERANCE
-            && f.y <= kb.y + HOST_TOLERANCE
-            && f.max_x() >= kb.max_x() - HOST_TOLERANCE
-            && f.max_y() >= kb.max_y() - HOST_TOLERANCE
-    };
-    let mut stack: Vec<(&UiNode, usize)> = vec![(&screen.root, 0)];
-    while let Some((n, depth)) = stack.pop() {
-        if is_pruned(n) || depth > MAX_DEPTH || excluded.contains(&addr(n)) {
-            continue;
+    if system_keyboard(kb, bounds) {
+        if !bounds.is_empty() && kb.y < bounds.max_y() {
+            let top = kb.y.max(bounds.y);
+            area = bounding(
+                area,
+                Rect::new(bounds.x, top, bounds.width, bounds.max_y() - top),
+            );
         }
-        if n.identifier.as_deref().map(str::trim) == Some(INPUT_HOST_ID)
-            && !n.frame.is_empty()
-            && holds(&n.frame)
-        {
-            area = bounding(area, n.frame);
+        let holds = |f: &Rect| {
+            f.x <= kb.x + HOST_TOLERANCE
+                && f.y <= kb.y + HOST_TOLERANCE
+                && f.max_x() >= kb.max_x() - HOST_TOLERANCE
+                && f.max_y() >= kb.max_y() - HOST_TOLERANCE
+        };
+        for f in hosts.iter().filter(|f| holds(f)) {
+            area = bounding(area, *f);
         }
-        stack.extend(n.children.iter().map(|c| (c, depth + 1)));
     }
     if bounds.is_empty() {
         area
     } else {
         area.intersection(&bounds).unwrap_or(area)
     }
+}
+
+/// Every drawn input host ([`INPUT_HOST_ID`]) outside the excluded subtrees, in one walk.
+fn input_hosts(screen: &Screen, excluded: &HashSet<usize>) -> Vec<Rect> {
+    let mut out = Vec::new();
+    let mut stack: Vec<(&UiNode, usize)> = vec![(&screen.root, 0)];
+    while let Some((n, depth)) = stack.pop() {
+        if is_pruned(n) || depth > MAX_DEPTH || excluded.contains(&addr(n)) {
+            continue;
+        }
+        if n.identifier.as_deref().map(str::trim) == Some(INPUT_HOST_ID) && !n.frame.is_empty() {
+            out.push(n.frame);
+        }
+        stack.extend(n.children.iter().map(|c| (c, depth + 1)));
+    }
+    out
+}
+
+/// How far (points) a system keyboard's frame may fall short of the screen's edges.
+const SYSTEM_KEYBOARD_TOLERANCE: f64 = 2.0;
+/// A system keyboard's top is below this share of the screen height ...
+const SYSTEM_KEYBOARD_MIN_TOP: f64 = 0.25;
+/// ... it is at least this share of the height tall (the real one: 25 %) ...
+const SYSTEM_KEYBOARD_MIN_HEIGHT: f64 = 0.1;
+// ... and it ends on the screen: its strip then runs from its top to the screen's bottom
+// (where its bottom row is, outside the node).
+/// A landscape keyboard (centred, not full width) spans at least this share of the width.
+const LANDSCAPE_KEYBOARD_MIN_WIDTH: f64 = 0.6;
+
+/// Review pass 29 (M2): whether a `Keyboard` node's frame `kb` is plausibly the system
+/// keyboard on a screen of `bounds`. Every real capture (iOS 26.5, 25 portrait trees of the
+/// probe rounds and fixtures): `Keyboard {{0, 655}, {440, 243}}` on 440 × 956 — the full
+/// width, its top at 69 % of the height, its bottom 58 pt (6 %) above the screen's bottom
+/// (the bottom row is in a sibling). Landscape (`p7-landscape-04`, 956 × 440): the keyboard's
+/// window reports the frame **rotated**, `{{2, 117}, {162, 722}}`, where the input host is
+/// `{{117, 276}, {722, 164}}`: turned back (x' = y, y' = height − (x + w), w' = h, h' = w)
+/// it is `{{117, 276}, {722, 162}}`, centred, 76 % of the width, its bottom at the screen's
+/// bottom — accepted as such (and its strip, from the reported top, over-covers as before).
+/// Anything else is not the system keyboard. `false` on a screen of unknown size.
+fn system_keyboard(kb: Rect, bounds: Rect) -> bool {
+    if bounds.is_empty() || kb.is_empty() {
+        return false;
+    }
+    let (w, h) = (bounds.width, bounds.height);
+    let lower = |top: f64, bottom: f64| {
+        top >= bounds.y + h * SYSTEM_KEYBOARD_MIN_TOP
+            && bottom - top >= h * SYSTEM_KEYBOARD_MIN_HEIGHT
+            && bottom <= bounds.max_y() + SYSTEM_KEYBOARD_TOLERANCE
+    };
+    let full_width = (kb.x - bounds.x).abs() <= SYSTEM_KEYBOARD_TOLERANCE
+        && (kb.max_x() - bounds.max_x()).abs() <= SYSTEM_KEYBOARD_TOLERANCE;
+    if full_width && lower(kb.y, kb.max_y()) {
+        return true;
+    }
+    // The rotated landscape frame, turned back.
+    if w > h && kb.height > kb.width {
+        let (x, y, rw, rh) = (
+            bounds.x + kb.y,
+            bounds.max_y() - kb.max_x(),
+            kb.height,
+            kb.width,
+        );
+        let centred = (x + rw / 2.0 - (bounds.x + w / 2.0)).abs() <= SYSTEM_KEYBOARD_TOLERANCE;
+        return centred && rw >= w * LANDSCAPE_KEYBOARD_MIN_WIDTH && lower(y, y + rh);
+    }
+    false
 }
 
 /// One screen as both the digest and compaction read it (see the module docs).
@@ -358,6 +423,10 @@ pub(crate) struct Layout<'a> {
     /// typed `Keyboard` of its own before the real one): their Return keys are all read
     /// (`compact::return_key`), and their areas are one.
     pub keyboards: Vec<&'a UiNode>,
+    /// Review pass 29 (M2): a shown `Keyboard` node is not plausibly the system keyboard
+    /// (`system_keyboard`): it counts with its own frame only, and Return's effect is
+    /// unknown (`ScreenCues::return_key_unknown`), as with several keyboards.
+    pub odd_keyboards: bool,
     /// Audit of real trees (C4): where the keyboard takes touches — larger than the
     /// `Keyboard` node (see [`keyboard_area`]); review pass 28: the union over every shown
     /// keyboard.
@@ -386,10 +455,23 @@ impl<'a> Layout<'a> {
             }
             stack.extend(n.children.iter().rev().map(|c| (c, out)));
         }
-        let keyboard = keyboards.first().copied();
+        // Review pass 29 (M2): the keyboard whose node is drawn over the whole area is the
+        // first plausible system keyboard (else the first); one that is not plausible is odd.
+        let bounds = screen.bounds();
+        let keyboard = keyboards
+            .iter()
+            .copied()
+            .find(|k| system_keyboard(k.frame, bounds))
+            .or_else(|| keyboards.first().copied());
+        let odd_keyboards = keyboards.iter().any(|k| !system_keyboard(k.frame, bounds));
+        let hosts = if keyboards.is_empty() {
+            Vec::new()
+        } else {
+            input_hosts(screen, &excluded)
+        };
         let keyboard_area = keyboards
             .iter()
-            .map(|k| keyboard_area(screen, k, &excluded))
+            .map(|k| keyboard_area(screen, k, &hosts))
             .reduce(bounding);
         let occluder = if alert.is_some() { None } else { keyboard_area };
         let quiet = keyboard_parts(screen, &excluded);
@@ -401,8 +483,9 @@ impl<'a> Layout<'a> {
             alert,
             keyboard,
             keyboards,
+            odd_keyboards,
             keyboard_area,
-            bounds: screen.bounds(),
+            bounds,
             occluder,
         }
     }
@@ -565,6 +648,9 @@ pub(crate) struct RawIndex {
     pub by_addr: std::collections::HashMap<usize, u32>,
     pub parents: Vec<u32>,
     pub ends: Vec<u32>,
+    /// Review pass 29 (M3): per index, whether a raw ancestor at any depth has the role
+    /// `Cell` — drawn or not, whatever its frame (zero, off screen, negative, NaN).
+    pub in_cell: Vec<bool>,
 }
 
 impl RawIndex {
@@ -574,10 +660,11 @@ impl RawIndex {
             by_addr: std::collections::HashMap::new(),
             parents: Vec::new(),
             ends: Vec::new(),
+            in_cell: Vec::new(),
         };
-        // (node, parent index, exit marker index)
-        let mut stack: Vec<(&UiNode, u32, Option<u32>)> = vec![(root, u32::MAX, None)];
-        while let Some((node, parent, exit)) = stack.pop() {
+        // (node, parent index, exit marker index, held by a `Cell`)
+        let mut stack: Vec<(&UiNode, u32, Option<u32>, bool)> = vec![(root, u32::MAX, None, false)];
+        while let Some((node, parent, exit, held)) = stack.pop() {
             if let Some(i) = exit {
                 let end = u32::try_from(out.parents.len()).unwrap_or(u32::MAX);
                 if let Some(e) = usize::try_from(i).ok().and_then(|i| out.ends.get_mut(i)) {
@@ -592,8 +679,10 @@ impl RawIndex {
             out.by_addr.insert(addr(node), i);
             out.parents.push(parent);
             out.ends.push(i.saturating_add(1));
-            stack.push((node, parent, Some(i)));
-            stack.extend(node.children.iter().rev().map(|c| (c, i, None)));
+            out.in_cell.push(held);
+            stack.push((node, parent, Some(i), held));
+            let below = held || node.role == Role::Cell;
+            stack.extend(node.children.iter().rev().map(|c| (c, i, None, below)));
         }
         out
     }

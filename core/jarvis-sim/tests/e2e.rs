@@ -15,6 +15,22 @@ use jarvis_proto::{OutcomeStatus, RiskCategory, RunnerCommand};
 use jarvis_safety::{SCREEN_BLOCK_END, SCREEN_BLOCK_START};
 use jarvis_sim::{Human, ObserveMode, RunOptions, RunReport, ScriptedModel};
 
+/// Run 146: the verify settle waits among `commands` (a model's `wait` of the same length
+/// would count too; none of these scripts has one).
+fn settles(commands: &[RunnerCommand]) -> usize {
+    commands
+        .iter()
+        .filter(
+            |c| matches!(c, RunnerCommand::Wait { ms } if *ms == jarvis_agent::VERIFY_SETTLE_MS),
+        )
+        .count()
+}
+
+/// The commands but the verify settle waits.
+fn acted(commands: &[RunnerCommand]) -> usize {
+    commands.len() - settles(commands)
+}
+
 fn assert_success(r: &RunReport, ctx: &str) {
     assert_eq!(
         r.outcome.status,
@@ -463,7 +479,9 @@ fn runner_text_hides_disabled_buttons_so_the_tap_is_sent_and_does_nothing() {
         &script,
         &mut Human::approve_all(),
     );
-    assert_eq!(t.commands.len(), 1, "{}", t.transcript());
+    // Run 146: the tap, then one settle wait before the second verify look (nothing changed).
+    assert_eq!(acted(&t.commands), 1, "{}", t.transcript());
+    assert_eq!(settles(&t.commands), 1, "{}", t.transcript());
     assert!(t
         .steps
         .iter()
@@ -686,7 +704,9 @@ fn repeating_an_action_that_changes_nothing_is_stuck() {
             "{}",
             r.outcome.summary
         );
-        assert_eq!(r.commands.len(), 2, "the third repeat is not executed");
+        assert_eq!(acted(&r.commands), 2, "the third repeat is not executed");
+        // Run 146: each tap that changed nothing was looked at once more after a wait.
+        assert_eq!(settles(&r.commands), 2, "{mode:?}");
         assert!(r.requests[3]
             .user
             .contains("same action on the same screen 3 times"));

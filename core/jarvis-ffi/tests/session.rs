@@ -669,3 +669,53 @@ fn a_locked_phone_waits_resumes_by_observing_and_can_time_out() {
     assert!(memory.contains(r#""outcome":"interrupted""#), "{memory}");
     assert!(memory.contains(r#""lock_waits":1"#), "{memory}");
 }
+
+/// Review pass 29 (depth): a tree is at most `jarvis_runner::MAX_TREE_DEPTH` (256) deep when
+/// it reaches the FFI (the runner wire refuses deeper ones; the in-runner copy and
+/// `UiTreeBuilder` stop at 200 levels; the deepest real capture is 35). At that depth the
+/// session's step — the FFI conversion, the compaction, the clones — runs on a 512 KB
+/// thread stack, an iOS secondary thread's.
+#[test]
+fn a_tree_at_the_wire_depth_cap_is_stepped_on_a_small_stack() {
+    let worker = thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(|| {
+            let full = rect(0.0, 0.0, 393.0, 852.0);
+            let mut node = ui(
+                Role::Button,
+                Some("Deep"),
+                rect(16.0, 100.0, 200.0, 44.0),
+                true,
+                vec![],
+            );
+            for _ in 0..jarvis_runner::MAX_TREE_DEPTH - 2 {
+                node = ui(
+                    Role::Other {
+                        name: "Other".into(),
+                    },
+                    None,
+                    full,
+                    false,
+                    vec![node],
+                );
+            }
+            let root = ui(Role::Application, Some("Settings"), full, false, vec![node]);
+            let mut screen = settings_screen();
+            screen.root = root;
+            let session = JarvisSession::new(config(), task(), String::new()).unwrap();
+            session.step(1, Event::Start);
+            let effect = session.step(
+                2,
+                Event::Observed {
+                    observation: ScreenObservation {
+                        screen,
+                        screenshot: None,
+                        device_locked: false,
+                    },
+                },
+            );
+            matches!(effect, Effect::Infer { .. })
+        })
+        .unwrap();
+    assert!(worker.join().unwrap());
+}

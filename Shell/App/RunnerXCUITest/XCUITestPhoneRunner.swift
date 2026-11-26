@@ -559,6 +559,9 @@ final class XCUITestPhoneRunner: PhoneRunner {
         let board = application(Self.springboard)
         var parts = [NSPredicate(format: "elementType == %lu", XCUIElement.ElementType.alert.rawValue)]
         parts += SystemLayers.triggerIdentifiers.map { NSPredicate(format: "identifier == %@", $0) }
+        // Run 146 (P15): the open folder's name field (`<name>, Folder name`): more terms of
+        // the same one query.
+        parts += SystemLayers.triggerSuffixes.map { NSPredicate(format: "identifier ENDSWITH %@", $0) }
         let any = NSCompoundPredicate(orPredicateWithSubpredicates: parts)
         guard board.descendants(matching: .any).matching(any).firstMatch.exists else { return (.nothing, nil, 0) }
         let start = Date()
@@ -569,7 +572,10 @@ final class XCUITestPhoneRunner: PhoneRunner {
         }
         let alert = board.alerts.firstMatch.exists
         let surface = SystemSurface.allCases.first { s in
-            board.descendants(matching: .any).matching(identifier: s.identifier).firstMatch.exists
+            let match = s.identifierIsSuffix
+                ? NSPredicate(format: "identifier ENDSWITH %@", s.identifier)
+                : NSPredicate(format: "identifier == %@", s.identifier)
+            return board.descendants(matching: .any).matching(match).firstMatch.exists
         }
         return (SystemLayers(alert: alert, surface: surface, banners: []), nil, 0)
     }

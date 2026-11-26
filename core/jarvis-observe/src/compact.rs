@@ -1032,6 +1032,11 @@ pub fn compact_view(screen: &Screen) -> CompactView {
                     banner: jarvis_safety::notification_banner(node),
                     grid_cell: jarvis_safety::grid_cell(node),
                     symbol: jarvis_safety::identifier_symbol_risk(node),
+                    in_cell: usize::try_from(i)
+                        .ok()
+                        .and_then(|k| index.in_cell.get(k))
+                        .copied()
+                        .unwrap_or(false),
                 });
             }
         }
@@ -1071,6 +1076,7 @@ pub fn compact_view(screen: &Screen) -> CompactView {
         .or_else(|| keys.first().cloned())
         .unwrap_or_default();
     let several_keyboards = layout.keyboards.len() > 1
+        || layout.odd_keyboards
         || keys
             .iter()
             .filter_map(|k| k.kind)

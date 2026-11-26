@@ -14,14 +14,10 @@ use serde::{Deserialize, Serialize};
 /// Thirteenth review: a request flagged `ConfirmRequest::phone_only` (a presumed submit,
 /// whose control the gate could not read; a link the owner did not give) is not remotely
 /// approvable either, whatever its category (the hub checks the flag beside this list).
-pub const NEVER_REMOTE_APPROVE: [RiskCategory; 6] = [
-    RiskCategory::Payment,
-    RiskCategory::Purchase,
-    RiskCategory::Credential,
-    RiskCategory::AccountChange,
-    RiskCategory::Delete,
-    RiskCategory::Unverified,
-];
+///
+/// Review pass 29 (M1): defined in the gate (`jarvis_safety::NEVER_REMOTE_APPROVE`), which
+/// flags a request phone only when it carries one of them beside the category it shows.
+pub const NEVER_REMOTE_APPROVE: [RiskCategory; 6] = jarvis_safety::NEVER_REMOTE_APPROVE;
 
 /// True when `category` may be approved remotely at all (it is not in
 /// [`NEVER_REMOTE_APPROVE`]).

@@ -204,6 +204,15 @@ pub const MAX_SETTLE_LOOKS: u32 = 3;
 pub const MAX_TYPING_LOOKS: u32 = 3;
 /// The settle wait before each extra look at a typed field.
 pub const TYPING_LOOK_MS: u64 = 400;
+/// Run 146: the settle wait before the one more look at the screen after an action that was
+/// expected to change it and showed no change on the first look (`Session::verify`). The
+/// time between an action and its verifying look used to be only the runner's overhead:
+/// on the Mac a SwiftUI switch tapped by a replayed step still read `value="0"` 1.42 s
+/// after the tap (a faster runner), and `1` at 2.58 s in the run that learned the step.
+/// The second look comes at least this long after the first one finished, plus one look's
+/// overhead (about 1.2 s on that run): past 3 s after the tap, beyond what any run showed,
+/// while a screen that really did not change costs under a second more, and only then.
+pub const VERIFY_SETTLE_MS: u64 = 800;
 /// Characters of tool output or answers kept in the history.
 const MAX_RESULT_CHARS: usize = 300;
 /// Known app names listed when `open_app` names an unknown app.
@@ -386,6 +395,17 @@ fn repeat_key(action: &Action, screen: &CompactScreen) -> Option<String> {
         Action::TapPoint { x, y } => Some(format!("tap_point#{x:.3}#{y:.3}")),
         _ => None,
     }
+}
+
+/// Run 146: whether an action that showed no change on its verifying look gets one more look
+/// after [`VERIFY_SETTLE_MS`] (see `Session::verify`): every action expected to change the
+/// screen but a scroll or swipe (the end of a list is information, and the content moves
+/// with the drag) and typing (its own check).
+fn settles(action: &Action) -> bool {
+    !matches!(
+        action,
+        Action::Scroll { .. } | Action::Swipe { .. } | Action::Type { .. }
+    )
 }
 
 /// Sliders, pickers and controls labelled like a stepper or pager.
@@ -974,6 +994,12 @@ impl Session {
             State::AwaitingTypeWait { pending } => {
                 self.on_type_wait(now, pending, event, state_name)
             }
+            State::AwaitingVerifyWait { pending } => {
+                self.on_verify_wait(now, pending, event, state_name)
+            }
+            State::AwaitingFocusRetry { check } => {
+                self.on_focus_retry(now, check, event, state_name)
+            }
             State::AwaitingTool { pending } => self.on_tool(now, pending, event, state_name),
             State::AwaitingConfirm {
                 pending,
@@ -1206,7 +1232,12 @@ impl Session {
                 // tap waits for a look at where focus went (`Self::after_focus_tap`).
                 Some(next) if fresh && types_after_focus_tap(&pending.action, &next) => {
                     queue.push_front(next);
-                    let check = FocusCheck { queue, pending };
+                    let check = FocusCheck {
+                        queue,
+                        pending,
+                        settled: false,
+                        retapped: false,
+                    };
                     self.observe(Owed::AfterCommand, ObservePurpose::Focus(Box::new(check)))
                 }
                 Some(next) => {
@@ -1531,6 +1562,18 @@ impl Session {
             // The wait before another look at the typed field: as a lock during that look
             // (the text was typed; what the field holds is unknown).
             State::AwaitingTypeWait { pending } => {
+                self.unknown_result(&pending, prompt::RESULT_LOCK_UNVERIFIED);
+                (Resume::Decide, by_event.then_some(Late::Act))
+            }
+            // Run 147: the settle wait or repeated tap of a typing's focus check: as a lock
+            // during the focus look (the focusing tap was sent, the typing was not).
+            State::AwaitingFocusRetry { check } => {
+                self.unknown_result(&check.pending, prompt::RESULT_LOCK_UNKNOWN);
+                (Resume::Decide, by_event.then_some(Late::Act))
+            }
+            // Run 146: the settle wait before the one more verify look: as a lock during the
+            // verify look (the action was sent; what it did is unknown).
+            State::AwaitingVerifyWait { pending } => {
                 self.unknown_result(&pending, prompt::RESULT_LOCK_UNVERIFIED);
                 (Resume::Decide, by_event.then_some(Late::Act))
             }
@@ -2282,10 +2325,60 @@ impl Session {
     /// input has focus ([`Self::focus_holds`]). Otherwise nothing is typed: the step is
     /// refunded and the model decides again on this screen with a one-line note (bounded
     /// like the other stale-screen refusals by [`MAX_REPLANS`], then a failed step).
+    ///
+    /// Run 147 (Safari, a page still settling): the look after the focusing tap showed no
+    /// input focused at all, and the text was sent anyway (the runner refused it: "no
+    /// software keyboard and no focused element"). Now the text goes only to a field the
+    /// look shows focused (focus alone suffices: a hardware keyboard shows no `Keyboard`
+    /// node). With no input focused: one settle wait and one more look (the chosen-look gate,
+    /// as the verify retry, [`VERIFY_SETTLE_MS`]); still none: the focusing tap once more,
+    /// part of the same step (no new question), only while the field is the same control in
+    /// the same app with nothing over its tap point; then one more look; still none: the step
+    /// fails ([`prompt::RESULT_FOCUS_NOT_TAKEN`]) and nothing is typed.
     fn after_focus_tap(&mut self, now: u64, check: FocusCheck) -> Out {
-        let FocusCheck { queue, pending } = check;
+        let FocusCheck {
+            queue,
+            pending,
+            settled,
+            retapped,
+        } = check;
         if self.focus_holds(&pending) {
-            return self.continue_act(now, queue, *pending);
+            if self.focus_shown(&pending) {
+                return self.continue_act(now, queue, *pending);
+            }
+            let check = FocusCheck {
+                queue,
+                pending,
+                settled: true,
+                retapped,
+            };
+            if !settled {
+                if self.restricted() {
+                    return self.focus_not_taken(now, &check.pending);
+                }
+                self.state = State::AwaitingFocusRetry {
+                    check: Box::new(check),
+                };
+                return self.emit(
+                    RunnerCommand::Wait {
+                        ms: VERIFY_SETTLE_MS,
+                    },
+                    None,
+                );
+            }
+            if !retapped {
+                if let Some(tap) = self.focus_retap(&check.pending) {
+                    let effect = self.emit(tap, Some(&check.pending));
+                    self.state = State::AwaitingFocusRetry {
+                        check: Box::new(FocusCheck {
+                            retapped: true,
+                            ..check
+                        }),
+                    };
+                    return effect;
+                }
+            }
+            return self.focus_not_taken(now, &check.pending);
         }
         self.stale_plans = self.stale_plans.saturating_add(1);
         if self.replans < MAX_REPLANS {
@@ -2295,6 +2388,102 @@ impl Session {
             self.record_failure(&pending, prompt::RESULT_FOCUS_MOVED);
         }
         self.decide(now)
+    }
+
+    /// Run 147: the typing's field did not take focus: a failed step, nothing typed.
+    fn focus_not_taken(&mut self, now: u64, pending: &Pending) -> Out {
+        self.record_failure(pending, prompt::RESULT_FOCUS_NOT_TAKEN);
+        self.decide(now)
+    }
+
+    /// Run 147: whether the current screen shows the typing's field focused (every typing
+    /// held after a focusing tap names its field; any other gate passes).
+    fn focus_shown(&self, pending: &Pending) -> bool {
+        // Runner text carries no focus (`jarvis_observe::runner_text`): there the runner's own
+        // check before typing and the typed-text check after it stay the guard.
+        if self.current.source == ScreenSource::RunnerText {
+            return true;
+        }
+        let i = match &pending.gate {
+            Action::Type {
+                element: Some(i), ..
+            }
+            | Action::Clear { element: i } => *i,
+            _ => return true,
+        };
+        self.current
+            .screen
+            .get(i)
+            .is_some_and(|e| e.focused && e.role.is_text_input())
+    }
+
+    /// Run 147: the focusing tap once more, planned on the current screen — `None` unless the
+    /// field is the same control ([`Self::focus_holds`] held) in the same app, no system
+    /// alert is up, and its tap point is clear (nothing came over it).
+    fn focus_retap(&self, pending: &Pending) -> Option<RunnerCommand> {
+        let i = match &pending.gate {
+            Action::Type {
+                element: Some(i), ..
+            }
+            | Action::Clear { element: i } => *i,
+            _ => return None,
+        };
+        let screen = &self.current.screen;
+        if !screen
+            .app_bundle_id
+            .trim()
+            .eq_ignore_ascii_case(pending.bound.app_bundle_id.trim())
+            || self.here == FlowContext::SystemAlert
+        {
+            return None;
+        }
+        let el = screen.get(i)?;
+        let tree = self.tree();
+        let p = jarvis_safety::tap_spot(el, screen, Some(&tree), None).ok()?;
+        Some(RunnerCommand::Tap {
+            x: p.x,
+            y: p.y,
+            expect: None,
+        })
+    }
+
+    /// Run 147: the reply to the settle wait or the repeated focusing tap of a typing whose
+    /// field showed no focus: look (the wait's look through the chosen-look gate; refused, the
+    /// step fails unsent). A lock is a lock during the focus look; a failed tap fails the step.
+    fn on_focus_retry(
+        &mut self,
+        now: u64,
+        check: Box<FocusCheck>,
+        event: Event,
+        state: &str,
+    ) -> Out {
+        let Event::ActResult(result) = event else {
+            return self.protocol_error(now, &event, state);
+        };
+        if result.is_device_locked() {
+            let state = State::AwaitingFocusRetry { check };
+            return self.interrupt(now, state, LockSignal::Reply, false);
+        }
+        if result.is_stale() {
+            return self.runner_stale(&check.pending, false);
+        }
+        if check.retapped {
+            if !result.ok {
+                let error = result
+                    .error
+                    .as_deref()
+                    .unwrap_or("the runner could not do it");
+                let msg = format!("failed: {}", clean(error, 120));
+                self.record_failure(&check.pending, &msg);
+                return self.observe(Owed::AfterCommand, ObservePurpose::Decide);
+            }
+            return self.observe(Owed::AfterCommand, ObservePurpose::Focus(check));
+        }
+        let pending = check.pending.clone();
+        match self.look_chosen(Chosen::VerifySettle, ObservePurpose::Focus(check), false) {
+            Some(out) => out,
+            None => self.focus_not_taken(now, &pending),
+        }
     }
 
     /// Whether the typing of `pending` may go to the focused field of the current screen:
@@ -2394,6 +2583,19 @@ impl Session {
     }
 
     fn ingest(&mut self, mut obs: Observation) {
+        // Run 146 (P15): SpringBoard in its edit mode, the App Library or an open folder is
+        // not the Home Screen (the shell reports these as the unidentified layer, named; a
+        // runner that does not is caught here, fail closed): the screen is read as one Jarvis
+        // cannot read — the application node alone, no screenshot.
+        if is_springboard(&obs.screen.app_bundle_id)
+            && jarvis_safety::home_screen_mode(&obs.screen.root).is_some()
+        {
+            let frame = obs.screen.root.frame;
+            obs.screen.app_bundle_id = jarvis_proto::UNIDENTIFIED_APP_BUNDLE_ID.to_owned();
+            obs.screen.root = jarvis_proto::UiNode::new(jarvis_proto::Role::Application, frame);
+            obs.screen.keyboard_visible = false;
+            obs.screenshot = None;
+        }
         // Front app: an app the runner cannot identify is named so wherever its name is
         // shown (the action line, the prompt), whatever name the observation carries.
         if is_unidentified_app(&obs.screen.app_bundle_id) {
@@ -3522,6 +3724,7 @@ impl Session {
             covers_return: None,
             flow: None,
             places: Vec::new(),
+            settle_looked: false,
         };
         // Sixteenth review (Rule T): an input into this context while something read
         // elsewhere in this task is not allowed into it asks (merged into the action's own
@@ -4644,11 +4847,25 @@ impl Session {
     }
 
     /// Compares the screen after an action with the one before it.
+    ///
+    /// Run 146: a screen that shows no change yet is not concluded on from one reading (the
+    /// time between the action and this look was only the runner's overhead): once per
+    /// action, the session waits [`VERIFY_SETTLE_MS`] and looks again ([`Self::verify_settle`];
+    /// not a step, not a model call; the history shows the final result only). Not for a
+    /// scroll or swipe (the content moves with the drag itself, so a later look cannot show a
+    /// scroll the first did not, and the end of a list — common — would cost the wait every
+    /// time) nor for typing (its own check, [`Self::verify_typing`]).
     fn verify(&mut self, now: u64, mut pending: Pending) -> Out {
         if let Some(check) = pending.check.take() {
             return self.verify_typing(now, pending, check);
         }
         let changed = diff(&pending.before, &self.current.screen).changed;
+        if pending.expect_change && !changed && !pending.settle_looked && settles(&pending.action) {
+            pending.settle_looked = true;
+            if let Some(out) = self.verify_settle(&pending) {
+                return out;
+            }
+        }
         if pending.expect_change && !changed {
             let msg = match pending.action {
                 Action::Scroll { .. } | Action::Swipe { .. } => prompt::RESULT_SCROLL_END,
@@ -4668,6 +4885,51 @@ impl Session {
             self.record_success(&pending, &result);
         }
         self.decide(now)
+    }
+
+    /// Run 146: the settle wait before the one more verify look, when a look is allowed now
+    /// (R24: a look the session chooses, refused while a place on the screen has a source
+    /// not allowed into it at the observe kind; the wait is such an input too, so the check
+    /// is made before it is sent). `None`: no wait, no look, no question — the caller
+    /// concludes on the reading in hand.
+    fn verify_settle(&mut self, pending: &Pending) -> Option<Out> {
+        if self.restricted() {
+            return None;
+        }
+        self.state = State::AwaitingVerifyWait {
+            pending: Box::new(pending.clone()),
+        };
+        Some(self.emit(
+            RunnerCommand::Wait {
+                ms: VERIFY_SETTLE_MS,
+            },
+            None,
+        ))
+    }
+
+    /// The runner's reply to the settle wait before the one more verify look: look, through
+    /// the chosen-look gate ([`Self::look_chosen`]; refused, the first reading concludes). A
+    /// failed wait changes nothing; a refusal because the phone is locked is a lock during
+    /// the verify look.
+    fn on_verify_wait(
+        &mut self,
+        now: u64,
+        pending: Box<Pending>,
+        event: Event,
+        state: &str,
+    ) -> Out {
+        let Event::ActResult(result) = event else {
+            return self.protocol_error(now, &event, state);
+        };
+        if result.is_device_locked() {
+            let state = State::AwaitingVerifyWait { pending };
+            return self.interrupt(now, state, LockSignal::Reply, false);
+        }
+        let purpose = ObservePurpose::Verify(pending.clone());
+        match self.look_chosen(Chosen::VerifySettle, purpose, false) {
+            Some(out) => out,
+            None => self.verify(now, *pending),
+        }
     }
 
     /// Ends the session when the model proposes an action it was told, twice, it keeps

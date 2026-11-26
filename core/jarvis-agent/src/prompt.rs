@@ -250,6 +250,10 @@ pub(crate) const RESULT_STALE_PART: &str =
     "failed: another app came to the front while this ran; only part of it was done, check the screen";
 /// Fifteenth review (F5): after the focusing tap another field had the focus (or the field
 /// changed), so nothing was typed.
+/// Run 147: the field did not take focus after its focusing tap, a settle wait and one more
+/// tap: nothing was typed.
+pub(crate) const RESULT_FOCUS_NOT_TAKEN: &str =
+    "not done: the field did not take focus (tapped twice, no field showed focus), so nothing was typed; the page may still be loading: wait, or tap the field first";
 pub(crate) const RESULT_FOCUS_MOVED: &str =
     "not done: after the tap, the focus was not in that field (the page moved it or the field changed), so nothing was typed; check which field is focused and choose again";
 /// Stale-screen guard: Return was refused because another app came to the front after the

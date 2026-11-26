@@ -46,6 +46,9 @@ pub struct Phone {
     pub transition: Box<dyn FnMut(&RunnerCommand, &Screen) -> Transition>,
     /// Whether screenshots can be taken.
     pub can_screenshot: bool,
+    /// Run 147: a tap on a text input focuses it (`focus_tapped`), unless the test scripts
+    /// focus itself (a tap that misses the field).
+    pub auto_focus: bool,
 }
 
 impl Phone {
@@ -58,6 +61,7 @@ impl Phone {
             screen,
             transition: Box::new(transition),
             can_screenshot: true,
+            auto_focus: true,
         }
     }
 
@@ -122,8 +126,13 @@ pub struct Run {
     /// Every model request.
     pub requests: Vec<ModelRequest>,
     /// Every runner command, without its stale-screen expectation (what it does; the
-    /// expectation is in `effects`).
+    /// expectation is in `effects`) — but the verify settle waits (run 146), which are in
+    /// `settle_waits` (and in `effects`).
     pub acts: Vec<RunnerCommand>,
+    /// Run 146: the settle waits before a second verify look (a `Wait` of
+    /// [`jarvis_agent::VERIFY_SETTLE_MS`] sent right after an observation), in order, each
+    /// with the number of `acts` sent before it.
+    pub settle_waits: Vec<usize>,
     /// Every confirmation request.
     pub confirms: Vec<ConfirmRequest>,
     /// Every tool call.
@@ -191,6 +200,7 @@ pub fn run_spec(
         },
         requests: Vec::new(),
         acts: Vec::new(),
+        settle_waits: Vec::new(),
         confirms: Vec::new(),
         tool_calls: Vec::new(),
         questions: Vec::new(),
@@ -201,6 +211,7 @@ pub fn run_spec(
     for _ in 0..MAX_ITERATIONS {
         let effect = session.step(TimedEvent::new(now, event));
         now += TICK_MS;
+        let after_look = matches!(out.effects.last(), Some(Effect::Observe { .. }));
         out.effects.push(effect.clone());
         event = match effect {
             Effect::Observe { screenshot } => {
@@ -225,11 +236,32 @@ pub fn run_spec(
                 }
             }
             Effect::Act(cmd) => {
-                out.acts.push(cmd.without_expect());
+                let settle = after_look
+                    && matches!(
+                        cmd,
+                        RunnerCommand::Wait { ms } if ms == jarvis_agent::VERIFY_SETTLE_MS
+                    );
+                if settle {
+                    out.settle_waits.push(out.acts.len());
+                } else {
+                    out.acts.push(cmd.without_expect());
+                }
+                let tapped = match &cmd {
+                    RunnerCommand::Tap { x, y, .. } if phone.auto_focus => Some(Point::new(*x, *y)),
+                    _ => None,
+                };
                 match (phone.transition)(&cmd, &phone.screen) {
-                    Transition::Stay => Event::ActResult(RunnerResult::ok()),
+                    Transition::Stay => {
+                        if let Some(p) = tapped {
+                            focus_tapped(&mut phone.screen, p);
+                        }
+                        Event::ActResult(RunnerResult::ok())
+                    }
                     Transition::Go(s) => {
                         phone.screen = s;
+                        if let Some(p) = tapped {
+                            focus_tapped(&mut phone.screen, p);
+                        }
                         Event::ActResult(RunnerResult::ok())
                     }
                     Transition::Fail(e) => Event::ActResult(RunnerResult::err(e)),
@@ -264,6 +296,31 @@ pub fn run_spec(
         };
     }
     panic!("session did not finish within {MAX_ITERATIONS} iterations");
+}
+
+/// Run 147: as on the device, a tap on a text input focuses it — when the screen after the
+/// tap shows no focused input (a scripted transition that sets focus itself decides), the
+/// innermost text input under the point becomes focused. The core now types only into a
+/// field a look shows focused.
+pub fn focus_tapped(screen: &mut Screen, p: Point) {
+    fn any_focused(n: &UiNode) -> bool {
+        (n.focused && n.role.is_text_input()) || n.children.iter().any(any_focused)
+    }
+    fn focus(n: &mut UiNode, p: Point) -> bool {
+        for c in n.children.iter_mut().rev() {
+            if focus(c, p) {
+                return true;
+            }
+        }
+        if n.role.is_text_input() && !n.secure && n.frame.contains(p) {
+            n.focused = true;
+            return true;
+        }
+        false
+    }
+    if !any_focused(&screen.root) {
+        focus(&mut screen.root, p);
+    }
 }
 
 // ---------------------------------------------------------------------------------------

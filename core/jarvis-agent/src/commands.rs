@@ -26,11 +26,10 @@ use std::collections::VecDeque;
 
 use jarvis_proto::{Action, AppInfo, CompactScreen, Key, Point, RunnerCommand};
 
-use jarvis_safety::gestures::{
-    denormalize, drag_gesture, GestureError, GestureKind, KEYBOARD_SHARE,
-};
+use jarvis_safety::gestures::{denormalize, GestureError, GestureKind, KEYBOARD_SHARE};
 use jarvis_safety::{
-    control_at, point_is_clear, tap_spot, wait_level, Covered, CoveredBy, PointError, ScreenTree,
+    control_at, planned_drag, point_is_clear, tap_spot, wait_level, Covered, CoveredBy, PointError,
+    ScreenTree,
 };
 
 /// Most Delete presses a `clear` sends.
@@ -226,7 +225,9 @@ pub(crate) fn plan(
                 Some(i) => Some(el(*i)?),
                 None => None,
             };
-            let g = drag_gesture(kind, *direction, target.map(|t| t.frame), screen)
+            // Run 146 (P13): across a list row the travel is a share of the row's width
+            // (`planned_drag`, the computation the gate's row rule reads).
+            let g = planned_drag(kind, *direction, target.map(|t| t.frame), screen, tree)
                 .map_err(PlanError::Gesture)?;
             // Fourteenth review (Rule H): no drag starts or ends on the keyboard (a key's
             // drag enters or commits text). An element-less drag is planned above it; any

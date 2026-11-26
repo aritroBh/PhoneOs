@@ -91,6 +91,14 @@ fn acted_once() -> Driver {
         Effect::Act(RunnerCommand::Tap { .. })
     ));
     assert!(matches!(d.ok(), Effect::Observe { .. }));
+    // Run 146: "Help" changed nothing on the first look: one settle wait, one more look.
+    assert_eq!(
+        d.observed(50, &form(None)),
+        Effect::Act(RunnerCommand::Wait {
+            ms: jarvis_agent::VERIFY_SETTLE_MS
+        })
+    );
+    assert!(matches!(d.ok(), Effect::Observe { .. }));
     assert!(matches!(d.observed(50, &form(None)), Effect::Infer(_)));
     d
 }

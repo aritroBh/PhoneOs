@@ -443,6 +443,15 @@ fn the_step_budget_counts_the_approved_action_once() {
     d.ok();
     assert_eq!(d.observed(&asked()), Effect::Act(tap()));
     assert_eq!(d.ok(), Effect::Observe { screenshot: false });
+    // Run 146: the tap showed no change yet: one settle wait and one more look, neither a
+    // step (the budget still ends the session after the one approved action).
+    assert_eq!(
+        d.observed(&asked()),
+        Effect::Act(RunnerCommand::Wait {
+            ms: jarvis_agent::VERIFY_SETTLE_MS
+        })
+    );
+    assert_eq!(d.ok(), Effect::Observe { screenshot: false });
     let Effect::Finished(o) = d.observed(&asked()) else {
         panic!()
     };

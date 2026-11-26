@@ -332,14 +332,21 @@ fn drive(
                     error: "script exhausted".into(),
                 },
             },
-            Effect::Act(cmd) => match (phone.transition)(&cmd, &phone.screen) {
-                Transition::Stay => Event::ActResult(RunnerResult::ok()),
-                Transition::Go(s) => {
-                    phone.screen = s;
-                    Event::ActResult(RunnerResult::ok())
+            Effect::Act(cmd) => {
+                let result = match (phone.transition)(&cmd, &phone.screen) {
+                    Transition::Stay => Event::ActResult(RunnerResult::ok()),
+                    Transition::Go(s) => {
+                        phone.screen = s;
+                        Event::ActResult(RunnerResult::ok())
+                    }
+                    Transition::Fail(e) => Event::ActResult(RunnerResult::err(e)),
+                };
+                // Run 147: a tap on a text input focuses it, as on the device.
+                if let RunnerCommand::Tap { x, y, .. } = &cmd {
+                    focus_tapped(&mut phone.screen, jarvis_proto::Point::new(*x, *y));
                 }
-                Transition::Fail(e) => Event::ActResult(RunnerResult::err(e)),
-            },
+                result
+            }
             Effect::Confirm(req) => {
                 change(confirms.len(), &req, &mut phone.screen);
                 confirms.push(req);
