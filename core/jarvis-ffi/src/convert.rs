@@ -329,6 +329,7 @@ impl From<p::Screen> for Screen {
             root,
             keyboard_visible,
             orientation,
+            tree_cut,
         } = v;
         Screen {
             app_bundle_id,
@@ -337,6 +338,7 @@ impl From<p::Screen> for Screen {
             root: root.into(),
             keyboard_visible,
             orientation: orientation.into(),
+            tree_cut,
         }
     }
 }
@@ -350,12 +352,19 @@ impl From<Screen> for p::Screen {
             root,
             keyboard_visible,
             orientation,
+            tree_cut,
         } = v;
+        // Review pass 31 (L1): a tree deeper than the core's bound is cut there, never an
+        // error and never silent: the screen carries the flag (the core reads it as an
+        // incomplete screen).
+        let mut root: p::UiNode = root.into();
+        let cut = p::cut_tree(&mut root);
         p::Screen {
+            tree_cut: tree_cut || cut,
             app_bundle_id,
             app_name,
             size: size.into(),
-            root: root.into(),
+            root,
             keyboard_visible,
             orientation: orientation.into(),
         }

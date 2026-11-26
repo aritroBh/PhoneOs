@@ -551,6 +551,7 @@ dependencies = [
  "jarvis-memory",
  "jarvis-observe",
  "jarvis-proto",
+ "jarvis-runner",
  "jarvis-safety",
  "serde",
  "serde_json",

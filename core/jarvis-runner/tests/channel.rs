@@ -209,6 +209,7 @@ fn screenshot(len: usize) -> Screenshot {
 
 fn snapshot(root: UiNode, shot: Option<Screenshot>) -> Snapshot {
     Snapshot {
+        tree_cut: false,
         root,
         app_bundle_id: "dev.jarvis.app".into(),
         app_name: Some("Jarvis".into()),

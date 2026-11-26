@@ -519,6 +519,7 @@ fn event_for_viewer(e: Event) -> p::Event {
             let size: p::Size = snapshot.size.into();
             p::Event::ObservedRunnerText(p::Observation {
                 screen: p::Screen {
+                    tree_cut: false,
                     app_bundle_id: snapshot.app_bundle_id,
                     app_name: snapshot.app_name,
                     size,

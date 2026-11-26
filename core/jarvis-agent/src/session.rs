@@ -2966,6 +2966,14 @@ impl Session {
         if let Some(stop) = self.budget_stop(now) {
             return stop;
         }
+        // Review pass 31 (M1): a learned flow is not replayed on a screen Jarvis could not
+        // read completely (what it matches the step against is only part of the screen): the
+        // replay stops there and the model decides, through the incomplete-screen rules.
+        if self.replay.is_some()
+            && jarvis_safety::incomplete(&self.current.screen, self.current.source)
+        {
+            self.diverge("the screen could not be read completely");
+        }
         if let Some(replayer) = &self.replay {
             match replayer.next(&self.current.screen) {
                 Next::Action(action) => return self.propose(now, action, Source::Replay),

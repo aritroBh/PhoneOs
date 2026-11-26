@@ -101,7 +101,10 @@ pub fn gate_on(
     }
 }
 
-/// [`gate_on`] plus the **unclear rule** (fourteenth review, Rule C): a request whose
+/// [`gate_in`] plus the screen-source rule (as [`gate_on`]; review pass 31: `source_rule` is
+/// decided by the caller, `crate::evaluate::source_rule` — on runner text every action that
+/// [`changes_state`], on a screen not read completely every action that
+/// [`changes_incomplete_screen`]) plus the **unclear rule** (fourteenth review, Rule C): a request whose
 /// category the gate guessed (`unclear`: a presumed submit, a send-by-label whose form may
 /// hold an amount or names no verified recipient, a link the owner did not give) is
 /// confirmed whatever the trust level or the categories the owner relaxed — a guess is not
@@ -121,11 +124,16 @@ pub fn gate_owned(
     level: TrustLevel,
     action: &Action,
     screen: &CompactScreen,
-    runner_text: bool,
+    source_rule: bool,
     unclear: bool,
     forced: bool,
 ) -> Gate {
-    match gate_on(policy, category, level, action, screen, runner_text) {
+    let gated = match gate_in(policy, category, level, action, screen) {
+        Gate::Deny => Gate::Deny,
+        _ if source_rule => Gate::Confirm,
+        other => other,
+    };
+    match gated {
         Gate::Allow if forced => Gate::Confirm,
         Gate::Allow if unclear && category != RiskCategory::None && !policy.confirm.is_empty() => {
             Gate::Confirm
@@ -154,4 +162,23 @@ pub fn changes_state(action: &Action, screen: &CompactScreen) -> bool {
         }
         _ => true,
     }
+}
+
+/// Review pass 31 (M1): whether `action`, judged on a screen Jarvis could not read completely
+/// (`ScreenSource::Incomplete`), counts as changing state there: every gesture that touches
+/// the screen — a scroll in any direction (an element-less vertical one too: its drag may
+/// cross a picker or a slider that was not read), a swipe, a tap, `tap_point`, a long
+/// press, typing, clearing, Return — and `open_app`, `open_url` and tool calls. Not
+/// `wait`, `look`, `done`, `fail`, `ask_user`, and not `press_home`: Home is the way off such
+/// a screen and touches nothing on it (it is gated as on any screen, Rule T included).
+pub fn changes_incomplete_screen(action: &Action) -> bool {
+    !matches!(
+        action,
+        Action::Wait { .. }
+            | Action::Look
+            | Action::Done { .. }
+            | Action::Fail { .. }
+            | Action::AskUser { .. }
+            | Action::PressHome
+    )
 }

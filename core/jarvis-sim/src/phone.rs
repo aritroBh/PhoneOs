@@ -464,6 +464,7 @@ impl SimPhone {
         self.apply_schedule();
         if self.lock.locked {
             let screen = Screen {
+                tree_cut: false,
                 app_bundle_id: SPRINGBOARD_BUNDLE.to_owned(),
                 app_name: Some("Lock Screen".to_owned()),
                 size: SCREEN_SIZE,
@@ -639,6 +640,7 @@ impl SimPhone {
             }
         };
         Ok(Observation::new(Screen {
+            tree_cut: false,
             app_bundle_id: bundle,
             app_name: Some(name),
             size: SCREEN_SIZE,

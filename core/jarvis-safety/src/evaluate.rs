@@ -41,9 +41,12 @@ pub enum ScreenSource {
     RunnerText,
     /// Review pass 30 (M1): a typed tree deeper than the core reads
     /// (`ScreenCues::truncated`): part of the screen is not seen by any rule. Like runner
-    /// text, every state-changing runner action is at least `Unverified` and asks, its
-    /// summary starting with [`INCOMPLETE_SCREEN_WARNING`]; and while the owner denies any
-    /// category it is refused (what is not read may be of that category).
+    /// text, every state-changing runner action is at least `Unverified` and asks, phone
+    /// only, its summary starting with [`INCOMPLETE_SCREEN_WARNING`]; and while the owner
+    /// denies any category it is refused (what is not read may be of that category).
+    /// Review pass 31 (M1): "state-changing" here is [`crate::gate::changes_incomplete_screen`]
+    /// — every gesture that touches the screen (a vertical scroll too), `open_app` and
+    /// `open_url`; `press_home` is not (it is the way off), nor are `wait` and `look`.
     Incomplete,
 }
 
@@ -226,16 +229,37 @@ pub fn classify_from(
     source: ScreenSource,
 ) -> RiskCategory {
     let category = classify(action, screen, tool);
-    let runner_action = !matches!(action, Action::CallTool { .. });
-    if source != ScreenSource::Typed
-        && category == RiskCategory::None
-        && runner_action
-        && changes_state(action, screen)
-    {
+    if category == RiskCategory::None && source_rule(action, screen, source) {
         RiskCategory::Unverified
     } else {
         category
     }
+}
+
+/// Review pass 31 (M1): whether `screen` (from `source`) was not read completely: the
+/// session's [`ScreenSource::Incomplete`] (a typed tree it read as `ScreenCues::truncated`),
+/// or runner text the parser cut at the bound (`ScreenCues::truncated` on a
+/// [`ScreenSource::RunnerText`] screen: the session keeps that source, so the incomplete
+/// rules come from the cue). A caller that judges a truncated typed screen as `Typed` gets
+/// the typed rules, as before (the session never does).
+pub fn incomplete(screen: &CompactScreen, source: ScreenSource) -> bool {
+    source == ScreenSource::Incomplete
+        || (source == ScreenSource::RunnerText && screen.cues.truncated)
+}
+
+/// The screen-source rule (sixth review; review pass 31, M1): whether `action` on `screen`
+/// from `source` is a runner action that is asked (at least `Unverified`) whatever the
+/// policy relaxes. On runner text: every action that [`changes_state`]. On a screen not
+/// read completely ([`incomplete`]): every action that
+/// [`crate::gate::changes_incomplete_screen`] — every gesture that touches it (a vertical
+/// scroll included), `open_app` and `open_url`; never `wait`, `look`, finishing, asking or
+/// `press_home` (the way off such a screen). Tool calls do not go to the runner.
+pub fn source_rule(action: &Action, screen: &CompactScreen, source: ScreenSource) -> bool {
+    if matches!(action, Action::CallTool { .. }) {
+        return false;
+    }
+    (incomplete(screen, source) && crate::gate::changes_incomplete_screen(action))
+        || (source == ScreenSource::RunnerText && changes_state(action, screen))
 }
 
 /// [`evaluate`] for a screen from `source`: on a screen read from runner text every
@@ -337,6 +361,25 @@ fn row_swipe_note() -> QuestionRow {
     row(QuestionRowKind::Note, &format!(". {ROW_SWIPE_NOTE}"))
 }
 
+/// Review pass 31 (M2): the note of a question about a point or a drag over more than
+/// `MAX_SCANNED_CONTROLS` controls: how many, and the riskiest found (never one arbitrary
+/// control as if it were the only one).
+fn many_controls_note(many: &crate::classify::ManyControls<'_>) -> QuestionRow {
+    let place = if many.path {
+        format!("This drag crosses {} controls", many.count)
+    } else {
+        format!("{} controls are under this point", many.count)
+    };
+    let text = match many.riskiest {
+        Some(el) => format!(
+            ". {place}; Jarvis cannot tell which one acts; the riskiest it found is {}",
+            quote_cut(&el.label, 60)
+        ),
+        None => format!(". {place}; Jarvis cannot tell which one acts"),
+    };
+    row(QuestionRowKind::Note, &text)
+}
+
 /// Review pass 28 (H2): raises `category` to `add` and carries `add` (every category a
 /// rule attaches, [`evaluate_sheeted`]'s deny check reads them all).
 fn carry(
@@ -376,6 +419,9 @@ pub fn round3_question_notes(
     let mut out = Vec::new();
     if crosses_list_row(action, screen, tree) {
         out.push(row_swipe_note());
+    }
+    if let Some(many) = crate::classify::many_controls(action, screen) {
+        out.push(many_controls_note(&many));
     }
     if emergency_return(action, screen) {
         out.push(emergency_call_note());
@@ -417,7 +463,7 @@ pub(crate) fn crosses_list_row(
     else {
         return false;
     };
-    crossed_row_width(g, screen, tree).is_some()
+    crossed_rows(g, screen, tree).is_some_and(|c| c.any)
 }
 
 /// The gesture kind, direction and element of a scroll or swipe whose finger moves
@@ -445,13 +491,15 @@ fn sideways_drag(
 /// Run 146 (P13): the drag the runner is sent for a scroll or swipe — the one computation
 /// the commands (`jarvis_agent`'s `plan`) and the gate's row rule ([`crosses_list_row`])
 /// share. It is [`crate::gestures::drag_gesture`]'s path (the *reach*, which the gate reads);
-/// when that path is sideways and crosses a list row ([`crossed_row_width`], the gate's own
-/// notion of a row), its travel is cut to [`crate::gestures::ROW_SWIPE_SHARE`] of the
-/// narrowest crossed row's width, its start kept (so the sent path is part of the path the
-/// gate read: every rule read on the reach holds for it). A row too narrow for
-/// [`crate::gestures::MIN_TRAVEL`] within that share refuses the drag
-/// ([`crate::gestures::GestureError::RowTooNarrow`]). A drag that crosses no row keeps the
-/// screen-share cap alone.
+/// when that path is sideways and crosses a list row ([`CrossedRows::list_width`], from the
+/// same pass as the gate's row question), its travel is cut to
+/// [`crate::gestures::ROW_SWIPE_SHARE`] of the narrowest crossed list row's width, its start
+/// kept (so the sent path is part of the path the gate read: every rule read on the reach
+/// holds for it). A list row too narrow for [`crate::gestures::MIN_TRAVEL`] within that share
+/// refuses the drag ([`crate::gestures::GestureError::RowTooNarrow`]). A drag that crosses no
+/// list row — none at all, or only grid, carousel, calendar, menu or pager cells (review
+/// pass 31, L2: the bound was measured on list rows; for those cells safety rests on the
+/// row-swipe question, which still asks) — keeps the screen-share cap alone.
 pub fn planned_drag(
     kind: crate::gestures::GestureKind,
     direction: jarvis_proto::Direction,
@@ -469,7 +517,7 @@ pub fn planned_drag(
     ) {
         return Ok(g);
     }
-    match crossed_row_width(g, screen, tree) {
+    match crossed_rows(g, screen, tree).and_then(|c| c.list_width) {
         None => Ok(g),
         Some(width) => {
             let bound = ROW_SWIPE_SHARE * width;
@@ -482,18 +530,49 @@ pub fn planned_drag(
     }
 }
 
-/// Run 146 (P13): the width of the narrowest list row the sideways path `g` touches in the
-/// raw tree ([`crosses_list_row`]'s rows), `None` when it touches none (or without the raw
-/// tree). A row's width: a `Cell`'s own frame; for a node a `Cell` holds, the nearest drawn
-/// `Cell` ancestor's frame, or — when no drawn ancestor cell is known (its frame is not
-/// drawable, review pass 29 M3) — the node's own frame (narrower: stricter); for a row by
-/// shape (a row-sized child of a `Table` or `CollectionView`, a row-height node spanning its
-/// scroller), the node's own frame.
-fn crossed_row_width(
+/// What a sideways path crosses in the raw tree ([`crossed_rows`]): the two facts the row
+/// rules read, from one pass.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct CrossedRows {
+    /// The path touches a row of any kind — a `Cell`, a node a `Cell` holds, a row by shape:
+    /// the gate's row-swipe question ([`crosses_list_row`]). Review pass 31 (L2): unchanged
+    /// (never narrower than before).
+    any: bool,
+    /// The width of the narrowest crossed **list** row (review pass 31, L2): one that spans
+    /// at least [`ROW_MIN_WIDTH_SHARE`] of its nearest scrollable ancestor's width and does
+    /// not fill that ancestor's height (a page of a pager). `None`: no list row is crossed
+    /// (grid, carousel, calendar and widget-pager cells only, or nothing) — the drag keeps
+    /// the screen cap. What bounds and refuses the drag ([`planned_drag`]).
+    list_width: Option<f64>,
+}
+
+/// Review pass 31 (L2): a row that fills at least this share of its scroller's height is a
+/// page of a pager (the Home Screen widget stack's pages, 176.7 x 176.7 in a 176.7 x 176.7
+/// `ScrollView`), not a row of a list: it does not bound a drag (it still asks).
+const PAGE_FILL_SHARE: f64 = 0.9;
+
+/// Run 146 (P13): the rows the sideways path `g` touches in the raw tree, `None` without the
+/// raw tree (or an empty one). A row is a `Cell`, a node a `Cell` holds, or a row by shape (a
+/// row-sized child of a `Table` or `CollectionView`, a row-height node spanning its
+/// scroller): any of them makes [`CrossedRows::any`]. Its width: a `Cell`'s own frame; for a
+/// node a `Cell` holds, the nearest drawn `Cell` ancestor's frame, or — when no drawn
+/// ancestor cell is known (its frame is not drawable, review pass 29 M3) — the node's own
+/// frame (narrower: stricter); for a row by shape, the node's own frame.
+///
+/// Review pass 31 (L2): the bound and the refusal read **list rows** only
+/// ([`CrossedRows::list_width`]): the row swipes were measured on rows that span their list
+/// (400-, 300-, 200-pt-column and 440-pt rows); a grid, carousel, calendar or menu cell is
+/// narrower than its scroller and gets the screen cap (its question is unchanged). A row is
+/// a list row when it spans [`ROW_MIN_WIDTH_SHARE`] of its nearest scrollable ancestor's
+/// width and fills less than [`PAGE_FILL_SHARE`] of its height (for a node a cell holds: its
+/// cell does); fail closed — a list row — when that ancestor is not known (none, or not
+/// drawn) and when a held node's cell frame is not drawable (so the forged undrawable cells
+/// of pass 29 keep their bound, from the node's own frame).
+fn crossed_rows(
     g: crate::gestures::Gesture,
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
-) -> Option<f64> {
+) -> Option<CrossedRows> {
     let t = tree.filter(|t| !t.nodes.is_empty())?;
     let (x0, x1) = (g.from.x.min(g.to.x), g.from.x.max(g.to.x));
     let (y0, y1) = (g.from.y.min(g.to.y), g.from.y.max(g.to.y));
@@ -509,9 +588,26 @@ fn crossed_row_width(
     // Review pass 28 (M2): and whether a drawn `Cell` holds it (at any depth): a node on a
     // cell's row is on the row whatever frame the cell itself reports.
     // Run 146: and the width of the nearest drawn `Cell` holding it (`NaN`: none known).
+    // Review pass 31 (L2): and whether that cell is a list row ([`CrossedRows::list_width`]).
     let mut nearest: Vec<u32> = Vec::with_capacity(t.parents.len());
     let mut in_cell: Vec<bool> = Vec::with_capacity(t.parents.len());
     let mut cell_width: Vec<f64> = Vec::with_capacity(t.parents.len());
+    let mut cell_list: Vec<bool> = Vec::with_capacity(t.parents.len());
+    // Whether a row of frame `f` under the scroller `s` (an index; `u32::MAX`: none) is a
+    // list row: it spans the scroller and is no page of it; an unknown scroller: yes.
+    let list_row = |f: jarvis_proto::Rect, s: u32| match (s != u32::MAX)
+        .then(|| crate::hit::raw_node(t, s))
+        .flatten()
+    {
+        None => true,
+        Some(s) => {
+            f.width >= s.frame.width * ROW_MIN_WIDTH_SHARE
+                && matches!(
+                    f.height.partial_cmp(&(s.frame.height * PAGE_FILL_SHARE)),
+                    Some(std::cmp::Ordering::Less) | None
+                )
+        }
+    };
     for (i, &p) in t.parents.iter().enumerate() {
         let parent = usize::try_from(p).ok().filter(|&k| p != u32::MAX && k < i);
         let drawn = parent.and_then(|_| crate::hit::raw_node(t, p));
@@ -525,14 +621,21 @@ fn crossed_row_width(
         let cell = parent.is_some_and(|k| {
             drawn.is_some_and(|n| n.role == Role::Cell) || in_cell.get(k).copied().unwrap_or(false)
         });
-        let width = match (parent, drawn) {
-            (Some(_), Some(n)) if n.role == Role::Cell => n.frame.width,
-            (Some(k), _) => cell_width.get(k).copied().unwrap_or(f64::NAN),
-            (None, _) => f64::NAN,
+        let (width, list) = match (parent, drawn) {
+            (Some(k), Some(n)) if n.role == Role::Cell => (
+                n.frame.width,
+                list_row(n.frame, nearest.get(k).copied().unwrap_or(u32::MAX)),
+            ),
+            (Some(k), _) => (
+                cell_width.get(k).copied().unwrap_or(f64::NAN),
+                cell_list.get(k).copied().unwrap_or(true),
+            ),
+            (None, _) => (f64::NAN, true),
         };
         nearest.push(up);
         in_cell.push(cell);
         cell_width.push(width);
+        cell_list.push(list);
     }
     let parent_of = |i: u32| {
         usize::try_from(i)
@@ -540,7 +643,7 @@ fn crossed_row_width(
             .and_then(|k| t.parents.get(k))
             .copied()
     };
-    let mut narrowest: Option<f64> = None;
+    let mut out = CrossedRows::default();
     for n in t.nodes {
         let f = n.frame;
         let touches = !n.keyboard
@@ -553,18 +656,21 @@ fn crossed_row_width(
             continue;
         }
         let k = usize::try_from(n.node).ok();
+        let scroller_of = k.and_then(|k| nearest.get(k)).copied().unwrap_or(u32::MAX);
         let held = n.in_cell || k.and_then(|k| in_cell.get(k)).copied().unwrap_or(false);
-        let width = if n.role == Role::Cell {
-            Some(f.width)
+        // (the row's width, whether it is a list row)
+        let row = if n.role == Role::Cell {
+            Some((f.width, list_row(f, scroller_of)))
         } else if held {
-            // The nearest drawn cell's width; none known (its frame is not drawable): the
-            // node's own.
-            Some(
-                k.and_then(|k| cell_width.get(k))
-                    .copied()
-                    .filter(|w| w.is_finite() && *w > 0.0)
-                    .unwrap_or(f.width),
-            )
+            // The nearest drawn cell's width and list-ness; none known (its frame is not
+            // drawable): the node's own width, a list row (fail closed).
+            match k
+                .and_then(|k| cell_width.get(k).zip(cell_list.get(k)))
+                .filter(|(w, _)| w.is_finite() && **w > 0.0)
+            {
+                Some((w, list)) => Some((*w, *list)),
+                None => Some((f.width, true)),
+            }
         } else if f.height > row_height {
             None
         } else {
@@ -572,17 +678,21 @@ fn crossed_row_width(
                 .and_then(|p| crate::hit::raw_node(t, p))
                 .is_some_and(|p| matches!(p.role, Role::Table | Role::CollectionView));
             let spans = || {
-                k.and_then(|k| nearest.get(k))
-                    .and_then(|&s| crate::hit::raw_node(t, s))
+                (scroller_of != u32::MAX)
+                    .then(|| crate::hit::raw_node(t, scroller_of))
+                    .flatten()
                     .is_some_and(|s| f.width >= s.frame.width * ROW_MIN_WIDTH_SHARE)
             };
-            (direct || spans()).then_some(f.width)
+            (direct || spans()).then(|| (f.width, list_row(f, scroller_of)))
         };
-        if let Some(w) = width {
-            narrowest = Some(narrowest.map_or(w, |m: f64| m.min(w)));
+        if let Some((w, list)) = row {
+            out.any = true;
+            if list {
+                out.list_width = Some(out.list_width.map_or(w, |m: f64| m.min(w)));
+            }
         }
     }
-    narrowest
+    Some(out)
 }
 
 /// Review of round 3 (M3): the share of its nearest scrollable ancestor's width a node of
@@ -1151,13 +1261,24 @@ pub fn evaluate_sheeted(
         category = carry(&mut carried, category, RiskCategory::SendMessage);
         unclear = true;
     }
-    let runner_text = source != ScreenSource::Typed && !matches!(action, Action::CallTool { .. });
+    // Review pass 31 (M2): more controls under the point or on the path than the cap: every
+    // one was classified (a denied category among them refuses below), and what remains is
+    // a guess — which of them acts is not known: asked phone only, naming the riskiest.
+    if crate::classify::many_controls(action, screen).is_some() {
+        category = carry(&mut carried, category, crate::classify::UNREADABLE_RISK);
+        unclear = true;
+    }
+    let source_rule = source_rule(action, screen, source);
+    let incomplete = incomplete(screen, source);
     // Review pass 30 (M1): on a screen not read completely, a denied category may be in what
     // was not read: while the owner denies any category, nothing that changes state runs.
-    if source == ScreenSource::Incomplete
+    // Review pass 31 (M1): "changes state" there is every gesture that touches the screen (a
+    // vertical scroll included), `open_app` and `open_url`; `press_home` is the way off such
+    // a screen and is gated as on any other.
+    if incomplete
         && !policy.deny_categories.is_empty()
-        && runner_text
-        && changes_state(action, screen)
+        && !matches!(action, Action::CallTool { .. })
+        && crate::gate::changes_incomplete_screen(action)
     {
         return Decision::Deny(
             "the screen could not be read completely, and what was not read may be of a category the owner does not allow".to_owned(),
@@ -1179,7 +1300,7 @@ pub fn evaluate_sheeted(
             level,
             action,
             screen,
-            runner_text,
+            source_rule,
             unclear,
             forced,
         )
@@ -1249,7 +1370,7 @@ pub fn evaluate_sheeted(
             );
             request.verb = verb_of(action);
             request.phone_only = unclear
-                || source == ScreenSource::Incomplete
+                || incomplete
                 || carried
                     .iter()
                     .any(|c| *c != category && NEVER_REMOTE_APPROVE.contains(c));

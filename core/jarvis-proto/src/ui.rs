@@ -430,6 +430,46 @@ pub struct Screen {
     /// Current interface orientation.
     #[serde(default)]
     pub orientation: Orientation,
+    /// Review pass 31 (L1): an intake cut the tree at [`crate::MAX_TREE_DEPTH`] levels (or
+    /// the runner wire at its node count): part of the screen was not copied. The core reads
+    /// such a screen as an incomplete one (`ScreenCues::truncated`, every action that touches
+    /// it asks; Home works). Every intake that cuts sets it (the shell's first copy, the
+    /// typed-tree builder, the runner wire's encoder, the FFI conversion, the runner-text
+    /// parser), so a cut never arrives unflagged. Absent in JSON written before: `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tree_cut: bool,
+}
+
+/// Review pass 31 (L1): `root` cut, without recursion, so that no node lies deeper than
+/// [`crate::MAX_TREE_DEPTH`] levels (the root is level 1): the children of every node at the
+/// bound are dropped. Returns whether anything was dropped. The dropped subtrees are
+/// released iteratively too (a deep tree's own `Drop` recurses).
+pub fn cut_tree(root: &mut UiNode) -> bool {
+    let mut cut = false;
+    let mut dropped: Vec<UiNode> = Vec::new();
+    let mut stack: Vec<(&mut UiNode, usize)> = vec![(root, 1)];
+    while let Some((node, depth)) = stack.pop() {
+        if depth >= crate::MAX_TREE_DEPTH {
+            if !node.children.is_empty() {
+                cut = true;
+                dropped.append(&mut node.children);
+            }
+            continue;
+        }
+        for c in node.children.iter_mut() {
+            stack.push((c, depth + 1));
+        }
+    }
+    drop_iteratively(dropped);
+    cut
+}
+
+/// Releases `nodes` and everything under them without recursing on depth (a `UiNode`'s
+/// own `Drop` recurses once per level).
+pub fn drop_iteratively(mut nodes: Vec<UiNode>) {
+    while let Some(mut n) = nodes.pop() {
+        nodes.append(&mut n.children);
+    }
 }
 
 impl Screen {

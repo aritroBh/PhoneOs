@@ -29,6 +29,10 @@ public struct RawElement: Sendable, Equatable {
     public var hasFocus: Bool?
     /// `children`, in document order.
     public var children: [RawElement]
+    /// Review pass 31 (L1): this element had children the copy left out — it lies at the
+    /// depth bound (`UiTreeBuilder.maxDepth`, the core's `MAX_TREE_DEPTH`). `UiTreeBuilder`
+    /// turns it into `Result.treeCut`, so the cut reaches the core flagged.
+    public var childrenCut: Bool
 
     /// Creates an element.
     public init(
@@ -42,7 +46,8 @@ public struct RawElement: Sendable, Equatable {
         isEnabled: Bool = true,
         isSelected: Bool = false,
         hasFocus: Bool? = nil,
-        children: [RawElement] = []
+        children: [RawElement] = [],
+        childrenCut: Bool = false
     ) {
         self.elementType = elementType
         self.label = label
@@ -55,6 +60,27 @@ public struct RawElement: Sendable, Equatable {
         self.isSelected = isSelected
         self.hasFocus = hasFocus
         self.children = children
+        self.childrenCut = childrenCut
+    }
+
+    /// Review pass 31 (L1): copies the tree under `root` (an `XCUIElementSnapshot` in the
+    /// runner) into `RawElement`s without recursion, at most `maxDepth` levels deep (the root
+    /// is level 1): an element at the bound keeps no children and, when it had some, says so
+    /// (`childrenCut`). `element` copies one node's own fields (its `children` are ignored).
+    /// The runner's first copy (`SnapshotCopy.copy`) goes through this, so no later walk of
+    /// the shell ever sees a deeper tree.
+    public static func copyTree<Source>(
+        _ root: Source,
+        maxDepth: Int = UiTreeBuilder.maxDepth,
+        children: (Source) -> [Source],
+        element: (Source) -> RawElement
+    ) -> RawElement {
+        TreeWalk.map(root, maxDepth: maxDepth, children: children) { source, kids, cut in
+            var e = element(source)
+            e.children = kids
+            e.childrenCut = e.childrenCut || cut
+            return e
+        }
     }
 
     /// Whether some element in this subtree has focus: `true` / `false` when at least one
@@ -72,9 +98,65 @@ public struct RawElement: Sendable, Equatable {
         return readable ? false : nil
     }
 
-    /// Number of elements in this subtree (itself included).
+    /// Number of elements in this subtree (itself included). Iterative.
     public var count: Int {
-        children.reduce(1) { $0 + $1.count }
+        var n = 0
+        var stack = [self]
+        while let e = stack.popLast() {
+            n += 1
+            stack.append(contentsOf: e.children)
+        }
+        return n
+    }
+}
+
+/// One open node of `TreeWalk.map`.
+struct TreeWalkFrame<Source, Mapped> {
+    let source: Source
+    let pending: [Source]
+    var next: Int
+    var done: [Mapped]
+    let cut: Bool
+}
+
+/// Review pass 31 (L1): a tree mapped without recursion on its depth, so no input can exhaust
+/// a thread's stack (iOS and macOS secondary threads have 512 KB; the recursive conversion of
+/// a 300-deep tree overflowed one, run 151).
+public enum TreeWalk {
+    /// Maps the tree under `root` bottom-up: `make(node, its mapped children, cut)` is called
+    /// for every node at most `maxDepth` levels deep (the root is level 1), after its
+    /// children; a node at the bound gets no children and `cut` is whether it had some.
+    /// Its frames are an explicit stack: memory grows with the depth, the call stack does not.
+    public static func map<Source, Mapped>(
+        _ root: Source,
+        maxDepth: Int,
+        children: (Source) -> [Source],
+        make: (Source, [Mapped], Bool) -> Mapped
+    ) -> Mapped {
+        typealias Frame = TreeWalkFrame<Source, Mapped>
+        func open(_ s: Source, level: Int) -> Frame {
+            let kids = children(s)
+            if level >= maxDepth {
+                return Frame(source: s, pending: [], next: 0, done: [], cut: !kids.isEmpty)
+            }
+            var done: [Mapped] = []
+            done.reserveCapacity(kids.count)
+            return Frame(source: s, pending: kids, next: 0, done: done, cut: false)
+        }
+        var stack: [Frame] = [open(root, level: 1)]
+        while true {
+            let top = stack.count - 1
+            if stack[top].next < stack[top].pending.count {
+                let child = stack[top].pending[stack[top].next]
+                stack[top].next += 1
+                stack.append(open(child, level: stack.count + 1))
+                continue
+            }
+            let f = stack.removeLast()
+            let node = make(f.source, f.done, f.cut)
+            if stack.isEmpty { return node }
+            stack[stack.count - 1].done.append(node)
+        }
     }
 }
 

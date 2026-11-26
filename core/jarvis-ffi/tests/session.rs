@@ -719,3 +719,53 @@ fn a_tree_at_the_wire_depth_cap_is_stepped_on_a_small_stack() {
         .unwrap();
     assert!(worker.join().unwrap());
 }
+
+/// Review pass 31 (L1): the FFI conversion is an intake: a tree from the shell deeper than
+/// `jarvis_proto::MAX_TREE_DEPTH` is cut there and the screen flagged (even when the shell
+/// did not flag it), never an error and never a silent cut; at the bound nothing is flagged.
+#[test]
+fn the_ffi_conversion_cuts_a_deep_tree_and_flags_it() {
+    let deep = |levels: usize| {
+        let full = rect(0.0, 0.0, 393.0, 852.0);
+        let mut node = ui(
+            Role::Button,
+            Some("Deep"),
+            rect(16.0, 100.0, 200.0, 44.0),
+            true,
+            vec![],
+        );
+        for _ in 0..levels - 2 {
+            node = ui(
+                Role::Other {
+                    name: "Other".into(),
+                },
+                None,
+                full,
+                false,
+                vec![node],
+            );
+        }
+        let mut screen = settings_screen();
+        screen.root = ui(Role::Application, Some("Settings"), full, false, vec![node]);
+        screen
+    };
+    let levels = |n: &jarvis_proto::UiNode| {
+        let mut best = 0;
+        let mut stack = vec![(n, 1usize)];
+        while let Some((e, d)) = stack.pop() {
+            best = best.max(d);
+            stack.extend(e.children.iter().map(|c| (c, d + 1)));
+        }
+        best
+    };
+    let at: jarvis_proto::Screen = deep(jarvis_proto::MAX_TREE_DEPTH).into();
+    assert!(!at.tree_cut);
+    assert_eq!(levels(&at.root), jarvis_proto::MAX_TREE_DEPTH);
+    let over: jarvis_proto::Screen = deep(300).into();
+    assert!(over.tree_cut);
+    assert_eq!(levels(&over.root), jarvis_proto::MAX_TREE_DEPTH);
+    let mut flagged = deep(3);
+    flagged.tree_cut = true;
+    let flagged: jarvis_proto::Screen = flagged.into();
+    assert!(flagged.tree_cut, "the shell's flag is carried");
+}

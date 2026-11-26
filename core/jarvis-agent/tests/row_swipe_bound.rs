@@ -93,10 +93,19 @@ fn planned(s: &Screen, label: Option<&str>) -> Result<Gesture, GestureError> {
 }
 
 /// The P13 list with every row's cell (and everything it holds) narrowed to `width` points,
-/// centred on the screen: an inset list.
+/// centred on the screen: an inset list. Review pass 31 (L2): the list (`CollectionView`) is
+/// narrowed with its rows — the rows of a narrow list are list rows and keep the bound; a
+/// narrow cell in a full-width list is a grid cell, asked but bounded by the screen cap only
+/// (`pass31_fixes.rs`).
 fn narrowed(width: f64) -> Screen {
     let mut s = parse(P13_ROWS);
     let x = (440.0 - width) / 2.0;
+    edit(&mut s.root, &mut |n| {
+        if n.role == Role::CollectionView && n.frame.width >= 399.0 {
+            n.frame.x = x;
+            n.frame.width = width;
+        }
+    });
     edit(&mut s.root, &mut |n| {
         if n.role == Role::Cell {
             edit(n, &mut |k| {
@@ -220,7 +229,9 @@ fn property_planned_travel_is_bounded_by_the_row() {
                 Rect::new(x, y, width, 52.0),
             )
             .with_label(&label)]);
-        let list = UiNode::new(Role::CollectionView, Rect::new(0.0, 100.0, 440.0, 800.0))
+        // Review pass 31 (L2): the list as wide as its row (a list row); a narrower row in a
+        // full-width list is a grid cell (screen cap, still asked: `pass31_fixes.rs`).
+        let list = UiNode::new(Role::CollectionView, Rect::new(x, 100.0, width, 800.0))
             .with_children(vec![cell]);
         let root = UiNode::new(Role::Application, Rect::new(0.0, 0.0, 440.0, 956.0))
             .with_label("App")

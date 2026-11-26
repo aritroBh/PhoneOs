@@ -109,6 +109,7 @@ fn shop_tree() -> p::UiNode {
 
 fn shop_screen() -> p::Screen {
     p::Screen {
+        tree_cut: false,
         app_bundle_id: "com.example.shop".to_owned(),
         app_name: Some("Shop".to_owned()),
         size: PHONE,
@@ -452,6 +453,7 @@ fn parsed(text: &str, locked: bool) -> p::Event {
     let root = jarvis_observe::parse_runner_text(text).unwrap().root;
     p::Event::ObservedRunnerText(p::Observation {
         screen: p::Screen {
+            tree_cut: false,
             app_bundle_id: "com.example.shop".to_owned(),
             app_name: Some("Shop".to_owned()),
             size: PHONE,

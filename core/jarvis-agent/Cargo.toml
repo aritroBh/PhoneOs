@@ -17,6 +17,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 jarvis-proto = { workspace = true, features = ["test-util"] }
+jarvis-runner.workspace = true
 
 [lints]
 workspace = true

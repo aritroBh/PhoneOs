@@ -90,6 +90,11 @@ pub struct Snapshot {
     pub notes: Vec<String>,
     /// The screenshot, when asked for and taken.
     pub screenshot: Option<Screenshot>,
+    /// Review pass 31 (L1, protocol version 3): the tree was cut — by the runner's own copy
+    /// (`UiTreeBuilder`'s `treeCut`) or by the encoder, at [`crate::MAX_TREE_DEPTH`] levels or
+    /// [`crate::MAX_TREE_NODES`] nodes. The client's screen carries it
+    /// (`jarvis_proto::Screen::tree_cut`): the core reads an incomplete screen.
+    pub tree_cut: bool,
 }
 
 /// Client → server.
@@ -598,6 +603,9 @@ fn write_snapshot(w: &mut Writer, s: &Snapshot) -> Result<(), MessageError> {
     w.u8(orientation_byte(s.orientation));
     w.bool(s.device_locked);
     w.u8(lock_byte(s.lock_state));
+    // Review pass 31 (L1): the cut, decided before anything of the tree is written.
+    let plan = plan_tree(&s.root);
+    w.bool(s.tree_cut || plan.cut);
     if s.notes.len() > MAX_NOTES {
         return Err(MessageError::Limit("notes"));
     }
@@ -606,7 +614,7 @@ fn write_snapshot(w: &mut Writer, s: &Snapshot) -> Result<(), MessageError> {
         w.str(note)?;
     }
     write_opt_screenshot(w, s.screenshot.as_ref())?;
-    write_tree(w, &s.root)
+    write_planned(w, &plan)
 }
 
 fn read_snapshot(r: &mut Reader<'_>) -> Result<Snapshot, MessageError> {
@@ -620,6 +628,7 @@ fn read_snapshot(r: &mut Reader<'_>) -> Result<Snapshot, MessageError> {
     let orientation = read_orientation(r)?;
     let device_locked = r.bool()?;
     let lock_state = read_lock(r)?;
+    let tree_cut = r.bool()?;
     // Each note is at least its 4-byte length.
     let count = r.count(4)?;
     if count > MAX_NOTES {
@@ -642,6 +651,7 @@ fn read_snapshot(r: &mut Reader<'_>) -> Result<Snapshot, MessageError> {
         lock_state,
         notes,
         screenshot,
+        tree_cut,
     })
 }
 
@@ -730,7 +740,14 @@ const FLAG_ALL: u8 =
     FLAG_ENABLED | FLAG_VISIBLE | FLAG_HITTABLE | FLAG_FOCUSED | FLAG_SELECTED | FLAG_SECURE;
 
 /// Writes one node without its children, followed by its child count.
+#[cfg(test)]
 fn write_node(w: &mut Writer, n: &UiNode) -> Result<(), MessageError> {
+    write_node_with(w, n, n.children.len())
+}
+
+/// Writes one node without its children, followed by `children`, the number of its
+/// children written after it.
+fn write_node_with(w: &mut Writer, n: &UiNode, children: usize) -> Result<(), MessageError> {
     w.u8(role_byte(&n.role));
     if let Role::Other(name) = &n.role {
         w.str(name)?;
@@ -757,7 +774,7 @@ fn write_node(w: &mut Writer, n: &UiNode) -> Result<(), MessageError> {
         }
     }
     w.u8(flags);
-    w.length(n.children.len(), "children")
+    w.length(children, "children")
 }
 
 /// Reads one node (children still empty) and its child count.
@@ -800,23 +817,57 @@ fn read_node(r: &mut Reader<'_>) -> Result<(UiNode, usize), MessageError> {
     ))
 }
 
-fn write_tree(w: &mut Writer, root: &UiNode) -> Result<(), MessageError> {
-    let mut stack: Vec<(&UiNode, usize)> = vec![(root, 1)];
-    let mut count = 0usize;
-    while let Some((node, depth)) = stack.pop() {
-        count += 1;
-        if count > MAX_TREE_NODES {
-            return Err(MessageError::Limit("tree nodes"));
+/// What of a tree the encoder writes (review pass 31, L1): the nodes in pre-order, each with
+/// the number of its children written, and whether anything was left out.
+struct TreePlan<'a> {
+    nodes: Vec<(&'a UiNode, usize)>,
+    cut: bool,
+}
+
+/// The tree as written: no node deeper than [`MAX_TREE_DEPTH`] levels (the children of a
+/// node at the bound are left out) and the first [`MAX_TREE_NODES`] nodes in pre-order
+/// (a prefix, so every written node's written children are a prefix of its children). A
+/// tree past either bound is cut there and the snapshot says so (`tree_cut`); it was an
+/// error ("the reply could not be encoded"), so a screen deeper than the bound could not be
+/// read at all and the session could not leave it. Iterative.
+fn plan_tree(root: &UiNode) -> TreePlan<'_> {
+    let mut nodes: Vec<(&UiNode, usize)> = Vec::new();
+    let mut cut = false;
+    // (node, depth, index of its parent in `nodes`)
+    let mut stack: Vec<(&UiNode, usize, Option<usize>)> = vec![(root, 1, None)];
+    while let Some((node, depth, parent)) = stack.pop() {
+        if nodes.len() >= MAX_TREE_NODES {
+            cut = true;
+            break;
         }
-        if depth > MAX_TREE_DEPTH {
-            return Err(MessageError::Limit("tree depth"));
+        let here = nodes.len();
+        nodes.push((node, 0));
+        if let Some((_, written)) = parent.and_then(|p| nodes.get_mut(p)) {
+            *written += 1;
         }
-        write_node(w, node)?;
+        if depth >= MAX_TREE_DEPTH {
+            cut |= !node.children.is_empty();
+            continue;
+        }
         for child in node.children.iter().rev() {
-            stack.push((child, depth + 1));
+            stack.push((child, depth + 1, Some(here)));
         }
     }
+    TreePlan { nodes, cut }
+}
+
+fn write_planned(w: &mut Writer, plan: &TreePlan<'_>) -> Result<(), MessageError> {
+    for (node, written) in &plan.nodes {
+        write_node_with(w, node, *written)?;
+    }
     Ok(())
+}
+
+#[cfg(test)]
+fn write_tree(w: &mut Writer, root: &UiNode) -> Result<bool, MessageError> {
+    let plan = plan_tree(root);
+    write_planned(w, &plan)?;
+    Ok(plan.cut)
 }
 
 fn read_tree(r: &mut Reader<'_>) -> Result<UiNode, MessageError> {
@@ -885,11 +936,24 @@ mod tests {
             parent.children = vec![node];
             node = parent;
         }
+        // Review pass 31 (L1): the writer cuts a chain one level too deep at the bound and
+        // says so (it refused it); what it wrote reads back at exactly the bound.
         let mut w = Writer::default();
-        assert_eq!(
-            write_tree(&mut w, &node),
-            Err(MessageError::Limit("tree depth"))
-        );
+        assert_eq!(write_tree(&mut w, &node), Ok(true));
+        let mut r = Reader::new(&w.buf);
+        let back = read_tree(&mut r).unwrap();
+        r.finish().unwrap();
+        let mut depth = 0usize;
+        let mut n = &back;
+        loop {
+            depth += 1;
+            match n.children.first() {
+                Some(c) => n = c,
+                None => break,
+            }
+        }
+        assert_eq!(depth, MAX_TREE_DEPTH);
+        jarvis_proto::drop_iteratively(vec![back, node]);
         // Hand-built: a chain one level too deep is refused by the reader.
         let mut w = Writer::default();
         for i in 0..=MAX_TREE_DEPTH {

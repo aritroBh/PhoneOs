@@ -120,6 +120,11 @@ pub struct Screen {
     pub root: UiNode,
     pub keyboard_visible: bool,
     pub orientation: Orientation,
+    /// Review pass 31 (L1): the shell cut the tree at `jarvis_proto::MAX_TREE_DEPTH` levels
+    /// (`UiTreeBuilder`'s `treeCut`): the core reads the screen as incomplete. The FFI
+    /// conversion cuts a deeper tree there too and sets it. Defaults to `false`.
+    #[uniffi(default = false)]
+    pub tree_cut: bool,
 }
 
 /// A handle to a screenshot the shell keeps (pixels never cross into the core).

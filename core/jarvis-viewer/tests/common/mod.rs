@@ -128,6 +128,7 @@ pub fn observed_full(
 ) -> p::Event {
     p::Event::Observed(p::Observation {
         screen: p::Screen {
+            tree_cut: false,
             app_bundle_id: bundle.to_owned(),
             app_name: app.map(str::to_owned),
             size,
@@ -152,6 +153,7 @@ pub fn observed(root: p::UiNode) -> p::Event {
 pub fn observed_text(bundle: &str, app: &str, locked: bool) -> p::Event {
     p::Event::ObservedRunnerText(p::Observation {
         screen: p::Screen {
+            tree_cut: false,
             app_bundle_id: bundle.to_owned(),
             app_name: Some(app.to_owned()),
             size: PHONE,

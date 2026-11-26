@@ -47,6 +47,7 @@ fn screen_tree(labels: &[String]) -> p::UiNode {
 fn observed(root: p::UiNode, locked: bool) -> p::Event {
     p::Event::Observed(p::Observation {
         screen: p::Screen {
+            tree_cut: false,
             app_bundle_id: "com.example.app".into(),
             app_name: Some("Example".into()),
             size: p::Size {

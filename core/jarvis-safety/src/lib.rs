@@ -78,7 +78,10 @@ pub use evaluate::{
     RECIPIENT_FIELD_NEGATIVES, RECIPIENT_FIELD_QUALIFIERS, RECIPIENT_FIELD_STRONG_HEADS,
     RECIPIENT_FIELD_WEAK_HEADS, UNVERIFIED_SCREEN_WARNING,
 };
-pub use evaluate::{planned_drag, round3_question_notes, EMERGENCY_CALL_NOTE, ROW_SWIPE_NOTE};
+pub use evaluate::{
+    incomplete, planned_drag, round3_question_notes, source_rule, EMERGENCY_CALL_NOTE,
+    ROW_SWIPE_NOTE,
+};
 pub use flow::{
     copy_control, edit_menu_shape, edit_menu_view, few_actionable, flow_checked, grid_cell,
     handoff_control, home_menu_row, home_screen_mode, home_view, insert_control, inside_text_input,
@@ -91,7 +94,8 @@ pub use flow::{
 };
 pub use flow::{picker_node, PickerKind, SYSTEM_PICKER_IDS};
 pub use gate::{
-    changes_state, gate, gate_in, gate_on, gate_owned, Gate, NEVER_REMOTE_APPROVE, TRUSTED_ALLOWED,
+    changes_incomplete_screen, changes_state, gate, gate_in, gate_on, gate_owned, Gate,
+    NEVER_REMOTE_APPROVE, TRUSTED_ALLOWED,
 };
 pub use hit::{
     control_at, point_is_clear, system_bar, takes_taps, tap_spot, tap_spot_under, Bar, Covered,

@@ -38,11 +38,18 @@ fn parse(snapshot: RunnerSnapshot) -> (p::Screen, Option<p::ImageRef>, Result<us
         device_locked: _,
     } = snapshot;
     let size: p::Size = size.into();
-    let (root, parsed) = match parse_runner_text(&source) {
-        Ok(ParsedTree { root, warnings }) => (root, Ok(warnings)),
-        Err(e) => (empty_root(size, app_name.as_deref()), Err(e)),
+    // Review pass 31 (L1): a text tree deeper than the bound is cut by the parser and the
+    // screen says so (the core reads it as incomplete).
+    let (root, cut, parsed) = match parse_runner_text(&source) {
+        Ok(ParsedTree {
+            root,
+            warnings,
+            cut,
+        }) => (root, cut, Ok(warnings)),
+        Err(e) => (empty_root(size, app_name.as_deref()), false, Err(e)),
     };
     let screen = p::Screen {
+        tree_cut: cut,
         app_bundle_id,
         app_name,
         size,

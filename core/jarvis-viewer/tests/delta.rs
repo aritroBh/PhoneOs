@@ -631,6 +631,7 @@ fn the_approval_picture_never_enters_a_delta_or_a_snapshot() {
         ])])
         .build();
     let screen = p::Screen {
+        tree_cut: false,
         app_bundle_id: "com.example.shop".to_owned(),
         app_name: Some("Shop".to_owned()),
         size: PHONE,

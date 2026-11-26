@@ -81,6 +81,7 @@ fn screen(n: usize, seed: usize) -> p::UiNode {
 
 fn observed(root: p::UiNode) -> p::Event {
     p::Event::Observed(p::Observation::new(p::Screen {
+        tree_cut: false,
         app_bundle_id: "com.apple.mobilemail".into(),
         app_name: Some("Mail".into()),
         size: p::Size::new(393.0, 852.0),

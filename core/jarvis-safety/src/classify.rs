@@ -23,12 +23,14 @@ use crate::text::{
 use crate::validate::{looks_like_url, url_scheme};
 use jarvis_proto::SPRINGBOARD_BUNDLE_ID;
 
-/// Most controls whose own risk is worked out for one gesture or `tap_point` (each such
-/// evaluation reads the whole screen as context). The elements are filtered to the ones
-/// that matter (controls that react to the drag, pressable elements under the point)
-/// *before* this cap applies, so padding with text cannot push a control out of view;
-/// when more relevant controls than this remain, the result is at least
-/// [`UNREADABLE_RISK`], so the owner is asked.
+/// "Many controls" under one `tap_point` or on one drag's path. The elements are filtered to
+/// the ones that matter (controls that react to the drag, pressable elements under the
+/// point). Review pass 31 (M2): it no longer limits what is classified — every such control
+/// is (it was the 32 smallest, so a denied "Delete account" under 33 decoys became a
+/// question naming a decoy); each costs O(1) beyond its own label, the screen's context
+/// being read once per reader. Above this many, the result is at least [`UNREADABLE_RISK`],
+/// the question says how many controls are there and names the riskiest found, and it is
+/// asked phone only (`many_controls`).
 pub(crate) const MAX_SCANNED_CONTROLS: usize = 32;
 
 /// Category for a tap the phrase net cannot read (unknown script or language, oversized
@@ -368,6 +370,8 @@ pub(crate) struct Reader<'a> {
     pub screen: &'a CompactScreen,
     tables: Vec<&'static [Phrase]>,
     tally: OnceCell<Tally>,
+    /// Per element index, its first position in `screen.elements` and how many share it.
+    positions: OnceCell<HashMap<u32, (usize, usize)>>,
     beside: OnceCell<BTreeSet<u32>>,
     stacked: OnceCell<HashMap<CardKey, bool>>,
 }
@@ -378,6 +382,7 @@ impl<'a> Reader<'a> {
             screen,
             tables: context_tables(screen),
             tally: OnceCell::new(),
+            positions: OnceCell::new(),
             beside: OnceCell::new(),
             stacked: OnceCell::new(),
         }
@@ -396,18 +401,31 @@ impl<'a> Reader<'a> {
             }
             t
         });
-        // Every element with that index (indices are unique on a compacted screen).
-        let mut minus = Signal::default();
-        let mut excluded = 0usize;
-        for el in self
-            .screen
-            .elements
-            .iter()
-            .filter(|e| Some(e.index) == exclude)
-        {
-            minus = signal_of(el, &self.tables);
-            excluded += 1;
-        }
+        // Every element with that index (indices are unique on a compacted screen). Review
+        // pass 31 (M2): found through a per-reader map, so excluding one element costs O(1)
+        // and classifying every control under a point or on a path stays linear.
+        let Some(exclude) = exclude else {
+            return tally.without(Signal::default());
+        };
+        let positions = self.positions.get_or_init(|| {
+            let mut m: HashMap<u32, (usize, usize)> = HashMap::new();
+            for (k, el) in self.screen.elements.iter().enumerate() {
+                m.entry(el.index).or_insert((k, 0)).1 += 1;
+            }
+            m
+        });
+        let (minus, excluded) = match positions.get(&exclude) {
+            None => (Signal::default(), 0),
+            Some(&(k, n)) => (
+                self.screen
+                    .elements
+                    .get(k)
+                    .map(|el| signal_of(el, &self.tables))
+                    .unwrap_or_default(),
+                n,
+            ),
+        };
+        let exclude = Some(exclude);
         if excluded > 1 {
             // Duplicate indices (a hand-built screen): read it the slow way.
             let mut t = Tally::default();
@@ -1147,10 +1165,12 @@ fn gesture_risk(
             .into_iter()
             .filter(|el| !target.is_some_and(|t| t.index == el.index))
             .collect();
+        // Review pass 31 (M2): every crossed control is classified (linear: the context of
+        // each is O(1) through the reader); more than the cap also makes it a guess.
         if crossed.len() > MAX_SCANNED_CONTROLS {
             risk = max_risk(risk, UNREADABLE_RISK);
         }
-        for el in crossed.into_iter().take(MAX_SCANNED_CONTROLS) {
+        for el in crossed {
             risk = max_risk(risk, swipe_risk(el, finger, r));
         }
     }
@@ -1250,10 +1270,12 @@ fn tap_point_in<'a>(x: f64, y: f64, r: &Reader<'a>) -> (RiskCategory, Option<&'a
         .filter(|e| is_pressable(&e.role))
         .collect();
     pressable.sort_by(|a, b| a.frame.area().total_cmp(&b.frame.area()));
+    // Review pass 31 (M2): every pressable element under the point is classified (it was the
+    // 32 smallest: a denied "Delete account" under 33 small decoys became a question naming
+    // a decoy). More than the cap also makes the result a guess (asked, phone only).
     let too_many = pressable.len() > MAX_SCANNED_CONTROLS;
     let best_pressable = pressable
         .into_iter()
-        .take(MAX_SCANNED_CONTROLS)
         .map(|e| (element_risk(e, r), e))
         .max_by(|(ra, a), (rb, b)| {
             severity(*ra)
@@ -1273,7 +1295,7 @@ fn tap_point_in<'a>(x: f64, y: f64, r: &Reader<'a>) -> (RiskCategory, Option<&'a
     if others.len() > MAX_SCANNED_CONTROLS {
         risk = max_risk(risk, UNREADABLE_RISK);
     }
-    for el in others.into_iter().take(MAX_SCANNED_CONTROLS) {
+    for el in others {
         risk = max_risk(risk, element_risk(el, r));
     }
     let largest = hits
@@ -1281,6 +1303,97 @@ fn tap_point_in<'a>(x: f64, y: f64, r: &Reader<'a>) -> (RiskCategory, Option<&'a
         .max_by(|a, b| a.frame.area().total_cmp(&b.frame.area()))
         .copied();
     (risk, largest)
+}
+
+/// Review pass 31 (M2): what lies under a `tap_point` or on a drag's path when more than
+/// [`MAX_SCANNED_CONTROLS`] controls are there (the classification read every one of them;
+/// the question says how many, names the riskiest found, and is asked phone only).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ManyControls<'a> {
+    /// How many controls (pressable elements under the point, controls the path crosses
+    /// that react to it; without a pressable one under a point, the elements there).
+    pub count: usize,
+    /// The riskiest of them (ties: the first the classification met); `None` when the point
+    /// holds no pressable element.
+    pub riskiest: Option<&'a Element>,
+    /// The action is a drag (a path), not a point.
+    pub path: bool,
+}
+
+/// Review pass 31 (M2): [`ManyControls`] for `action` on `screen` when the point or path holds
+/// more than [`MAX_SCANNED_CONTROLS`] controls (the same sets [`classify`] reads), else `None`.
+pub(crate) fn many_controls<'a>(
+    action: &Action,
+    screen: &'a CompactScreen,
+) -> Option<ManyControls<'a>> {
+    let r = Reader::new(screen);
+    match action {
+        Action::TapPoint { x, y } => {
+            if !(x.is_finite() && y.is_finite()) {
+                return None;
+            }
+            let p = Point::new(x * screen.size.width, y * screen.size.height);
+            let hits: Vec<&Element> = screen
+                .elements
+                .iter()
+                .filter(|e| e.frame.contains(p) && !screen.cues.is_unplaced(e.index))
+                .collect();
+            let pressable = hits.iter().filter(|e| is_pressable(&e.role)).count();
+            if pressable > MAX_SCANNED_CONTROLS {
+                let (_, riskiest) = tap_point_in(*x, *y, &r);
+                return Some(ManyControls {
+                    count: pressable,
+                    riskiest,
+                    path: false,
+                });
+            }
+            let others = hits.iter().filter(|e| !e.role.is_text_input()).count();
+            (pressable == 0 && others > MAX_SCANNED_CONTROLS).then_some(ManyControls {
+                count: others,
+                riskiest: None,
+                path: false,
+            })
+        }
+        Action::Scroll { direction, element } | Action::Swipe { direction, element } => {
+            let kind = if matches!(action, Action::Swipe { .. }) {
+                GestureKind::Swipe
+            } else {
+                GestureKind::Scroll
+            };
+            let finger = finger_direction(kind, *direction);
+            let target = element.and_then(|i| screen.get(i));
+            let g = drag_gesture(kind, *direction, target.map(|e| e.frame), screen).ok()?;
+            let crossed: Vec<&Element> = crossed_controls(&r, g.from, g.to, finger)
+                .into_iter()
+                .filter(|el| !target.is_some_and(|t| t.index == el.index))
+                .collect();
+            if crossed.len() <= MAX_SCANNED_CONTROLS {
+                return None;
+            }
+            // The riskiest by its reading; among equals, the one whose own words carry the
+            // risk (a money screen lends every control its context).
+            let tables = action_tables(&screen.app_bundle_id);
+            let key = |el: &Element| {
+                (
+                    severity(swipe_risk(el, finger, &r)),
+                    severity(match_label(&element_text(el), &tables).category),
+                )
+            };
+            let mut riskiest: Option<(_, &Element)> = None;
+            for el in &crossed {
+                let k = key(el);
+                if riskiest.is_none_or(|(best, _)| k > best) {
+                    riskiest = Some((k, el));
+                }
+            }
+            Some(ManyControls {
+                count: crossed.len(),
+                riskiest: riskiest.map(|(_, e)| e),
+                path: true,
+            })
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

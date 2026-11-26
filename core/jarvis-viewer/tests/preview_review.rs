@@ -207,6 +207,7 @@ fn probe_deep_tree_observed_without_confirmation() {
 #[test]
 fn probe_deep_tree_compacted_by_the_core() {
     let screen = p::Screen {
+        tree_cut: false,
         app_bundle_id: "a".into(),
         app_name: None,
         size: PHONE,

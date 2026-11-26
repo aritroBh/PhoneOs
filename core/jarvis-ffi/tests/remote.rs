@@ -205,6 +205,7 @@ fn screen() -> Screen {
         node(Role::Button, "Send", None, false, 300.0),
     ];
     Screen {
+        tree_cut: false,
         app_bundle_id: "com.apple.MobileSMS".into(),
         app_name: Some("Messages".into()),
         size: Size {

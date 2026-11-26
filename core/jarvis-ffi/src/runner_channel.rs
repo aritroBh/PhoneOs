@@ -72,6 +72,10 @@ pub struct RunnerWireSnapshot {
     pub lock_state: RunnerWireLockState,
     pub notes: Vec<String>,
     pub screenshot: Option<RunnerWireScreenshot>,
+    /// Review pass 31 (L1, protocol version 3): the tree was cut (by the runner's own copy, or
+    /// by the encoder at `jarvis_runner::MAX_TREE_DEPTH` levels or `MAX_TREE_NODES` nodes).
+    #[uniffi(default = false)]
+    pub tree_cut: bool,
 }
 
 /// App → runner: exactly the `PhoneRunner` surface, plus a hello.
@@ -284,6 +288,7 @@ impl From<r::Snapshot> for RunnerWireSnapshot {
             lock_state,
             notes,
             screenshot,
+            tree_cut,
         } = v;
         Self {
             root: root.into(),
@@ -296,6 +301,7 @@ impl From<r::Snapshot> for RunnerWireSnapshot {
             lock_state: lock_state.into(),
             notes,
             screenshot: screenshot.map(Into::into),
+            tree_cut,
         }
     }
 }
@@ -313,6 +319,7 @@ impl From<RunnerWireSnapshot> for r::Snapshot {
             lock_state,
             notes,
             screenshot,
+            tree_cut,
         } = v;
         Self {
             root: root.into(),
@@ -325,6 +332,7 @@ impl From<RunnerWireSnapshot> for r::Snapshot {
             lock_state: lock_state.into(),
             notes,
             screenshot: screenshot.map(Into::into),
+            tree_cut,
         }
     }
 }

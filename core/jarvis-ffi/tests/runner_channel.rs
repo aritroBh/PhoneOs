@@ -156,6 +156,7 @@ fn requests_and_typed_replies_cross_intact() {
     };
     let snapshot = RunnerWireReply::Snapshot {
         snapshot: RunnerWireSnapshot {
+            tree_cut: false,
             root,
             app_bundle_id: "com.apple.Preferences".into(),
             app_name: Some("Settings".into()),
@@ -197,7 +198,8 @@ fn requests_and_typed_replies_cross_intact() {
         RunnerWireReply::FrontBundleId { bundle_id: None },
     );
     assert_eq!(got, RunnerWireReply::FrontBundleId { bundle_id: None });
-    assert_eq!(runner_protocol_version(), 2);
+    // Review pass 31 (L1): version 3 carries `tree_cut`.
+    assert_eq!(runner_protocol_version(), 3);
 }
 
 #[test]

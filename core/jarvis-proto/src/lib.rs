@@ -50,4 +50,6 @@ pub use session::{
 pub use skill::SkillContext;
 pub use task::{AppInfo, SessionConfig, TaskOrigin, TaskSpec};
 pub use tool::{ParamKind, Tier, ToolCall, ToolParam, ToolResult, ToolSpec};
-pub use ui::{ImageRef, Observation, Orientation, Role, Screen, UiNode};
+pub use ui::{
+    cut_tree, drop_iteratively, ImageRef, Observation, Orientation, Role, Screen, UiNode,
+};

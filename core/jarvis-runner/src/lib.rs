@@ -79,9 +79,11 @@ pub use message::{LockState, Reply, ReplyKind, Request, Screenshot, Snapshot};
 
 /// Protocol version, carried in both hellos and bound into every MAC and AEAD tag.
 ///
-/// Version 2 (twenty-first review) added `not_after_ms` to every request. A peer of
+/// Version 2 (twenty-first review) added `not_after_ms` to every request; version 3 (review
+/// pass 31, L1) added `tree_cut` to every snapshot (a tree past a bound is cut and flagged,
+/// never refused). A peer of
 /// another version is refused in the hello; nothing is negotiated.
-pub const PROTOCOL_VERSION: u8 = 2;
+pub const PROTOCOL_VERSION: u8 = 3;
 /// Length of the pre-shared key, in bytes.
 pub const KEY_LEN: usize = 32;
 /// Least entropy the shell passes per connection, in bytes.
@@ -92,10 +94,11 @@ pub const MAX_CLIENT_FRAME: usize = 256 * 1024;
 pub const MAX_SERVER_FRAME: usize = 16 * 1024 * 1024;
 /// Largest screenshot carried, in bytes.
 pub const MAX_SCREENSHOT_BYTES: usize = 15 * 1024 * 1024;
-/// Most nodes in one tree.
+/// Most nodes in one tree: the encoder writes the first this many in pre-order and flags the
+/// cut (`Snapshot::tree_cut`); the decoder refuses more (no encoder sends them).
 pub const MAX_TREE_NODES: usize = 100_000;
 /// Deepest tree (the root is depth 1): the core's one bound (`jarvis_proto::MAX_TREE_DEPTH`),
-/// refused beyond it, never cut.
+/// cut there by the encoder (flagged, `Snapshot::tree_cut`), refused beyond it by the decoder.
 pub const MAX_TREE_DEPTH: usize = jarvis_proto::MAX_TREE_DEPTH;
 /// Most notes in one snapshot.
 pub const MAX_NOTES: usize = 256;

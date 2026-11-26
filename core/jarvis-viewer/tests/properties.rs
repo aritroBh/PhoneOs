@@ -218,6 +218,7 @@ fn observed_parsed_text(root: &p::UiNode, app: &str, locked: bool) -> p::Event {
     let parsed = jarvis_observe::parse_runner_text(&text).expect("parses");
     p::Event::ObservedRunnerText(p::Observation {
         screen: p::Screen {
+            tree_cut: false,
             app_bundle_id: "com.example".to_owned(),
             app_name: Some(app.to_owned()),
             size: PHONE,

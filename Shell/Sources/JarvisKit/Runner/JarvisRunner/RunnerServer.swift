@@ -67,6 +67,10 @@ public actor RunnerServer {
     private let onEvent: @Sendable (Event) -> Void
     private let clock: @Sendable () -> UInt64
     private var active: (any RunnerByteStream)?
+    /// Which accepted connection `active` is (each gets the next number), so a serving task
+    /// that ends after its connection was already let go never clears a newer one.
+    private var activeNumber: UInt64 = 0
+    private var accepted: UInt64 = 0
     /// The idle watch of the active connection, once it authenticated.
     private var activeIdle: IdleWatch?
     private var stopped = false
@@ -95,14 +99,25 @@ public actor RunnerServer {
     /// Takes a new connection: served when the server is free, closed at once otherwise.
     /// Returns at once; the connection is served in its own task.
     public func accept(_ connection: any RunnerByteStream) async {
+        // The active connection's peer may have closed it already (the client retires an idle
+        // connection and connects again at once) while its serving task has not yet run to
+        // see the end: a stream that knows it is closed holds the slot no longer. Without
+        // this the new connection was refused as busy whenever the new one won the race to
+        // the actor (the "runner connection is closed" flake of the LOW-1 retire test).
+        if let current = active, current.isKnownClosed {
+            await finished(current, number: activeNumber, reason: "the client closed the connection")
+        }
         guard !stopped, active == nil else {
             onEvent(.refusedBusy)
             await connection.close()
             return
         }
+        accepted &+= 1
+        let number = accepted
         active = connection
+        activeNumber = number
         onEvent(.accepted)
-        Task { await self.serve(connection) }
+        Task { await self.serve(connection, number: number) }
     }
 
     /// Closes the current connection and refuses all later ones.
@@ -111,19 +126,23 @@ public actor RunnerServer {
         if let active { await active.close() }
     }
 
-    private func finished(_ connection: any RunnerByteStream, reason: String) async {
+    /// Lets connection `number` go: closes it and, when it still holds the slot, frees the
+    /// slot and reports it (once per connection).
+    private func finished(_ connection: any RunnerByteStream, number: UInt64, reason: String) async {
         await connection.close()
+        guard active != nil, activeNumber == number else { return }
         active = nil
         activeIdle = nil
         onEvent(.closed(reason: reason))
     }
 
-    private func serve(_ connection: any RunnerByteStream) async {
+    private func serve(_ connection: any RunnerByteStream, number: UInt64) async {
         let channel: JarvisRunnerServerChannel
         do {
             channel = try JarvisRunnerServerChannel(key: key.reveal(), entropy: random.bytes(count: 32))
         } catch {
-            await finished(connection, reason: "could not open a channel: \(CoreErrorMessage(error).message)")
+            await finished(connection, number: number,
+                           reason: "could not open a channel: \(CoreErrorMessage(error).message)")
             return
         }
         // The handshake deadline: closing the connection ends the read below.
@@ -147,7 +166,7 @@ public actor RunnerServer {
                         watchdog.cancel()
                         onEvent(.authenticated)
                         idle.busy(false, nowMs: clock())
-                        activeIdle = idle
+                        if activeNumber == number { activeIdle = idle }
                         idleWatchdog = watchIdle(idle)
                     case .request(let id, _, let request): // not_after: checked by the core channel on receipt
                         idle.busy(true, nowMs: clock())
@@ -159,9 +178,9 @@ public actor RunnerServer {
                 }
             }
             let reason = idle.fired ? "no request for \(configuration.idleTimeout)" : "the client closed the connection"
-            await finished(connection, reason: reason)
+            await finished(connection, number: number, reason: reason)
         } catch {
-            await finished(connection, reason: CoreErrorMessage(error).message)
+            await finished(connection, number: number, reason: CoreErrorMessage(error).message)
         }
     }
 

@@ -42,6 +42,9 @@ pub struct ParsedTree {
     pub root: UiNode,
     /// Number of non-blank lines that could not be parsed and were skipped.
     pub warnings: usize,
+    /// Review pass 31 (L1): nodes deeper than `jarvis_proto::MAX_TREE_DEPTH` levels were
+    /// dropped (cut there); the screen built from this tree carries `Screen::tree_cut`.
+    pub cut: bool,
 }
 
 /// Why a runner text tree could not be parsed at all.
@@ -200,8 +203,10 @@ fn to_node(f: Fields) -> UiNode {
 /// line after a node start with an open quote is continuation text until the node closes
 /// (never a node of its own, see the module docs); unparseable lines are skipped and
 /// counted in [`ParsedTree::warnings`]; a jump of more than one level attaches to the
-/// nearest open parent; nesting deeper than the compaction depth cap is flattened to
-/// siblings at the cap; several top-level lines are wrapped in a synthetic `Application`.
+/// nearest open parent; several top-level lines are wrapped in a synthetic `Application`.
+/// Review pass 31 (L1): a node deeper than `jarvis_proto::MAX_TREE_DEPTH` levels (and all it
+/// holds) is dropped and the tree says so ([`ParsedTree::cut`]); it was flattened to
+/// siblings at the cap, which no rule could tell from a real screen.
 ///
 /// The format comes from reading the runner's source (see `docs/RUNNER.md` section 2.1) and
 /// has not been verified against a real device.
@@ -274,8 +279,15 @@ pub fn parse_runner_text(source: &str) -> Result<ParsedTree, ParseError> {
             }
         }
     };
+    let mut cut = false;
     for (indent, fields) in entries {
-        let depth = ((indent - base) / unit).min(stack.len()).min(MAX_DEPTH);
+        let depth = ((indent - base) / unit).min(stack.len());
+        // This node's level is `depth + 1`: past the bound it is cut, with what it holds
+        // (every deeper line that follows attaches no higher than the stack allows).
+        if depth >= MAX_DEPTH {
+            cut = true;
+            continue;
+        }
         while stack.len() > depth {
             close(&mut stack, &mut roots);
         }
@@ -305,5 +317,12 @@ pub fn parse_runner_text(source: &str) -> Result<ParsedTree, ParseError> {
         });
         UiNode::new(Role::Application, frame.unwrap_or_default()).with_children(roots)
     };
-    Ok(ParsedTree { root, warnings })
+    let mut root = root;
+    // The synthetic `Application` adds a level.
+    cut |= jarvis_proto::cut_tree(&mut root);
+    Ok(ParsedTree {
+        root,
+        warnings,
+        cut,
+    })
 }

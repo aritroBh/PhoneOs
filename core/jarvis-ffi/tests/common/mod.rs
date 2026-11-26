@@ -114,6 +114,7 @@ pub fn settings_screen() -> Screen {
         vec![nav, table],
     );
     Screen {
+        tree_cut: false,
         app_bundle_id: SETTINGS.to_owned(),
         app_name: Some("Settings".to_owned()),
         size: size(),

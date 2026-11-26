@@ -31,6 +31,10 @@ public enum UiTreeBuilder {
         public var unmappedTypes: [String: Int]
         /// Elements whose frame had to be sanitised (non-finite, huge or negative).
         public var sanitizedFrames: Int
+        /// Review pass 31 (L1): the tree was cut at `maxDepth` levels, here or by the first
+        /// copy (`RawElement.childrenCut`): carried to the core (`RunnerObservation.treeCut`,
+        /// `Screen.treeCut`), which reads the screen as incomplete.
+        public var treeCut: Bool = false
     }
 
     /// Converts `raw` (normally the `Application` element). `screenSize` (points) decides
@@ -42,7 +46,12 @@ public enum UiTreeBuilder {
         var sanitizedFrames = 0
         let bounds = screenSize.map { Rect(x: 0, y: 0, width: $0.width, height: $0.height).sanitized }
 
-        func convert(_ e: RawElement, depth: Int) -> UiNode {
+        var cut = false
+        // Review pass 31 (L1): iterative (`TreeWalk.map`) and cut at `maxDepth` levels, so no
+        // input depth can exhaust a 512 KB stack (the recursive conversion at 300 levels did,
+        // on a macOS test thread: run 151).
+        func convert(_ e: RawElement, _ children: [UiNode], _ cutHere: Bool) -> UiNode {
+            if cutHere || e.childrenCut { cut = true }
             count += 1
             let role = XCUIElementTypeCode.role(e.elementType)
             if case .other(let name) = role { unmapped[name, default: 0] += 1 }
@@ -58,8 +67,6 @@ public enum UiTreeBuilder {
             } else if isTextInput(role), let v = value, v == placeholder {
                 value = nil
             }
-            // Real trees are shallow; the cap only protects the stack from a broken snapshot.
-            let children = depth < maxDepth ? e.children.map { convert($0, depth: depth + 1) } : []
             return UiNode(
                 role: role,
                 label: nonEmpty(e.label) ?? nonEmpty(e.title),
@@ -77,23 +84,27 @@ public enum UiTreeBuilder {
             )
         }
 
-        let root = convert(raw, depth: 0)
+        let root = TreeWalk.map(raw, maxDepth: maxDepth, children: { $0.children }, make: convert)
         return Result(root: root, keyboardVisible: keyboard, nodeCount: count, unmappedTypes: unmapped,
-                      sanitizedFrames: sanitizedFrames)
+                      sanitizedFrames: sanitizedFrames, treeCut: cut)
     }
 
-    /// Deepest level converted. Review pass 30: deeper than the core reads
-    /// (`jarvis_proto::MAX_TREE_DEPTH`, 160; real trees stay under 40 levels), so a cut here
-    /// is never silent: the wire refuses a tree deeper than 160, and the core reads one that
-    /// reaches it deeper as an incomplete screen (every action asks).
-    public static let maxDepth = 300
+    /// Deepest level converted and copied (the root is level 1). Review pass 31 (L1): the
+    /// core's one bound (`jarvis_proto::MAX_TREE_DEPTH`, 160; real trees stay under 40
+    /// levels): a deeper tree is cut here — first in the runner's copy of the snapshot
+    /// (`SnapshotCopy`, through `RawElement.copyTree`) — and the cut is flagged
+    /// (`Result.treeCut`), never silent and never an error. It was 300 and recursive: a
+    /// 300-deep conversion overflowed a 512 KB stack (run 151).
+    public static let maxDepth = 160
 
     /// A readable dump of the typed tree, one node per line, two spaces per level:
     /// `Button "Sign In" id=login.submit {{16, 400}, {361, 44}} [disabled, focused]`.
     /// Invisible nodes are marked `(hidden)`.
     public static func dump(_ node: UiNode) -> String {
         var lines: [String] = []
-        func walk(_ n: UiNode, _ depth: Int) {
+        // Iterative (pre-order, as the recursive walk was): no depth can exhaust the stack.
+        var stack: [(UiNode, Int)] = [(node, 0)]
+        while let (n, depth) = stack.popLast() {
             var line = String(repeating: "  ", count: depth) + roleName(n.role)
             if let label = n.label { line += " \"\(escape(label))\"" }
             if let value = n.value { line += " value=\"\(escape(value))\"" }
@@ -108,9 +119,8 @@ public enum UiTreeBuilder {
             if !n.visible { flags.append("hidden") }
             if !flags.isEmpty { line += " [\(flags.joined(separator: ", "))]" }
             lines.append(line)
-            for c in n.children { walk(c, depth + 1) }
+            for c in n.children.reversed() { stack.append((c, depth + 1)) }
         }
-        walk(node, 0)
         return lines.joined(separator: "\n")
     }
 
@@ -118,7 +128,8 @@ public enum UiTreeBuilder {
     /// mapping itself can be checked from the artifacts.
     public static func dump(_ raw: RawElement) -> String {
         var lines: [String] = []
-        func walk(_ e: RawElement, _ depth: Int) {
+        var stack: [(RawElement, Int)] = [(raw, 0)]
+        while let (e, depth) = stack.popLast() {
             var line = String(repeating: "  ", count: depth)
             line += "\(XCUIElementTypeCode.name(e.elementType))(\(e.elementType))"
             if !e.label.isEmpty { line += " label=\"\(escape(e.label))\"" }
@@ -135,11 +146,11 @@ public enum UiTreeBuilder {
             case nil: flags.append("focus=?")
             case false?: break
             }
+            if e.childrenCut { flags.append("children cut") }
             if !flags.isEmpty { line += " [\(flags.joined(separator: ", "))]" }
             lines.append(line)
-            for c in e.children { walk(c, depth + 1) }
+            for c in e.children.reversed() { stack.append((c, depth + 1)) }
         }
-        walk(raw, 0)
         return lines.joined(separator: "\n")
     }
 

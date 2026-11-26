@@ -7,16 +7,34 @@ import JarvisKit
 /// public `XCUIElementAttributes` are read; everything that interprets them
 /// (`UiTreeBuilder`) is in JarvisKit and tested on Linux.
 enum SnapshotCopy {
-    /// Deepest level copied (real trees are far shallower: 35 levels at most in the
-    /// captures). Review pass 30: deeper than the core reads (`jarvis_proto::MAX_TREE_DEPTH`,
-    /// 160), so a cut here is never silent — the wire refuses such a tree, and the core reads
-    /// one that reaches it as an incomplete screen.
+    /// Deepest level copied, the root being level 1 (real trees are far shallower: 36 levels
+    /// at most in the captures). Review pass 31 (L1): the core's one bound
+    /// (`jarvis_proto::MAX_TREE_DEPTH`, 160, `UiTreeBuilder.maxDepth`): a deeper tree is cut
+    /// HERE, in the first copy, and the element at the bound says so (`childrenCut`, carried
+    /// to the core as `treeCut`), so no later walk sees a deeper tree. The copy is iterative
+    /// (`RawElement.copyTree`): it was recursive to 300 levels, past a 512 KB stack.
     static let maxDepth = UiTreeBuilder.maxDepth
 
+    /// A snapshot as `RawElement.copyTree`'s source (a concrete type, so no existential is
+    /// opened for the generic parameter).
+    private struct Node {
+        let snapshot: any XCUIElementSnapshot
+    }
+
     @MainActor
-    static func copy(_ snapshot: any XCUIElementSnapshot, depth: Int = 0) -> RawElement {
+    static func copy(_ snapshot: any XCUIElementSnapshot) -> RawElement {
+        RawElement.copyTree(
+            Node(snapshot: snapshot),
+            maxDepth: maxDepth,
+            children: { (n: Node) -> [Node] in n.snapshot.children.map { Node(snapshot: $0) } },
+            element: { (n: Node) -> RawElement in one(n.snapshot) }
+        )
+    }
+
+    /// One snapshot's own fields (no children).
+    @MainActor
+    private static func one(_ snapshot: any XCUIElementSnapshot) -> RawElement {
         let frame = snapshot.frame
-        let children = depth < maxDepth ? snapshot.children.map { copy($0, depth: depth + 1) } : []
         return RawElement(
             elementType: snapshot.elementType.rawValue,
             label: snapshot.label,
@@ -30,8 +48,7 @@ enum SnapshotCopy {
             ),
             isEnabled: snapshot.isEnabled,
             isSelected: snapshot.isSelected,
-            hasFocus: focus(snapshot),
-            children: children
+            hasFocus: focus(snapshot)
         )
     }
 

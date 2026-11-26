@@ -289,6 +289,7 @@ mod tests {
         let mut root = p::UiNode::new(p::Role::Application, size.to_rect());
         root.children = children;
         p::Screen {
+            tree_cut: false,
             app_bundle_id: "com.example.shop".to_owned(),
             app_name: Some("Shop".to_owned()),
             size,

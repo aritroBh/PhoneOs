@@ -1151,7 +1151,8 @@ pub fn compact_view(screen: &Screen) -> CompactView {
     // Probe run 134: the listed elements whose raw node lies inside a remote container have
     // no known position on screen (ascending index: `elements` is in index order).
     // Review pass 30 (M1): a node deeper than the walks read: the screen is incomplete.
-    screen_out.cues.truncated = index.truncated;
+    // Review pass 31 (L1): or an intake cut the tree there and said so (`Screen::tree_cut`).
+    screen_out.cues.truncated = index.truncated || screen.tree_cut;
     screen_out.cues.unplaced = screen_out
         .elements
         .iter()

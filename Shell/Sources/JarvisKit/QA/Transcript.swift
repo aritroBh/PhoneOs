@@ -231,7 +231,14 @@ public final class Transcript: Sendable {
     }
 
     static func countNodes(_ node: UiNode) -> Int {
-        node.children.reduce(1) { $0 + countNodes($1) }
+        // Iterative: no depth can exhaust the stack (review pass 31).
+        var n = 0
+        var stack = [node]
+        while let e = stack.popLast() {
+            n += 1
+            stack.append(contentsOf: e.children)
+        }
+        return n
     }
 }
 

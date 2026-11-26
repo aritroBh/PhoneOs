@@ -132,6 +132,7 @@ fn tree(r: &mut Rng) -> Screen {
         "com.example.app"
     };
     Screen {
+        tree_cut: false,
         app_bundle_id: bundle.into(),
         app_name: None,
         size: IPHONE_SIZE,
@@ -375,6 +376,7 @@ fn tree_runs(r: &mut Rng) -> Screen {
     }
     root.children.push(win);
     Screen {
+        tree_cut: false,
         app_bundle_id: "com.example.app".into(),
         app_name: None,
         size: IPHONE_SIZE,

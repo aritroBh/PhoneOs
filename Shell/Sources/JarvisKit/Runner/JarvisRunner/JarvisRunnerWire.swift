@@ -108,7 +108,8 @@ extension RunnerWireSnapshot {
             deviceLocked: observation.deviceLocked,
             lockState: RunnerWireLockState(observation.lockState),
             notes: observation.notes,
-            screenshot: observation.screenshot.map(RunnerWireScreenshot.init)
+            screenshot: observation.screenshot.map(RunnerWireScreenshot.init),
+            treeCut: observation.treeCut
         )
     }
 
@@ -123,7 +124,8 @@ extension RunnerWireSnapshot {
             screenshot: screenshot?.captured,
             deviceLocked: deviceLocked,
             notes: notes,
-            lockState: lockState.deviceLockState
+            lockState: lockState.deviceLockState,
+            treeCut: treeCut
         )
     }
 }

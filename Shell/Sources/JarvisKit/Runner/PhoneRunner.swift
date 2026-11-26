@@ -232,6 +232,12 @@ public struct RunnerObservation: Sendable, Equatable {
     /// Things the runner adapter had to assume or default (shown in the driver's updates,
     /// so nothing is guessed silently).
     public var notes: [String]
+    /// Review pass 31 (L1): the typed tree was cut at the core's depth bound
+    /// (`UiTreeBuilder.maxDepth`, `jarvis_proto::MAX_TREE_DEPTH`) by the first copy or the
+    /// builder (`UiTreeBuilder.Result.treeCut`), or by the runner wire. The core reads such a
+    /// screen as incomplete (every action that touches it asks; Home works). Never set for
+    /// runner text (the core's parser cuts and flags that itself).
+    public var treeCut: Bool
 
     /// Not locked, and the runner said so.
     public var isKnownUnlocked: Bool { !deviceLocked && lockState == .unlocked }
@@ -267,12 +273,13 @@ public struct RunnerObservation: Sendable, Equatable {
         screenshot: CapturedScreenshot? = nil,
         deviceLocked: Bool = false,
         notes: [String] = [],
-        lockState: DeviceLockState? = nil
+        lockState: DeviceLockState? = nil,
+        treeCut: Bool = false
     ) {
         self.init(
             ui: .tree(root), appBundleId: appBundleId, appName: appName, screenSize: screenSize,
             keyboardVisible: keyboardVisible, orientation: orientation, screenshot: screenshot,
-            deviceLocked: deviceLocked, notes: notes, lockState: lockState
+            deviceLocked: deviceLocked, notes: notes, lockState: lockState, treeCut: treeCut
         )
     }
 
@@ -287,8 +294,10 @@ public struct RunnerObservation: Sendable, Equatable {
         screenshot: CapturedScreenshot?,
         deviceLocked: Bool = false,
         notes: [String],
-        lockState: DeviceLockState? = nil
+        lockState: DeviceLockState? = nil,
+        treeCut: Bool = false
     ) {
+        self.treeCut = treeCut
         self.lockState = lockState ?? (deviceLocked ? .locked : .unknown)
         self.ui = ui
         self.appBundleId = appBundleId
@@ -338,7 +347,8 @@ public struct RunnerObservation: Sendable, Equatable {
                     size: screenSize,
                     root: root,
                     keyboardVisible: keyboardVisible,
-                    orientation: orientation
+                    orientation: orientation,
+                    treeCut: treeCut
                 ),
                 screenshot: ref,
                 deviceLocked: deviceLocked

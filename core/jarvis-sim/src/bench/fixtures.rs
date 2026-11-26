@@ -86,6 +86,7 @@ pub fn parse_screen(text: &str) -> Result<Screen, String> {
         .filter(|s| !s.is_empty())
         .map(str::to_owned);
     Ok(Screen {
+        tree_cut: false,
         app_bundle_id: bundle,
         app_name,
         size,

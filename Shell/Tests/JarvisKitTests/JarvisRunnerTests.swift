@@ -741,6 +741,29 @@ struct JarvisRunnerTests {
         #expect(connector.ends.withLock { $0.count } == 2, "an idle connection was reused")
     }
 
+    @Test("a connection its client closed frees the slot for the next one at once, before its serving task catches up")
+    func closedConnectionFreesTheSlotAtOnce() async throws {
+        // Review pass 31: the client retiring an idle connection closes it and connects again
+        // at once; when the new connection reached the server before the old one's serving
+        // task had seen the end, it was refused as busy (the LOW-1 retire test's flake).
+        let events = EventLog()
+        let server = makeServer(TypedFakeRunner(), events: events)
+        for round in 0..<50 {
+            let (end, serverEnd) = InMemoryRunnerPipe.make()
+            await server.accept(serverEnd)
+            await end.close()
+            #expect(!events.events.withLock { $0.contains(.refusedBusy) }, "round \(round)")
+        }
+        let accepted = events.events.withLock { $0.filter { $0 == .accepted }.count }
+        #expect(accepted == 50)
+        // Every connection is reported closed exactly once, and the slot is free at the end.
+        try await eventually("the last slot frees", tries: 3_000) { await !server.isServing }
+        let closed: @Sendable () -> Int = { events.events.withLock { $0.filter { if case .closed = $0 { true } else { false } }.count } }
+        try await eventually("every connection reported closed", tries: 3_000) { closed() == 50 }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(closed() == 50, "a connection was reported closed twice")
+    }
+
     @Test("retry: a command whose connection the runner already closed (idle cut) is sent once on a fresh connection")
     func closedBeforeWriteIsRetried() async throws {
         let fake = TypedFakeRunner()

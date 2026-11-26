@@ -30,6 +30,7 @@ pub fn text(label: &str, frame: Rect) -> UiNode {
 /// Wraps a root in a portrait iPhone `Screen`.
 pub fn screen(bundle_id: &str, app_name: &str, root: UiNode, keyboard_visible: bool) -> Screen {
     Screen {
+        tree_cut: false,
         app_bundle_id: bundle_id.to_owned(),
         app_name: Some(app_name.to_owned()),
         size: IPHONE_SIZE,

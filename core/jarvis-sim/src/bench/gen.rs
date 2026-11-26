@@ -492,6 +492,7 @@ pub fn generate(spec: &GenSpec) -> Screen {
     let window = node(Role::Window, full, None).with_children(vec![wrapper]);
     let root = node(Role::Application, full, Some("Bench".to_owned())).with_children(vec![window]);
     Screen {
+        tree_cut: false,
         app_bundle_id: "com.example.bench".to_owned(),
         app_name: Some("Bench".to_owned()),
         size: Size::new(SCREEN_W, SCREEN_H),

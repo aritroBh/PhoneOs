@@ -382,6 +382,9 @@ final class XCUITestPhoneRunner: PhoneRunner {
         pendingLockNotes = []
         notes += pendingCommandNotes
         pendingCommandNotes = []
+        if built.treeCut {
+            notes.append("the tree is deeper than \(UiTreeBuilder.maxDepth) levels and was cut there; the core reads the screen as incomplete")
+        }
         if built.sanitizedFrames > 0 {
             notes.append("\(built.sanitizedFrames) element frame(s) were non-finite, huge or negative and were sanitised (raw values in the tree dump)")
         }
@@ -404,7 +407,8 @@ final class XCUITestPhoneRunner: PhoneRunner {
             orientation: orientation(),
             screenshot: includeScreenshot ? captured(shot) : nil,
             deviceLocked: false,
-            notes: notes
+            notes: notes,
+            treeCut: built.treeCut
         )
     }
 

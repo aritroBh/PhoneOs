@@ -25,6 +25,7 @@ fn node(role: Role, label: Option<&str>, frame: Rect, children: Vec<UiNode>) -> 
 fn screen_of(children: Vec<UiNode>) -> Screen {
     let full = rect(0.0, 0.0, 393.0, 852.0);
     Screen {
+        tree_cut: false,
         app_bundle_id: SHOP.to_owned(),
         app_name: Some("Shop".to_owned()),
         size: size(),

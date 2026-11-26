@@ -134,7 +134,8 @@ fn probe_server_proof_not_reusable_across_clients() {
 /// Version byte downgrade/upgrade in either hello is refused (never negotiated).
 #[test]
 fn probe_version_byte_is_not_negotiable() {
-    for v in [0u8, 1, 3, 0xff] {
+    // Review pass 31: version 3 is current; 2 is refused too.
+    for v in [0u8, 1, 2, 4, 0xff] {
         let mut c = RunnerClientChannel::new(&KEY, &entropy(20)).unwrap();
         let mut s = RunnerServerChannel::new(&KEY, &entropy(21)).unwrap();
         let mut hello = c.start().unwrap();
@@ -404,6 +405,7 @@ fn encode_chain(depth: usize) -> Vec<u8> {
         node = p;
     }
     let snap = jarvis_runner::Snapshot {
+        tree_cut: false,
         root: node,
         app_bundle_id: "a".into(),
         app_name: None,
@@ -430,6 +432,7 @@ fn probe_decoder_limits_and_speed() {
         .map(|_| UiNode::new(Role::Button, Rect::new(0.0, 0.0, 1.0, 1.0)))
         .collect();
     let snap = jarvis_runner::Snapshot {
+        tree_cut: false,
         root: root.clone(),
         app_bundle_id: "a".into(),
         app_name: None,
@@ -492,6 +495,7 @@ fn probe_decoder_no_quadratic_on_deep_wide_mix() {
         .map(|_| chain(jarvis_runner::MAX_TREE_DEPTH - 1))
         .collect();
     let snap = jarvis_runner::Snapshot {
+        tree_cut: false,
         root,
         app_bundle_id: "a".into(),
         app_name: None,
