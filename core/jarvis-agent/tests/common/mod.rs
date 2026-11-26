@@ -298,7 +298,7 @@ pub fn run_spec(
     panic!("session did not finish within {MAX_ITERATIONS} iterations");
 }
 
-/// Run 147: as on the device, a tap on a text input focuses it — when the screen after the
+/// Run 147: as on the device, a tap on a text input (a secure one too) focuses it — when the screen after the
 /// tap shows no focused input (a scripted transition that sets focus itself decides), the
 /// innermost text input under the point becomes focused. The core now types only into a
 /// field a look shows focused.
@@ -312,7 +312,9 @@ pub fn focus_tapped(screen: &mut Screen, p: Point) {
                 return true;
             }
         }
-        if n.role.is_text_input() && !n.secure && n.frame.contains(p) {
+        // Review pass 30 (L2): a secure field takes focus like any text input (UIKit gives it
+        // keyboard focus; no capture holds a focused secure field, so this follows the OS).
+        if n.role.is_text_input() && n.frame.contains(p) {
             n.focused = true;
             return true;
         }

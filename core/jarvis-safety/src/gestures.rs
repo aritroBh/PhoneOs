@@ -148,16 +148,25 @@ fn span(region_lo: f64, region_hi: f64, safe_lo: f64, safe_hi: f64) -> (f64, f64
 /// measured-safe length. Relative to the width, so it holds in landscape too.
 pub const MAX_SIDEWAYS_SHARE: f64 = 240.0 / 440.0;
 
-/// Run 146 (Mac, probe P13; P05b Reminders agrees): the longest sideways travel across a
-/// list row, as a share of the **row's** width. On a 400-pt row (`Cell {{20, 278}, {400,
-/// 52}}` on a 440-pt screen) a 240-pt drag (0.60 of the row) only revealed the row's actions,
-/// and every drag of 264 pt (0.66) or more deleted the row — through the runner and as an
-/// XCUITest drag at 200 ms. 0.55 of the row (220 pt there) stays below the length measured
-/// to reveal only, 0.11 of the row (17 %) below the measured delete threshold: the margin
-/// covers a threshold that is a share of the row (UIKit's full swipe is) on a narrower row,
-/// and a drag landing a few points long. A row too narrow for [`MIN_TRAVEL`] within this
-/// share (under about 145 pt) gets no drag at all ([`GestureError::RowTooNarrow`]).
-pub const ROW_SWIPE_SHARE: f64 = 0.55;
+/// Runs 146 and 149 (Mac, probes P13, P13a, P13b; P05b Reminders agrees): the longest
+/// sideways travel across a list row, as a share of the **row's** width. Measured at 200 ms
+/// (800 ms behaved the same at the same length), the largest drag that only revealed the
+/// row's actions and the smallest that deleted the row:
+///
+/// | row | width | only revealed up to | deleted from |
+/// |---|---|---|---|
+/// | full width, trailing actions `{20, 278} 400 x 52` | 400 | 250 pt (0.625; 120–250 all revealed) | 264 pt (0.66) |
+/// | narrow list `{70, 204} 300 x 52` | 300 | 198 pt (0.66) | 225 pt (0.75) |
+/// | left of two columns `{16, 204} 200 x 52` | 200 | 132 pt (0.66) | 150 pt (0.75) |
+/// | leading action, dragged left to right `{0, 204} 440 x 52` | 440 | 242 pt (0.55) | 264 pt (0.60) |
+///
+/// The delete threshold is not a constant share of the row: the lowest that deleted is 0.60
+/// (the leading action), where 0.55 is the largest known to reveal only. 0.45 is 0.10 below
+/// that, 0.15 below 0.60, and above the 0.40 that revealed the actions on every row tested
+/// (0.30 on the 400-pt row). A row too narrow for [`MIN_TRAVEL`] within this share (under
+/// 80 / 0.45 ≈ 178 pt) gets no drag at all ([`GestureError::RowTooNarrow`]); the 200-pt
+/// column gets 90 pt.
+pub const ROW_SWIPE_SHARE: f64 = 0.45;
 
 /// `g` with its travel at most `max` long: the start kept (it is where the gate read the
 /// drag from), the end moved towards it.

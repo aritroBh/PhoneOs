@@ -475,9 +475,9 @@ fn f1_a_session_asks_before_the_row_swipe_and_sends_the_measured_path() {
             duration_ms,
             ..
         }] => {
-            // Run 146 (P13): across the 400-pt row the travel is 0.55 of the row (220 pt,
-            // was the screen cap's 240), its start kept.
-            assert!((from.x - 340.0).abs() < 1e-6 && (to.x - 120.0).abs() < 1e-6);
+            // Runs 146 and 149 (P13): across the 400-pt row the travel is 0.45 of the row
+            // (180 pt, was the screen cap's 240), its start kept.
+            assert!((from.x - 340.0).abs() < 1e-6 && (to.x - 160.0).abs() < 1e-6);
             assert_eq!(*duration_ms, 200);
         }
         other => panic!("{other:?}"),

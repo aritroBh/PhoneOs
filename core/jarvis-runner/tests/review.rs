@@ -476,7 +476,8 @@ fn probe_decoder_limits_and_speed() {
 /// rest) at the depth limit, repeated — still linear.
 #[test]
 fn probe_decoder_no_quadratic_on_deep_wide_mix() {
-    // 390 stacked chains of depth 256 under one root: ~100k nodes.
+    // Stacked chains at the depth limit under one root: ~100k nodes (pass 30: the limit is
+    // 160, was 256; 620 chains keep the node count).
     let chain = |d: usize| {
         let mut n = UiNode::new(Role::Button, Rect::new(0.0, 0.0, 1.0, 1.0));
         for _ in 1..d {
@@ -487,7 +488,9 @@ fn probe_decoder_no_quadratic_on_deep_wide_mix() {
         n
     };
     let mut root = UiNode::new(Role::Application, Rect::new(0.0, 0.0, 1.0, 1.0));
-    root.children = (0..390).map(|_| chain(255)).collect();
+    root.children = (0..620)
+        .map(|_| chain(jarvis_runner::MAX_TREE_DEPTH - 1))
+        .collect();
     let snap = jarvis_runner::Snapshot {
         root,
         app_bundle_id: "a".into(),

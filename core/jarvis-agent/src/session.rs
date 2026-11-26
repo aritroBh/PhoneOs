@@ -2342,6 +2342,22 @@ impl Session {
             settled,
             retapped,
         } = check;
+        // Review pass 30 (M3): the text (or Deletes, or Return) of a step goes only to the
+        // place it was decided and approved on: the field's places on this look must be the
+        // step's (`Pending::places`: app, host, frame or page place, picker, top layer).
+        // Otherwise nothing more of the step is sent, as for focus that moved: the model is
+        // told and decides again, through the full gate on this screen (whose question names
+        // the new place).
+        if !self.same_places(&pending) {
+            self.stale_plans = self.stale_plans.saturating_add(1);
+            if self.replans < MAX_REPLANS {
+                self.replans = self.replans.saturating_add(1);
+                self.set_aside(&pending, prompt::RESULT_PLACE_CHANGED);
+            } else {
+                self.record_failure(&pending, prompt::RESULT_PLACE_CHANGED);
+            }
+            return self.decide(now);
+        }
         if self.focus_holds(&pending) {
             if self.focus_shown(&pending) {
                 return self.continue_act(now, queue, *pending);
@@ -2437,14 +2453,27 @@ impl Session {
         {
             return None;
         }
-        let el = screen.get(i)?;
+        screen.get(i)?;
+        // Review pass 30 (M2): the plan's own focusing tap on this screen (a clear's lands at
+        // the trailing edge, where its question's point is), never a hand-built point.
         let tree = self.tree();
-        let p = jarvis_safety::tap_spot(el, screen, Some(&tree), None).ok()?;
-        Some(RunnerCommand::Tap {
-            x: p.x,
-            y: p.y,
-            expect: None,
-        })
+        match plan(&pending.gate, screen, Some(&tree)).ok()?.pop_front()? {
+            tap @ RunnerCommand::Tap { .. } => Some(tap),
+            _ => None,
+        }
+    }
+
+    /// Review pass 30 (M3): whether the step's input goes to the places it was decided on —
+    /// the gate's places on the current screen equal `pending.places` (a step that is no
+    /// input, or names none, passes).
+    fn same_places(&self, pending: &Pending) -> bool {
+        if pending.places.is_empty() {
+            return true;
+        }
+        let now = self.flow_targets(&pending.gate, None, None).0;
+        let a: BTreeSet<String> = now.iter().map(|p| format!("{p:?}")).collect();
+        let b: BTreeSet<String> = pending.places.iter().map(|p| format!("{p:?}")).collect();
+        a == b
     }
 
     /// Run 147: the reply to the settle wait or the repeated focusing tap of a typing whose
@@ -2704,6 +2733,21 @@ impl Session {
             view.bars.clear();
         }
         let screen = view.screen;
+        // Review pass 30 (M1): a typed tree deeper than the core reads is incomplete: every
+        // action on it asks with a warning (none runs while a category is denied), and the
+        // model is told.
+        let source = if screen.cues.truncated && self.incoming_source == ScreenSource::Typed {
+            if !self
+                .notes
+                .iter()
+                .any(|n| n == prompt::INCOMPLETE_SCREEN_NOTE)
+            {
+                self.notes.push(prompt::INCOMPLETE_SCREEN_NOTE.to_owned());
+            }
+            ScreenSource::Incomplete
+        } else {
+            self.incoming_source
+        };
         self.current = Current {
             hash: screen_hash(&screen),
             digest,
@@ -2715,7 +2759,7 @@ impl Session {
             bars: view.bars,
             nodes: view.nodes,
             inputs: masked_inputs(view.inputs, &self.memory),
-            source: self.incoming_source,
+            source,
             screen: Arc::new(screen),
             screenshot: obs.screenshot.filter(|_| !at_home),
             seen: true,
@@ -5239,7 +5283,7 @@ fn tree_of(cur: &Current) -> ScreenTree<'_> {
         parents: &cur.parents,
         ends: &cur.ends,
         bars: match cur.source {
-            ScreenSource::Typed => &cur.bars,
+            ScreenSource::Typed | ScreenSource::Incomplete => &cur.bars,
             ScreenSource::RunnerText => &[],
         },
         // Occluders only ever refuse more, so runner text keeps them.

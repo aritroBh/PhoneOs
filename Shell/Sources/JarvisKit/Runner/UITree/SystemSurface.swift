@@ -102,14 +102,46 @@ public enum SystemSurface: String, Sendable, Equatable, CaseIterable {
 
     /// The surface up in SpringBoard's raw tree, if any. Hidden nodes count, as for the Home
     /// Screen's identifier (`FrontApp.homeScreenShowing`).
+    ///
+    /// Review pass 30 (L1): the Home Screen states' markers count only on nodes of
+    /// SpringBoard's own shape, never on an icon (its identifier and label are the app's
+    /// display name) and never inside a widget (a third party's content): `DeleteButton` on
+    /// an unlabelled button held by an icon, `dewey-pod-view` on an unlabelled `Other`, the
+    /// folder's name on a `TextField` (the shapes of every P15 capture).
     public static func up(inSpringBoard raw: RawElement) -> SystemSurface? {
         var present: Set<String> = []
-        var stack = [raw]
-        while let e = stack.popLast() {
-            for s in allCases where s.matches(e.identifier) { present.insert(s.identifier) }
-            stack.append(contentsOf: e.children)
+        // (element, its parent is an icon or a button)
+        var stack: [(RawElement, Bool)] = [(raw, false)]
+        while let (e, underIcon) = stack.popLast() {
+            if isWidget(e) { continue }
+            for s in allCases where s.matches(e.identifier) && s.shapeHolds(e, underIcon: underIcon) {
+                present.insert(s.identifier)
+            }
+            let icon = e.elementType == XCUIElementTypeCode.icon || e.elementType == XCUIElementTypeCode.button
+            stack.append(contentsOf: e.children.map { ($0, icon) })
         }
         return up(present: present, lockScreen: LockScreenSignature.matches(raw))
+    }
+
+    /// Whether `e` has the shape this surface's marker has in the real captures (only the
+    /// Home Screen states are checked; the surfaces over an app keep their rule).
+    func shapeHolds(_ e: RawElement, underIcon: Bool) -> Bool {
+        let unlabelled = e.label.trimmingCharacters(in: .whitespaces).isEmpty
+            && (e.value ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+        switch self {
+        case .homeEditMode: return e.elementType == XCUIElementTypeCode.button && unlabelled && underIcon
+        case .appLibrary: return e.elementType == XCUIElementTypeCode.other && unlabelled
+        case .openFolder: return e.elementType == XCUIElementTypeCode.textField
+        case .controlCentre, .notificationCentre, .appSwitcher: return true
+        }
+    }
+
+    /// A widget of SpringBoard's tree (its value "Widget…", or the Today view's scroll view):
+    /// a third party's content, never read for a marker.
+    static func isWidget(_ e: RawElement) -> Bool {
+        let value = (e.value ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+        return value == "widget" || value.hasPrefix("widget,")
+            || e.identifier.lowercased().hasPrefix("left-of-home")
     }
 
     /// The decision on the identifiers present (`present`) and whether SpringBoard's tree

@@ -10,7 +10,7 @@
 //! and more deleted the row every time. The core's capped swipe (240/440 of the screen, and
 //! 0.6 of an element's width with an 80-pt minimum) gave a narrower row — an inset list, a
 //! split view, a landscape column — a drag above that share. Now the travel across a row is
-//! at most `ROW_SWIPE_SHARE` (0.55) of the narrowest crossed row, and a row too narrow for
+//! at most `ROW_SWIPE_SHARE` (0.45; run 149) of the narrowest crossed row, and a row too narrow for
 //! the 80-pt minimum gets no drag at all.
 
 mod common;
@@ -110,7 +110,7 @@ fn narrowed(width: f64) -> Screen {
     s
 }
 
-/// On the real 400-pt row: the swipe on "Full swipe row 1" travels 0.55 of the row (220 pt),
+/// On the real 400-pt row: the swipe on "Full swipe row 1" travels 0.45 of the row (180 pt),
 /// below the 240 pt measured to reveal only and the 264 pt measured to delete, from the same
 /// start as before; the element-less swipe across the rows likewise.
 #[test]
@@ -137,12 +137,12 @@ fn p13_a_row_swipe_travels_a_share_of_the_row() {
     }
 }
 
-/// Narrowed rows: the travel is at most 0.55 of the row whatever its width, and a row too
+/// Narrowed rows: the travel is at most 0.45 of the row whatever its width, and a row too
 /// narrow for an 80-pt drag gets none (the old code sent 0.6 of the element, at least 80).
 #[test]
 fn p13_a_narrowed_row_gets_a_shorter_drag_or_none() {
     for width in [
-        360.0, 300.0, 240.0, 200.0, 150.0, 146.0, 145.0, 120.0, 100.0, 60.0,
+        360.0, 300.0, 240.0, 200.0, 179.0, 178.0, 177.0, 150.0, 120.0, 100.0, 60.0,
     ] {
         let s = narrowed(width);
         for label in [Some("Full swipe row 1"), None] {
@@ -264,7 +264,7 @@ fn a_session_refuses_a_narrow_row_swipe_and_bounds_a_wide_one() {
         let i = index_of(s, "Full swipe row 1");
         format!(r#"{{"action":"swipe","direction":"left","element":{i}}}"#)
     };
-    let narrow = narrowed(120.0);
+    let narrow = narrowed(150.0);
     let r = run(
         config(),
         "Reveal the row's actions",
@@ -303,7 +303,7 @@ fn a_session_refuses_a_narrow_row_swipe_and_bounds_a_wide_one() {
         "{:#?}",
         r.confirms
     );
-    assert!(ROW_SWIPE_NOTE.contains("two thirds of the row deleted it"));
+    assert!(ROW_SWIPE_NOTE.contains("0.60 to 0.75 of the row deleted it"));
     let sent: Vec<f64> = r
         .acts
         .iter()
@@ -315,4 +315,70 @@ fn a_session_refuses_a_narrow_row_swipe_and_bounds_a_wide_one() {
     assert_eq!(sent.len(), 1, "{:?}", r.acts);
     assert!(sent[0] <= ROW_SWIPE_SHARE * 400.0 + 1e-9, "{sent:?}");
     let _ = Action::Look;
+}
+
+/// Run 149 (P13a, P13b): on each measured row kind the planned travel stays at most the
+/// largest drag measured to only reveal the row's actions there (the left-to-right swipe of
+/// the leading-action row too).
+#[test]
+fn p13ab_each_row_kind_gets_at_most_its_reveal_only_length() {
+    for (text, label, dir, revealed, width) in [
+        (
+            include_str!(
+                "fixtures/ios26_probes3/p13a-swipe-lengths-01-rows-full-swipe-row-tree.txt"
+            ),
+            "Full swipe row 1",
+            Direction::Left,
+            250.0,
+            400.0,
+        ),
+        (
+            include_str!("fixtures/ios26_probes3/p13b-swipe-lengths-02-rows-narrow-row-tree.txt"),
+            "Narrow row 1",
+            Direction::Left,
+            198.0,
+            300.0,
+        ),
+        (
+            include_str!("fixtures/ios26_probes3/p13b-swipe-lengths-05-rows-left-row-tree.txt"),
+            "Left row 1",
+            Direction::Left,
+            132.0,
+            200.0,
+        ),
+        (
+            include_str!("fixtures/ios26_probes3/p13b-swipe-lengths-08-rows-leading-row-tree.txt"),
+            "Leading row 1",
+            Direction::Right,
+            242.0,
+            440.0,
+        ),
+    ] {
+        let s = parse(text);
+        let v = compact_view(&s);
+        let frame = v
+            .screen
+            .elements
+            .iter()
+            .find(|e| e.label == label)
+            .unwrap_or_else(|| panic!("{label}: {:#?}", v.screen.elements))
+            .frame;
+        for (kind, d) in [
+            (GestureKind::Swipe, dir),
+            (
+                GestureKind::Scroll,
+                if dir == Direction::Left {
+                    Direction::Right
+                } else {
+                    Direction::Left
+                },
+            ),
+        ] {
+            let g = planned_drag(kind, d, Some(frame), &v.screen, Some(&tree(&v))).unwrap();
+            let t = travel(&g);
+            assert!(t <= revealed, "{label} {kind:?}: {t} > {revealed}");
+            assert!(t <= ROW_SWIPE_SHARE * width + 1e-9, "{label}: {t}");
+            assert!(t >= MIN_TRAVEL - 1e-9, "{label}: {t}");
+        }
+    }
 }

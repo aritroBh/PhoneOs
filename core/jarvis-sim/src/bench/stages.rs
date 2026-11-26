@@ -702,13 +702,34 @@ fn session_stages(out: &mut CaseResult, id: &str, screen: &Screen, tap_index: u3
         let observe = waiting.step(TimedEvent::new(2_500, Event::ActResult(RunnerResult::ok())));
         let mut changed = screen.clone();
         let did_change = perturb(&mut changed);
+        // Run 146: a change the model is not shown (a home screen's widget text, stubbed)
+        // takes the verify settle wait and one more look before the next prompt: the stage
+        // then times that whole path to the prompt (the same screens), as it timed the
+        // look-to-prompt step before.
+        let settle = |s: &mut Session, e: Effect| -> Effect {
+            match e {
+                Effect::Act(jarvis_proto::RunnerCommand::Wait { ms })
+                    if ms == jarvis_agent::VERIFY_SETTLE_MS =>
+                {
+                    let look = s.step(TimedEvent::new(3_100, Event::ActResult(RunnerResult::ok())));
+                    if matches!(look, Effect::Observe { .. }) {
+                        s.step(TimedEvent::new(3_200, observed(&changed)))
+                    } else {
+                        look
+                    }
+                }
+                other => other,
+            }
+        };
         let mut check = waiting.clone();
-        let result = check.step(TimedEvent::new(3_000, observed(&changed)));
+        let first = check.step(TimedEvent::new(3_000, observed(&changed)));
+        let result = settle(&mut check, first);
         let s = measure(
             plan,
             || (waiting.clone(), TimedEvent::new(3_000, observed(&changed))),
             |(mut s, ev)| {
                 let e = s.step(ev);
+                let e = settle(&mut s, e);
                 (s, e)
             },
         );

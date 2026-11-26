@@ -77,6 +77,16 @@ pub const SPOTLIGHT_BUNDLE_ID: &str = "com.apple.Spotlight";
 /// read (every input asks, nothing is kept), named by `jarvis_safety::UNIDENTIFIED_APP`.
 pub const UNIDENTIFIED_APP_BUNDLE_ID: &str = "unknown.front.app";
 
+/// Review pass 30 (M1): the one depth bound of a UI tree (the root is level 1). The runner
+/// wire refuses a deeper tree (`jarvis_runner`; it allowed 256), and the core reads every
+/// level up to it (`jarvis_observe`); a tree that reaches the core deeper than this (a
+/// hand-built one, or a shell copy cut deeper than this bound: the Swift copies stop at 300)
+/// is read as an incomplete screen (`ScreenCues::truncated`). Real iOS trees stay under 40
+/// levels (35 at most in the captures): 160 is four times that, and the compaction's walk
+/// (recursive, bounded by it) fits an iOS secondary thread's 512 KB stack at it in a debug
+/// build too (at 256 it did not).
+pub const MAX_TREE_DEPTH: usize = 160;
+
 /// How closely the owner supervises actions in apps without their own [`AppRule`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

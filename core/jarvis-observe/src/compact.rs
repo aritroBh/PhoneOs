@@ -52,8 +52,10 @@ use jarvis_proto::{
 use crate::fingerprint::{identity_key, FingerprintAssigner};
 use crate::layout::{addr, Layout, Quiet, RawIndex};
 
-/// Trees deeper than this are cut (real iOS trees stay far below).
-pub(crate) const MAX_DEPTH: usize = 160;
+/// Levels below the root read (`jarvis_proto::MAX_TREE_DEPTH`, the one bound; review pass
+/// 30: the intakes allowed 200 and 256 while the walks stopped at 160, silently). A deeper node is
+/// not read, and the screen says so (`ScreenCues::truncated`).
+pub(crate) const MAX_DEPTH: usize = jarvis_proto::MAX_TREE_DEPTH;
 /// Vertical jitter (points) tolerated between elements of the same visual row.
 const ROW_TOLERANCE: f64 = 6.0;
 /// At most this many child texts are merged into one label.
@@ -1148,6 +1150,8 @@ pub fn compact_view(screen: &Screen) -> CompactView {
     };
     // Probe run 134: the listed elements whose raw node lies inside a remote container have
     // no known position on screen (ascending index: `elements` is in index order).
+    // Review pass 30 (M1): a node deeper than the walks read: the screen is incomplete.
+    screen_out.cues.truncated = index.truncated;
     screen_out.cues.unplaced = screen_out
         .elements
         .iter()

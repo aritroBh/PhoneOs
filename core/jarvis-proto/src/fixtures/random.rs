@@ -321,6 +321,7 @@ pub fn random_compact_screen(seed: u64) -> CompactScreen {
             return_key_unknown: false,
             covered,
             unplaced: Vec::new(),
+            truncated: false,
         },
     }
 }

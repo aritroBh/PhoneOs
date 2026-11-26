@@ -160,6 +160,34 @@ fn shop_run(grant: &str, then: &[&str], level_after_drag: bool) -> Run {
     )
 }
 
+/// Run 149: the order rows are 157 pt wide, under the 80 / 0.45 ≈ 178 pt a row drag needs:
+/// a sideways drag across one is never sent (`RowTooNarrow`), under any grant.
+fn narrow_row(c: &str) -> bool {
+    c == scroll_on(index_of(&shop(0, false), "Order 1, pickup at 9"), "left")
+}
+
+/// Run 149: under a scroll grant or a full grant, the sideways scroll on a 157-pt order row
+/// is refused before any question and nothing is dragged (it was asked, then sent).
+#[test]
+fn a_sideways_scroll_on_a_narrow_row_is_never_sent() {
+    let row = scroll_on(index_of(&shop(0, false), "Order 1, pickup at 9"), "left");
+    let details = tap(index_of(&shop(0, false), "Details"));
+    for grant in [SCROLL.to_owned(), details] {
+        let r = shop_run(&grant, &[&row], false);
+        let own = usize::from(grant == SCROLL);
+        assert_eq!(
+            drags(&r.acts),
+            own,
+            "{grant}: only the grant's own drag: {:?}",
+            r.acts
+        );
+        assert!(
+            r.all_prompt_text().contains("too narrow to swipe safely"),
+            "{grant}"
+        );
+    }
+}
+
 fn controls() -> Vec<String> {
     let s = shop(0, false);
     vec![
@@ -236,6 +264,9 @@ fn the_kind_of_a_scroll_is_decided_on_the_screen() {
 #[test]
 fn a_scroll_on_a_control_asks_under_a_scroll_grant() {
     for c in controls() {
+        if narrow_row(&c) {
+            continue;
+        }
         let r = shop_run(SCROLL, &[&c, &c], false);
         assert_eq!(r.outcome.status, OutcomeStatus::Success, "{c}");
         assert_eq!(
@@ -253,6 +284,9 @@ fn a_scroll_on_a_control_asks_under_a_scroll_grant() {
 fn a_scroll_on_a_control_is_covered_by_a_full_grant() {
     let details = tap(index_of(&shop(0, false), "Details"));
     for c in controls() {
+        if narrow_row(&c) {
+            continue;
+        }
         let r = shop_run(&details, &[&c, &c], false);
         assert_eq!(r.outcome.status, OutcomeStatus::Success, "{c}");
         assert_eq!(verbs(&r), vec![ConfirmVerb::Tap], "{c}: {:#?}", flows(&r));

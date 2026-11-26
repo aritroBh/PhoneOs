@@ -94,7 +94,8 @@ pub const MAX_SERVER_FRAME: usize = 16 * 1024 * 1024;
 pub const MAX_SCREENSHOT_BYTES: usize = 15 * 1024 * 1024;
 /// Most nodes in one tree.
 pub const MAX_TREE_NODES: usize = 100_000;
-/// Deepest tree (the root is depth 1). The runner copies at most 200 levels.
-pub const MAX_TREE_DEPTH: usize = 256;
+/// Deepest tree (the root is depth 1): the core's one bound (`jarvis_proto::MAX_TREE_DEPTH`),
+/// refused beyond it, never cut.
+pub const MAX_TREE_DEPTH: usize = jarvis_proto::MAX_TREE_DEPTH;
 /// Most notes in one snapshot.
 pub const MAX_NOTES: usize = 256;

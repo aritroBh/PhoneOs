@@ -61,6 +61,48 @@ struct HomeScreenModeTests {
         }
     }
 
+    private func edit(_ e: inout RawElement, _ f: (inout RawElement) -> Void) {
+        f(&e)
+        for i in e.children.indices { edit(&e.children[i], f) }
+    }
+
+    /// An icon renamed: its label and identifier are the app's display name.
+    private func forgedIcons(_ text: String) throws -> RawElement {
+        var raw = try RawTreeText.parse(text)
+        var k = 0
+        edit(&raw) { e in
+            guard e.elementType == XCUIElementTypeCode.icon, e.value == nil || e.value == "" else { return }
+            if e.label == "Maps" || e.label == "Fitness" {
+                let name = k == 0 ? "DeleteButton" : "Notes, Folder name"
+                k += 1
+                e.label = name
+                e.identifier = name
+            }
+        }
+        return raw
+    }
+
+    @Test("review pass 30 (L1): an app named like a marker, or a widget holding one, makes no Home Screen state")
+    func markersOnlyFromSpringBoardsOwnNodes() throws {
+        #expect(SystemSurface.up(inSpringBoard: try forgedIcons(RealHomeScreenModeTrees.home.text)) == nil)
+        var widget = try RawTreeText.parse(RealHomeScreenModeTrees.home.text)
+        edit(&widget) { e in
+            guard (e.value ?? "").hasPrefix("Widget") else { return }
+            var badge = RawElement(elementType: XCUIElementTypeCode.button, frame: e.frame)
+            badge.identifier = "DeleteButton"
+            var icon = RawElement(elementType: XCUIElementTypeCode.icon, frame: e.frame)
+            icon.children = [badge]
+            var field = RawElement(elementType: XCUIElementTypeCode.textField, frame: e.frame)
+            field.identifier = "Utilities, Folder name"
+            e.children += [icon, field]
+        }
+        #expect(SystemSurface.up(inSpringBoard: widget) == nil)
+        // The real edit mode is still recognised next to an icon named "DeleteButton".
+        #expect(SystemSurface.up(inSpringBoard: try forgedIcons(RealHomeScreenModeTrees.jiggle.text)) == .homeEditMode)
+        #expect(SystemSurface.up(inSpringBoard: try RawTreeText.parse(RealHomeScreenModeTrees.appLibrary.text)) == .appLibrary)
+        #expect(SystemSurface.up(inSpringBoard: try RawTreeText.parse(RealHomeScreenModeTrees.folder.text)) == .openFolder)
+    }
+
     @Test("edit mode wins over the other states; the surfaces over an app still come first")
     func order() {
         let all = Set(SystemSurface.allCases.map(\.identifier))

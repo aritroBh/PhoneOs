@@ -82,8 +82,11 @@ public enum UiTreeBuilder {
                       sanitizedFrames: sanitizedFrames)
     }
 
-    /// Deepest level converted.
-    public static let maxDepth = 200
+    /// Deepest level converted. Review pass 30: deeper than the core reads
+    /// (`jarvis_proto::MAX_TREE_DEPTH`, 160; real trees stay under 40 levels), so a cut here
+    /// is never silent: the wire refuses a tree deeper than 160, and the core reads one that
+    /// reaches it deeper as an incomplete screen (every action asks).
+    public static let maxDepth = 300
 
     /// A readable dump of the typed tree, one node per line, two spaces per level:
     /// `Button "Sign In" id=login.submit {{16, 400}, {361, 44}} [disabled, focused]`.

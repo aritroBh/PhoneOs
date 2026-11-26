@@ -112,6 +112,12 @@ pub struct ScreenCues {
     /// rendered line says so (`jarvis_observe::UNPLACED_MARKER`): one decision.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unplaced: Vec<u32>,
+    /// Review pass 30 (M1): the raw tree is deeper than the core reads
+    /// ([`crate::MAX_TREE_DEPTH`]): part of the screen is not read, listed or seen by any
+    /// rule. The screen is incomplete (`jarvis_safety::ScreenSource::Incomplete`): every
+    /// action on it asks, phone only, and none runs while the owner denies a category.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }
 
 impl ScreenCues {
@@ -125,6 +131,7 @@ impl ScreenCues {
             && !self.return_key_unknown
             && self.covered.is_empty()
             && self.unplaced.is_empty()
+            && !self.truncated
     }
 
     /// The words the rules read for the Return key (audit C1): its type by identifier

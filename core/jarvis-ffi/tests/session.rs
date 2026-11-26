@@ -670,7 +670,7 @@ fn a_locked_phone_waits_resumes_by_observing_and_can_time_out() {
     assert!(memory.contains(r#""lock_waits":1"#), "{memory}");
 }
 
-/// Review pass 29 (depth): a tree is at most `jarvis_runner::MAX_TREE_DEPTH` (256) deep when
+/// Review pass 29 (depth): a tree is at most `jarvis_runner::MAX_TREE_DEPTH` (160) deep when
 /// it reaches the FFI (the runner wire refuses deeper ones; the in-runner copy and
 /// `UiTreeBuilder` stop at 200 levels; the deepest real capture is 35). At that depth the
 /// session's step — the FFI conversion, the compaction, the clones — runs on a 512 KB

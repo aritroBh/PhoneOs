@@ -651,6 +651,22 @@ pub(crate) struct RawIndex {
     /// Review pass 29 (M3): per index, whether a raw ancestor at any depth has the role
     /// `Cell` — drawn or not, whatever its frame (zero, off screen, negative, NaN).
     pub in_cell: Vec<bool>,
+    /// Review pass 30 (M1): a node that is not pruned (no hidden ancestor, not hidden itself)
+    /// lies deeper than the walks read (`MAX_DEPTH`): the screen is incomplete.
+    pub truncated: bool,
+}
+
+/// One entry of [`RawIndex::build`]'s walk.
+struct IndexFrame<'a> {
+    node: &'a UiNode,
+    parent: u32,
+    /// Set on the exit marker: the node's index.
+    exit: Option<u32>,
+    /// A `Cell` holds the node.
+    held: bool,
+    depth: usize,
+    /// The node or an ancestor is pruned (hidden on screen): not read whatever its depth.
+    pruned: bool,
 }
 
 impl RawIndex {
@@ -661,28 +677,48 @@ impl RawIndex {
             parents: Vec::new(),
             ends: Vec::new(),
             in_cell: Vec::new(),
+            truncated: false,
         };
-        // (node, parent index, exit marker index, held by a `Cell`)
-        let mut stack: Vec<(&UiNode, u32, Option<u32>, bool)> = vec![(root, u32::MAX, None, false)];
-        while let Some((node, parent, exit, held)) = stack.pop() {
-            if let Some(i) = exit {
+        let mut stack = vec![IndexFrame {
+            node: root,
+            parent: u32::MAX,
+            exit: None,
+            held: false,
+            depth: 0,
+            pruned: false,
+        }];
+        while let Some(f) = stack.pop() {
+            if let Some(i) = f.exit {
                 let end = u32::try_from(out.parents.len()).unwrap_or(u32::MAX);
                 if let Some(e) = usize::try_from(i).ok().and_then(|i| out.ends.get_mut(i)) {
                     *e = end;
                 }
                 continue;
             }
+            let node = f.node;
             if layout.is_excluded(node) {
                 continue;
             }
+            let pruned = f.pruned || is_pruned(node);
+            if f.depth > MAX_DEPTH && !pruned {
+                out.truncated = true;
+            }
             let i = u32::try_from(out.parents.len()).unwrap_or(u32::MAX);
             out.by_addr.insert(addr(node), i);
-            out.parents.push(parent);
+            out.parents.push(f.parent);
             out.ends.push(i.saturating_add(1));
-            out.in_cell.push(held);
-            stack.push((node, parent, Some(i), held));
-            let below = held || node.role == Role::Cell;
-            stack.extend(node.children.iter().rev().map(|c| (c, i, None, below)));
+            out.in_cell.push(f.held);
+            let held = f.held || node.role == Role::Cell;
+            let depth = f.depth.saturating_add(1);
+            stack.push(IndexFrame { exit: Some(i), ..f });
+            stack.extend(node.children.iter().rev().map(|c| IndexFrame {
+                node: c,
+                parent: i,
+                exit: None,
+                held,
+                depth,
+                pruned,
+            }));
         }
         out
     }

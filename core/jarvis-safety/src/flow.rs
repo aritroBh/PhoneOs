@@ -953,15 +953,36 @@ impl HomeScreenMode {
 
 /// Run 146 (P15): the mode SpringBoard's raw tree `root` shows, if any ([`HomeScreenMode`]).
 /// Hidden nodes count (as for the shell's Home Screen identifier); iterative.
+///
+/// Review pass 30 (L1): a marker counts only on a node of SpringBoard's own shape - never
+/// an icon (an `Icon`'s identifier and label are the app's display name, author-controlled)
+/// and never inside a widget (a third party's content): the edit mode's `DeleteButton` is an
+/// unlabelled `Button` held by an icon (`Button id=DeleteButton` in every jiggle capture),
+/// the App Library's `dewey-pod-view` an unlabelled `Other` (its `dewey-search-field` a
+/// `SearchField`), the folder's name field a `TextField`. An app named "DeleteButton" or
+/// "X, Folder name" is an icon labelled so: no mode.
 pub fn home_screen_mode(root: &UiNode) -> Option<HomeScreenMode> {
     let mut found = None;
-    let mut stack = vec![root];
-    while let Some(n) = stack.pop() {
+    // (node, its parent is a button: an icon)
+    let mut stack = vec![(root, false)];
+    while let Some((n, under_button)) = stack.pop() {
+        if home_widget(n) {
+            continue;
+        }
         let id = n.identifier.as_deref().map(str::trim).unwrap_or("");
+        let unlabelled = n.label.as_deref().is_none_or(|l| l.trim().is_empty())
+            && n.value.as_deref().is_none_or(|v| v.trim().is_empty());
         let mode = match id {
-            "DeleteButton" => Some(HomeScreenMode::EditMode),
-            "dewey-search-field" | "dewey-pod-view" => Some(HomeScreenMode::AppLibrary),
-            _ if id.ends_with(", Folder name") => Some(HomeScreenMode::Folder),
+            "DeleteButton" if n.role == Role::Button && unlabelled && under_button => {
+                Some(HomeScreenMode::EditMode)
+            }
+            "dewey-pod-view" if matches!(n.role, Role::Other(_)) && unlabelled => {
+                Some(HomeScreenMode::AppLibrary)
+            }
+            "dewey-search-field" if n.role == Role::SearchField => Some(HomeScreenMode::AppLibrary),
+            _ if n.role == Role::TextField && id.ends_with(", Folder name") => {
+                Some(HomeScreenMode::Folder)
+            }
             _ => None,
         };
         // Edit mode wins (deleting an app is the riskiest thing these states offer).
@@ -970,7 +991,8 @@ pub fn home_screen_mode(root: &UiNode) -> Option<HomeScreenMode> {
             Some(_) if found.is_none() => found = mode,
             _ => {}
         }
-        stack.extend(n.children.iter());
+        let button = n.role == Role::Button;
+        stack.extend(n.children.iter().map(|c| (c, button)));
     }
     found
 }

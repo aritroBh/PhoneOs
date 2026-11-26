@@ -250,6 +250,12 @@ pub(crate) const RESULT_STALE_PART: &str =
     "failed: another app came to the front while this ran; only part of it was done, check the screen";
 /// Fifteenth review (F5): after the focusing tap another field had the focus (or the field
 /// changed), so nothing was typed.
+/// Review pass 30 (M3): after a step's focusing tap the field's page (or app, or place) was
+/// not the one the step was decided on: nothing more of it was sent.
+pub(crate) const RESULT_PLACE_CHANGED: &str =
+    "not done: the page changed after the tap (the field is now in another place than when this was decided), so nothing was typed; check the screen and choose again";
+/// Review pass 30 (M1): the note on a screen whose tree is deeper than Jarvis reads.
+pub(crate) const INCOMPLETE_SCREEN_NOTE: &str = "Note: this screen is deeper than Jarvis can read; part of it is not listed, and every action on it asks the owner first";
 /// Run 147: the field did not take focus after its focusing tap, a settle wait and one more
 /// tap: nothing was typed.
 pub(crate) const RESULT_FOCUS_NOT_TAKEN: &str =

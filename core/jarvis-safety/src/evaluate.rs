@@ -39,7 +39,18 @@ pub enum ScreenSource {
     /// at least [`RiskCategory::Unverified`] and its summary starts with
     /// [`UNVERIFIED_SCREEN_WARNING`].
     RunnerText,
+    /// Review pass 30 (M1): a typed tree deeper than the core reads
+    /// (`ScreenCues::truncated`): part of the screen is not seen by any rule. Like runner
+    /// text, every state-changing runner action is at least `Unverified` and asks, its
+    /// summary starting with [`INCOMPLETE_SCREEN_WARNING`]; and while the owner denies any
+    /// category it is refused (what is not read may be of that category).
+    Incomplete,
 }
+
+/// Review pass 30 (M1): the fixed start of every confirmation summary of an action judged on
+/// a screen Jarvis could not read completely ([`ScreenSource::Incomplete`]).
+pub const INCOMPLETE_SCREEN_WARNING: &str =
+    "Warning: this screen could not be read completely (its tree is deeper than Jarvis reads); what is under the action may not be what the question says. ";
 
 /// The fixed start of every confirmation summary of an action judged on a screen read from
 /// runner text ([`ScreenSource::RunnerText`]).
@@ -216,7 +227,7 @@ pub fn classify_from(
 ) -> RiskCategory {
     let category = classify(action, screen, tool);
     let runner_action = !matches!(action, Action::CallTool { .. });
-    if source == ScreenSource::RunnerText
+    if source != ScreenSource::Typed
         && category == RiskCategory::None
         && runner_action
         && changes_state(action, screen)
@@ -320,7 +331,7 @@ pub fn not_owner_note() -> QuestionRow {
 
 /// Probe round 3 (F1): the note of a question about a sideways drag across a list row.
 pub const ROW_SWIPE_NOTE: &str =
-    "The drag crosses a list row: it may trigger the row's swipe action (on a measured list, a swipe of two thirds of the row deleted it)";
+    "The drag crosses a list row: it may trigger the row's swipe action (on measured lists a swipe of 0.60 to 0.75 of the row deleted it)";
 
 fn row_swipe_note() -> QuestionRow {
     row(QuestionRowKind::Note, &format!(". {ROW_SWIPE_NOTE}"))
@@ -1140,8 +1151,18 @@ pub fn evaluate_sheeted(
         category = carry(&mut carried, category, RiskCategory::SendMessage);
         unclear = true;
     }
-    let runner_text =
-        source == ScreenSource::RunnerText && !matches!(action, Action::CallTool { .. });
+    let runner_text = source != ScreenSource::Typed && !matches!(action, Action::CallTool { .. });
+    // Review pass 30 (M1): on a screen not read completely, a denied category may be in what
+    // was not read: while the owner denies any category, nothing that changes state runs.
+    if source == ScreenSource::Incomplete
+        && !policy.deny_categories.is_empty()
+        && runner_text
+        && changes_state(action, screen)
+    {
+        return Decision::Deny(
+            "the screen could not be read completely, and what was not read may be of a category the owner does not allow".to_owned(),
+        );
+    }
     // Review pass 28 (H2): a denied category any rule attached refuses, whatever the riskiest
     // one is (an emergency call behind a presumed send, a row swipe on a send button).
     if let Some(denied) = carried
@@ -1228,6 +1249,7 @@ pub fn evaluate_sheeted(
             );
             request.verb = verb_of(action);
             request.phone_only = unclear
+                || source == ScreenSource::Incomplete
                 || carried
                     .iter()
                     .any(|c| *c != category && NEVER_REMOTE_APPROVE.contains(c));
@@ -4926,9 +4948,14 @@ fn with_source(
 ) -> Vec<QuestionRow> {
     match source {
         ScreenSource::Typed => build(MAX_SUMMARY_CHARS),
-        ScreenSource::RunnerText => {
-            let room = MAX_SUMMARY_CHARS.saturating_sub(UNVERIFIED_SCREEN_WARNING.chars().count());
-            let mut rows = vec![row(QuestionRowKind::Warning, UNVERIFIED_SCREEN_WARNING)];
+        ScreenSource::RunnerText | ScreenSource::Incomplete => {
+            let warning = if source == ScreenSource::RunnerText {
+                UNVERIFIED_SCREEN_WARNING
+            } else {
+                INCOMPLETE_SCREEN_WARNING
+            };
+            let room = MAX_SUMMARY_CHARS.saturating_sub(warning.chars().count());
+            let mut rows = vec![row(QuestionRowKind::Warning, warning)];
             rows.extend(build(room.max(120)));
             rows
         }

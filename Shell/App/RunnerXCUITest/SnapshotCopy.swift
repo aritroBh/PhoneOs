@@ -7,8 +7,11 @@ import JarvisKit
 /// public `XCUIElementAttributes` are read; everything that interprets them
 /// (`UiTreeBuilder`) is in JarvisKit and tested on Linux.
 enum SnapshotCopy {
-    /// Deepest level copied (real trees are far shallower).
-    static let maxDepth = 200
+    /// Deepest level copied (real trees are far shallower: 35 levels at most in the
+    /// captures). Review pass 30: deeper than the core reads (`jarvis_proto::MAX_TREE_DEPTH`,
+    /// 160), so a cut here is never silent — the wire refuses such a tree, and the core reads
+    /// one that reaches it as an incomplete screen.
+    static let maxDepth = UiTreeBuilder.maxDepth
 
     @MainActor
     static func copy(_ snapshot: any XCUIElementSnapshot, depth: Int = 0) -> RawElement {

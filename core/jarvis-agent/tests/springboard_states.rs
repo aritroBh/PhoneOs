@@ -264,3 +264,126 @@ fn p15_edit_mode_never_launches_or_deletes_unasked() {
         r.confirms
     );
 }
+
+fn edit(n: &mut jarvis_proto::UiNode, f: &mut impl FnMut(&mut jarvis_proto::UiNode)) {
+    f(n);
+    for c in &mut n.children {
+        edit(c, f);
+    }
+}
+
+/// Review pass 30 (L1): an icon's identifier and label are the app's display name, and a
+/// widget's content is a third party's: an app named "DeleteButton" or "Notes, Folder name",
+/// or a widget holding a node with such an identifier, makes no mode of the Home Screen; the
+/// real states are still recognised, the edit mode also next to such an icon.
+#[test]
+fn p15_markers_are_read_only_from_springboards_own_nodes() {
+    let forged_icons = |text: &str| {
+        let mut s = parse(text);
+        let mut k = 0;
+        edit(&mut s.root, &mut |n| {
+            if n.label.as_deref() == Some("Maps") && n.value.is_none() {
+                let name = if k == 0 {
+                    "DeleteButton"
+                } else {
+                    "Notes, Folder name"
+                };
+                k += 1;
+                n.label = Some(name.into());
+                n.identifier = Some(name.into());
+            }
+            if n.label.as_deref() == Some("Health") && n.value.is_none() {
+                n.label = Some("dewey-pod-view".into());
+                n.identifier = Some("dewey-pod-view".into());
+            }
+        });
+        s
+    };
+    let home = forged_icons(HOME);
+    assert_eq!(home_screen_mode(&home.root), None);
+    // A widget holding an unlabelled `Button id=DeleteButton` and a folder-name field.
+    let mut widget = parse(HOME);
+    edit(&mut widget.root, &mut |n| {
+        if n.value.as_deref().is_some_and(|v| v.starts_with("Widget")) {
+            let mut icon = jarvis_proto::UiNode::new(jarvis_proto::Role::Button, n.frame);
+            icon.children.push(
+                jarvis_proto::UiNode::new(jarvis_proto::Role::Button, n.frame)
+                    .with_identifier("DeleteButton"),
+            );
+            n.children.push(icon);
+            n.children.push(
+                jarvis_proto::UiNode::new(jarvis_proto::Role::TextField, n.frame)
+                    .with_identifier("Utilities, Folder name"),
+            );
+        }
+    });
+    assert_eq!(home_screen_mode(&widget.root), None);
+    // The session still reads the forged Home Screen as the Home Screen.
+    let r = session(&home, r#"{"action":"fail","reason":"stop"}"#);
+    assert!(
+        !r.requests[0].user.contains("cannot identify"),
+        "{}",
+        r.requests[0].user
+    );
+    // The real states, the edit mode next to an icon named "DeleteButton".
+    assert_eq!(
+        home_screen_mode(&forged_icons(JIGGLE).root),
+        Some(HomeScreenMode::EditMode)
+    );
+    assert_eq!(
+        home_screen_mode(&parse(LIBRARY).root),
+        Some(HomeScreenMode::AppLibrary)
+    );
+    assert_eq!(
+        home_screen_mode(&parse(FOLDER).root),
+        Some(HomeScreenMode::Folder)
+    );
+}
+
+/// Pass 30 (the reviewer's open question, pinned): on the real Today-view tree the model is
+/// shown no element at all — no widget text, no widget identifier, no headline — and nothing
+/// can be tapped; a swipe and a scroll are sent unasked as on the plain Home Screen (the OS
+/// sees them, no third party), and no question carries widget content.
+#[test]
+fn p15_today_view_lists_nothing_and_its_swipes_ask_nothing() {
+    let s = parse(TODAY);
+    let shown = compact_view(&home_view(&s).unwrap()).screen;
+    assert!(shown.elements.is_empty(), "{:#?}", shown.elements);
+    let widget_words = [
+        "Wall Street Journal",
+        "Top Stories",
+        "Trending",
+        "Featured",
+        "No Events Today",
+        "iconic-date-header-view",
+        "battery-widget",
+        "NearbyWidgetMapImage",
+        "left-of-home",
+    ];
+    for step in [
+        r#"{"action":"swipe","direction":"left"}"#,
+        r#"{"action":"scroll","direction":"down"}"#,
+        r#"{"action":"tap","element":1}"#,
+    ] {
+        let r = session(&s, step);
+        let all = r.all_prompt_text();
+        for w in widget_words {
+            assert!(!all.contains(w), "{step}: {w}");
+            for c in &r.confirms {
+                assert!(!c.summary.contains(w), "{step}: {w} in {}", c.summary);
+            }
+        }
+        if step.contains("tap") {
+            assert!(r.acts.is_empty(), "{step}: {:?}", r.acts);
+        } else {
+            assert!(r.confirms.is_empty(), "{step}: {:#?}", r.confirms);
+            assert!(
+                r.acts
+                    .iter()
+                    .any(|a| matches!(a, RunnerCommand::Swipe { .. })),
+                "{step}: {:?}",
+                r.acts
+            );
+        }
+    }
+}
