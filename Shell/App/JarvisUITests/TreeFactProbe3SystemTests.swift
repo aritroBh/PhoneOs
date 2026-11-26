@@ -862,7 +862,9 @@ final class TreeFactProbe3SystemTests: Probe3Case {
             let hits = Self.hits(form) { $0.label == "Delete Contact" && ($0.elementType == XCUIElementTypeCode.cell || $0.elementType == XCUIElementTypeCode.staticText) }
             if let hit = hits.first(where: { h in
                 let mid = h.element.frame.y + h.element.frame.height / 2
-                return mid > screen.height * 0.15 && mid < screen.height * 0.85
+                // Run 154: at the end of the form the cell rests at 0.90 of the height and no
+                // scroll brings it higher; a tap there is still clear of the home indicator.
+                return mid > screen.height * 0.15 && mid < screen.height * 0.93
             }) {
                 found = hit.element.frame
                 break
@@ -876,7 +878,7 @@ final class TreeFactProbe3SystemTests: Probe3Case {
             capture(contacts, Self.contactsId, "no-delete", "Why is the Delete Contact cell not reachable?")
             return "the Delete Contact cell was not reached within 6 scrolls"
         }
-        note("the Delete Contact cell is in the middle band at \(Self.rectText(target)) after \(scrolls) scroll(s)")
+        note("the Delete Contact cell is within reach at \(Self.rectText(target)) after \(scrolls) scroll(s)")
         boardTap(target, "tap the Delete Contact cell (the form's; the confirmation is never confirmed)")
         await pause(1.5)
         let tree = capture(contacts, Self.contactsId, "delete-confirmation", "Contacts' delete confirmation up: its container (Alert, Sheet, Popover, Other), its buttons' roles and labels, the card behind")
