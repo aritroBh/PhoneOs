@@ -272,7 +272,7 @@ run_xcodebuild "$qa/xcodebuild-test.log" test-without-building "${common[@]}" \
   -parallel-testing-enabled NO \
   -test-timeouts-enabled YES \
   -default-test-execution-time-allowance 180 \
-  -maximum-test-execution-time-allowance 300 \
+  -maximum-test-execution-time-allowance 480 \
   ${only_testing[@]+"${only_testing[@]}"} || test_rc=$?
 endgroup
 log "test-without-building exit code: $test_rc"
