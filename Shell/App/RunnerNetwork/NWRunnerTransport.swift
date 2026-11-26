@@ -49,9 +49,37 @@ struct SystemRunnerRandom: RandomSource {
 /// A `RunnerByteStream` over one `NWConnection`.
 final class NWRunnerStream: RunnerByteStream, @unchecked Sendable {
     private let connection: NWConnection
+    /// Review pass 32 (F3): set once this stream knows the connection is over (guarded by
+    /// `lock`; the connection's callbacks arrive on its own queue).
+    private let lock = NSLock()
+    private var over = false
 
     init(_ connection: NWConnection) {
         self.connection = connection
+    }
+
+    /// Review pass 32 (F3): `true` once the stream knows the connection is over — its own
+    /// `close()` was called, a receive saw the peer's end or an error, a send failed, or the
+    /// connection's state is `.cancelled` or `.failed` — so `RunnerServer.accept` frees the
+    /// slot for a quick reconnect. Never `true` for a live connection (a second local
+    /// connection must not evict an authenticated one).
+    var isKnownClosed: Bool {
+        lock.lock()
+        let known = over
+        lock.unlock()
+        if known { return true }
+        switch connection.state {
+        case .cancelled, .failed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func markOver() {
+        lock.lock()
+        over = true
+        lock.unlock()
     }
 
     func write(_ bytes: Data) async throws {
@@ -59,6 +87,7 @@ final class NWRunnerStream: RunnerByteStream, @unchecked Sendable {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             connection.send(content: bytes, completion: .contentProcessed { error in
                 if let error {
+                    self.markOver()
                     continuation.resume(throwing: error)
                 } else {
                     continuation.resume()
@@ -75,8 +104,10 @@ final class NWRunnerStream: RunnerByteStream, @unchecked Sendable {
                     if let data, !data.isEmpty {
                         continuation.resume(returning: data)
                     } else if let error {
+                        self.markOver()
                         continuation.resume(throwing: error)
                     } else if isComplete {
+                        self.markOver()
                         continuation.resume(returning: nil)
                     } else {
                         continuation.resume(returning: Data())
@@ -89,6 +120,7 @@ final class NWRunnerStream: RunnerByteStream, @unchecked Sendable {
     }
 
     func close() async {
+        markOver()
         connection.cancel()
     }
 }

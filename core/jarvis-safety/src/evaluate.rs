@@ -491,15 +491,23 @@ fn sideways_drag(
 /// Run 146 (P13): the drag the runner is sent for a scroll or swipe — the one computation
 /// the commands (`jarvis_agent`'s `plan`) and the gate's row rule ([`crosses_list_row`])
 /// share. It is [`crate::gestures::drag_gesture`]'s path (the *reach*, which the gate reads);
-/// when that path is sideways and crosses a list row ([`CrossedRows::list_width`], from the
-/// same pass as the gate's row question), its travel is cut to
-/// [`crate::gestures::ROW_SWIPE_SHARE`] of the narrowest crossed list row's width, its start
-/// kept (so the sent path is part of the path the gate read: every rule read on the reach
-/// holds for it). A list row too narrow for [`crate::gestures::MIN_TRAVEL`] within that share
-/// refuses the drag ([`crate::gestures::GestureError::RowTooNarrow`]). A drag that crosses no
-/// list row — none at all, or only grid, carousel, calendar, menu or pager cells (review
-/// pass 31, L2: the bound was measured on list rows; for those cells safety rests on the
-/// row-swipe question, which still asks) — keeps the screen-share cap alone.
+/// when that path is sideways and crosses a row ([`crossed_rows`], the same pass as the
+/// gate's row question), its travel is cut to [`crate::gestures::ROW_SWIPE_SHARE`] of the
+/// narrowest crossed row's own width, its start kept (so the sent path is part of the path
+/// the gate read: every rule read on the reach holds for it):
+///
+/// - a **list row** ([`CrossedRows::list_width`]: it spans [`ROW_MIN_WIDTH_SHARE`] of its
+///   list, or its list is not known) too narrow for [`crate::gestures::MIN_TRAVEL`] within
+///   that share refuses the drag ([`crate::gestures::GestureError::RowTooNarrow`]);
+/// - review pass 32 (F1): an **inset row** ([`CrossedRows::inset_width`]: a `Cell`, or a
+///   row-sized direct child of a `Table` or `CollectionView`, narrower than that share of its
+///   list and with no grid signal) is bounded the same way at its own width, but never below
+///   `MIN_TRAVEL` (it is not refused: a cell the tree shows without its neighbours may be a
+///   grid's, pass 31 L2);
+/// - a **grid cell** (several comparable cells side by side in the path's band of the same
+///   list, [`grid_widths`]) or a page of a pager (a row by shape of a scroll view that fills
+///   its height) does not bound the drag (it still asks): the drag keeps the screen-share
+///   cap, as does a drag that crosses no row.
 pub fn planned_drag(
     kind: crate::gestures::GestureKind,
     direction: jarvis_proto::Direction,
@@ -517,62 +525,226 @@ pub fn planned_drag(
     ) {
         return Ok(g);
     }
-    match crossed_rows(g, screen, tree).and_then(|c| c.list_width) {
-        None => Ok(g),
-        Some(width) => {
-            let bound = ROW_SWIPE_SHARE * width;
-            // Not a number, or too short to register: no drag.
-            if bound.is_nan() || bound < MIN_TRAVEL {
-                return Err(GestureError::RowTooNarrow);
-            }
-            Ok(shortened(g, bound))
+    let Some(c) = crossed_rows(g, screen, tree) else {
+        return Ok(g);
+    };
+    let mut bound = f64::INFINITY;
+    if let Some(width) = c.list_width {
+        let b = ROW_SWIPE_SHARE * width;
+        // Not a number, or too short to register: no drag.
+        if b.is_nan() || b < MIN_TRAVEL {
+            return Err(GestureError::RowTooNarrow);
         }
+        bound = bound.min(b);
     }
+    if let Some(width) = c.inset_width {
+        if width.is_nan() {
+            return Err(GestureError::RowTooNarrow);
+        }
+        bound = bound.min((ROW_SWIPE_SHARE * width).max(MIN_TRAVEL));
+    }
+    Ok(if bound.is_finite() {
+        shortened(g, bound)
+    } else {
+        g
+    })
 }
 
-/// What a sideways path crosses in the raw tree ([`crossed_rows`]): the two facts the row
-/// rules read, from one pass.
+/// What a sideways path crosses in the raw tree ([`crossed_rows`]): the facts the row rules
+/// read, from one pass.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 struct CrossedRows {
     /// The path touches a row of any kind — a `Cell`, a node a `Cell` holds, a row by shape:
-    /// the gate's row-swipe question ([`crosses_list_row`]). Review pass 31 (L2): unchanged
-    /// (never narrower than before).
+    /// the gate's row-swipe question ([`crosses_list_row`]). Review passes 31 and 32:
+    /// unchanged (never narrower than before).
     any: bool,
-    /// The width of the narrowest crossed **list** row (review pass 31, L2): one that spans
-    /// at least [`ROW_MIN_WIDTH_SHARE`] of its nearest scrollable ancestor's width and does
-    /// not fill that ancestor's height (a page of a pager). `None`: no list row is crossed
-    /// (grid, carousel, calendar and widget-pager cells only, or nothing) — the drag keeps
-    /// the screen cap. What bounds and refuses the drag ([`planned_drag`]).
+    /// The width of the narrowest crossed **list** row: one that spans at least
+    /// [`ROW_MIN_WIDTH_SHARE`] of its nearest scrollable ancestor's width (or whose ancestor
+    /// is not known: fail closed). For a row by shape of a scroll view (not a `Cell`, not a
+    /// child of a `Table` or `CollectionView`) also: it does not fill that ancestor's height
+    /// (a page of a pager, [`PAGE_FILL_SHARE`]). Review pass 32 (F1b): a `Cell` or a direct
+    /// child of a `Table`/`CollectionView` is never a page by its height (a one-row list
+    /// shrunk to its row is a list). Bounds and refuses the drag ([`planned_drag`]).
     list_width: Option<f64>,
+    /// Review pass 32 (F1): the width of the narrowest crossed **inset** row: a `Cell` (or
+    /// what one holds) or a row-sized direct child of a `Table`/`CollectionView` that is no
+    /// list row and has no grid signal ([`grid_widths`]): a padded or readable-width list's
+    /// row. Bounds the drag at its own width, never below `MIN_TRAVEL` ([`planned_drag`]).
+    inset_width: Option<f64>,
 }
 
-/// Review pass 31 (L2): a row that fills at least this share of its scroller's height is a
-/// page of a pager (the Home Screen widget stack's pages, 176.7 x 176.7 in a 176.7 x 176.7
-/// `ScrollView`), not a row of a list: it does not bound a drag (it still asks).
+/// Review pass 31 (L2): a row by shape of a scroll view that fills at least this share of
+/// its scroller's height is a page of a pager (the Home Screen widget stack's pages, 176.7 x
+/// 176.7 in a 176.7 x 176.7 `ScrollView`), not a row of a list: it does not bound a drag (it
+/// still asks). Review pass 32 (F1b): never read for a `Cell` or a child of a `Table` or
+/// `CollectionView`.
 const PAGE_FILL_SHARE: f64 = 0.9;
+
+/// Review pass 32 (F1): the narrowest a cell may be to count toward a grid signal (a real
+/// grid's cells are touch targets: the month calendar's days are 48 pt, the edit menu's
+/// items 56 pt and up; a forged 1-pt "cell" beside a row is none).
+const GRID_CELL_MIN_WIDTH: f64 = 20.0;
+/// Review pass 32 (F1): the widest share of its list a grid cell may span (two comparable
+/// cells side by side fit only below about half; the widest real one, the edit menu's
+/// "Cut", is 117 of 250 pt). A row wider than this is never a grid cell, whatever the tree
+/// puts beside it.
+const GRID_CELL_MAX_SHARE: f64 = 0.5;
+/// Review pass 32 (F1): how alike two cells side by side must be (the smaller width over
+/// the larger, and the same for heights) to make a grid signal.
+const GRID_LIKENESS: f64 = 0.8;
+/// Review pass 32 (F1): at most this many band cells are checked for being covered (each
+/// check reads every drawn node once), so the grid signal stays linear in the tree; past
+/// it, no signal (fail closed: the rows are bounded).
+const GRID_COVER_CHECKS: usize = 16;
+
+/// Review pass 32 (F1): for each list (a scrollable ancestor's raw index), the widest cell
+/// of a **grid signal** in the band `y0..=y1` the path runs through: two cells side by side,
+/// in that same list, each of them
+///
+/// - a `Cell` or a row-sized direct child of a `Table` or `CollectionView` (a "band cell"),
+///   drawn (not hidden, not zero-sized, the part of it on screen), not of the keyboard, its
+///   centre inside its list's drawn frame;
+/// - at least [`GRID_CELL_MIN_WIDTH`] wide and at most [`GRID_CELL_MAX_SHARE`] of its
+///   list's width;
+/// - not covered: no drawn node painted after it outside its subtree (a later sibling or a
+///   later branch) that shows something (text, a control, an image, a cell, the keyboard)
+///   holds its centre;
+///
+/// and the pair alike ([`GRID_LIKENESS`] of each other's width and height), overlapping by
+/// at least half the smaller height, side by side (their frames do not overlap sideways)
+/// and adjacent (the gap at most the wider one's width). A crossed `Cell` (or a row a list
+/// holds directly) that is no list row is a grid cell when it is no wider than its list's
+/// widest grid-signal cell: the 1-pt separators between the edit menu's items are, a
+/// padded list's row is not (it is wider than half its list, or wider than anything beside
+/// it). Linear in the tree but for sorting the band's cells and [`GRID_COVER_CHECKS`].
+fn grid_widths(
+    t: &ScreenTree<'_>,
+    nearest: &[u32],
+    y0: f64,
+    y1: f64,
+    row_height: f64,
+) -> Vec<(u32, f64)> {
+    let list_kind = |r: &Role| matches!(r, Role::Table | Role::CollectionView);
+    // The band's cells: (list, node).
+    let mut band: Vec<(u32, &RawNode)> = Vec::new();
+    for n in t.nodes {
+        let f = n.frame;
+        if n.keyboard
+            || f.is_empty()
+            || !(f.y <= y1 && f.max_y() >= y0)
+            || f.height > row_height
+            || f.width < GRID_CELL_MIN_WIDTH
+        {
+            continue;
+        }
+        let Some(k) = usize::try_from(n.node).ok() else {
+            continue;
+        };
+        let list = nearest.get(k).copied().unwrap_or(u32::MAX);
+        let Some(s) = (list != u32::MAX)
+            .then(|| crate::hit::raw_node(t, list))
+            .flatten()
+        else {
+            continue;
+        };
+        let direct = t.parents.get(k).copied() == Some(list) && list_kind(&s.role);
+        if !(n.role == Role::Cell || direct) {
+            continue;
+        }
+        if f.width > s.frame.width * GRID_CELL_MAX_SHARE || !s.frame.contains(f.center()) {
+            continue;
+        }
+        band.push((list, n));
+    }
+    band.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(a.1.frame.x.total_cmp(&b.1.frame.x))
+            .then(a.1.node.cmp(&b.1.node))
+    });
+    let alike = |a: f64, b: f64| a.min(b) >= a.max(b) * GRID_LIKENESS;
+    // The pairs that make a signal by shape: (list, widest, a, b).
+    let mut pairs: Vec<(u32, f64, &RawNode, &RawNode)> = Vec::new();
+    for (i, (la, a)) in band.iter().enumerate() {
+        // Only the next few by position (a real grid's neighbour is the next cell).
+        for (lb, b) in band.iter().skip(i + 1).take(4) {
+            if la != lb {
+                break;
+            }
+            let (fa, fb) = (a.frame, b.frame);
+            let wide = fa.width.max(fb.width);
+            let overlap = fa.max_y().min(fb.max_y()) - fa.y.max(fb.y);
+            if fb.x >= fa.max_x() - 0.5
+                && fb.x - fa.max_x() <= wide
+                && alike(fa.width, fb.width)
+                && alike(fa.height, fb.height)
+                && overlap >= 0.5 * fa.height.min(fb.height)
+            {
+                pairs.push((*la, wide, a, b));
+            }
+        }
+    }
+    // Widest first: per list, the first pair whose cells are both uncovered is its widest.
+    pairs.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
+    let covered = |m: &RawNode| {
+        let end = usize::try_from(m.node)
+            .ok()
+            .and_then(|k| t.ends.get(k))
+            .copied()
+            .unwrap_or(u32::MAX);
+        let c = m.frame.center();
+        t.nodes.iter().any(|j| {
+            j.node >= end
+                && j.frame.contains(c)
+                && (j.keyboard
+                    || j.text
+                    || crate::hit::takes_taps(&j.role)
+                    || matches!(j.role, Role::Image | Role::Cell))
+        })
+    };
+    let mut checks = 0usize;
+    let mut out: Vec<(u32, f64)> = Vec::new();
+    for (list, wide, a, b) in pairs {
+        if out.last().is_some_and(|(l, _)| *l == list) {
+            continue;
+        }
+        if checks >= GRID_COVER_CHECKS {
+            break;
+        }
+        checks += 2;
+        if !covered(a) && !covered(b) {
+            out.push((list, wide));
+        }
+    }
+    out
+}
 
 /// Run 146 (P13): the rows the sideways path `g` touches in the raw tree, `None` without the
 /// raw tree (or an empty one). A row is a `Cell`, a node a `Cell` holds, or a row by shape (a
 /// row-sized child of a `Table` or `CollectionView`, a row-height node spanning its
-/// scroller): any of them makes [`CrossedRows::any`]. Its width: a `Cell`'s own frame; for a
-/// node a `Cell` holds, the nearest drawn `Cell` ancestor's frame, or — when no drawn
-/// ancestor cell is known (its frame is not drawable, review pass 29 M3) — the node's own
-/// frame (narrower: stricter); for a row by shape, the node's own frame.
+/// scroller): any of them makes [`CrossedRows::any`]. Its frame: a `Cell`'s own; for a node
+/// a `Cell` holds, the nearest drawn `Cell` ancestor's, or — when no drawn ancestor cell is
+/// known (its frame is not drawable, review pass 29 M3) — the node's own (narrower:
+/// stricter); for a row by shape, the node's own.
 ///
-/// Review pass 31 (L2): the bound and the refusal read **list rows** only
-/// ([`CrossedRows::list_width`]): the row swipes were measured on rows that span their list
-/// (400-, 300-, 200-pt-column and 440-pt rows); a grid, carousel, calendar or menu cell is
-/// narrower than its scroller and gets the screen cap (its question is unchanged). A row is
-/// a list row when it spans [`ROW_MIN_WIDTH_SHARE`] of its nearest scrollable ancestor's
-/// width and fills less than [`PAGE_FILL_SHARE`] of its height (for a node a cell holds: its
-/// cell does); fail closed — a list row — when that ancestor is not known (none, or not
-/// drawn) and when a held node's cell frame is not drawable (so the forged undrawable cells
-/// of pass 29 keep their bound, from the node's own frame).
+/// Review pass 31 (L2) and 32 (F1): every crossed `Cell` (or what one holds) and every
+/// row-sized direct child of a `Table`/`CollectionView` is bounded at its own width — as a
+/// list row ([`CrossedRows::list_width`]) when it spans [`ROW_MIN_WIDTH_SHARE`] of its
+/// nearest scrollable ancestor (or that ancestor is not known, or a held node's cell frame
+/// is not drawable: fail closed), else as an inset row ([`CrossedRows::inset_width`]) —
+/// unless it is a grid cell ([`grid_widths`]); a row by shape of a scroll view is a list
+/// row unless it fills [`PAGE_FILL_SHARE`] of its scroller's height (a pager's page).
 fn crossed_rows(
     g: crate::gestures::Gesture,
     screen: &CompactScreen,
     tree: Option<&ScreenTree<'_>>,
 ) -> Option<CrossedRows> {
+    // A crossed row: a native one (a cell, or what a list holds directly) with its frame
+    // and its list; a row by shape of a scroll view, a list row of that width; a page.
+    enum Row {
+        Native(jarvis_proto::Rect, u32),
+        List(f64),
+        Page,
+    }
     let t = tree.filter(|t| !t.nodes.is_empty())?;
     let (x0, x1) = (g.from.x.min(g.to.x), g.from.x.max(g.to.x));
     let (y0, y1) = (g.from.y.min(g.to.y), g.from.y.max(g.to.y));
@@ -587,27 +759,10 @@ fn crossed_rows(
     // (a parent's index is below its children's).
     // Review pass 28 (M2): and whether a drawn `Cell` holds it (at any depth): a node on a
     // cell's row is on the row whatever frame the cell itself reports.
-    // Run 146: and the width of the nearest drawn `Cell` holding it (`NaN`: none known).
-    // Review pass 31 (L2): and whether that cell is a list row ([`CrossedRows::list_width`]).
+    // Run 146, review pass 32: and the nearest drawn `Cell` holding it (`u32::MAX`: none).
     let mut nearest: Vec<u32> = Vec::with_capacity(t.parents.len());
     let mut in_cell: Vec<bool> = Vec::with_capacity(t.parents.len());
-    let mut cell_width: Vec<f64> = Vec::with_capacity(t.parents.len());
-    let mut cell_list: Vec<bool> = Vec::with_capacity(t.parents.len());
-    // Whether a row of frame `f` under the scroller `s` (an index; `u32::MAX`: none) is a
-    // list row: it spans the scroller and is no page of it; an unknown scroller: yes.
-    let list_row = |f: jarvis_proto::Rect, s: u32| match (s != u32::MAX)
-        .then(|| crate::hit::raw_node(t, s))
-        .flatten()
-    {
-        None => true,
-        Some(s) => {
-            f.width >= s.frame.width * ROW_MIN_WIDTH_SHARE
-                && matches!(
-                    f.height.partial_cmp(&(s.frame.height * PAGE_FILL_SHARE)),
-                    Some(std::cmp::Ordering::Less) | None
-                )
-        }
-    };
+    let mut cell_of: Vec<u32> = Vec::with_capacity(t.parents.len());
     for (i, &p) in t.parents.iter().enumerate() {
         let parent = usize::try_from(p).ok().filter(|&k| p != u32::MAX && k < i);
         let drawn = parent.and_then(|_| crate::hit::raw_node(t, p));
@@ -621,21 +776,14 @@ fn crossed_rows(
         let cell = parent.is_some_and(|k| {
             drawn.is_some_and(|n| n.role == Role::Cell) || in_cell.get(k).copied().unwrap_or(false)
         });
-        let (width, list) = match (parent, drawn) {
-            (Some(k), Some(n)) if n.role == Role::Cell => (
-                n.frame.width,
-                list_row(n.frame, nearest.get(k).copied().unwrap_or(u32::MAX)),
-            ),
-            (Some(k), _) => (
-                cell_width.get(k).copied().unwrap_or(f64::NAN),
-                cell_list.get(k).copied().unwrap_or(true),
-            ),
-            (None, _) => (f64::NAN, true),
+        let holder = match (parent, drawn) {
+            (Some(_), Some(n)) if n.role == Role::Cell => p,
+            (Some(k), _) => cell_of.get(k).copied().unwrap_or(u32::MAX),
+            (None, _) => u32::MAX,
         };
         nearest.push(up);
         in_cell.push(cell);
-        cell_width.push(width);
-        cell_list.push(list);
+        cell_of.push(holder);
     }
     let parent_of = |i: u32| {
         usize::try_from(i)
@@ -643,6 +791,23 @@ fn crossed_rows(
             .and_then(|k| t.parents.get(k))
             .copied()
     };
+    let scroller_of = |i: u32| {
+        usize::try_from(i)
+            .ok()
+            .and_then(|k| nearest.get(k))
+            .copied()
+            .unwrap_or(u32::MAX)
+    };
+    // Whether a row of frame `f` spans the scroller `s`; `None`: `s` is not known.
+    let spans = |f: jarvis_proto::Rect, s: u32| {
+        (s != u32::MAX)
+            .then(|| crate::hit::raw_node(t, s))
+            .flatten()
+            .map(|s| f.width >= s.frame.width * ROW_MIN_WIDTH_SHARE)
+    };
+    let min = |m: Option<f64>, w: f64| Some(m.map_or(w, |m: f64| m.min(w)));
+    // Computed once, for the first crossed row that needs it.
+    let mut grids: Option<Vec<(u32, f64)>> = None;
     let mut out = CrossedRows::default();
     for n in t.nodes {
         let f = n.frame;
@@ -656,39 +821,62 @@ fn crossed_rows(
             continue;
         }
         let k = usize::try_from(n.node).ok();
-        let scroller_of = k.and_then(|k| nearest.get(k)).copied().unwrap_or(u32::MAX);
         let held = n.in_cell || k.and_then(|k| in_cell.get(k)).copied().unwrap_or(false);
-        // (the row's width, whether it is a list row)
         let row = if n.role == Role::Cell {
-            Some((f.width, list_row(f, scroller_of)))
+            Some(Row::Native(f, scroller_of(n.node)))
         } else if held {
-            // The nearest drawn cell's width and list-ness; none known (its frame is not
-            // drawable): the node's own width, a list row (fail closed).
+            // The nearest drawn cell; none known (its frame is not drawable): the node's own
+            // width, a list row (fail closed).
             match k
-                .and_then(|k| cell_width.get(k).zip(cell_list.get(k)))
-                .filter(|(w, _)| w.is_finite() && **w > 0.0)
+                .and_then(|k| cell_of.get(k))
+                .copied()
+                .filter(|&c| c != u32::MAX)
+                .and_then(|c| crate::hit::raw_node(t, c))
+                .filter(|c| c.frame.width.is_finite() && c.frame.width > 0.0)
             {
-                Some((w, list)) => Some((*w, *list)),
-                None => Some((f.width, true)),
+                Some(c) => Some(Row::Native(c.frame, scroller_of(c.node))),
+                None => Some(Row::List(f.width)),
             }
         } else if f.height > row_height {
             None
         } else {
             let direct = parent_of(n.node)
+                .filter(|&p| p != u32::MAX)
                 .and_then(|p| crate::hit::raw_node(t, p))
                 .is_some_and(|p| matches!(p.role, Role::Table | Role::CollectionView));
-            let spans = || {
-                (scroller_of != u32::MAX)
-                    .then(|| crate::hit::raw_node(t, scroller_of))
-                    .flatten()
-                    .is_some_and(|s| f.width >= s.frame.width * ROW_MIN_WIDTH_SHARE)
-            };
-            (direct || spans()).then(|| (f.width, list_row(f, scroller_of)))
+            let s = scroller_of(n.node);
+            if direct {
+                Some(Row::Native(f, s))
+            } else if spans(f, s) == Some(true) {
+                let page = crate::hit::raw_node(t, s).is_some_and(|s| {
+                    !matches!(
+                        f.height.partial_cmp(&(s.frame.height * PAGE_FILL_SHARE)),
+                        Some(std::cmp::Ordering::Less) | None
+                    )
+                });
+                Some(if page { Row::Page } else { Row::List(f.width) })
+            } else {
+                None
+            }
         };
-        if let Some((w, list)) = row {
-            out.any = true;
-            if list {
-                out.list_width = Some(out.list_width.map_or(w, |m: f64| m.min(w)));
+        let Some(row) = row else { continue };
+        out.any = true;
+        match row {
+            Row::Page => {}
+            Row::List(w) => out.list_width = min(out.list_width, w),
+            Row::Native(rf, s) => {
+                if spans(rf, s) != Some(false) {
+                    // Spans its list, or its list is not known: a list row.
+                    out.list_width = min(out.list_width, rf.width);
+                    continue;
+                }
+                let grid = grids
+                    .get_or_insert_with(|| grid_widths(t, &nearest, y0, y1, row_height))
+                    .iter()
+                    .any(|&(l, wide)| l == s && rf.width <= wide + 0.5);
+                if !grid {
+                    out.inset_width = min(out.inset_width, rf.width);
+                }
             }
         }
     }

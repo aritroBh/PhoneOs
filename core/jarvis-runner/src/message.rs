@@ -526,6 +526,13 @@ fn read_lock(r: &mut Reader<'_>) -> Result<LockState, MessageError> {
 // Snapshots and screenshots.
 // ---------------------------------------------------------------------------------------
 
+/// The bytes [`write_opt_screenshot`] writes for a snapshot's screenshot.
+fn screenshot_len(s: &Snapshot) -> usize {
+    s.screenshot.as_ref().map_or(1, |shot| {
+        1 + 4 + shot.mime_type.len() + 4 + 4 + shot.scale.map_or(1, |_| 9) + 4 + shot.data.len()
+    })
+}
+
 fn write_opt_screenshot(w: &mut Writer, shot: Option<&Screenshot>) -> Result<(), MessageError> {
     let Some(shot) = shot else {
         w.u8(0);
@@ -603,12 +610,18 @@ fn write_snapshot(w: &mut Writer, s: &Snapshot) -> Result<(), MessageError> {
     w.u8(orientation_byte(s.orientation));
     w.bool(s.device_locked);
     w.u8(lock_byte(s.lock_state));
-    // Review pass 31 (L1): the cut, decided before anything of the tree is written.
-    let plan = plan_tree(&s.root);
-    w.bool(s.tree_cut || plan.cut);
     if s.notes.len() > MAX_NOTES {
         return Err(MessageError::Limit("notes"));
     }
+    // Review pass 32 (F2): what the tree may take of the frame — the frame's body less the
+    // seal, the headroom, what is written so far (and the cut flag) and what the notes and
+    // the screenshot take after it.
+    let rest = 1 + 4 + s.notes.iter().map(|n| 4 + n.len()).sum::<usize>() + screenshot_len(s);
+    let budget = crate::MAX_SERVER_FRAME
+        .saturating_sub(crate::channel::DATA_OVERHEAD + WIRE_HEADROOM + w.buf.len() + rest);
+    // Review pass 31 (L1): the cut, decided before anything of the tree is written.
+    let plan = plan_tree(&s.root, budget);
+    w.bool(s.tree_cut || plan.cut);
     w.length(s.notes.len(), "notes")?;
     for note in &s.notes {
         w.str(note)?;
@@ -750,12 +763,11 @@ fn write_node(w: &mut Writer, n: &UiNode) -> Result<(), MessageError> {
 fn write_node_with(w: &mut Writer, n: &UiNode, children: usize) -> Result<(), MessageError> {
     w.u8(role_byte(&n.role));
     if let Role::Other(name) = &n.role {
-        w.str(name)?;
+        w.str(capped(name).0)?;
     }
-    w.opt_str(n.label.as_deref())?;
-    w.opt_str(n.value.as_deref())?;
-    w.opt_str(n.identifier.as_deref())?;
-    w.opt_str(n.placeholder.as_deref())?;
+    for s in node_strings(n) {
+        w.opt_str(s.map(|s| capped(s).0))?;
+    }
     w.f64(n.frame.x)?;
     w.f64(n.frame.y)?;
     w.f64(n.frame.width)?;
@@ -817,6 +829,56 @@ fn read_node(r: &mut Reader<'_>) -> Result<(UiNode, usize), MessageError> {
     ))
 }
 
+/// Review pass 32 (F2): the longest text of one node the wire carries (its label, value,
+/// identifier, placeholder and `Other` role name, each), in bytes. A longer one is cut at a
+/// character boundary at or below this and the snapshot is flagged cut (`tree_cut`): the
+/// rules read label text, so a shortened text is never passed on as the whole screen.
+pub const MAX_NODE_STRING_BYTES: usize = 64 * 1024;
+
+/// Review pass 32 (F2): bytes of the server frame kept free below the tree's budget.
+const WIRE_HEADROOM: usize = 4 * 1024;
+
+/// `s` as the wire carries it: at most [`MAX_NODE_STRING_BYTES`] (cut at a character
+/// boundary), and whether it was cut.
+fn capped(s: &str) -> (&str, bool) {
+    if s.len() <= MAX_NODE_STRING_BYTES {
+        return (s, false);
+    }
+    let mut end = MAX_NODE_STRING_BYTES;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    (s.get(..end).unwrap_or(""), true)
+}
+
+/// A node's optional texts in wire order.
+fn node_strings(n: &UiNode) -> [Option<&str>; 4] {
+    [
+        n.label.as_deref(),
+        n.value.as_deref(),
+        n.identifier.as_deref(),
+        n.placeholder.as_deref(),
+    ]
+}
+
+/// The bytes [`write_node_with`] writes for `n`, and whether one of its texts is cut.
+fn node_len(n: &UiNode) -> (usize, bool) {
+    let mut cut = false;
+    let mut text = |s: &str| {
+        let (s, c) = capped(s);
+        cut |= c;
+        4 + s.len()
+    };
+    let mut len = 1 + 32 + 1 + 4;
+    if let Role::Other(name) = &n.role {
+        len += text(name);
+    }
+    for s in node_strings(n) {
+        len += 1 + s.map_or(0, &mut text);
+    }
+    (len, cut)
+}
+
 /// What of a tree the encoder writes (review pass 31, L1): the nodes in pre-order, each with
 /// the number of its children written, and whether anything was left out.
 struct TreePlan<'a> {
@@ -830,9 +892,17 @@ struct TreePlan<'a> {
 /// tree past either bound is cut there and the snapshot says so (`tree_cut`); it was an
 /// error ("the reply could not be encoded"), so a screen deeper than the bound could not be
 /// read at all and the session could not leave it. Iterative.
-fn plan_tree(root: &UiNode) -> TreePlan<'_> {
+///
+/// Review pass 32 (F2): and no more than `budget` bytes of nodes (the root is always
+/// written): the pre-order prefix stops before the first node that would not fit, so the
+/// snapshot always fits the server frame (it was cut by node count only: 20,000 nodes of
+/// 1,000-byte labels encoded past the frame and the server answered "the reply is too
+/// large", so every look failed). Each text is at most [`MAX_NODE_STRING_BYTES`]; a cut text
+/// is a cut too. Linear in the nodes written.
+fn plan_tree(root: &UiNode, budget: usize) -> TreePlan<'_> {
     let mut nodes: Vec<(&UiNode, usize)> = Vec::new();
     let mut cut = false;
+    let mut used = 0usize;
     // (node, depth, index of its parent in `nodes`)
     let mut stack: Vec<(&UiNode, usize, Option<usize>)> = vec![(root, 1, None)];
     while let Some((node, depth, parent)) = stack.pop() {
@@ -840,6 +910,13 @@ fn plan_tree(root: &UiNode) -> TreePlan<'_> {
             cut = true;
             break;
         }
+        let (len, text_cut) = node_len(node);
+        if !nodes.is_empty() && used.saturating_add(len) > budget {
+            cut = true;
+            break;
+        }
+        used = used.saturating_add(len);
+        cut |= text_cut;
         let here = nodes.len();
         nodes.push((node, 0));
         if let Some((_, written)) = parent.and_then(|p| nodes.get_mut(p)) {
@@ -865,7 +942,7 @@ fn write_planned(w: &mut Writer, plan: &TreePlan<'_>) -> Result<(), MessageError
 
 #[cfg(test)]
 fn write_tree(w: &mut Writer, root: &UiNode) -> Result<bool, MessageError> {
-    let plan = plan_tree(root);
+    let plan = plan_tree(root, usize::MAX);
     write_planned(w, &plan)?;
     Ok(plan.cut)
 }
