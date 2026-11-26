@@ -14,6 +14,12 @@ import Synchronization
 ///   SpringBoard is in front, and also with an app in front once the notify state says
 ///   locked (audit C6).
 /// - `front`: what is in front.
+/// - `notificationCentre`: the same SpringBoard tree shows the cover sheet
+///   (`SBCoverSheetWindow`) without the lock screen's signature: Notification Centre pulled
+///   down on an unlocked phone (`SystemSurface.notificationCentre`). Mac run 139: with it up
+///   over Settings the notify state read true (it read false before and after), so the notify
+///   state alone would judge the phone locked. Only read with the lock screen check
+///   (`lockScreen` not `nil`).
 ///
 /// There used to be two rules over these (commands: either says locked; resume: unlocked as
 /// soon as an app is in front). They contradicted each other whenever `notify` said locked
@@ -32,11 +38,13 @@ public struct LockSignals: Sendable, Equatable, CustomStringConvertible {
     public var notify: Bool?
     public var lockScreen: Bool?
     public var front: Front
+    public var notificationCentre: Bool
 
-    public init(notify: Bool?, lockScreen: Bool?, front: Front) {
+    public init(notify: Bool?, lockScreen: Bool?, front: Front, notificationCentre: Bool = false) {
         self.notify = notify
         self.lockScreen = lockScreen
         self.front = front
+        self.notificationCentre = notificationCentre
     }
 
     /// The raw readings (the verdict is in `LockVerdict.description`).
@@ -48,6 +56,7 @@ public struct LockSignals: Sendable, Equatable, CustomStringConvertible {
         }
         return "lock signals: notify(com.apple.springboard.lockstate)=\(notify.map(String.init) ?? "unavailable"), "
             + "lock screen=\(lockScreen.map(String.init) ?? "not checked"), front=\(frontText)"
+            + (notificationCentre ? ", Notification Centre up (the cover sheet with no lock screen)" : "")
     }
 }
 
@@ -87,6 +96,10 @@ public struct LockVerdict: Sendable, Equatable, CustomStringConvertible {
 ///   failed, or a runner that does not check): locked, however long it lasts — the notify
 ///   state never goes stale on such a reading (audit C6, run 137: right after the lock the
 ///   locked app still read as in front; a runner checks SpringBoard's tree then);
+/// - the notify state says locked and the check showed no lock screen but Notification Centre
+///   (the cover sheet with no lock screen's signature, `notificationCentre`): unlocked, at once
+///   (run 139: pulling Notification Centre down on an unlocked phone sets the notify state);
+///   the staleness clock is left as it is;
 /// - the notify state says locked and the check showed no lock screen (`false`; an app or
 ///   SpringBoard in front): locked while the notify state has been true for less than
 ///   `notifyStaleAfter`; after that, with the lock screen never confirmed in the stretch, it
@@ -127,6 +140,13 @@ public final class LockJudge: Sendable {
                 return LockVerdict(state: .locked, notifyTrueFor: .zero)
             }
             let held = max(.zero, now - (s.notifyTrueSince ?? now))
+            // Run 139: Notification Centre pulled down over an unlocked phone sets the notify
+            // state; SpringBoard's tree then shows the cover sheet and no lock screen. What
+            // tells it from the lock screen is the lock screen's signature only (the window,
+            // the notification rows and the date view are the same).
+            if signals.lockScreen == false, signals.notificationCentre {
+                return LockVerdict(state: .unlocked, notifyTrueFor: held)
+            }
             // Audit C6 (run 137): notify may go stale only on a reading whose lock screen
             // check positively showed none. Unchecked (an app reads as in front, the
             // snapshot failed) it stays locked however long it lasts: right after the lock

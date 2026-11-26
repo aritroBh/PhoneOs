@@ -782,4 +782,186 @@ final class TopLayerRunnerTests: QATestCase {
         }
         await finish("front-app", terminating: [id])
     }
+
+    // MARK: - 5. System surfaces drawn by SpringBoard over Settings (tolerant: a surface the simulator does not produce is skipped)
+
+    /// How each surface is pulled over Settings (`TreeFactProbe3SystemTests`
+    /// `testP12a_BadgeAndSystemSurfaces`, run 139: each produced the surface), and labels of
+    /// the surface's own that must never reach a look.
+    private struct SurfaceCase {
+        let surface: SystemSurface
+        let from: CGVector
+        let to: CGVector
+        let hold: Bool
+        let labels: [String]
+    }
+
+    private static let surfaceCases = [
+        SurfaceCase(surface: .controlCentre, from: CGVector(dx: 0.92, dy: 0.003), to: CGVector(dx: 0.92, dy: 0.7), hold: false,
+                    labels: ["Add Controls", "Power", "Services in use"]),
+        SurfaceCase(surface: .notificationCentre, from: CGVector(dx: 0.15, dy: 0.003), to: CGVector(dx: 0.15, dy: 0.7), hold: false,
+                    labels: ["Notification Center", "Clear"]),
+        SurfaceCase(surface: .appSwitcher, from: CGVector(dx: 0.5, dy: 0.998), to: CGVector(dx: 0.5, dy: 0.6), hold: true,
+                    labels: ["Messages", "Contacts", "Safari"]),
+    ]
+
+    /// Whether `surface` is up now, by its identifier's query on SpringBoard (the
+    /// identifiers of `SystemSurface`; the simulator is unlocked).
+    @MainActor
+    private func surfaceUp(_ board: XCUIApplication, _ surface: SystemSurface) -> Bool {
+        board.descendants(matching: .any).matching(identifier: surface.identifier).firstMatch.exists
+    }
+
+    /// Where a touch planned on Settings would land on the surface: a notification row, the
+    /// Settings card, else a point inside Control Centre's module grid (its modules are not in
+    /// the tree: run 139, 33 nodes).
+    @MainActor
+    private func pointOnSurface(_ board: XCUIApplication, _ surface: SystemSurface, screen: Size) -> (x: Double, y: Double) {
+        let target: XCUIElement?
+        switch surface {
+        case .notificationCentre:
+            target = board.descendants(matching: .any).matching(identifier: "ListCell").firstMatch
+        case .appSwitcher:
+            target = board.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier BEGINSWITH %@", "card:\(Self.settingsId):")).firstMatch
+        case .controlCentre:
+            target = nil
+        }
+        if let target, target.exists, !target.frame.isEmpty {
+            return (Double(target.frame.midX), Double(target.frame.midY))
+        }
+        return (screen.width * 0.25, screen.height * 0.3)
+    }
+
+    /// Control Centre, Notification Centre and the App Switcher over Settings, strict: the
+    /// top layer is not Settings (the unidentified layer, the surface named), the look holds
+    /// nothing (no Settings control, no label of the surface), a tap planned on Settings at a
+    /// point of the surface is refused as stale at once (no banner wait under Notification
+    /// Centre's rows) and the surface is still up after it; Home dismisses it and a fresh look
+    /// is Settings or the Home Screen; a tap planned on the surface is then stale. Tolerant
+    /// only where the simulator decides: a surface that does not come up is recorded and
+    /// skipped. Record only: timings.
+    ///
+    /// Timing (expected): Settings ~3 s, per surface ~10 s, the end ~10 s: ~45 s.
+    @MainActor
+    func testE_SystemSurfacesOverAnAppAreNotTheApp() async throws {
+        continueAfterFailure = true
+        started = Date()
+        await SystemAppAgentTests.startOnHomeScreen(terminating: [Self.settingsId])
+        let board = XCUIApplication(bundleIdentifier: Self.springboardId)
+        let settings = XCUIApplication(bundleIdentifier: Self.settingsId)
+        var produced = 0
+        for c in Self.surfaceCases {
+            let name = c.surface.name
+            if settings.state != .runningForeground {
+                settings.activate()
+                _ = settings.wait(for: .runningForeground, timeout: 15)
+                try await Task.sleep(for: .seconds(1.5))
+            }
+            guard settings.state == .runningForeground else {
+                note("\(name): Settings did not reach the foreground (state \(settings.state.rawValue)); skipped")
+                continue
+            }
+            // The look the stale tap is planned with: Settings, no surface.
+            let runner = XCUITestPhoneRunner()
+            runner.noteActivated(Self.settingsId)
+            let before = try await runner.snapshot(includeScreenshot: false)
+            let settingsLabels = before.root.map { Self.findAll($0) { Self.isControl($0) && !($0.label ?? "").isEmpty }.compactMap(\.label) } ?? []
+            note("\(name): look before (the plan): \(before.appBundleId), \(settingsLabels.count) labelled controls (\(settingsLabels.prefix(6).joined(separator: ", "))); notes: \(before.notes.joined(separator: " | "))")
+            XCTAssertEqual(before.appBundleId, Self.settingsId, "\(name): the look before is not of Settings")
+
+            let start = board.coordinate(withNormalizedOffset: c.from)
+            let end = board.coordinate(withNormalizedOffset: c.to)
+            if c.hold {
+                start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 1.0)
+            } else {
+                start.press(forDuration: 0.05, thenDragTo: end)
+            }
+            var up = false
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline {
+                if surfaceUp(board, c.surface) {
+                    up = true
+                    break
+                }
+                try await Task.sleep(for: .milliseconds(300))
+            }
+            guard up else {
+                note("\(name): \(c.surface.identifier) did not appear in SpringBoard's tree within 5 s of the drag; skipped (the simulator did not produce it)")
+                XCUIDevice.shared.press(.home)
+                try await Task.sleep(for: .seconds(1.5))
+                continue
+            }
+            produced += 1
+            try await Task.sleep(for: .seconds(1))
+            note("\(name): up (\(c.surface.identifier) in SpringBoard's tree); Settings state \(settings.state.rawValue)")
+
+            // (i) The top layer is not Settings: the unidentified layer.
+            let askedAt = Date()
+            let front = try await runner.frontBundleId()
+            note("\(name): frontBundleId() \(front ?? "nil") in \(Self.seconds(Date().timeIntervalSince(askedAt))) s")
+            XCTAssertNotEqual(front, Self.settingsId, "\(name): Settings is reported on top under \(name)")
+            XCTAssertEqual(front, FrontApp.unidentified, "\(name): not reported as the unidentified layer")
+
+            // (ii) The look holds nothing: no Settings control, nothing of the surface; the note
+            // names the surface and the app below.
+            let look = try await runner.snapshot(includeScreenshot: false)
+            let root = try XCTUnwrap(look.root, "\(name): the runner sent no typed tree")
+            let labels = Self.findAll(root) { !($0.label ?? "").isEmpty }.compactMap(\.label)
+            note("\(name): look: \(look.appBundleId), \(root.children.count) children, labels [\(labels.prefix(8).joined(separator: ", "))]; notes: \(look.notes.joined(separator: " | "))")
+            XCTAssertEqual(look.appBundleId, FrontApp.unidentified, "\(name): the look is not of the unidentified layer")
+            XCTAssertTrue(root.children.isEmpty, "\(name): the look has content")
+            XCTAssertFalse(look.deviceLocked, "\(name): judged locked (the phone is unlocked)")
+            for label in settingsLabels { XCTAssertFalse(labels.contains(label), "\(name): Settings' \"\(label)\" is in the look") }
+            for label in c.labels { XCTAssertFalse(labels.contains(label), "\(name): \"\(label)\" of \(name) is in the look") }
+            XCTAssertTrue(look.notes.contains(c.surface.note(over: Self.settingsId)),
+                          "\(name): no note names \(name) over Settings: \(look.notes)")
+
+            // (iii) A tap planned on Settings, at a point of the surface: stale at once (no
+            // banner wait), and the surface is unchanged.
+            let p = pointOnSurface(board, c.surface, screen: look.screenSize)
+            let boardBefore = fingerprint(board)
+            let tappedAt = Date()
+            let stale = try await runner.perform(.tap(x: p.x, y: p.y), expect: CommandExpect(bundleId: Self.settingsId))
+            let took = Date().timeIntervalSince(tappedAt)
+            try await Task.sleep(for: .seconds(1))
+            let boardAfter = fingerprint(board)
+            note("\(name): tap at (\(p.x.compactText), \(p.y.compactText)) planned on Settings: ok \(stale.ok), failure \(String(describing: stale.failure)), \(stale.error ?? "") in \(Self.seconds(took)) s; SpringBoard unchanged \(boardBefore == boardAfter)")
+            XCTAssertFalse(stale.ok, "\(name): the tap planned on Settings was carried out")
+            XCTAssertEqual(stale.failure, RunnerFailure.stale)
+            XCTAssertFalse((stale.error ?? "").contains("notification banner"), "\(name): refused by the banner gate, not the top layer: \(stale.error ?? "")")
+            XCTAssertTrue(surfaceUp(board, c.surface), "\(name) is gone after the refused tap: a touch may have reached it")
+            XCTAssertEqual(settings.state, .runningForeground, "\(name): Settings is no longer in the foreground after the refused tap")
+
+            // (iv) Home dismisses it; a fresh look is Settings or the Home Screen.
+            let home = try await runner.perform(.pressKey(.home), expect: nil)
+            note("\(name): Home through the runner: ok \(home.ok) \(home.error ?? "")")
+            XCTAssertTrue(home.ok, "\(name): Home was refused: \(home.error ?? "")")
+            var gone = false
+            let goneBy = Date().addingTimeInterval(5)
+            while Date() < goneBy {
+                if !surfaceUp(board, c.surface) {
+                    gone = true
+                    break
+                }
+                try await Task.sleep(for: .milliseconds(300))
+            }
+            XCTAssertTrue(gone, "\(name) is still up 5 s after Home")
+            try await Task.sleep(for: .seconds(1))
+            let fresh = try await runner.snapshot(includeScreenshot: false)
+            note("\(name): fresh look after Home: \(fresh.appBundleId); Settings state \(settings.state.rawValue); notes: \(fresh.notes.joined(separator: " | "))")
+            XCTAssertTrue([Self.settingsId, Self.springboardId].contains(fresh.appBundleId),
+                          "\(name): after Home the look is \(fresh.appBundleId), neither Settings nor the Home Screen")
+
+            // (v) The reverse: a tap planned on the surface (the look above) once it has gone is
+            // stale (at the status bar: harmless if it went through).
+            let reverse = try await runner.perform(.tap(x: look.screenSize.width / 2, y: 20), expect: CommandExpect(bundleId: FrontApp.unidentified))
+            note("\(name): tap planned on \(name) after it went: ok \(reverse.ok), failure \(String(describing: reverse.failure)), \(reverse.error ?? "")")
+            XCTAssertFalse(reverse.ok)
+            XCTAssertEqual(reverse.failure, RunnerFailure.stale)
+        }
+        note("surfaces produced: \(produced) of \(Self.surfaceCases.count)")
+        await finish("system-surfaces", terminating: [Self.settingsId])
+        if produced == 0 { throw XCTSkip("the simulator produced none of Control Centre, Notification Centre, the App Switcher") }
+    }
 }

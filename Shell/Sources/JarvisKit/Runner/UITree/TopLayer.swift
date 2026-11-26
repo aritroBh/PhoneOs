@@ -31,11 +31,20 @@ public enum TopLayer {
         public var alertOver: String?
         /// Top layer is a SpringBoard alert.
         public var systemAlert: Bool
+        /// The system surface on top (`SystemSurface`; the bundle id is then
+        /// `FrontApp.unidentified`), `nil` otherwise.
+        public var surface: SystemSurface?
+        /// When a surface is on top over an app: that app (the foreground reading). `nil`
+        /// otherwise, and for a surface over SpringBoard.
+        public var surfaceOver: String?
 
-        public init(bundleId: String, alertOver: String? = nil, systemAlert: Bool = false) {
+        public init(bundleId: String, alertOver: String? = nil, systemAlert: Bool = false,
+                    surface: SystemSurface? = nil, surfaceOver: String? = nil) {
             self.bundleId = bundleId
             self.alertOver = alertOver
             self.systemAlert = systemAlert
+            self.surface = surface
+            self.surfaceOver = surfaceOver
         }
 
         /// The observation note that says what the top layer is when it is not the
@@ -46,6 +55,9 @@ public enum TopLayer {
                     return "a system alert (SpringBoard's) is up over \(over): this observation is SpringBoard's tree, the alert"
                 }
                 return "a system alert (SpringBoard's) is up: this observation is SpringBoard's tree, the alert"
+            }
+            if let surface {
+                return surface.note(over: surfaceOver)
             }
             if bundleId == TopLayer.spotlight {
                 return "Spotlight (\(TopLayer.spotlight)) is in front: this observation is Spotlight's tree"
@@ -70,25 +82,40 @@ public enum TopLayer {
 
     /// The top layer:
     /// 1. a SpringBoard alert is up → SpringBoard (the alert), over `foreground`;
-    /// 2. else Spotlight is in front → `com.apple.Spotlight`;
-    /// 3. else, `foreground` being SpringBoard: SpringBoard while it shows its Home Screen or
+    /// 2. else a system surface is up (Control Centre, Notification Centre, the App Switcher:
+    ///    `SystemSurface`) → `FrontApp.unidentified` with the surface named, over
+    ///    `foreground`: nothing of it is read, every input on it asks, typing is refused,
+    ///    Home dismisses it;
+    /// 3. else Spotlight is in front → `com.apple.Spotlight`;
+    /// 4. else, `foreground` being SpringBoard: SpringBoard while it shows its Home Screen or
     ///    the lock screen, else `FrontApp.unidentified` (an app Jarvis cannot identify is in
     ///    front: fail closed, never "the Home Screen");
-    /// 4. else `foreground` (the identified app in front).
+    /// 5. else `foreground` (the identified app in front).
+    ///
+    /// The order is what is drawn above what: an alert's window is above every other
+    /// SpringBoard window (an alert over Control Centre is still an alert, and it is what a
+    /// touch reaches); the surfaces are SpringBoard's windows over every app, Spotlight's
+    /// process included (Control Centre and Notification Centre are pulled down over it);
+    /// Spotlight is over the Home Screen and the app it was pulled over.
     ///
     /// - Parameters:
     ///   - systemAlertUp: SpringBoard's tree holds an alert (a query on SpringBoard).
+    ///   - systemSurface: the system surface SpringBoard's tree shows, if any
+    ///     (`SystemSurface.up`).
     ///   - spotlightInFront: Spotlight runs in the foreground and shows its search field
     ///     (queries on the Spotlight process).
     ///   - foreground: the runner's foreground reading (never empty; SpringBoard when no
     ///     app in front was identified).
-    ///   - springBoard: what SpringBoard shows; consulted only in case 3. A runner that did
+    ///   - springBoard: what SpringBoard shows; consulted only in case 4. A runner that did
     ///     not read it passes `.other` (fail closed).
-    public static func decide(systemAlertUp: Bool, spotlightInFront: Bool, foreground: String,
-                              springBoard shows: SpringBoardShows) -> Decision {
+    public static func decide(systemAlertUp: Bool, systemSurface: SystemSurface? = nil, spotlightInFront: Bool,
+                              foreground: String, springBoard shows: SpringBoardShows) -> Decision {
+        let over = isSpringBoard(foreground) ? nil : foreground
         if systemAlertUp {
-            let over = isSpringBoard(foreground) ? nil : foreground
             return Decision(bundleId: springBoard, alertOver: over, systemAlert: true)
+        }
+        if let systemSurface {
+            return Decision(bundleId: FrontApp.unidentified, surface: systemSurface, surfaceOver: over)
         }
         if spotlightInFront {
             return Decision(bundleId: spotlight)

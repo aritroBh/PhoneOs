@@ -113,6 +113,9 @@ final class XCUITestPhoneRunner: PhoneRunner {
     /// The banners (screen points) the last observation added to the front app's tree as
     /// covering nodes (`BannerCover`): what the next touch was planned with.
     private var reportedBanners: [Rect] = []
+    /// The system surface the last observation reported (`SystemSurface`; `nil` when it
+    /// reported none): what the next touch on the unidentified layer was planned with.
+    private var reportedSurface: SystemSurface?
     /// Lock readings with the time since the runner was made: every change, and every
     /// reading with `noteLockSignalsEveryObservation` (for failure messages).
     private(set) var lockSignalHistory: [String] = []
@@ -187,8 +190,10 @@ final class XCUITestPhoneRunner: PhoneRunner {
         // No event while a notification banner is up (`BannerGate`, run 138: XCUITest holds
         // the event until the banner goes, up to 15 s, then sends it onto whatever is on the
         // screen): wait for the banner to go (bounded, off the main actor), then answer stale
-        // either way; the caller looks again.
-        if BannerGate.synthesizesEvent(command), await bannerIsUp() {
+        // either way; the caller looks again. A system surface or an alert comes first (run
+        // 139: Notification Centre's rows have the banner's identifier): no wait, the check
+        // next to the gesture decides at once.
+        if BannerGate.synthesizesEvent(command), await bannerOnlyIsUp() {
             let clock = ContinuousClock()
             let start = clock.now
             var left = false
@@ -206,8 +211,16 @@ final class XCUITestPhoneRunner: PhoneRunner {
         return await act(command, expect: expect)
     }
 
+    /// Whether a notification banner is up with neither a system surface nor an alert
+    /// (`SystemLayers`: one existence query on SpringBoard, its snapshot only when it says
+    /// yes): the case the banner gate waits for.
+    private func bannerOnlyIsUp() -> Bool {
+        let layers = systemLayers().layers
+        return layers.surface == nil && !layers.alert && !layers.banners.isEmpty
+    }
+
     /// Whether SpringBoard shows a notification banner now (`.exists` on the banner's
-    /// identifier query on SpringBoard; no snapshot).
+    /// identifier query on SpringBoard; no snapshot): the poll while the gate waits.
     private func bannerIsUp() -> Bool {
         application(Self.springboard).descendants(matching: .any)
             .matching(identifier: BannerCover.identifier).firstMatch.exists
@@ -246,11 +259,10 @@ final class XCUITestPhoneRunner: PhoneRunner {
         var notes: [String] = []
         let foreground = foregroundBundleId(notes: &notes)
         noteFrontAppPath(&notes)
-        let alertUp = systemAlertUp()
-        let spotlightUp = !alertUp && spotlightInFront()
         // SpringBoard's tree (the OS's process, not a look at any app), taken at most once per
         // observation: the observation itself when SpringBoard is the top layer, the lock
-        // screen check, and whether it shows its Home Screen (`FrontApp`, part 1).
+        // screen check, what SpringBoard draws over the app (`SystemLayers`: an alert, a
+        // system surface, banners) and whether it shows its Home Screen (`FrontApp`, part 1).
         var board: RawElement?
         var boardMs = 0
         func springBoardTree() throws -> RawElement {
@@ -269,15 +281,21 @@ final class XCUITestPhoneRunner: PhoneRunner {
         // reads as in front for seconds after the lock).
         let notify = notifyLockState()
         let lockScreen: Bool?
+        var notificationCentre = false
         if foreground == Self.springboard || notify == true {
-            lockScreen = (try? springBoardTree()).map(LockScreenSignature.matches)
+            let tree = try? springBoardTree()
+            lockScreen = tree.map(LockScreenSignature.matches)
+            // Run 139: Notification Centre pulled down on an unlocked phone sets the notify
+            // state; the same tree tells it from the lock screen (`LockJudge`).
+            notificationCentre = tree.map { SystemSurface.up(inSpringBoard: $0) == .notificationCentre } ?? false
         } else {
             lockScreen = nil
         }
         let signals = LockSignals(
             notify: notify,
             lockScreen: lockScreen,
-            front: foreground == Self.springboard ? .springBoard : .app(foreground)
+            front: foreground == Self.springboard ? .springBoard : .app(foreground),
+            notificationCentre: notificationCentre
         )
         let verdict = lockJudge.judge(signals, at: lockClockNow())
         record(signals, verdict, everyTime: configuration.noteLockSignalsEveryObservation)
@@ -290,25 +308,46 @@ final class XCUITestPhoneRunner: PhoneRunner {
                                     includeScreenshot: false)
         }
 
-        // 2. The top layer (`TopLayer.decide`): with SpringBoard the foreground reading and
-        // neither an alert nor Spotlight up, SpringBoard must show its Home Screen; else an app
-        // Jarvis cannot identify is in front.
+        // 2. What SpringBoard draws over the foreground reading (`SystemLayers`): from the tree
+        // already taken, else one existence query (and SpringBoard's tree only when it says
+        // yes, kept for the steps below).
+        let layers: SystemLayers
+        if let board {
+            layers = SystemLayers.read(springBoard: board)
+        } else {
+            let read = systemLayers()
+            layers = read.layers
+            if let tree = read.tree {
+                board = tree
+                boardMs = read.ms
+            }
+        }
+        let alertUp = layers.alert
+        let spotlightUp = !alertUp && layers.surface == nil && spotlightInFront()
+
+        // 3. The top layer (`TopLayer.decide`): an alert, else a system surface (the
+        // unidentified layer, named), else Spotlight; with SpringBoard the foreground reading
+        // and none of these up, SpringBoard must show its Home Screen; else an app Jarvis
+        // cannot identify is in front.
         var shows = TopLayer.SpringBoardShows.other
-        if foreground == Self.springboard, !alertUp, !spotlightUp {
+        if foreground == Self.springboard, !alertUp, layers.surface == nil, !spotlightUp {
             shows = FrontApp.homeScreenShowing(try springBoardTree()) ? .homeScreen : .other
         }
-        let top = TopLayer.decide(systemAlertUp: alertUp, spotlightInFront: spotlightUp,
+        let top = TopLayer.decide(systemAlertUp: alertUp, systemSurface: layers.surface, spotlightInFront: spotlightUp,
                                   foreground: foreground, springBoard: shows)
         if let note = top.note { notes.append(note) }
         let bundleId = top.bundleId
         if FrontApp.isUnidentified(bundleId) {
-            // Never SpringBoard's tree, never "the Home Screen": the application node only.
+            // Never SpringBoard's tree, never "the Home Screen", nothing of a system surface
+            // (no notification text, no control names): the application node only.
             reportedBanners = []
+            reportedSurface = top.surface
             return emptyObservation(bundleId: FrontApp.unidentified, screen: board?.frame, notes: notes,
                                     locked: false, includeScreenshot: includeScreenshot)
         }
+        reportedSurface = nil
 
-        // 3. The top layer's tree: SpringBoard's own snapshot reused when it is the top layer.
+        // 4. The top layer's tree: SpringBoard's own snapshot reused when it is the top layer.
         let raw: RawElement
         let snapshotMs: Int
         if bundleId == Self.springboard {
@@ -328,10 +367,11 @@ final class XCUITestPhoneRunner: PhoneRunner {
         lastScreenSize = size
         var built = UiTreeBuilder.build(raw, screenSize: size)
         // A notification banner over an app or Spotlight is SpringBoard's: one covering node
-        // per banner, with no text (`BannerCover`). On SpringBoard the banner is in the tree.
+        // per banner, with no text (`BannerCover`), from the reading of step 2 (no query of
+        // its own). On SpringBoard the banner is in the tree.
         reportedBanners = []
         if bundleId != Self.springboard {
-            let banners = bannerFrames()
+            let banners = layers.banners
             if !banners.isEmpty {
                 built.root = BannerCover.covering(built.root, banners: banners)
                 reportedBanners = banners
@@ -485,24 +525,53 @@ final class XCUITestPhoneRunner: PhoneRunner {
         return Self.springboard
     }
 
-    /// The top layer now, read cheaply (queries on the OS's processes, no snapshot): what
-    /// `frontBundleId()` reports and what the check next to a gesture compares `expect` with.
+    /// The top layer now, read cheaply (queries on the OS's processes; SpringBoard's snapshot
+    /// only while it draws something over the app): what `frontBundleId()` reports and what
+    /// the check next to a gesture compares `expect` with.
     private func frontOnMain() -> String {
-        var notes: [String] = []
-        let foreground = foregroundBundleId(notes: &notes)
-        let alertUp = systemAlertUp()
-        let spotlightUp = !alertUp && spotlightInFront()
-        var shows = TopLayer.SpringBoardShows.other
-        if foreground == Self.springboard, !alertUp, !spotlightUp {
-            shows = springBoardShowsByQuery()
-        }
-        return TopLayer.decide(systemAlertUp: alertUp, spotlightInFront: spotlightUp,
-                               foreground: foreground, springBoard: shows).bundleId
+        topNow().top.bundleId
     }
 
-    /// Whether SpringBoard shows an alert (`.exists` on its alerts query).
-    private func systemAlertUp() -> Bool {
-        application(Self.springboard).alerts.firstMatch.exists
+    /// The top layer now, with the reading of what SpringBoard draws over the app it was
+    /// decided from (`SystemLayers`), for the check next to a gesture (the banners).
+    private func topNow() -> (top: TopLayer.Decision, layers: SystemLayers) {
+        var notes: [String] = []
+        let foreground = foregroundBundleId(notes: &notes)
+        let read = systemLayers()
+        let layers = read.layers
+        let spotlightUp = !layers.alert && layers.surface == nil && spotlightInFront()
+        var shows = TopLayer.SpringBoardShows.other
+        if foreground == Self.springboard, !layers.alert, layers.surface == nil, !spotlightUp {
+            shows = springBoardShows(tree: read.tree)
+        }
+        let top = TopLayer.decide(systemAlertUp: layers.alert, systemSurface: layers.surface, spotlightInFront: spotlightUp,
+                                  foreground: foreground, springBoard: shows)
+        return (top, layers)
+    }
+
+    /// The one existence query for what SpringBoard draws over the app: an alert (its element
+    /// type), a notification banner or a system surface (their identifiers,
+    /// `SystemLayers.triggerIdentifiers`). Nothing up: that one query, no snapshot
+    /// (`SystemLayers.nothing`). Something up: SpringBoard's snapshot, decided there
+    /// (`SystemLayers.read`); the tree is returned for reuse. A snapshot that fails falls back
+    /// to one query per kind (no banner frames then, as before).
+    private func systemLayers() -> (layers: SystemLayers, tree: RawElement?, ms: Int) {
+        let board = application(Self.springboard)
+        var parts = [NSPredicate(format: "elementType == %lu", XCUIElement.ElementType.alert.rawValue)]
+        parts += SystemLayers.triggerIdentifiers.map { NSPredicate(format: "identifier == %@", $0) }
+        let any = NSCompoundPredicate(orPredicateWithSubpredicates: parts)
+        guard board.descendants(matching: .any).matching(any).firstMatch.exists else { return (.nothing, nil, 0) }
+        let start = Date()
+        if let snapshot = try? board.snapshot() {
+            let tree = SnapshotCopy.copy(snapshot)
+            let ms = (Date().timeIntervalSince(start) * 1_000).clampedInt
+            return (SystemLayers.read(springBoard: tree), tree, ms)
+        }
+        let alert = board.alerts.firstMatch.exists
+        let surface = SystemSurface.allCases.first { s in
+            board.descendants(matching: .any).matching(identifier: s.identifier).firstMatch.exists
+        }
+        return (SystemLayers(alert: alert, surface: surface, banners: []), nil, 0)
     }
 
     /// Whether Spotlight runs in the foreground showing its search field (its application
@@ -511,6 +580,17 @@ final class XCUITestPhoneRunner: PhoneRunner {
         let spotlight = application(Self.spotlight)
         return spotlight.state == .runningForeground
             && spotlight.textFields[TopLayer.spotlightFieldIdentifier].firstMatch.exists
+    }
+
+    /// What SpringBoard shows: from its tree when one was just taken (`tree`, the same
+    /// identifiers as the queries), else by queries (`springBoardShowsByQuery`).
+    private func springBoardShows(tree: RawElement?) -> TopLayer.SpringBoardShows {
+        guard let tree else { return springBoardShowsByQuery() }
+        if FrontApp.homeScreenShowing(tree) { return .homeScreen }
+        let signals = LockSignals(notify: notifyLockState(), lockScreen: LockScreenSignature.matches(tree), front: .springBoard)
+        let verdict = lockJudge.judge(signals, at: lockClockNow())
+        record(signals, verdict, everyTime: false)
+        return verdict.state == .locked ? .lockScreen : .other
     }
 
     /// What SpringBoard shows, by queries on SpringBoard (the same identifiers
@@ -530,16 +610,6 @@ final class XCUITestPhoneRunner: PhoneRunner {
         let verdict = lockJudge.judge(signals, at: lockClockNow())
         record(signals, verdict, everyTime: false)
         return verdict.state == .locked ? .lockScreen : .other
-    }
-
-    /// The frames (screen points) of the notification banners SpringBoard shows now: a query
-    /// for the banner's identifier on SpringBoard, and only when one exists, SpringBoard's
-    /// snapshot for the frames (`BannerCover.frames`: some SpringBoard windows report pixels).
-    private func bannerFrames() -> [Rect] {
-        let board = application(Self.springboard)
-        guard board.descendants(matching: .any).matching(identifier: BannerCover.identifier).firstMatch.exists,
-              let snapshot = try? board.snapshot() else { return [] }
-        return BannerCover.frames(inSpringBoard: SnapshotCopy.copy(snapshot))
     }
 
     private func application(_ bundleId: String) -> XCUIApplication {
@@ -611,12 +681,18 @@ final class XCUITestPhoneRunner: PhoneRunner {
         let notify = notifyLockState()
         // SpringBoard's tree for the lock screen: with SpringBoard in front, and with an app in
         // front once the notify state says locked (the OS's process, not a look at the app).
+        // The same tree tells Notification Centre on an unlocked phone (run 139: it sets the
+        // notify state) from the lock screen.
         var lockScreen: Bool?
-        if front == Self.springboard || notify == true {
-            lockScreen = (try? application(Self.springboard).snapshot()).map { LockScreenSignature.matches(SnapshotCopy.copy($0)) }
+        var notificationCentre = false
+        if front == Self.springboard || notify == true,
+           let tree = (try? application(Self.springboard).snapshot()).map({ SnapshotCopy.copy($0) }) {
+            lockScreen = LockScreenSignature.matches(tree)
+            notificationCentre = SystemSurface.up(inSpringBoard: tree) == .notificationCentre
         }
         return LockSignals(notify: notify, lockScreen: lockScreen,
-                           front: front == Self.springboard ? .springBoard : .app(front))
+                           front: front == Self.springboard ? .springBoard : .app(front),
+                           notificationCentre: notificationCentre)
     }
 
     private func record(_ signals: LockSignals, _ verdict: LockVerdict, everyTime: Bool) {
@@ -665,15 +741,22 @@ final class XCUITestPhoneRunner: PhoneRunner {
     private func act(_ command: RunnerCommand, expect: CommandExpect?) -> RunnerResult {
         // Stale-screen check next to the gesture: the top layer is read in this same
         // main-actor step, with no suspension before `execute` acts on it.
-        let top = frontOnMain()
+        let (decision, layers) = topNow()
+        let top = decision.bundleId
         if let refusal = FrontAppGuard.refusalNextToGesture(expect, front: top) {
             onCommand?(command, refusal)
             return refusal
         }
-        // Banners, in this same main-actor step as the event: read once (a query on
-        // SpringBoard, and its snapshot only when one is up) for a command that synthesizes
-        // an event.
-        let banners = BannerGate.synthesizesEvent(command) ? bannerFrames() : []
+        // On the unidentified layer: planned on another system surface (or on none, or on one
+        // that has gone) is stale too (the same bundle id both ways, `SystemSurface`).
+        if let refusal = SystemSurface.staleRefusal(expect: expect, top: top, planned: reportedSurface, now: decision.surface) {
+            onCommand?(command, refusal)
+            return refusal
+        }
+        // Banners, in this same main-actor step as the event, from the same reading as the
+        // top layer (one existence query on SpringBoard, its snapshot only when something is
+        // up), for a command that synthesizes an event.
+        let banners = BannerGate.synthesizesEvent(command) ? layers.banners : []
         // A banner that came up since the look and holds the point the command touches (the
         // special case, with its own message).
         if let expect, top != Self.springboard, let p = BannerCover.touchPoint(command),
@@ -705,12 +788,17 @@ final class XCUITestPhoneRunner: PhoneRunner {
     }
 
     /// The last check before XCUITest types into `app` (after the keyboard wait, which can
-    /// take seconds): no SpringBoard alert over it and no banner up, else no event.
+    /// take seconds): no SpringBoard alert over it, no system surface and no banner up, else
+    /// no event (one reading, `SystemLayers`).
     private func typingBlocked(_ app: XCUIApplication) -> RunnerResult? {
-        if app !== application(Self.springboard), systemAlertUp() {
+        let layers = systemLayers().layers
+        if app !== application(Self.springboard), layers.alert {
             return RunnerResult(ok: false, error: "not carried out: a system alert (SpringBoard's) came up before typing; nothing was typed", failure: .stale)
         }
-        if bannerIsUp() { return BannerGate.refusal(waited: .zero, bannerLeft: false) }
+        if let surface = layers.surface {
+            return RunnerResult(ok: false, error: "not carried out: \(surface.name) came up before typing; nothing was typed", failure: .stale)
+        }
+        if !layers.banners.isEmpty { return BannerGate.refusal(waited: .zero, bannerLeft: false) }
         return nil
     }
 
