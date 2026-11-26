@@ -23,6 +23,7 @@ import WebKit
 /// symbol-only buttons have no `accessibilityLabel` and no identifier on purpose).
 enum Probe3Screen: String, Hashable, CaseIterable {
     case symbols, returns, modals, controls, web, pickers, permissions, system, swipes
+    case swipesNarrow, swipesColumns, swipesLeading
 
     var title: String {
         switch self {
@@ -35,6 +36,9 @@ enum Probe3Screen: String, Hashable, CaseIterable {
         case .permissions: "Permissions"
         case .system: "System"
         case .swipes: "Swipe rows"
+        case .swipesNarrow: "Swipe rows, narrow"
+        case .swipesColumns: "Swipe rows, two columns"
+        case .swipesLeading: "Swipe rows, leading"
         }
     }
 }
@@ -67,6 +71,9 @@ struct Probe3Destination: View {
         case .permissions: Probe3PermissionsFixture()
         case .system: Probe3SystemFixture()
         case .swipes: Probe3SwipeRowsFixture()
+        case .swipesNarrow: Probe3SwipeVariantFixture(variant: .narrow)
+        case .swipesColumns: Probe3SwipeVariantFixture(variant: .columns)
+        case .swipesLeading: Probe3SwipeVariantFixture(variant: .leading)
         }
     }
 }
@@ -302,9 +309,17 @@ struct Probe3ModalsFixture: View {
                     Probe3SheetContent(title: "Probe popover") { popover = false }
                         .presentationCompactAdaptation(.popover)
                 }
-            Menu("Probe menu") {
+            // Run 146: a coordinate tap at the row's centre did not open `Menu("Probe menu")`
+            // (its tappable label is only the text). The label now fills the row and carries
+            // its own identifier.
+            Menu {
                 Button("Probe menu item") { status = "Menu item chosen" }
                 Button("Delete from menu", role: .destructive) { status = "Deleted from the menu" }
+            } label: {
+                Text("Probe menu")
+                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("probe3.modals.menulabel")
             }
             .accessibilityIdentifier("probe3.modals.menu")
             Text("Hold for the probe context menu")
@@ -462,11 +477,11 @@ private struct Probe3TabsCover: View {
 
 // MARK: - P13: swipe lengths
 
-/// Sixteen rows whose trailing swipe actions (a destructive Delete, a Flag) allow a full
-/// swipe, under a status line. P13 drags each row once, with a different path, and reads
+/// Twenty-four rows whose trailing swipe actions (a destructive Delete, a Flag) allow a full
+/// swipe, under a status line. P13a drags each row once, with a different path, and reads
 /// whether the row was deleted, its actions revealed, or nothing happened.
 struct Probe3SwipeRowsFixture: View {
-    @State private var rows = Array(1...16)
+    @State private var rows = Array(1...24)
     @State private var status = "No swipe action yet"
 
     var body: some View {
@@ -495,6 +510,84 @@ struct Probe3SwipeRowsFixture: View {
             }
         }
         .navigationTitle("Swipe rows")
+    }
+}
+
+enum Probe3SwipeVariant {
+    case narrow, columns, leading
+}
+
+/// P13b: rows that are not full width (a plain list 300 pt wide; two plain lists 200 pt
+/// wide side by side, "Left row N" and "Right row N"), each row with trailing Delete
+/// (destructive, full swipe) and Flag; or full-width rows with a leading full-swipe action
+/// (Remove, destructive; Pin). One status line on top.
+struct Probe3SwipeVariantFixture: View {
+    let variant: Probe3SwipeVariant
+    @State private var rows = Array(1...12)
+    @State private var right = Array(1...8)
+    @State private var status = "No swipe action yet"
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(status)
+                .accessibilityIdentifier("probe3.swipevariant.status")
+                .padding(.vertical, 8)
+            switch variant {
+            case .narrow:
+                trailingList("Narrow row", $rows)
+                    .frame(width: 300)
+            case .columns:
+                HStack(spacing: 8) {
+                    trailingList("Left row", $rows)
+                        .frame(width: 200)
+                    trailingList("Right row", $right)
+                        .frame(width: 200)
+                }
+            case .leading:
+                List {
+                    ForEach(rows, id: \.self) { n in
+                        Text("Leading row \(n)")
+                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    rows.removeAll { $0 == n }
+                                    status = "Removed leading row \(n)"
+                                } label: {
+                                    Label("Remove", systemImage: "trash")
+                                }
+                                Button {
+                                    status = "Pinned leading row \(n)"
+                                } label: {
+                                    Label("Pin", systemImage: "pin")
+                                }
+                            }
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("Swipe variants")
+    }
+
+    private func trailingList(_ prefix: String, _ list: Binding<[Int]>) -> some View {
+        List {
+            ForEach(list.wrappedValue, id: \.self) { n in
+                Text("\(prefix) \(n)")
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            list.wrappedValue.removeAll { $0 == n }
+                            status = "Deleted \(prefix.lowercased()) \(n)"
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        Button {
+                            status = "Flagged \(prefix.lowercased()) \(n)"
+                        } label: {
+                            Label("Flag", systemImage: "flag")
+                        }
+                    }
+            }
+        }
+        .listStyle(.plain)
     }
 }
 

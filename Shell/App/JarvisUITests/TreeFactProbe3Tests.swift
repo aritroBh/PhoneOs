@@ -247,17 +247,20 @@ final class TreeFactProbe3Tests: Probe3Case {
             }
             // Let the previous modal's dismissal finish before the next trigger.
             await pause(0.8)
+            let marker = Self.node(in: app, labelled: item.marker)
+            var opened = false
             if item.longPress {
                 tolerant("long-press for the \(item.name)") { trigger.press(forDuration: 1.2) }
+                await pause(1.5)
+                opened = existsNow(marker)
             } else if item.coordinateTap {
-                tapCentre(app, trigger, "open the \(item.name) (tap at its frame centre)")
+                opened = await openMenu(app, trigger, marker, item.name)
             } else {
                 tolerant("open the \(item.name)") { trigger.tap() }
+                await pause(1.5)
+                opened = existsNow(marker)
             }
-            await pause(1.5)
-            let marker = Self.node(in: app, labelled: item.marker)
-            var opened = existsNow(marker)
-            if !opened, !item.longPress, hittableNow(trigger) {
+            if !opened, !item.longPress, !item.coordinateTap, hittableNow(trigger) {
                 note("\(item.name): its marker \"\(item.marker)\" is not there 1.5 s after the tap and the trigger is still hittable: one more tap at its frame centre")
                 tapCentre(app, trigger, "open the \(item.name) again (tap at its frame centre)")
                 await pause(1.5)
@@ -276,6 +279,53 @@ final class TreeFactProbe3Tests: Probe3Case {
             fact("\(item.name): the runner's look is of \(look?.appBundleId ?? "?") with \(lookModal) typed Alert/Sheet node(s)")
             await dismissModal(app, item, marker)
         }
+    }
+
+    /// Opens the SwiftUI Menu, trying in turn (run 146: two coordinate taps at the row's centre
+    /// {20,532 400x52} did not open it; its label text sat at {40,548 92x20}): XCUITest's tap
+    /// on the label's own identifier `probe3.modals.menulabel`, a tap at the label text's
+    /// centre, XCUITest's tap on the Menu's button, a 0.8 s press on the label (a Menu with a
+    /// primary action opens on a long press). After each, up to 2.5 s for the marker. Records
+    /// which way opened it, and the label's and the button's frames.
+    @MainActor
+    private func openMenu(_ app: XCUIApplication, _ trigger: XCUIElement, _ marker: XCUIElement, _ name: String) async -> Bool {
+        let labelById = app.descendants(matching: .any).matching(identifier: "probe3.modals.menulabel").firstMatch
+        let labelText = app.staticTexts.matching(NSPredicate(format: "label == %@", "Probe menu")).firstMatch
+        let triggerFrame = queryFrame(trigger).map { Self.frameText($0) } ?? "none"
+        let labelFrame = queryFrame(labelById).map { Self.frameText($0) } ?? "none"
+        let textFrame = queryFrame(labelText).map { Self.frameText($0) } ?? "none"
+        fact("\(name): frames by query: the Menu's button (id probe3.modals.menu) \(triggerFrame); the label (id probe3.modals.menulabel) \(labelFrame); the text \"Probe menu\" \(textFrame)")
+        var ways: [String] = []
+        for way in ["tap on the label by its identifier", "tap at the label text's centre", "tap on the Menu's button", "0.8 s press on the label text"] {
+            switch way {
+            case "tap on the label by its identifier":
+                guard existsNow(labelById) else { ways.append("\(way): no such element"); continue }
+                tolerant("open the \(name): \(way)") { labelById.tap() }
+            case "tap at the label text's centre":
+                guard tapCentre(app, existsNow(labelText) ? labelText : trigger, "open the \(name): \(way)") else { continue }
+            case "tap on the Menu's button":
+                tolerant("open the \(name): \(way)") { trigger.tap() }
+            default:
+                let target = existsNow(labelText) ? labelText : trigger
+                tolerant("open the \(name): \(way)") { target.press(forDuration: 0.8) }
+            }
+            var up = false
+            let deadline = Date().addingTimeInterval(2.5)
+            while !up, Date() < deadline {
+                await pause(0.5)
+                up = existsNow(marker)
+            }
+            ways.append("\(way): \(up ? "opened" : "not opened")")
+            if up {
+                fact("\(name): opening attempts: \(ways.joined(separator: "; "))")
+                return true
+            }
+            // A Menu that opened and closed again, or a stray state: close anything first.
+            tapAt(app, 0.5, 0.06, "tap outside before the next way of opening the \(name)")
+            await pause(0.8)
+        }
+        fact("\(name): opening attempts: \(ways.joined(separator: "; "))")
+        return false
     }
 
     @MainActor
@@ -653,10 +703,12 @@ final class TreeFactProbe3Tests: Probe3Case {
         ("probe3.perm.contacts", "contacts", "contacts"),
     ]
     private static let dataPermissionCases: [PermissionCase] = [
-        ("probe3.perm.photos", "photos", "photo library"),
+        // Photos last: in runs 141, 142 and 146 the test ended right after the photo prompt
+        // was read (see `readAlert`); whatever happens there, the others are recorded first.
         ("probe3.perm.tracking", "tracking", "tracking transparency"),
         ("probe3.perm.localnet", "localnet", "local network"),
         ("probe3.perm.paste", "paste", "paste (pasteboard written by the test runner)"),
+        ("probe3.perm.photos", "photos", "photo library"),
     ]
 
     @MainActor
@@ -872,38 +924,78 @@ final class TreeFactProbe3Tests: Probe3Case {
 
     // MARK: - P13: row swipe lengths
 
-    /// One drag of P13: the core's path (`fraction` nil, `scroll` nil), a centred drag of
-    /// `fraction` of the screen width (through the runner, or as an XCUITest drag at the
-    /// core's 200 ms), or the core's horizontal scroll with content direction `scroll`.
+    /// One drag of P13. Its length is the core's (no share, no points: the core's swipe, or
+    /// its horizontal scroll when `scroll` is set), `screenShare` of the screen width,
+    /// `rowShare` of the row's width, or `points`; centred on the row. Through the runner
+    /// (which sends XCTest's own drag speed whatever the duration) or as an XCUITest drag at
+    /// velocity length / `ms`. `rightward`: the finger moves left to right (leading actions).
     private struct SwipeAttempt {
         var name: String
-        var fraction: Double?
-        var viaRunner = true
+        var screenShare: Double?
+        var rowShare: Double?
+        var points: Double?
+        var runner: Bool
         var scroll: String?
+        var ms: UInt64
+        var rightward: Bool
+
+        init(_ name: String, screenShare: Double? = nil, rowShare: Double? = nil, points: Double? = nil,
+             runner: Bool = false, scroll: String? = nil, ms: UInt64 = 200, rightward: Bool = false) {
+            self.name = name
+            self.screenShare = screenShare
+            self.rowShare = rowShare
+            self.points = points
+            self.runner = runner
+            self.scroll = scroll
+            self.ms = ms
+            self.rightward = rightward
+        }
     }
 
-    private static let swipeAttempts: [SwipeAttempt] = [
-        SwipeAttempt(name: "the core's swipe left (runner)"),
-        SwipeAttempt(name: "60 % of the width (runner)", fraction: 0.6),
-        SwipeAttempt(name: "70 % of the width (runner)", fraction: 0.7),
-        SwipeAttempt(name: "80 % of the width (runner)", fraction: 0.8),
-        SwipeAttempt(name: "90 % of the width (runner)", fraction: 0.9),
-        SwipeAttempt(name: "60 % of the width (XCUITest drag, 200 ms)", fraction: 0.6, viaRunner: false),
-        SwipeAttempt(name: "70 % of the width (XCUITest drag, 200 ms)", fraction: 0.7, viaRunner: false),
-        SwipeAttempt(name: "80 % of the width (XCUITest drag, 200 ms)", fraction: 0.8, viaRunner: false),
-        SwipeAttempt(name: "90 % of the width (XCUITest drag, 200 ms)", fraction: 0.9, viaRunner: false),
-        SwipeAttempt(name: "the core's scroll right, finger left (runner)", scroll: "right"),
-        SwipeAttempt(name: "the core's scroll left, finger right (runner)", scroll: "left"),
+    /// P13a, on full-width rows (run 146: 240 pt, 55 % of the screen, revealed; 264 pt, 60 %,
+    /// and longer deleted).
+    private static let fullWidthAttempts: [SwipeAttempt] = [
+        SwipeAttempt("the core's swipe left (runner)", runner: true),
+        SwipeAttempt("60 % of the screen (runner)", screenShare: 0.6, runner: true),
+        SwipeAttempt("70 % of the screen (runner)", screenShare: 0.7, runner: true),
+        SwipeAttempt("80 % of the screen (runner)", screenShare: 0.8, runner: true),
+        SwipeAttempt("90 % of the screen (runner)", screenShare: 0.9, runner: true),
+        SwipeAttempt("the core's scroll right, finger left (runner)", runner: true, scroll: "right"),
+        SwipeAttempt("the core's scroll left, finger right (runner)", runner: true, scroll: "left"),
+        SwipeAttempt("60 % of the screen (XCUITest drag, 200 ms)", screenShare: 0.6),
+        SwipeAttempt("70 % of the screen (XCUITest drag, 200 ms)", screenShare: 0.7),
+        SwipeAttempt("80 % of the screen (XCUITest drag, 200 ms)", screenShare: 0.8),
+        SwipeAttempt("90 % of the screen (XCUITest drag, 200 ms)", screenShare: 0.9),
+        SwipeAttempt("120 pt (XCUITest drag, 200 ms)", points: 120),
+        SwipeAttempt("160 pt (XCUITest drag, 200 ms)", points: 160),
+        SwipeAttempt("200 pt (XCUITest drag, 200 ms)", points: 200),
+        SwipeAttempt("220 pt (XCUITest drag, 200 ms)", points: 220),
+        SwipeAttempt("250 pt (XCUITest drag, 200 ms)", points: 250),
+        SwipeAttempt("50 % of the row (XCUITest drag, 200 ms)", rowShare: 0.5),
+        SwipeAttempt("50 % of the row (XCUITest drag, 800 ms)", rowShare: 0.5, ms: 800),
+        SwipeAttempt("66 % of the row (XCUITest drag, 200 ms)", rowShare: 0.66),
+        SwipeAttempt("66 % of the row (XCUITest drag, 800 ms)", rowShare: 0.66, ms: 800),
     ]
 
+    /// P13b, on narrow rows (trailing actions) and, left to right, on rows with a leading
+    /// action.
+    private static let rowShares: [Double] = [0.4, 0.5, 0.55, 0.6, 0.66, 0.75]
+
+    private static func shareAttempts(rightward: Bool) -> [SwipeAttempt] {
+        rowShares.map { share in
+            SwipeAttempt("\(Int((share * 100).rounded())) % of the row\(rightward ? ", left to right" : "") (XCUITest drag, 200 ms)", rowShare: share, rightward: rightward)
+        }
+    }
+
     @MainActor
-    func testP13_RowSwipeLengths() async throws {
+    func testP13a_RowSwipeLengthsFullWidth() async throws {
         executionTimeAllowance = 200
-        begin("p13-swipe-lengths", "On list rows whose trailing actions allow a full swipe (Delete, Flag): what do the core's swipe-left path, centred drags of 60, 70, 80 and 90 % of the screen width (through the runner, and as XCUITest drags at the core's 200 ms) and the core's horizontal scroll paths do: reveal the actions, delete the row, or nothing? At which length is the row deleted?")
+        begin("p13a-swipe-lengths", "On full-width list rows whose trailing actions allow a full swipe (Delete, Flag): what do the core's swipe-left path, the core's horizontal scrolls, centred drags of 60-90 % of the screen (runner and XCUITest at 200 ms), of 120-250 pt, and of 50 % and 66 % of the row at 200 and 800 ms do: reveal, delete, or nothing? Where between 240 and 264 pt does reveal turn into delete, and does velocity matter?")
         let app = launchPlayground()
         var reason: String?
         if await openProbe3(app, "probe3.swipes") {
-            reason = await probeSwipeLengths(app)
+            reason = await probeSwipeSet(app, set: "full width", rowPrefix: "Full swipe row", statusId: "probe3.swipes.status",
+                                         actions: ["Delete", "Flag"], remove: "Delete", attempts: Self.fullWidthAttempts, runner: XCUITestPhoneRunner(), screen: nil)
         } else {
             capture(app, Self.appBundleId, "no-screen", "Why was the Swipe rows screen not reached?")
             reason = "the Swipe rows screen was not reached"
@@ -912,56 +1004,126 @@ final class TreeFactProbe3Tests: Probe3Case {
         if let reason { throw XCTSkip(reason) }
     }
 
-    /// Each attempt on a fresh row ("Full swipe row N", N = 1, 2, …): the row's frame by query,
-    /// the drag, then by query: is the row's own text gone (deleted), are Delete/Flag hittable
-    /// (revealed), else nothing. Revealed actions are closed with the core's swipe right.
     @MainActor
-    private func probeSwipeLengths(_ app: XCUIApplication) async -> String? {
-        let status = app.staticTexts["probe3.swipes.status"].firstMatch
-        guard waitFor(status, "the swipe rows' status line", 5) else { return "the Swipe rows screen has no status line" }
-        capture(app, Self.appBundleId, "rows", "The swipe rows before any swipe: each row's Cell and text, frames")
+    func testP13b_RowSwipeLengthsNarrowAndLeading() async throws {
+        executionTimeAllowance = 200
+        begin("p13b-swipe-lengths", "On rows that are not full width (a 300 pt list; the left list of two 200 pt columns) and, left to right, on full-width rows with a leading full-swipe action: what do drags of 40, 50, 55, 60, 66 and 75 % of the ROW width at 200 ms do: reveal, delete, or nothing? Is the threshold a share of the row?")
+        let app = launchPlayground()
         let runner = XCUITestPhoneRunner()
-        let look = await runnerLook("the swipe rows before any swipe", "rows", runner: runner)
-        guard let screen = look?.screenSize, screen.width > 0 else { return "no runner look (no screen size)" }
-        note("the runner's swipe sends press(forDuration: 0.05, thenDragTo:) at XCTest's own speed: the command's durationMs is not honoured (XCUITestPhoneRunner); the XCUITest drags below pass a velocity of length / 0.2 s")
+        var screen: Size?
+        var reason: String?
+        let sets: [(id: String, set: String, prefix: String, actions: [String], remove: String, rightward: Bool)] = [
+            ("probe3.swipesNarrow", "narrow 300 pt list", "Narrow row", ["Delete", "Flag"], "Delete", false),
+            ("probe3.swipesColumns", "left of two 200 pt columns", "Left row", ["Delete", "Flag"], "Delete", false),
+            ("probe3.swipesLeading", "leading action, left to right", "Leading row", ["Remove", "Pin"], "Remove", true),
+        ]
+        var first = true
+        for item in sets {
+            var opened = false
+            if first {
+                opened = await openProbe3(app, item.id)
+            } else {
+                opened = await openSibling(app, item.id)
+            }
+            first = false
+            guard opened else {
+                fact("P13 \(item.set): could not produce (the screen \(item.id) was not reached)")
+                continue
+            }
+            if screen == nil {
+                let look = await runnerLook("the \(item.set) rows before any swipe", "rows", runner: runner)
+                screen = look?.screenSize
+            }
+            var attempts = Self.shareAttempts(rightward: item.rightward)
+            if item.rightward { attempts.append(SwipeAttempt("the core's swipe right (runner)", runner: true, rightward: true)) }
+            let skipped = await probeSwipeSet(app, set: item.set, rowPrefix: item.prefix, statusId: "probe3.swipevariant.status",
+                                              actions: item.actions, remove: item.remove, attempts: attempts, runner: runner, screen: screen)
+            if let skipped { note("P13 \(item.set): \(skipped)") }
+        }
+        if screen == nil { reason = "no runner look (no screen size) on any Swipe rows screen" }
+        await finish(terminating: [])
+        if let reason { throw XCTSkip(reason) }
+    }
+
+    /// From one probe screen to another: Back to Fact probes 3, then the row `id`.
+    @MainActor
+    private func openSibling(_ app: XCUIApplication, _ id: String) async -> Bool {
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        tolerant("go back to Fact probes 3") { if back.exists { back.tap() } }
+        await pause(1)
+        let row = app.buttons[id].firstMatch
+        guard waitFor(row, "the \(id) row", 5) else { return false }
+        tolerant("open \(id)") { row.tap() }
+        await pause(1)
+        return true
+    }
+
+    /// Each attempt on a fresh row ("<rowPrefix> N", N = 1, 2, …): the row's frame by query,
+    /// the drag, then by query: is the row's own text gone (deleted), which of `actions` are
+    /// hittable (revealed), else nothing. A revealed row is then removed with its `remove`
+    /// action, so the next rows stay high on the screen. One fact per drag.
+    @MainActor
+    private func probeSwipeSet(_ app: XCUIApplication, set: String, rowPrefix: String, statusId: String, actions: [String], remove: String,
+                               attempts: [SwipeAttempt], runner: XCUITestPhoneRunner, screen given: Size?) async -> String? {
+        let status = app.staticTexts[statusId].firstMatch
+        guard waitFor(status, "the \(set) rows' status line", 5) else { return "the \(set) screen has no status line" }
+        capture(app, Self.appBundleId, "rows-\(rowPrefix.lowercased().replacingOccurrences(of: " ", with: "-"))", "The \(set) swipe rows before any swipe: each row's Cell and text, frames")
+        var screen = given
+        if screen == nil {
+            let look = await runnerLook("the \(set) rows before any swipe", "rows", runner: runner)
+            screen = look?.screenSize
+        }
+        guard let screen, screen.width > 0 else { return "no runner look (no screen size)" }
+        note("\(set): the runner's swipe sends press(forDuration: 0.05, thenDragTo:) at XCTest's own speed (the command's durationMs is not honoured); the XCUITest drags pass a velocity of length / duration")
         var row = 0
         var revealCaptured = false
         var deleteCaptured = false
-        var deletedAt: [String] = []
-        for attempt in Self.swipeAttempts {
+        var deletedBy: [String] = []
+        var revealedBy: [String] = []
+        for attempt in attempts {
             row += 1
-            let text = "Full swipe row \(row)"
+            let text = "\(rowPrefix) \(row)"
             let cell = app.cells.containing(NSPredicate(format: "label == %@", text)).firstMatch
             guard let cg = queryFrame(cell) else {
-                fact("P13 \(attempt.name): could not produce (\(text) not found by query)")
+                fact("P13 \(set), \(attempt.name): could not produce (\(text) not found by query)")
                 continue
             }
             let frame = Rect(x: Double(cg.origin.x), y: Double(cg.origin.y), width: Double(cg.width), height: Double(cg.height))
             let y = frame.y + frame.height / 2
+            guard y > screen.height * 0.1, y < screen.height * 0.85 else {
+                fact("P13 \(set), \(attempt.name): could not produce (\(text) at y \(Int(y)), outside the band a drag may use)")
+                continue
+            }
             var from = Point(x: 0, y: y)
             var to = Point(x: 0, y: y)
-            var duration: UInt64 = 200
-            if let scroll = attempt.scroll {
+            var duration = attempt.ms
+            var length: Double?
+            if let share = attempt.screenShare { length = screen.width * share }
+            if let share = attempt.rowShare { length = frame.width * share }
+            if let points = attempt.points { length = points }
+            if let length {
+                let centre = frame.x + frame.width / 2
+                let left = max(centre - length / 2, 1)
+                let right = min(centre + length / 2, screen.width - 1)
+                from = Point(x: attempt.rightward ? left : right, y: y)
+                to = Point(x: attempt.rightward ? right : left, y: y)
+            } else if let scroll = attempt.scroll {
                 guard let path = Self.coreDrag("scroll", scroll, frame: frame, screen: screen) else { continue }
                 from = path.from
                 to = path.to
                 duration = path.durationMs
-            } else if let fraction = attempt.fraction {
-                let centre = frame.x + frame.width / 2
-                let half = screen.width * fraction / 2
-                from = Point(x: min(centre + half, screen.width - 1), y: y)
-                to = Point(x: max(centre - half, 1), y: y)
             } else {
-                guard let path = Self.coreSwipe("left", frame: frame, screen: screen) else { continue }
+                guard let path = Self.coreSwipe(attempt.rightward ? "right" : "left", frame: frame, screen: screen) else { continue }
                 from = path.from
                 to = path.to
             }
-            let length = abs(from.x - to.x)
-            let share = Int((length / screen.width * 100).rounded())
-            if attempt.viaRunner {
+            let travelled = abs(from.x - to.x)
+            let ofRow = Int((travelled / max(frame.width, 1) * 100).rounded())
+            let ofScreen = Int((travelled / screen.width * 100).rounded())
+            if attempt.runner {
                 await runnerDo(runner, .swipe(from: from, to: to, durationMs: duration), expecting: Self.appBundleId, "\(attempt.name) on \(text)")
             } else {
-                let velocity = CGFloat(length / 0.2)
+                let velocity = CGFloat(travelled / (Double(duration) / 1_000))
                 let drag = from
                 let drop = to
                 tolerant("\(attempt.name) on \(text): XCUITest drag at velocity \(Int(velocity))") {
@@ -970,20 +1132,21 @@ final class TreeFactProbe3Tests: Probe3Case {
                     let end = origin.withOffset(CGVector(dx: drop.x, dy: drop.y))
                     start.press(forDuration: 0.05, thenDragTo: end, withVelocity: XCUIGestureVelocity(rawValue: velocity), thenHoldForDuration: 0)
                 }
-                note("\(attempt.name) on \(text): XCUITest drag \(Self.pointText(from)) -> \(Self.pointText(to)), velocity \(Int(velocity)) (length / 0.2 s)")
             }
-            await pause(1.3)
+            await pause(1.1)
             let deleted = !existsNow(Self.node(in: app, labelled: text))
-            let revealed = ["Delete", "Flag"].filter { hittableNow(app.buttons[$0].firstMatch) }
+            let revealed = actions.filter { hittableNow(app.buttons[$0].firstMatch) }
             let statusText = labelNow(status)
             var outcome = "nothing (the row in place, no action revealed)"
             if deleted {
                 outcome = "deleted"
-                deletedAt.append(attempt.name)
+                deletedBy.append("\(Int(travelled.rounded())) pt / \(ofRow) % of the row (\(attempt.name))")
             } else if !revealed.isEmpty {
-                outcome = "actions revealed (\(revealed.joined(separator: ", ")))"
+                outcome = "revealed (\(revealed.joined(separator: ", ")))"
+                revealedBy.append("\(Int(travelled.rounded())) pt / \(ofRow) % of the row")
             }
-            fact("P13 \(attempt.name): \(Self.pointText(from)) -> \(Self.pointText(to)) on \(text) \(Self.rectText(frame)), \(Int(length.rounded())) pt (\(share) % of the width), sent as \(duration) ms -> \(outcome); status \"\(statusText)\"")
+            let way = attempt.runner ? "runner, sent as \(duration) ms" : "XCUITest drag, \(duration) ms"
+            fact("P13 \(set), \(attempt.name): \(Self.pointText(from)) -> \(Self.pointText(to)) on \(text) \(Self.rectText(frame)), \(Int(travelled.rounded())) pt = \(ofRow) % of the row (\(Int(frame.width.rounded())) pt) = \(ofScreen) % of the screen, \(way) -> \(outcome); status \"\(statusText)\"")
             if deleted && !deleteCaptured {
                 deleteCaptured = true
                 capture(app, Self.appBundleId, "after-delete-\(row)", "After \(attempt.name) deleted \(text): the rows and the status line")
@@ -992,21 +1155,19 @@ final class TreeFactProbe3Tests: Probe3Case {
                 if !revealCaptured {
                     revealCaptured = true
                     let tree = capture(app, Self.appBundleId, "revealed-\(row)", "After \(attempt.name) on \(text): the revealed actions (role, label, identifier, frame)")
-                    report(tree, "revealed actions (nodes labelled Delete or Flag)") { $0.label == "Delete" || $0.label == "Flag" }
+                    report(tree, "revealed actions (nodes labelled \(actions.joined(separator: " or ")))") { actions.contains($0.label) }
                 }
-                if let back = Self.coreSwipe("right", frame: frame, screen: screen) {
-                    await runnerDo(runner, .swipe(from: back.from, to: back.to, durationMs: 200), expecting: Self.appBundleId, "the core's swipe right on \(text) to close its actions")
-                    await pause(1)
-                }
-                if hittableNow(app.buttons["Delete"].firstMatch) {
+                if revealed.contains(remove) {
+                    tolerant("remove \(text) with its revealed \(remove) (clean-up)") { app.buttons[remove].firstMatch.tap() }
+                } else {
                     tolerant("tap the status line to close the actions") { status.tap() }
-                    await pause(1)
-                    note("actions still open after the swipe right: tapped the status line; open now: \(Self.yesNo(hittableNow(app.buttons["Delete"].firstMatch)))")
                 }
+                await pause(0.8)
             }
         }
-        let deletedText = deletedAt.isEmpty ? "none" : deletedAt.joined(separator: "; ")
-        fact("P13 summary: the drags that deleted their row: \(deletedText)")
+        let deletedText = deletedBy.isEmpty ? "none" : deletedBy.joined(separator: "; ")
+        let revealedText = revealedBy.isEmpty ? "none" : revealedBy.joined(separator: "; ")
+        fact("P13 \(set) summary: deleted by \(deletedText); revealed by \(revealedText)")
         return nil
     }
 
@@ -1210,6 +1371,12 @@ class Probe3Case: QATestCase {
     private var checkpoints = 0
     private var lastCheckpoint = Date()
     private var checkpointedLines = 0
+    /// `begin` ran, `finish` ran to its end, and the last step noted: a probe whose body
+    /// ended between the two fails in teardown with that step (run 146: P9b ended silently
+    /// after the photo prompt and was reported as passed).
+    private var began = false
+    private var finished = false
+    private var lastStep = "(none)"
 
     override func tearDownWithError() throws {
         // Never leave the simulator rotated, even when a probe ended early (teardown runs on
@@ -1217,9 +1384,29 @@ class Probe3Case: QATestCase {
         if Thread.isMainThread {
             MainActor.assumeIsolated {
                 if XCUIDevice.shared.orientation != .portrait { XCUIDevice.shared.orientation = .portrait }
+                failIfEndedEarly()
             }
+        } else if began && !finished {
+            XCTFail("probe round 3 \(probe): the test body ended before finish() (teardown off the main thread: the record was not written)")
         }
         try super.tearDownWithError()
+    }
+
+    /// A probe that began and did not reach the end of `finish()` (an early return, a
+    /// swallowed throw, or XCTest ending the test after an issue it had been told to expect)
+    /// FAILS here, naming the last step reached, after writing its progress file and leaving
+    /// the simulator on the Home Screen.
+    @MainActor
+    private func failIfEndedEarly() {
+        guard began, !finished else { return }
+        let last = lastStep
+        note("TEARDOWN: the probe did not reach finish(); last step: \(last)")
+        checkpoint("teardown: the probe ended before finish()", force: true)
+        let own = XCUIApplication()
+        tolerant("terminate Jarvis (teardown)") { if own.state != .notRunning { own.terminate() } }
+        tolerant("press Home (teardown)") { XCUIDevice.shared.press(.home) }
+        began = false
+        XCTFail("probe round 3 \(probe): the test body ended before finish() with no failure of its own (an early return, a swallowed throw, or XCTest stopping the test after an expected issue); last step reached: \(last)")
     }
 
     // MARK: - Recording
@@ -1236,6 +1423,8 @@ class Probe3Case: QATestCase {
         lastCheckpoint = Date()
         checkpointedLines = 0
         unavailableApps = []
+        began = true
+        finished = false
         note("probe round 3, \(name), started (\(ProcessInfo.processInfo.operatingSystemVersionString))")
         note("QUESTION: \(question)")
     }
@@ -1265,7 +1454,9 @@ class Probe3Case: QATestCase {
 
     @MainActor
     func note(_ text: String) {
-        lines.append(String(format: "t+%6.1f s  ", Date().timeIntervalSince(started)) + text)
+        let line = String(format: "t+%6.1f s  ", Date().timeIntervalSince(started)) + text
+        lines.append(line)
+        lastStep = line.count > 300 ? String(line.prefix(300)) + "…" : line
     }
 
     /// One mechanically answered fact (`question: answer`), for the facts attachment.
@@ -1296,6 +1487,7 @@ class Probe3Case: QATestCase {
         attach(XCTAttachment(string: factText), "probe3-\(probe)-facts.txt")
         print(text)
         print(factText)
+        finished = true
     }
 
     /// Captures `app`'s tree and a screenshot as `probe3-<probe>-NN-<slug>-tree.txt` and
@@ -1938,27 +2130,38 @@ class Probe3Case: QATestCase {
         return nil
     }
 
-    /// The first alert of `owner` by query: label, identifier, frame, buttons (label, id).
-    /// Returns the button labels.
+    /// The first alert of `owner`, read from ONE snapshot of `owner` as data: its label, frame,
+    /// texts and buttons (label, id). Returns the button labels.
+    ///
+    /// Run 146 (and 141, 142): this read the photo prompt element by element
+    /// (`allElementsBoundByIndex`); XCTest raised "Failed to get matching snapshot: No matches
+    /// found for Element at index 2" (Automation type mismatch: computed Alert vs Sheet,
+    /// `_UIAlertControllerPhoneTVMacView`) inside the expected-failure scope, and the test then
+    /// ended silently at its next XCTest call, before `finish()`, reported as passed. Reading
+    /// a snapshot resolves no element by index. The node may be an Alert or a Sheet.
     @MainActor
     @discardableResult
     func readAlert(_ owner: XCUIApplication, _ ownerId: String, _ what: String) -> [String] {
-        var labels: [String] = []
-        tolerant("read the alert by query") {
-            let alert = owner.alerts.firstMatch
-            let buttons = alert.buttons.allElementsBoundByIndex
-            labels = buttons.map { $0.label }
-            let rows: [String] = buttons.map { b in
-                let id = b.identifier.isEmpty ? "-" : b.identifier
-                return "\"\(b.label)\" id \(id)"
-            }
-            let texts: [String] = alert.staticTexts.allElementsBoundByIndex.map { "\"\(Self.clip($0.label))\"" }
-            let alertId = alert.identifier.isEmpty ? "-" : alert.identifier
-            let textList = texts.joined(separator: ", ")
-            let buttonList = rows.joined(separator: ", ")
-            note("\(what): alert in \(ownerId) by query: label \"\(Self.clip(alert.label))\", id \(alertId), frame \(Self.frameText(alert.frame)); texts: \(textList); buttons: \(buttonList)")
+        guard let alert = alertNode(owner, ownerId) else {
+            note("\(what): no Alert or Sheet node in \(ownerId)'s snapshot")
+            return []
         }
-        return labels
+        let buttons = Self.hits(alert) { $0.elementType == XCUIElementTypeCode.button && !$0.label.isEmpty }
+        let rows: [String] = buttons.map { hit in "\"\(hit.element.label)\" id \(hit.element.identifier.isEmpty ? "-" : hit.element.identifier) \(Self.rectText(hit.element.frame))" }
+        let texts: [String] = Self.hits(alert) { $0.elementType == XCUIElementTypeCode.staticText && !$0.label.isEmpty }.map { "\"\(Self.clip($0.element.label))\"" }
+        let kind = XCUIElementTypeCode.name(alert.elementType)
+        note("\(what): \(kind) in \(ownerId)'s snapshot: label \"\(Self.clip(alert.label))\", id \(alert.identifier.isEmpty ? "-" : alert.identifier), frame \(Self.rectText(alert.frame)); texts: \(texts.joined(separator: ", ")); buttons: \(rows.joined(separator: ", "))")
+        return buttons.map { $0.element.label }
+    }
+
+    /// The first Alert (else Sheet) node in one snapshot of `owner`, or nil.
+    @MainActor
+    func alertNode(_ owner: XCUIApplication, _ ownerId: String) -> RawElement? {
+        var raw: RawElement?
+        tolerant("snapshot \(ownerId) for its alert") { raw = SnapshotCopy.copy(try owner.snapshot()) }
+        guard let raw else { return nil }
+        if let alert = Self.hits(raw, { $0.elementType == XCUIElementTypeCode.alert }).first { return alert.element }
+        return Self.hits(raw, { $0.elementType == XCUIElementTypeCode.sheet }).first?.element
     }
 
     /// The button of a permission prompt that refuses (Don't Allow, Ask App Not to Track, …).
@@ -1969,16 +2172,28 @@ class Probe3Case: QATestCase {
         return nil
     }
 
-    /// Taps `label` in `owner`'s first alert and waits (≤ 4 s) for the alert to go.
+    /// Taps `label` in `owner`'s first alert and waits (≤ 4 s) for it to go. The button's frame
+    /// comes from a snapshot and the tap is a coordinate tap on `owner` (no element of the
+    /// alert is resolved by query: see `readAlert`); by query only when the snapshot has no
+    /// such button.
     @MainActor
     func tapInAlert(_ owner: XCUIApplication, _ label: String, _ what: String) async {
-        tolerant(what) {
-            let button = owner.alerts.firstMatch.buttons[label].firstMatch
-            if button.exists { button.tap() } else { note("\(what): no button \"\(label)\" in the alert") }
+        let frame = alertNode(owner, "the alert's owner").flatMap { alert in Self.hits(alert) { $0.elementType == XCUIElementTypeCode.button && $0.label == label }.first?.element.frame }
+        if let frame {
+            tolerant(what) {
+                let origin = owner.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+                origin.withOffset(CGVector(dx: frame.x + frame.width / 2, dy: frame.y + frame.height / 2)).tap()
+            }
+            note("\(what): tapped \"\(label)\" at its snapshot frame \(Self.rectText(frame))")
+        } else {
+            tolerant(what) {
+                let button = owner.alerts.firstMatch.buttons[label].firstMatch
+                if button.exists { button.tap() } else { note("\(what): no button \"\(label)\" in the alert") }
+            }
         }
         let deadline = Date().addingTimeInterval(4)
         while existsNow(owner.alerts.firstMatch), Date() < deadline { await pause(0.3) }
-        note("\(what): tapped \"\(label)\"; alert still up afterwards: \(Self.yesNo(existsNow(owner.alerts.firstMatch)))")
+        note("\(what): alert still up afterwards (by query): \(Self.yesNo(existsNow(owner.alerts.firstMatch)))")
     }
 
     /// Opens `url` in Safari from the Home Screen and waits (≤ 30 s) for a node labelled
@@ -2119,6 +2334,9 @@ class Probe3Case: QATestCase {
         if !issues.isEmpty {
             ok = false
             note("\(what): XCTest issues (recorded, not failures): " + issues.joined(separator: " | "))
+            if issues.contains(where: { $0.contains("No matches found for Element at index") || $0.contains("Automation type mismatch") }) {
+                note("WARNING \(what): an element could not be resolved (run 146: XCTest then ended the test at its next call; the teardown check reports it)")
+            }
         }
         return ok
     }
