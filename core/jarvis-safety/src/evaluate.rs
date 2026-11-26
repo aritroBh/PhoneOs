@@ -492,31 +492,30 @@ fn sideways_drag(
 /// the commands (`jarvis_agent`'s `plan`) and the gate's row rule ([`crosses_list_row`])
 /// share. It is [`crate::gestures::drag_gesture`]'s path (the *reach*, which the gate reads);
 /// when that path is sideways and crosses a row ([`crossed_rows`], the same pass as the
-/// gate's row question), its travel is cut to [`crate::gestures::ROW_SWIPE_SHARE`] of the
-/// narrowest crossed row's own width, its start kept (so the sent path is part of the path
-/// the gate read: every rule read on the reach holds for it):
+/// gate's row question), its travel is cut to the smallest bound of the rows the reach
+/// crosses, its start kept (so the sent path is part of the path the gate read: every rule
+/// read on the reach holds for it).
 ///
-/// - a **list row** ([`CrossedRows::list_width`]: it spans [`ROW_MIN_WIDTH_SHARE`] of its
-///   list, or its list is not known) too narrow for [`crate::gestures::MIN_TRAVEL`] within
-///   that share refuses the drag ([`crate::gestures::GestureError::RowTooNarrow`]);
-/// - review passes 32 and 33 (F1): an **inset row** ([`CrossedRows::inset_width`]: a
-///   `Cell`, or what one holds, narrower than that share of its list, row-shaped
-///   ([`ROW_SHAPE_MIN_ASPECT`]) or with no alike cell beside it anywhere in its list) is
-///   bounded at `ROW_SWIPE_SHARE` of its own width raised to `MIN_TRAVEL`, but never more
-///   than [`crate::gestures::INSET_ROW_MAX_SHARE`] of it (below the measured delete shares):
-///   an inset row under 80 / 0.55 ≈ 145 pt is refused (`RowTooNarrow`), as a narrow list
-///   row is;
-/// - a **floored** row ([`CrossedRows::floor_width`]: a squarish cell with alike cells
-///   beside it that make no grid signal — covered, or past the cover-check budget: a
-///   calendar under a popover's dismiss region — or a row-sized direct child of a `Table`
-///   or `CollectionView` without the `Cell` role, such as a scroll indicator) keeps pass
-///   32's inset bound: `ROW_SWIPE_SHARE` of its width, never below `MIN_TRAVEL`, never
-///   refused;
-/// - a **grid cell** (squarish, with comparable, drawn, uncovered cells side by side in the
-///   path's band of the same list, [`grid_widths`]) or a page of a pager (a row by shape of a
-///   scroll view that fills its height) does not bound the drag (it still asks): the drag
-///   keeps the screen-share cap, as does a drag that crosses no row. Review pass 33 (F2): a
-///   row-shaped cell is never a grid cell, whatever is beside it.
+/// Review pass 34: **every crossed cell of a list is bounded at its own width `w`**,
+/// whatever it is read as; what it is read as decides only whether a narrow one is refused
+/// ([`crate::gestures::GestureError::RowTooNarrow`]) or floored at
+/// [`crate::gestures::MIN_TRAVEL`]. With `S` = [`crate::gestures::ROW_SWIPE_SHARE`] (0.45),
+/// `M` = [`crate::gestures::INSET_ROW_MAX_SHARE`] (0.55) and `T` = `MIN_TRAVEL` (80 pt):
+///
+/// | crossed | bound | refused when |
+/// |---|---|---|
+/// | **list row**: spans [`ROW_MIN_WIDTH_SHARE`] of its list, or its list is not known ([`CrossedRows::list_width`]) | `S·w` | `S·w < T` (w < 178) |
+/// | **inset row**: any other row — a `Cell`, what one holds, or what a `Table` or `CollectionView` holds directly that holds text or a control and is at least `GRID_CELL_MIN_WIDTH` (20 pt) wide ([`CrossedRows::inset_width`]) | `max(S·w, T)` | `max(S·w, T) > M·w` (w < 145.5) |
+/// | **grid cell**: an inset row that is squarish ([`ROW_SHAPE_MIN_ASPECT`], by its frame and by its drawn height) and no wider than an alike pair of cells side by side in its list ([`grid_widths`]) ([`CrossedRows::floor_width`]) | `max(S·w, T)` | never |
+/// | **no row**: what a list holds directly that holds no text and no control, or is narrower than `GRID_CELL_MIN_WIDTH` (a scroll indicator, a separator) ([`CrossedRows::floor_width`]) | `max(S·w, T)` | never |
+/// | a pager's page (a row by shape of a scroll view that fills its height), or nothing crossed | the screen cap | — |
+///
+/// From 146 pt up every crossed cell's bound is at most `M` of it (80 / 146 < 0.55), below
+/// every measured delete share (0.60 to 0.69, run 154). The grid signal no longer lifts a
+/// bound: it only spares a narrow squarish cell the refusal. Residual: a cell under 145.5 pt
+/// with a grid signal (or a forged one), or that is no row, gets 80 pt, more than `M` of it
+/// — real grids of small cells (icons, days, share-sheet apps) need that drag; the drag
+/// still asks as `Delete`, phone only.
 pub fn planned_drag(
     kind: crate::gestures::GestureKind,
     direction: jarvis_proto::Direction,
@@ -588,18 +587,21 @@ struct CrossedRows {
     /// child of a `Table`/`CollectionView` is never a page by its height (a one-row list
     /// shrunk to its row is a list). Bounds and refuses the drag ([`planned_drag`]).
     list_width: Option<f64>,
-    /// Review passes 32 and 33 (F1, F2): the width of the narrowest crossed **inset** row: a
-    /// `Cell` (or what one holds) that is no list row and either is row-shaped
-    /// ([`ROW_SHAPE_MIN_ASPECT`]) or has no alike cell beside it anywhere in its list
-    /// ([`grid_widths`]): a padded or readable-width list's row, or a row of a multi-column
-    /// list. Bounds the drag at its own width, raised to `MIN_TRAVEL` but never past
+    /// Review passes 32 to 34: the width of the narrowest crossed **inset** row: no list row,
+    /// no grid cell, and a `Cell`, what one holds, or a row-sized direct child of a `Table`
+    /// or `CollectionView` that holds text or a control and is at least
+    /// [`GRID_CELL_MIN_WIDTH`] wide (review pass 34, F2: treated as a `Cell` whatever its
+    /// role): a padded or readable-width list's row, or a row of a multi-column list.
+    /// Bounds the drag at its own width, raised to `MIN_TRAVEL` but never past
     /// `INSET_ROW_MAX_SHARE` of it, else refused ([`planned_drag`]).
     inset_width: Option<f64>,
-    /// Review pass 33 (F1): the width of the narrowest crossed **floored** row: no list row,
-    /// and either a squarish cell with alike cells beside it by shape that make no grid
-    /// signal (one is covered, or the cover checks ran out), or a row-sized direct child of a
-    /// `Table`/`CollectionView` without the `Cell` role that is no grid cell. Bounds the drag
-    /// at its own width, never below `MIN_TRAVEL`, never refused (pass 32's inset bound).
+    /// Review passes 33 and 34: the width of the narrowest crossed **floored** cell: no list
+    /// row, and either a grid cell (squarish, no wider than an alike pair side by side in its
+    /// list, [`grid_widths`]) or what a list holds directly that cannot be a row (no text and
+    /// no control in it, or narrower than [`GRID_CELL_MIN_WIDTH`]: a scroll indicator, a
+    /// separator). Bounds the drag at its own width, never below `MIN_TRAVEL`, never refused.
+    /// Review pass 34 (F1): a grid cell is bounded too (it lifted the bound to the screen
+    /// cap before).
     floor_width: Option<f64>,
 }
 
@@ -622,14 +624,10 @@ const GRID_CELL_MAX_SHARE: f64 = 0.5;
 /// Review pass 32 (F1): how alike two cells side by side must be (the smaller width over
 /// the larger, and the same for heights) to make a grid signal.
 const GRID_LIKENESS: f64 = 0.8;
-/// Review pass 32 (F1): at most this many band cells are checked for being covered (each
-/// check reads every drawn node once), so the grid signal stays linear in the tree; past
-/// it, no signal (fail closed: the rows are bounded).
-const GRID_COVER_CHECKS: usize = 16;
 /// Review pass 33 (F2): a cell at least this many times as wide as it is tall (its drawn
-/// height, [`shape_height`]) is **row-shaped**: never a grid cell nor a grid-like one, and
-/// never part of a grid signal, whatever is beside it; it is bounded at its own width as an
-/// inset row. The real trees (the fixtures of probe rounds 1 to 3 and run 154's lists): the
+/// height, [`shape_height`]) is **row-shaped**: never a grid cell and never part of a grid
+/// signal, whatever is beside it; it is an inset row (review pass 34: what this still
+/// decides is that a narrow row-shaped cell is refused rather than floored). The real trees (the fixtures of probe rounds 1 to 3 and run 154's lists): the
 /// measured swipe-to-delete rows are 190 to 440 pt wide and 52 pt tall (3.65 for the 190-pt
 /// two-column row, 3.85 for the 200-pt one, 4.14 for a 215-pt row revealing its actions,
 /// 7.7 and up for full-width rows); the widest real grid cell is the edit menu's 98.7 x 44
@@ -652,30 +650,28 @@ const SHAPE_CHECKS: usize = 32;
 ///   centre inside its list's drawn frame;
 /// - at least [`GRID_CELL_MIN_WIDTH`] wide and at most [`GRID_CELL_MAX_SHARE`] of its
 ///   list's width;
-/// - not covered: no drawn node painted after it outside its subtree (a later sibling or a
-///   later branch) that shows something (text, a control, an image, a cell, the keyboard)
-///   holds its centre;
+/// - not row-shaped ([`ROW_SHAPE_MIN_ASPECT`] by its drawn frame, review pass 33);
 ///
 /// and the pair alike ([`GRID_LIKENESS`] of each other's width and height), overlapping by
 /// at least half the smaller height, side by side (their frames do not overlap sideways)
-/// and adjacent (the gap at most the wider one's width). A crossed `Cell` (or a row a list
-/// holds directly) that is no list row is a grid cell when it is no wider than its list's
-/// widest grid-signal cell: the 1-pt separators between the edit menu's items are, a
-/// padded list's row is not (it is wider than half its list, or wider than anything beside
-/// it). Linear in the tree but for sorting the band's cells and [`GRID_COVER_CHECKS`].
-///
-/// Review pass 33: a row-shaped band cell ([`ROW_SHAPE_MIN_ASPECT`] by its drawn frame) is
-/// left out (it makes no signal), and each entry is `(list, grid, shape)`: `grid` the widest
-/// cell of an uncovered pair (`-inf`: none), `shape` the widest cell of any pair by shape,
-/// covered or not checked (a crossed cell no wider than it is grid-like, not an inset row).
+/// and adjacent (the gap at most the wider one's width). Each entry is `(list, widest)`. A
+/// crossed squarish inset row no wider than its list's widest is a grid cell
+/// ([`crossed_rows`]): the 1-pt separators between the edit menu's items are, a padded
+/// list's row is not (it is wider than half its list, or wider than anything beside it).
 /// With `band_y` `None`, the pairs are read in the whole list (by rows: sorted by `y`, then
-/// `x`) and only `shape` is set: a calendar's last row holds one day, its other rows seven.
+/// `x`): a calendar's last row holds one day, its other rows seven. Linear in the tree but
+/// for sorting the band's cells.
+///
+/// Review pass 34: a grid cell is bounded at its own width like every cell (the signal only
+/// spares a narrow one the refusal), so whether a cell of a pair is covered no longer
+/// decides anything and is not read (pass 32's uncovered check, which lifted the bound to
+/// the screen cap, is gone).
 fn grid_widths(
     t: &ScreenTree<'_>,
     nearest: &[u32],
     band_y: Option<(f64, f64)>,
     row_height: f64,
-) -> Vec<(u32, f64, f64)> {
+) -> Vec<(u32, f64)> {
     let (y0, y1) = band_y.unwrap_or((f64::NEG_INFINITY, f64::INFINITY));
     let list_kind = |r: &Role| matches!(r, Role::Table | Role::CollectionView);
     // The band's cells: (list, node).
@@ -728,8 +724,8 @@ fn grid_widths(
             .then(a.1.node.cmp(&b.1.node))
     });
     let alike = |a: f64, b: f64| a.min(b) >= a.max(b) * GRID_LIKENESS;
-    // The pairs that make a signal by shape: (list, widest, a, b).
-    let mut pairs: Vec<(u32, f64, &RawNode, &RawNode)> = Vec::new();
+    // Per list, the widest cell of a pair (cells are sorted by list).
+    let mut out: Vec<(u32, f64)> = Vec::new();
     for (i, (la, a)) in cells.iter().enumerate() {
         // Only the next few by position (a real grid's neighbour is the next cell).
         for (lb, b) in cells.iter().skip(i + 1).take(4) {
@@ -745,52 +741,10 @@ fn grid_widths(
                 && alike(fa.height, fb.height)
                 && overlap >= 0.5 * fa.height.min(fb.height)
             {
-                pairs.push((*la, wide, a, b));
-            }
-        }
-    }
-    // Widest first: per list, the first pair whose cells are both uncovered is its widest.
-    pairs.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
-    let covered = |m: &RawNode| {
-        let end = usize::try_from(m.node)
-            .ok()
-            .and_then(|k| t.ends.get(k))
-            .copied()
-            .unwrap_or(u32::MAX);
-        let c = m.frame.center();
-        t.nodes.iter().any(|j| {
-            j.node >= end
-                && j.frame.contains(c)
-                && (j.keyboard
-                    || j.text
-                    || crate::hit::takes_taps(&j.role)
-                    || matches!(j.role, Role::Image | Role::Cell))
-        })
-    };
-    // Per list, the widest pair by shape (the first: widest first).
-    let mut out: Vec<(u32, f64, f64)> = Vec::new();
-    for (list, wide, _, _) in &pairs {
-        if out.last().is_none_or(|(l, _, _)| l != list) {
-            out.push((*list, f64::NEG_INFINITY, *wide));
-        }
-    }
-    if whole {
-        return out;
-    }
-    let mut checks = 0usize;
-    let mut done: Option<u32> = None;
-    for (list, wide, a, b) in pairs {
-        if done == Some(list) {
-            continue;
-        }
-        if checks >= GRID_COVER_CHECKS {
-            break;
-        }
-        checks += 2;
-        if !covered(a) && !covered(b) {
-            done = Some(list);
-            if let Some(e) = out.iter_mut().find(|e| e.0 == list) {
-                e.1 = wide;
+                match out.last_mut() {
+                    Some(e) if e.0 == *la => e.1 = e.1.max(wide),
+                    _ => out.push((*la, wide)),
+                }
             }
         }
     }
@@ -865,11 +819,12 @@ fn shape_height(
 /// row-sized direct child of a `Table`/`CollectionView` is bounded at its own width — as a
 /// list row ([`CrossedRows::list_width`]) when it spans [`ROW_MIN_WIDTH_SHARE`] of its
 /// nearest scrollable ancestor (or that ancestor is not known, or a held node's cell frame
-/// is not drawable: fail closed), else as an inset row ([`CrossedRows::inset_width`]) or a
-/// floored one ([`CrossedRows::floor_width`]) — unless it is a grid cell ([`grid_widths`];
-/// review pass 33: never when row-shaped, by its frame or its drawn height,
-/// [`shape_height`]); a row by shape of a scroll view is a list row unless it fills
-/// [`PAGE_FILL_SHARE`] of its scroller's height (a pager's page).
+/// is not drawable: fail closed), else as an inset row ([`CrossedRows::inset_width`]) or,
+/// when it is a grid cell ([`grid_widths`]; review pass 33: never when row-shaped, by its
+/// frame or its drawn height, [`shape_height`]) or cannot be a row (review pass 34: a
+/// non-`Cell` with no text and no control in it, or narrower than [`GRID_CELL_MIN_WIDTH`]),
+/// a floored one ([`CrossedRows::floor_width`]); a row by shape of a scroll view is a list
+/// row unless it fills [`PAGE_FILL_SHARE`] of its scroller's height (a pager's page).
 fn crossed_rows(
     g: crate::gestures::Gesture,
     screen: &CompactScreen,
@@ -945,17 +900,33 @@ fn crossed_rows(
     };
     let min = |m: Option<f64>, w: f64| Some(m.map_or(w, |m: f64| m.min(w)));
     // Computed once, for the first crossed row that needs it.
-    let mut grids: Option<Vec<(u32, f64, f64)>> = None;
+    let mut grids: Option<Vec<(u32, f64)>> = None;
     // Review pass 33 (F1): pairs by shape anywhere in each list (not only the band).
-    let mut lists: Option<Vec<(u32, f64, f64)>> = None;
+    let mut lists: Option<Vec<(u32, f64)>> = None;
     // Review pass 33 (F2): the cells whose drawn height was read: (cell, squarish).
     let mut shapes: Vec<(u32, bool)> = Vec::new();
-    #[derive(Clone, Copy, PartialEq)]
-    enum Class {
-        Grid,
-        GridLike,
-        Inset,
-    }
+    // Review pass 34 (F2): the drawn nodes that show text or take taps, by raw index (sorted,
+    // built once): whether a node holds one below it is one binary search.
+    let mut shows: Option<Vec<u32>> = None;
+    let holds = |node: u32, shows: &mut Option<Vec<u32>>| {
+        let end = usize::try_from(node)
+            .ok()
+            .and_then(|k| t.ends.get(k))
+            .copied()
+            .unwrap_or(u32::MAX);
+        let v = shows.get_or_insert_with(|| {
+            let mut v: Vec<u32> = t
+                .nodes
+                .iter()
+                .filter(|j| !j.keyboard && (j.text || crate::hit::takes_taps(&j.role)))
+                .map(|j| j.node)
+                .collect();
+            v.sort_unstable();
+            v
+        });
+        let i = v.partition_point(|&j| j <= node);
+        v.get(i).is_some_and(|&j| j < end)
+    };
     let mut out = CrossedRows::default();
     for n in t.nodes {
         let f = n.frame;
@@ -1018,58 +989,53 @@ fn crossed_rows(
                     out.list_width = min(out.list_width, rf.width);
                     continue;
                 }
-                // Review pass 33 (F2): row-shaped by its frame: an inset row, whatever is
+                // Review pass 34 (F2): what a list holds directly is a row, as a `Cell` is,
+                // when it holds text or a control and is at least `GRID_CELL_MIN_WIDTH` wide;
+                // else it cannot be a row (a scroll indicator, whose only text is its own
+                // label; a separator): floored.
+                let row = match crate::hit::raw_node(t, cell) {
+                    Some(c) if c.role == Role::Cell => true,
+                    c => {
+                        rf.width >= GRID_CELL_MIN_WIDTH
+                            && (c.is_some_and(|c| crate::hit::takes_taps(&c.role))
+                                || holds(cell, &mut shows))
+                    }
+                };
+                // Review pass 33 (F2): row-shaped by its frame: no grid cell, whatever is
                 // beside it (no grid read, no height read).
-                let mut class = Class::Inset;
-                if rf.width < rf.height * ROW_SHAPE_MIN_ASPECT {
-                    let of = |v: &[(u32, f64, f64)]| {
-                        v.iter()
-                            .find(|e| e.0 == s)
-                            .map_or((f64::NEG_INFINITY, f64::NEG_INFINITY), |e| (e.1, e.2))
-                    };
-                    let (grid, shape) = of(grids.get_or_insert_with(|| {
-                        grid_widths(t, &nearest, Some((y0, y1)), row_height)
-                    }));
-                    let candidate = if rf.width <= grid + 0.5 {
-                        Class::Grid
-                    } else if rf.width <= shape + 0.5
-                        || rf.width
-                            <= of(lists
-                                .get_or_insert_with(|| grid_widths(t, &nearest, None, row_height)))
-                            .1 + 0.5
-                    {
-                        Class::GridLike
-                    } else {
-                        Class::Inset
-                    };
-                    if candidate != Class::Inset {
-                        // Squarish by its drawn height too (cut at its pitch), read once per
-                        // cell; past the budget, row-shaped (fail closed).
-                        let squarish = match shapes.iter().find(|e| e.0 == cell) {
-                            Some(e) => e.1,
-                            None if shapes.len() >= SHAPE_CHECKS => false,
-                            None => {
-                                let h = shape_height(t, &nearest, cell, rf, s, row_height);
-                                let q = rf.width < h * ROW_SHAPE_MIN_ASPECT;
-                                shapes.push((cell, q));
-                                q
-                            }
+                let grid = row
+                    && rf.width < rf.height * ROW_SHAPE_MIN_ASPECT
+                    && {
+                        let of = |v: &[(u32, f64)]| {
+                            v.iter().find(|e| e.0 == s).map_or(f64::NEG_INFINITY, |e| e.1)
                         };
-                        if squarish {
-                            class = candidate;
+                        rf.width
+                            <= of(grids.get_or_insert_with(|| {
+                                grid_widths(t, &nearest, Some((y0, y1)), row_height)
+                            })) + 0.5
+                            || rf.width
+                                <= of(lists.get_or_insert_with(|| {
+                                    grid_widths(t, &nearest, None, row_height)
+                                })) + 0.5
+                    }
+                    // Squarish by its drawn height too (cut at its pitch), read once per
+                    // cell; past the budget, row-shaped (fail closed).
+                    && match shapes.iter().find(|e| e.0 == cell) {
+                        Some(e) => e.1,
+                        None if shapes.len() >= SHAPE_CHECKS => false,
+                        None => {
+                            let h = shape_height(t, &nearest, cell, rf, s, row_height);
+                            let q = rf.width < h * ROW_SHAPE_MIN_ASPECT;
+                            shapes.push((cell, q));
+                            q
                         }
-                    }
-                }
-                // Review pass 33 (F1): the refusal is for a `Cell` (every measured row is
-                // one, run 154); a row a list holds directly without the role (a scroll
-                // indicator beside a select's rows) keeps pass 32's floor.
-                let is_cell = crate::hit::raw_node(t, cell).is_some_and(|c| c.role == Role::Cell);
-                match class {
-                    Class::Grid => {}
-                    Class::Inset if is_cell => out.inset_width = min(out.inset_width, rf.width),
-                    Class::GridLike | Class::Inset => {
-                        out.floor_width = min(out.floor_width, rf.width);
-                    }
+                    };
+                // Review pass 34 (F1): a grid cell is bounded at its own width too (never
+                // refused); an inset row is refused when narrow.
+                if row && !grid {
+                    out.inset_width = min(out.inset_width, rf.width);
+                } else {
+                    out.floor_width = min(out.floor_width, rf.width);
                 }
             }
         }

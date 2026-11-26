@@ -202,7 +202,8 @@ fn f1_padded_rows_of_every_inset_are_bounded_at_their_own_width() {
 /// cell, so with the neighbour too it is bounded at 0.45 of its width; the grid control is
 /// now made of squarish cells (150 x 52, 2.88): alone bounded at `MIN_TRAVEL`, with an
 /// alike neighbour the reach (the forgeries against the grid signal on squarish cells are
-/// in `pass33_fixes.rs`).
+/// in `pass33_fixes.rs`). Review pass 34: with the neighbour, `max(0.45 w, 80)` = 80 pt
+/// (a grid cell is bounded at its own width too; only the refusal is spared).
 #[test]
 fn f1_two_alike_cells_side_by_side_are_a_grid() {
     let lone = rows_at(LEFT.0, LEFT.1);
@@ -226,7 +227,12 @@ fn f1_two_alike_cells_side_by_side_are_a_grid() {
         vec![cell(Rect::new(180.0, 278.0, 150.0, 52.0), "Right column")],
     );
     let (t, reach) = swipe(&grid, Some(f));
-    assert!((t.unwrap() - reach).abs() < 1e-6, "{t:?} {reach}");
+    // Review pass 34 (F1): a grid cell is bounded at its own width too, `max(0.45 w, 80)`:
+    // 80 pt (was its 90-pt reach); the grid signal still spares it the refusal.
+    assert!(
+        (t.unwrap() - MIN_TRAVEL).abs() < 1e-6 && reach > MIN_TRAVEL + 5.0,
+        "{t:?} {reach}"
+    );
 }
 
 /// Forged grid signals: a neighbour that is hidden, zero-sized, off screen, 1 pt wide (one
