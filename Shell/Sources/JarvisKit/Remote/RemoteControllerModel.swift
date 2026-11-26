@@ -171,6 +171,10 @@ public final class RemoteControllerModel {
         /// The owner wants the Live view (asked again after a reconnect).
         public var watchWanted = false
 
+        /// Public so the app can hold an empty state before the model exists (Mac run 160:
+        /// the synthesized initializer is internal).
+        public init() {}
+
         public var isPaired: Bool {
             switch phase {
             case .notPaired, .pairing: false
