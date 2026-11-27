@@ -442,7 +442,7 @@ pub(crate) fn mixed_script(value: &str) -> bool {
 
 /// Whether a letter can be read by the phrase net: ASCII, foldable to ASCII, or Latin
 /// script (whose accented forms the tables approximate).
-fn is_readable_letter(c: char) -> bool {
+pub(crate) fn is_readable_letter(c: char) -> bool {
     fold_char(c).is_ascii()
         || matches!(u32::from(c), 0x00C0..=0x024F | 0x1E00..=0x1EFF)
         // Review pass 37: only the five blocks read before. A mark of another block that is

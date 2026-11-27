@@ -13,13 +13,18 @@
 //! * a digit for itself, and where its run of look-alike characters touches a letter of the
 //!   same word also `0` o, `1` i/l, `2` z, `3` e, `4` a, `5` s, `6` b/g, `7` t, `8` b,
 //!   `9` g;
-//! * `@` a (except the last `@` of an email-shaped word), `$` s, `|` and `¡` i/l, `€` e/c,
-//!   `¢` c, `¥` y, `£` l/e touching a letter of the word, and `!` i/l with a letter on both
-//!   sides, decided after the spelled-out joins; any other symbol or space separates words.
+//! * `@` a or e (review pass 38: every `@`, an address's too — the plain reading keeps it
+//!   a separator, both are carried), `$` s, `|` and `¡` i/l, `€` e/c, `¢` c, `¥` y, `£` l/e
+//!   touching a letter of the word, and `!` i/l with a letter on both sides, decided after
+//!   the spelled-out joins;
+//! * review pass 38: punctuation inside a whitespace-delimited word (ASCII punctuation and
+//!   [`crate::norm::is_word_punctuation`]: `De-lete`, `De.lete`, `Sign_Out`) is a *soft*
+//!   boundary, as a case step is; any other symbol or space separates words.
 //!
 //! Boundaries: hard ones (a separator, the start and the end) and soft ones (a lowercase to
 //! uppercase step, an uppercase letter before an uppercase letter followed by a lowercase
-//! one, a letter/digit step, the joins of a spelled-out `P a y`, a narrow space). A phrase matches when its
+//! one, a letter/digit step, the joins of a spelled-out `P a y`, a soft space, punctuation
+//! inside a word). A phrase matches when its
 //! characters are in the units' sets position by position from a boundary to a boundary;
 //! soft boundaries inside the match are ignored, a hard one is allowed only where the phrase
 //! has a space, and a space of the phrase may also fall on a soft boundary or on none
@@ -40,9 +45,9 @@ use std::sync::OnceLock;
 
 use jarvis_proto::RiskCategory;
 
-use crate::norm::{piece, Piece};
+use crate::norm::{is_word_punctuation, piece, Piece};
 use crate::phrases::{max_risk, LabelRisk, Phrase};
-use crate::text::{fold_confusable, fold_fullwidth, fold_upper_confusable, tokens};
+use crate::text::{fold_confusable, fold_upper_confusable, tokens};
 
 /// The trie symbol of a phrase space (letters are 0..26, digits 26..36).
 const SPACE: u8 = 36;
@@ -74,6 +79,10 @@ enum Soft {
     Step,
     /// The join of a spelled-out word (`P a y`): the plain matcher reads it joined.
     Glue,
+    /// Review pass 38: punctuation inside a word (`De-lete`): the plain tokenizer splits
+    /// there. Not counted against [`MAX_SOFT_BOUNDARIES`]: it stands where a separator
+    /// stood, which started a walk as well.
+    Punct,
 }
 
 /// One visible character of a label (or a run of separators).
@@ -89,7 +98,8 @@ pub(crate) struct Unit {
     src: char,
     /// A capital `I` or a letter that folds to one.
     capital_i: bool,
-    /// Review pass 37 (F3): a narrow space lies before it inside its word (a soft boundary).
+    /// Review pass 37 (F3): a soft space (review pass 38: or punctuation) lies before it
+    /// inside its word (a soft boundary): it starts a word as the plain tokenizer reads it.
     narrow: bool,
 }
 
@@ -111,14 +121,16 @@ fn is_letter(k: Kind) -> bool {
 }
 
 /// The letters a digit or symbol of a word stands for (review pass 35's table; review pass
-/// 37 (F6): `¡` i/l, `€` e/c, `¢` c, `¥` y, `£` l/e, `9` g, `6` b/g, `2` z).
+/// 37 (F6): `¡` i/l, `€` e/c, `¢` c, `¥` y, `£` l/e, `9` g, `6` b/g, `2` z; review pass 38:
+/// `@` also e, `Del@te`).
 fn lookalike_letters(c: char) -> &'static [char] {
     match c {
         '0' => &['o'],
         '1' | '|' | '!' | '\u{A1}' => &['i', 'l'],
         '2' => &['z'],
         '3' => &['e'],
-        '4' | '@' => &['a'],
+        '4' => &['a'],
+        '@' => &['a', 'e'],
         '5' | '$' => &['s'],
         '6' => &['b', 'g'],
         '7' => &['t'],
@@ -141,32 +153,14 @@ fn is_lookalike_symbol(c: char) -> bool {
     )
 }
 
-/// Review pass 37 (F1): the `@`s of `text` (by character position) that keep their plain
-/// meaning. In each whitespace-separated word (a narrow space separates too), the **last**
-/// `@` when a `.` follows it in that word: the word is an email address or a handle at a
-/// host, and an address has one `@`. Every other `@` of the label — in another word, or
-/// before the last one of its word — may read as `a` (`P@y anna@mail.com`).
-fn email_ats(text: &str, out: &mut Vec<usize>) {
-    out.clear();
-    if !text.contains(['@', '\u{FF20}']) {
-        return;
-    }
-    let mut last_at: Option<usize> = None;
-    let mut dot = false;
-    for (k, raw) in text.chars().chain(std::iter::once(' ')).enumerate() {
-        let c = fold_fullwidth(raw);
-        if c.is_whitespace() {
-            if let (Some(a), true) = (last_at, dot) {
-                out.push(a);
-            }
-            last_at = None;
-            dot = false;
-        } else if c == '@' {
-            last_at = Some(k);
-            dot = false;
-        } else if c == '.' && last_at.is_some() {
-            dot = true;
-        }
+/// Review pass 38: whether `c` is punctuation that is a soft boundary inside a word: ASCII
+/// punctuation and symbols other than the look-alike symbols (`@ $ | !`, read as letters),
+/// and the word punctuation of [`is_word_punctuation`].
+fn is_soft_punctuation(c: char) -> bool {
+    if c.is_ascii() {
+        c.is_ascii_punctuation() && !is_lookalike_symbol(c)
+    } else {
+        is_word_punctuation(c)
     }
 }
 
@@ -174,16 +168,14 @@ fn email_ats(text: &str, out: &mut Vec<usize>) {
 /// through the normalisation the plain tokenizer shares ([`crate::norm::piece`]).
 pub(crate) fn build_units(text: &str, out: &mut Vec<Unit>) {
     out.clear();
-    let mut ats = Vec::new();
-    email_ats(text, &mut ats);
     let push = |u: Unit, out: &mut Vec<Unit>| {
         if u.kind == Kind::Sep && out.last().is_some_and(|l| l.kind == Kind::Sep) {
             return;
         }
         out.push(u);
     };
-    let mut narrow = false;
-    for (k, raw) in text.chars().enumerate() {
+    let (mut narrow, mut punct) = (false, false);
+    for raw in text.chars() {
         let c = match piece(raw) {
             None => continue,
             Some(Piece::Narrow) => {
@@ -192,11 +184,18 @@ pub(crate) fn build_units(text: &str, out: &mut Vec<Unit>) {
             }
             Some(Piece::Emoji(_)) => {
                 narrow = false;
+                punct = false;
                 push(Unit::default(), out);
                 continue;
             }
             Some(Piece::Char(c)) => c,
         };
+        // Review pass 38: punctuation is decided by what follows it: inside a word a soft
+        // boundary, else a separator.
+        if is_soft_punctuation(c) {
+            punct = true;
+            continue;
+        }
         let mut unit = if c.is_ascii_digit() {
             Unit {
                 set: bit(c),
@@ -205,7 +204,7 @@ pub(crate) fn build_units(text: &str, out: &mut Vec<Unit>) {
                 src: c,
                 ..Unit::default()
             }
-        } else if is_lookalike_symbol(c) && !(c == '@' && ats.contains(&k)) {
+        } else if is_lookalike_symbol(c) {
             // A candidate: decided below, after the spelled-out joins (review pass 37,
             // F2: `$ E N D` is one word whose `$` touches its `E`).
             Unit {
@@ -259,13 +258,18 @@ pub(crate) fn build_units(text: &str, out: &mut Vec<Unit>) {
             Unit::default()
         };
         // Review pass 37 (F3): a narrow space inside a word is a soft boundary (the plain
-        // tokenizer splits there; the eye sees one word).
-        if std::mem::take(&mut narrow)
-            && unit.kind != Kind::Sep
-            && out.last().is_some_and(|l| l.kind != Kind::Sep)
-        {
+        // tokenizer splits there; the eye sees one word). Review pass 38: so is punctuation.
+        let inside = unit.kind != Kind::Sep && out.last().is_some_and(|l| l.kind != Kind::Sep);
+        let (was_narrow, was_punct) = (std::mem::take(&mut narrow), std::mem::take(&mut punct));
+        if inside && was_narrow {
             unit.soft = Soft::Step;
             unit.narrow = true;
+        } else if inside && was_punct {
+            unit.soft = Soft::Punct;
+            unit.narrow = true;
+        } else if was_punct && unit.kind != Kind::Sep {
+            // Punctuation at a word's start or after a separator separates.
+            push(Unit::default(), out);
         }
         push(unit, out);
     }
@@ -352,7 +356,7 @@ pub(crate) fn build_units(text: &str, out: &mut Vec<Unit>) {
         let Some(p) = prev.filter(|p| *p != Kind::Sep) else {
             continue;
         };
-        if u.soft == Soft::Glue {
+        if matches!(u.soft, Soft::Glue | Soft::Punct) {
             continue;
         }
         let step = (p == Kind::Lower && u.kind == Kind::Upper)
@@ -561,7 +565,9 @@ impl Walk<'_> {
                 }
             } else if u.kind != Kind::Sep && u.set & (1u64 << s) != 0 {
                 // A step inside a phrase word: the plain tokenizer splits the word there.
-                let lit = literal && u.lit == s && (pos == self.start || u.soft != Soft::Step);
+                let lit = literal
+                    && u.lit == s
+                    && (pos == self.start || !matches!(u.soft, Soft::Step | Soft::Punct));
                 self.go(child, pos + 1, (lit, folded || u.lit != s), out);
             }
         }
@@ -598,7 +604,10 @@ pub(crate) const MAX_SOFT_BOUNDARIES: usize = 96;
 
 /// The soft boundaries of `units` ([`MAX_SOFT_BOUNDARIES`]).
 pub(crate) fn soft_boundaries(units: &[Unit]) -> usize {
-    units.iter().filter(|u| u.soft != Soft::No).count()
+    units
+        .iter()
+        .filter(|u| matches!(u.soft, Soft::Step | Soft::Glue))
+        .count()
 }
 
 /// Runs `f` with the units of `text` (a buffer reused per thread: no allocation once warm).
@@ -704,15 +713,18 @@ pub(crate) fn match_units(units: &[Unit], tables: &[&[Phrase]], beyond_plain: bo
 }
 
 /// How many words the units hold between hard boundaries (separators): the plain
-/// tokenizer's count without its splits at case and letter/digit steps.
+/// tokenizer's count without its splits at case and letter/digit steps. Review pass 38:
+/// punctuation inside a word still separates words here (`£32,995` is two, as before the
+/// punctuation became a soft boundary), so whether a row is content does not change.
 pub(crate) fn hard_words(units: &[Unit]) -> usize {
     units
         .iter()
         .enumerate()
         .filter(|(k, x)| {
             x.kind != Kind::Sep
-                && k.checked_sub(1)
-                    .is_none_or(|p| units.get(p).is_none_or(|y| y.kind == Kind::Sep))
+                && (x.soft == Soft::Punct
+                    || k.checked_sub(1)
+                        .is_none_or(|p| units.get(p).is_none_or(|y| y.kind == Kind::Sep)))
         })
         .count()
 }

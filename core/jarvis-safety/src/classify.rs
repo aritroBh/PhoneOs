@@ -8,6 +8,7 @@ use jarvis_proto::{
 };
 
 use crate::gestures::{drag_gesture, finger_direction, GestureKind};
+use crate::norm::has_intruder;
 use crate::phrases::{
     action_tables, covers_all, in_app, match_label, match_label_read, match_tokens, match_whole,
     max_risk, severity, sf_symbol_risk, LabelRisk, Phrase, RuleTarget, ACTION_PHRASES, APP_RULES,
@@ -721,7 +722,9 @@ fn too_long(text: &str) -> bool {
 /// ([`SIGN_IN_PHRASES`]) by its own words or their look-alike sets (`Sign ln`, `Log ln`).
 pub(crate) fn sign_in_words(label: &str) -> bool {
     let b = bounded(label);
-    match_whole(&tokens(&b), &[SIGN_IN_PHRASES]).category != RiskCategory::None
+    // Review pass 38: a label the tables cannot read may be a sign-in word.
+    has_intruder(label)
+        || match_whole(&tokens(&b), &[SIGN_IN_PHRASES]).category != RiskCategory::None
         || match_sets_whole(&b, &[SIGN_IN_PHRASES]).category != RiskCategory::None
 }
 
@@ -848,7 +851,20 @@ fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool, bool
     if asked && (unread_words || unlabeled) {
         risk = max_risk(risk, UNREADABLE_RISK);
     }
-    (risk, content_row, asked && unread_words)
+    // Review pass 38: a character the tables do not know inside a word that reads as Latin
+    // (`Deǀete`, `Ca∣∣`, `P﹫y`) makes every pressable control `Unverified` — a long row, a
+    // tab and a key too: what it is drawn as is unknown, so its words are not trusted.
+    let intruder = pressable && intruder_in(el);
+    if intruder {
+        risk = max_risk(risk, UNREADABLE_RISK);
+    }
+    (risk, content_row, (asked && unread_words) || intruder)
+}
+
+/// Review pass 38: whether `el`'s label or value holds an intruder
+/// ([`crate::norm::has_intruder`]).
+fn intruder_in(el: &Element) -> bool {
+    has_intruder(&el.label) || el.value.as_deref().is_some_and(has_intruder)
 }
 
 /// The element `Type` lands in: the given one, or the focused text input.
@@ -877,6 +893,9 @@ fn type_risk(element: Option<u32>, text: &str, submit: bool, r: &Reader<'_>) -> 
             || match_label_read(&field, &[CREDENTIAL_FIELD_PHRASES]).category != RiskCategory::None
         {
             risk = RiskCategory::Credential;
+        } else if field_intruder(t) {
+            // Review pass 38: a field label the tables cannot read may name a password.
+            risk = UNREADABLE_RISK;
         }
     }
     if contains_secret(text) {
@@ -889,6 +908,11 @@ fn type_risk(element: Option<u32>, text: &str, submit: bool, r: &Reader<'_>) -> 
         }
     }
     risk
+}
+
+/// Review pass 38: whether a field's label or placeholder holds an intruder.
+fn field_intruder(t: &Element) -> bool {
+    has_intruder(&t.label) || t.placeholder.as_deref().is_some_and(has_intruder)
 }
 
 /// Return-key labels (`UIReturnKeyType`, English) that submit something rather than insert
@@ -932,7 +956,11 @@ fn return_key_risk(target: Option<&Element>, r: &Reader<'_>) -> RiskCategory {
     let mut generic = false;
     for label in cue.iter().map(String::as_str).chain(keys) {
         let plain = PLAIN_RETURN_LABELS.contains(&tokens(label).join(" ").as_str());
-        let lr = match_label(label, &tables);
+        let mut lr = match_label(label, &tables);
+        if has_intruder(label) {
+            // Review pass 38: a key label the tables cannot read.
+            lr.category = max_risk(lr.category, UNREADABLE_RISK);
+        }
         match lr.category {
             // The keyboard's backspace key is labelled "delete".
             RiskCategory::Delete => {}
@@ -974,7 +1002,8 @@ fn submit_risk(target: Option<&Element>, text: &str, r: &Reader<'_>) -> RiskCate
         // truncated (its head and tail): a risk word in the cut middle is lost, so such a
         // field is `Unverified` at least (asked, never truncated and trusted).
         let over = |s: &str| s.len() > MAX_LABEL_CHARS && s.chars().count() > MAX_LABEL_CHARS;
-        if over(&t.label) || over(placeholder) {
+        // Review pass 38: so is one whose label or placeholder holds an intruder.
+        if over(&t.label) || over(placeholder) || field_intruder(t) {
             max_risk(named, UNREADABLE_RISK)
         } else {
             named

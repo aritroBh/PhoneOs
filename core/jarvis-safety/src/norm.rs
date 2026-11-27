@@ -11,24 +11,38 @@
 //!    enclosing marks is read as that base (`ė į ẹ ŏ Ŗ é ñ` as `e i e o R e n`; the
 //!    Ångström and Kelvin signs as `A`, `K`); Hangul syllables and decompositions holding a
 //!    spacing mark are left whole.
-//! 2. Fullwidth and styled forms and the decimal digits of every script are folded to
+//! 2. Review pass 38: the **compatibility fold** ([`crate::compat::COMPAT_FOLD`], generated
+//!    by `tools/gen_compat.py`): a character whose compatibility decomposition holds exactly
+//!    one ASCII letter or digit and otherwise no letter or digit is that character
+//!    (parenthesized `⒟`, circled, squared, fullwidth, mathematical, modifier, superscript
+//!    and subscript forms, Roman numeral one, the long s). Then fullwidth and styled forms
+//!    and the decimal digits of every script are folded to
 //!    ASCII ([`crate::text::fold_fullwidth`], [`crate::text::fold_styled`],
 //!    [`crate::text::fold_digit`]), and the result decomposed again.
 //! 3. **Dropped** without a split: every nonspacing or enclosing mark (General_Category Mn
 //!    and Me, Unicode 15.1, [`MARK_RANGES`], plus the five combining blocks read before),
 //!    every invisible or format character ([`crate::text::is_invisible`]), apostrophes,
 //!    and ASCII controls other than whitespace.
-//! 4. **Narrow spaces** (U+2000..U+200A, U+202F, U+205F) are [`Piece::Narrow`]: a real
-//!    space to the plain tokenizer (French `Supprimer ?`, digit grouping), a *soft*
-//!    boundary to the set matcher (a phrase may run across it, a phrase's space may fall on
-//!    it). The ideographic space, NBSP and ordinary spaces stay hard.
+//! 4. **Soft spaces** (review pass 37: the narrow spaces U+2000..U+200A, U+202F, U+205F;
+//!    review pass 38: the line breaks newline, carriage return, form feed and NEL) are
+//!    [`Piece::Narrow`]: a real space to the plain tokenizer (French `Supprimer ?`, digit
+//!    grouping, a two-line label), a *soft* boundary to the set matcher (a phrase may run
+//!    across it, a phrase's space may fall on it). The space, tab, NBSP, the ideographic
+//!    space, the ogham space mark and the line and paragraph separators U+2028/U+2029 stay
+//!    hard (the reviewer's pass-38 sound test pins that they split a word as a visible gap
+//!    does).
 //! 5. The icon emoji the tokenizer reads as words ([`crate::text::emoji_word`]).
 //!
 //! Every output character is a fixed point of the pass, so normalising twice is
 //! normalising once ([`normalized`]), and no character yields more than one.
+//!
+//! Review pass 38: [`has_intruder`] says which characters of a label are *known* inside a
+//! word that reads as Latin; any other character there makes a pressable control
+//! `Unverified`.
 
 use crate::text::{
-    emoji_word, fold_digit, fold_fullwidth, fold_styled, is_apostrophe, is_combining, is_invisible,
+    emoji_word, fold_confusable, fold_digit, fold_fullwidth, fold_styled, fold_upper_confusable,
+    is_apostrophe, is_combining, is_currency_symbol, is_digit, is_invisible, is_readable_letter,
 };
 
 /// One character of a label after the normalisation.
@@ -42,9 +56,28 @@ pub(crate) enum Piece {
     Emoji(&'static str),
 }
 
-/// The narrow spaces (U+2000..U+200A, U+202F narrow no-break, U+205F medium mathematical).
+/// The soft spaces: the narrow spaces (U+2000..U+200A, U+202F narrow no-break, U+205F
+/// medium mathematical) and, review pass 38, the line breaks other than the line and
+/// paragraph separators (newline, carriage return, form feed, NEL).
 pub(crate) fn is_narrow_space(c: char) -> bool {
-    matches!(u32::from(c), 0x2000..=0x200A | 0x202F | 0x205F)
+    matches!(
+        u32::from(c),
+        0x0A | 0x0C | 0x0D | 0x85 | 0x2000..=0x200A | 0x202F | 0x205F
+    )
+}
+
+/// Review pass 38: the ASCII letter or digit `c`'s compatibility decomposition reduces to
+/// ([`crate::compat::COMPAT_FOLD`]), if any.
+pub(crate) fn compat_fold(c: char) -> Option<char> {
+    let u = u32::from(c);
+    if u < 0xA0 {
+        return None;
+    }
+    crate::compat::COMPAT_FOLD
+        .binary_search_by_key(&u, |&(k, _)| k)
+        .ok()
+        .and_then(|k| crate::compat::COMPAT_FOLD.get(k))
+        .map(|&(_, a)| char::from(a))
 }
 
 /// Whether `c` is a nonspacing or enclosing mark (General_Category Mn or Me, Unicode 15.1).
@@ -78,6 +111,8 @@ pub(crate) fn base_of(c: char) -> char {
 fn ascii_piece(c: char) -> Option<Piece> {
     if (c.is_ascii_control() && !c.is_ascii_whitespace()) || c == '\'' || c == '`' {
         None
+    } else if is_narrow_space(c) {
+        Some(Piece::Narrow)
     } else {
         Some(Piece::Char(c))
     }
@@ -91,6 +126,9 @@ pub(crate) fn piece(raw: char) -> Option<Piece> {
     if let Some(w) = emoji_word(raw) {
         return Some(Piece::Emoji(w));
     }
+    if let Some(a) = compat_fold(raw) {
+        return ascii_piece(a);
+    }
     let c = base_of(fold_digit(fold_styled(fold_fullwidth(base_of(raw)))));
     if c.is_ascii() {
         return ascii_piece(c);
@@ -102,6 +140,163 @@ pub(crate) fn piece(raw: char) -> Option<Piece> {
         return None;
     }
     Some(Piece::Char(c))
+}
+
+// ---------------------------------------------------------------------------------------
+// Review pass 38: what is known inside a Latin word.
+// ---------------------------------------------------------------------------------------
+
+/// Review pass 38: the punctuation a word may hold anywhere besides ASCII's: hyphens and
+/// dashes (U+2010..U+2015, the minus sign U+2212), curly double quotes, the middle dot,
+/// bullet and ellipsis, the trademark, registered, copyright, degree and numero signs,
+/// prime and double prime. (Curly single quotes are apostrophes: dropped.) Inside a word
+/// it is a soft boundary to the sets ([`crate::sets`]), as ASCII punctuation is.
+pub(crate) fn is_word_punctuation(c: char) -> bool {
+    matches!(
+        c,
+        '\u{2010}'
+            ..='\u{2015}'
+                | '\u{2212}'
+                | '\u{201C}'
+                | '\u{201D}'
+                | '\u{B7}'
+                | '\u{2022}'
+                | '\u{2026}'
+                | '\u{2122}'
+                | '\u{AE}'
+                | '\u{A9}'
+                | '\u{B0}'
+                | '\u{2116}'
+                | '\u{2032}'
+                | '\u{2033}'
+    )
+}
+
+/// Review pass 38: the arrows, chevrons, check marks and crosses a word may hold at its edge
+/// ("‹Back", "Done✓"): never between two letters or digits of it.
+fn is_edge_symbol(c: char) -> bool {
+    matches!(
+        c,
+        '\u{2039}' | '\u{203A}' | '\u{AB}' | '\u{BB}' | '\u{2190}'
+            ..='\u{2193}' | '\u{2713}' | '\u{2714}' | '\u{2715}' | '\u{2716}' | '\u{D7}'
+    )
+}
+
+/// Review pass 38: whether `c` is a pictograph ([`crate::compat::PICTOGRAPH_RANGES`]: an
+/// approximation of Emoji_Presentation, see `tools/gen_compat.py`).
+fn is_pictograph(c: char) -> bool {
+    let u = u32::from(c);
+    if u < 0x2000 {
+        return false;
+    }
+    let r = &crate::compat::PICTOGRAPH_RANGES;
+    let k = r.partition_point(|&(_, hi)| hi < u);
+    r.get(k).is_some_and(|&(lo, _)| lo <= u)
+}
+
+/// A pictograph a word may hold at its edge: not one drawn as a letter (the negative
+/// squared and circled letters are alphabetic; the regional indicators are drawn as boxed
+/// letters alone).
+fn is_edge_pictograph(c: char) -> bool {
+    is_pictograph(c) && !c.is_alphabetic() && !matches!(u32::from(c), 0x1F1E6..=0x1F1FF)
+}
+
+/// Whether the normalised character `c` (outside ASCII) is a letter the tables read as an
+/// ASCII letter: a Greek or Cyrillic look-alike, an accented or name letter the fold table
+/// holds (`ø ł đ ı`). Precomposed letters were decomposed by [`piece`] already.
+fn folds_to_ascii_letter(c: char) -> bool {
+    if fold_upper_confusable(c).is_some() {
+        return true;
+    }
+    let mut low = c.to_lowercase();
+    match (low.next(), low.next()) {
+        (Some(l), None) => fold_confusable(l).is_ascii_alphabetic(),
+        _ => false,
+    }
+}
+
+/// Review pass 38: whether `text` holds an **intruder**: inside a whitespace-delimited word
+/// that reads as Latin — it holds an ASCII letter after the normalisation, or a letter the
+/// fold table reads as one and no letter of a script the tables do not read — a character
+/// that is none of:
+///
+/// * dropped by the normalisation (an invisible or format character, a mark, an
+///   apostrophe), ASCII after it (letters, digits, ASCII punctuation and symbols: the
+///   compatibility fold and the decomposition included), or a letter the fold table reads
+///   as an ASCII letter ([`folds_to_ascii_letter`]);
+/// * a decimal digit, or a look-alike symbol the sets read (`¡ € ¢ ¥ £`; `@ $ | !` are
+///   ASCII);
+/// * word punctuation ([`is_word_punctuation`]), or a currency sign next to a digit;
+/// * at the word's edge only (no letter or digit of the word on both sides): an arrow,
+///   chevron, check mark or cross ([`is_edge_symbol`]), a pictograph ([`is_pictograph`])
+///   or an icon emoji read as a word.
+///
+/// Everything else there — a letter of any script that does not fold (`ǀ ǁ ß þ ŋ`), a
+/// number form, a mathematical, box-drawing or dingbat symbol, a halfwidth or small form
+/// (`∣ │ ⏐ ￨ ❘ ׀ ¦ ‖ ﹫ ﹩`), an emoji between two letters — is an intruder: the tables do
+/// not know what it is drawn as. A word with no such letter (a Japanese or Cyrillic word, a
+/// lone emoji, a price) is not read by this rule.
+pub(crate) fn has_intruder(text: &str) -> bool {
+    !text.is_ascii() && text.split(char::is_whitespace).any(word_has_intruder)
+}
+
+/// [`has_intruder`] for one word.
+fn word_has_intruder(word: &str) -> bool {
+    if word.is_ascii() {
+        return false;
+    }
+    let (mut ascii, mut folded, mut foreign) = (false, false, false);
+    let (mut first, mut last) = (usize::MAX, 0usize);
+    for (k, raw) in word.chars().enumerate() {
+        let alnum = match piece(raw) {
+            Some(Piece::Char(c)) if c.is_ascii() => {
+                ascii |= c.is_ascii_alphabetic();
+                c.is_ascii_alphanumeric()
+            }
+            Some(Piece::Char(c)) if c.is_alphabetic() => {
+                if folds_to_ascii_letter(c) {
+                    folded = true;
+                } else if !is_readable_letter(c) {
+                    foreign = true;
+                }
+                true
+            }
+            Some(Piece::Char(c)) => c.is_numeric(),
+            _ => false,
+        };
+        if alnum {
+            first = first.min(k);
+            last = k;
+        }
+    }
+    if !ascii && !(folded && !foreign) {
+        return false;
+    }
+    let mut prev: Option<char> = None;
+    let mut chars = word.chars().enumerate().peekable();
+    while let Some((k, raw)) = chars.next() {
+        let next = chars.peek().map(|&(_, c)| c);
+        let edge = k <= first || k >= last;
+        let known = match piece(raw) {
+            None | Some(Piece::Narrow) => true,
+            Some(Piece::Emoji(_)) => edge,
+            Some(Piece::Char(c)) => {
+                c.is_ascii()
+                    || (c.is_alphabetic() && folds_to_ascii_letter(c))
+                    || is_digit(c)
+                    || matches!(c, '\u{A1}' | '\u{20AC}' | '\u{A2}' | '\u{A5}' | '\u{A3}')
+                    || is_word_punctuation(c)
+                    || (is_currency_symbol(c)
+                        && (prev.is_some_and(is_digit) || next.is_some_and(is_digit)))
+                    || (edge && (is_edge_symbol(c) || is_edge_pictograph(c)))
+            }
+        };
+        if !known {
+            return true;
+        }
+        prev = Some(raw);
+    }
+    false
 }
 
 /// The narrow space [`normalized`] writes for every [`Piece::Narrow`] (the thin space).
@@ -2496,6 +2691,87 @@ mod tests {
         assert_eq!(marks, 1998);
     }
 
+    /// Review pass 38: the compatibility fold is the generated table, unedited (count and
+    /// hash as `tools/gen_compat.py` wrote them), sorted, and reads the forms it is for.
+    #[test]
+    fn the_compatibility_fold_is_the_recipe() {
+        use crate::compat::{COMPAT_FOLD, COMPAT_FOLD_HASH, COMPAT_FOLD_LEN};
+        assert_eq!(COMPAT_FOLD.len(), COMPAT_FOLD_LEN);
+        let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+        for &(cp, a) in &COMPAT_FOLD {
+            for b in format!("{cp}:{a};").bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0100_0000_01B3);
+            }
+        }
+        assert_eq!(h, COMPAT_FOLD_HASH);
+        assert!(COMPAT_FOLD
+            .windows(2)
+            .all(|w| matches!(w, [a, b] if a.0 < b.0)));
+        assert!(COMPAT_FOLD.iter().all(|&(_, a)| a.is_ascii_alphanumeric()));
+        for (c, a) in [
+            ('\u{249F}', "d"),
+            ('\u{24AE}', "s"),
+            ('\u{2474}', "1"),
+            ('\u{2160}', "I"),
+            ('\u{17F}', "s"),
+            ('\u{1F130}', "A"),
+            ('\u{1D2C}', "A"),
+            ('\u{B2}', "2"),
+            ('\u{FF41}', "a"),
+        ] {
+            assert_eq!(normalized(&c.to_string()), a, "U+{:04X}", u32::from(c));
+        }
+        // No single letter: kept (an intruder inside a Latin word).
+        for c in ['\u{FB00}', '\u{2122}', '\u{FE6B}', '\u{1C0}', '\u{1F17F}'] {
+            assert_eq!(normalized(&c.to_string()), c.to_string(), "{c:?}");
+        }
+    }
+
+    /// Review pass 38: the intruder rule on the reviewer's characters and on ordinary text.
+    #[test]
+    fn intruders_inside_latin_words() {
+        for t in [
+            "De\u{1C0}ete",
+            "Ca\u{1C1}",
+            "Ca\u{2223}\u{2223}",
+            "De\u{2502}ete",
+            "P\u{FE6B}y",
+            "\u{FE69}end",
+            "Se\u{2016}",
+            "De\u{A6}ete",
+            "Stra\u{DF}e",
+            "Hi\u{1F44B}there",
+            "\u{1F17F}ay",
+            "Pay\u{20B9}",
+            "\u{455}\u{435}\u{1C1}",
+        ] {
+            assert!(has_intruder(t), "{t:?}");
+        }
+        for t in [
+            "Delete Account",
+            "Caf\u{E9} M\u{FC}ller",
+            "S\u{F8}ren \u{141}ukasz",
+            "Wi\u{2011}Fi",
+            "Title\u{2026}",
+            "\u{2039}Back",
+            "Done\u{2713}",
+            "Pay\u{1F4B8}",
+            "\u{1F44B}Hi",
+            "\u{20B9}99 only",
+            "99\u{20B9}",
+            "\u{423}\u{434}\u{430}\u{43B}\u{438}\u{442}\u{44C}",
+            "\u{524A}\u{9664}",
+            "\u{2715}",
+            "\u{A9}2024 Apple\u{AE}",
+            "B\u{430}ck",
+            "m\u{B2}",
+            "AirPods\u{2019}",
+        ] {
+            assert!(!has_intruder(t), "{t:?}");
+        }
+    }
+
     #[test]
     fn decomposition_reads_the_base_letter() {
         for (c, b) in [
@@ -2507,7 +2783,9 @@ mod tests {
             ('\u{E9}', 'e'),
             ('\u{212B}', 'A'),
             ('\u{212A}', 'K'),
-            ('\u{1E9B}', '\u{17F}'),
+            // Review pass 38: the long s with dot decomposes to the long s, which the
+            // compatibility fold reads as `s` (it was left `ſ`).
+            ('\u{1E9B}', 's'),
         ] {
             assert_eq!(normalized(&c.to_string()), b.to_string(), "{c:?}");
         }

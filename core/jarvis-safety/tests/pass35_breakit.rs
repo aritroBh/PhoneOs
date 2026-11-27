@@ -118,10 +118,12 @@ fn f3_send_m0ney_is_remotely_approvable() {
 /// Review pass 37 (F5): `İ` decomposes canonically to `I` and a combining dot, so
 /// `SUBMİT` and `SİGN OUT` now read as the words they draw (`SendMessage`,
 /// `AccountChange`); the other-language signal still carries `Unverified` beside it, so
-/// the question stays phone only (checked below).
+/// the question stays phone only (checked below). Review pass 38: the long s `ſ`
+/// compatibility-decomposes to `s`, so `ſend` reads `SendMessage` (it was `Unverified`);
+/// the other-language signal still carries `Unverified`: phone only, checked below.
 #[test]
 fn sound_unicode_tricks_on_risk_words_are_caught() {
-    for label in ["SUBMİT", "SİGN OUT"] {
+    for label in ["SUBMİT", "SİGN OUT", "ſend"] {
         match decide(&Policy::default(), label) {
             Decision::Confirm(c) => assert!(c.phone_only, "{label:?}: {c:?}"),
             other => panic!("{label:?}: {other:?}"),
@@ -139,7 +141,7 @@ fn sound_unicode_tricks_on_risk_words_are_caught() {
         ("Seпd", RiskCategory::SendMessage),
         ("Se\u{3164}nd", RiskCategory::SendMessage),
         ("Send\u{2063}", RiskCategory::SendMessage),
-        ("ſend", RiskCategory::Unverified),
+        ("ſend", RiskCategory::SendMessage),
         ("Conﬁrm", RiskCategory::Unverified),
         ("Tranѕfer", RiskCategory::Payment),
     ] {

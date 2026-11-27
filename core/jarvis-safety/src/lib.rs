@@ -42,6 +42,7 @@ mod app;
 mod approval;
 mod budget;
 mod classify;
+mod compat;
 mod confine;
 mod evaluate;
 mod flow;
@@ -131,6 +132,12 @@ pub mod reference {
     /// Review pass 37: `text` through the one normalisation both readings share.
     pub fn normalized(text: &str) -> String {
         crate::norm::normalized(text)
+    }
+
+    /// Review pass 38: whether `text` holds a character not known inside a word that reads
+    /// as Latin (`crate::norm::has_intruder`).
+    pub fn has_intruder(text: &str) -> bool {
+        crate::norm::has_intruder(text)
     }
 
     /// Review pass 37 (F8): the soft boundaries of `text`'s look-alike units.

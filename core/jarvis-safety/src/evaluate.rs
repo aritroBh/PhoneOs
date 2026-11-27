@@ -704,9 +704,18 @@ const REVEAL_SIZE_SLACK: f64 = 1.0;
 /// lattice ([`revealed_rows`]).
 const REVEAL_LATTICE_SLACK: f64 = 4.0;
 /// Mac run 161: at most this many crossed cells' rows are read for an action container
-/// ([`revealed_rows`]; each button checked reads them): the second reading is a weaker,
-/// added signal, so past it the remaining rows are left to the first.
+/// ([`revealed_rows`]; each button checked reads them). Review pass 38 (F6): past it, when
+/// a list holds a button the search would read, the search is exhausted and the path reads
+/// as crossing a revealed row both ways (fail closed: the sideways drag is refused,
+/// `RowActionsShowing`); it was left to the first reading, so 64 decoy cells before a revealed table row hid it. A real sideways drag
+/// crosses one row of a list or one row of a grid (at most 7 calendar days).
 const REVEAL_BANDS: usize = 64;
+/// Review pass 38 (F5): how far (in points) a loose button may reach past its cell's rows
+/// to read as that cell's revealed action. Measured (Mac run 170, P13h `UITableView`): the
+/// action buttons are 44 pt high inside 53-pt rows (`{366.5, 153.0}, {63.3, 44}` in the row
+/// `{0, 148.3}, {440, 53}`); a floating button an app adds to its table (56 pt over a 53-pt
+/// row, or spanning two rows) does not fit.
+const LOOSE_BUTTON_SLACK: f64 = 2.0;
 
 /// Mac run 161: whether the sideways path over `x0..=x1` × `y0..=y1` crosses the band of a
 /// list row whose swipe actions are showing, and which way that row was pulled: `(left,
@@ -747,9 +756,16 @@ const REVEAL_BANDS: usize = 64;
 ///    (Mac run 170, `UITableView`): a `Button` that is itself a direct child of the list
 ///    — the table lists its actions after all its cells, with no container, and the `Cell`
 ///    does not move (only its content inside it) — reads as a revealed action of the cell
-///    whose rows hold it (vertical overlap at least half the button's height) and whose
-///    x-range holds at least half of its width; its side is that cell's, the buttons of one
-///    cell are read together.
+///    whose rows hold its whole height (review pass 38, F5: within
+///    [`LOOSE_BUTTON_SLACK`]; it was half of it, so a floating button over a table at rest
+///    read as one) and whose x-range holds at least half of its width; its side is that
+///    cell's, the buttons of one cell are read together. The cell's shifted content (the
+///    P13h captures keep a child of the revealed cell offset beyond it) is not used: the
+///    leading captures do not show it on the row that holds the button.
+///
+/// Review pass 38 (F6): a path crossing more than [`REVEAL_BANDS`] cells of lists that hold
+/// a candidate action button (one the second reading would search for) reads as crossing a
+/// revealed row both ways (the search is exhausted: fail closed).
 ///
 /// A band is the row's rows across its whole list's width (a drag over the buttons' side
 /// crosses it, not only one over the shifted cell). Linear in the drawn nodes, plus at most
@@ -896,14 +912,23 @@ fn revealed_rows(
         {
             continue;
         }
+        // Review pass 38 (F6): a candidate action and more crossed cells than the search
+        // reads: the search is exhausted, fail closed (both ways).
+        if bands.len() > REVEAL_BANDS {
+            return (true, true);
+        }
         // Mac run 170 (UITableView): a loose button, itself the list's direct child, is a
-        // revealed action of the cell whose rows and width hold it.
+        // revealed action of the cell whose rows and width hold it. Review pass 38 (F5):
+        // its whole height lies inside that one cell's rows (within LOOSE_BUTTON_SLACK): a
+        // floating button over the list (taller than a row, or across two) is none.
         if c == n.node {
             let b = n.frame;
             let holder = bands.iter().take(REVEAL_BANDS).position(|&(s2, g, _)| {
-                let v = b.max_y().min(g.max_y()) - b.y.max(g.y);
                 let h = b.max_x().min(g.max_x()) - b.x.max(g.x);
-                s2 == s && v >= 0.5 * b.height && h >= 0.5 * b.width
+                s2 == s
+                    && b.y >= g.y - LOOSE_BUTTON_SLACK
+                    && b.max_y() <= g.max_y() + LOOSE_BUTTON_SLACK
+                    && h >= 0.5 * b.width
             });
             let Some((k, &(_, g, _))) = holder.and_then(|k| bands.get(k).map(|x| (k, x))) else {
                 continue;
