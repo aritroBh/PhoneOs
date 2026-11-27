@@ -267,6 +267,7 @@ fi
 # never seen to clear) must fail with its diagnostics in minutes, not eat the job timeout.
 group "xcodebuild test-without-building"
 test_rc=0
+: > "$qa/.test-start"
 run_xcodebuild "$qa/xcodebuild-test.log" test-without-building "${common[@]}" \
   -resultBundlePath "$result" \
   -parallel-testing-enabled NO \
@@ -280,6 +281,28 @@ log "test-without-building exit code: $test_rc"
 # ---------------------------------------------------------------- 5. export (always)
 # Best-effort from here on: a failed export must not hide the test result.
 xcrun simctl io "$udid" screenshot "$qa/final-screen.png" >/dev/null 2>&1 || true
+
+# After a failed run, keep what says why a process died: crash reports written since the tests
+# began and the errors and faults the app, the test runner and the test daemon logged. (A
+# run ended with "Test crashed with signal term" and nothing in the artifact said which
+# process went first or why.) Text only, best effort, bounded in time and size.
+if [ "$test_rc" -ne 0 ]; then
+  group "diagnostics after a failed run"
+  mkdir -p "$qa/diagnostics"
+  find "$HOME/Library/Logs/DiagnosticReports" -type f \( -name "*.ips" -o -name "*.crash" \) \
+    -newer "$qa/.test-start" -exec cp {} "$qa/diagnostics/" \; 2>/dev/null || true
+  ls -1 "$qa/diagnostics" 2>/dev/null | sed 's/^/sim-qa: crash report: /' >&2 || true
+  ( xcrun simctl spawn "$udid" log show --last 100m --style compact \
+      --predicate '(process == "Jarvis" OR process == "JarvisUITests-Runner" OR process == "testmanagerd") AND (messageType == error OR messageType == fault)' \
+      2>/dev/null | tail -n 20000 > "$qa/diagnostics/simulator-errors.txt" ) &
+  log_pid=$!
+  ( sleep 180; pkill -P "$log_pid" 2>/dev/null; kill "$log_pid" 2>/dev/null ) >/dev/null 2>&1 &
+  watch_pid=$!
+  wait "$log_pid" 2>/dev/null || true
+  pkill -P "$watch_pid" 2>/dev/null || true
+  kill "$watch_pid" 2>/dev/null || true
+  endgroup
+fi
 
 if [ -d "$result" ]; then
   group "export attachments and test results"
