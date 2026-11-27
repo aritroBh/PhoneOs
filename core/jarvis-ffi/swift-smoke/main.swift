@@ -1188,6 +1188,31 @@ do {
           late.contains(.stopTask) && afterLate.phase == .idle, "\(late) \(afterLate)")
     let spec = TaskSpec(id: "v", text: "open Settings", voice: true)
     check("voice: the task spec carries the voice origin", spec.voice && !spec.remote)
+    // The scene: covered (inactive) keeps the wake word but starts nothing and says
+    // nothing; the stop words still stop a task; active again, a request starts.
+    let scened = JarvisVoice(settings: VoiceSettings(wakeWord: true, speakAnswers: .never, confirmPushToTalk: true))
+    _ = try scened.step(nowMs: 10, event: .tick)
+    _ = try scened.step(nowMs: 20, event: .sceneChanged(scene: .inactive))
+    let covered = try scened.step(nowMs: 30, event: .finalTranscript(text: "Hey Jarvis, open Settings"))
+    let coveredStatus = try scened.status()
+    check("voice: while covered the wake word listens and a hands-free request does nothing",
+          covered.isEmpty && coveredStatus.wakeArmed && coveredStatus.phase == .idle, "\(covered) \(coveredStatus)")
+    _ = try scened.step(nowMs: 40, event: .task(event: .started))
+    let coveredStop = try scened.step(nowMs: 50, event: .finalTranscript(text: "Jarvis, stop"))
+    check("voice: while covered the stop words still stop", coveredStop == [.stopTask], "\(coveredStop)")
+    // "Stopped." is said, and ends.
+    for effect in try scened.step(nowMs: 60, event: .task(event: .stopped)) {
+        if case .speak(let utteranceId, _, _) = effect {
+            _ = try scened.step(nowMs: 70, event: .speechFinished(utteranceId: utteranceId))
+        }
+    }
+    _ = try scened.step(nowMs: 9_000, event: .sceneChanged(scene: .active))
+    let again = try scened.step(nowMs: 9_100, event: .finalTranscript(text: "Hey Jarvis, open Settings"))
+    let startedAgain = again.contains { if case .startTask(text: "open Settings", origin: .voice, _) = $0 { true } else { false } }
+    check("voice: active again, a hands-free request starts", startedAgain, "\(again)")
+    // Starting: barge-in listens; the background stops it.
+    let background = try scened.step(nowMs: 9_200, event: .sceneChanged(scene: .background))
+    check("voice: the background stops the recogniser", background.contains(.stopRecognizer), "\(background)")
     voice.debugPanicNextStep()
     do {
         _ = try voice.step(nowMs: 9_200, event: .tick)

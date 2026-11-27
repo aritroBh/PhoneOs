@@ -19,8 +19,10 @@ pub const WAKE_PHRASES: &[&[&str]] = &[
     &["jarvis"],
 ];
 
-/// The stop words, as words: the whole request (after the wake phrase is stripped) must be
-/// one of them. "nevermind" is how recognisers often write "never mind".
+/// The stop words, as words. Outside a stop context the whole request (after the wake
+/// phrase is stripped) must be one of them ([`Utterance::is_stop`]); in a stop context the
+/// session reads them with [`wake_then_stop`] and [`only_stop_words`]. "nevermind" is how
+/// recognisers often write "never mind".
 pub const STOP_PHRASES: &[&[&str]] = &[
     &["stop"],
     &["cancel"],
@@ -74,6 +76,60 @@ impl Utterance {
     pub fn request_is_empty(&self) -> bool {
         self.request_words.is_empty()
     }
+}
+
+/// The number of words of the longest phrase of `phrases` that `words` starts with (0:
+/// none).
+fn phrase_len(words: &[String], phrases: &[&[&str]]) -> usize {
+    phrases
+        .iter()
+        .filter(|p| p.len() <= words.len() && words.iter().zip(p.iter()).all(|(w, p)| w == p))
+        .map(|p| p.len())
+        .max()
+        .unwrap_or(0)
+}
+
+/// The stop grammar's first form, read on words: a wake phrase immediately followed by a
+/// stop phrase anywhere in `words` ("…the weather tonight. Jarvis, stop", "Jarvis, stop
+/// the music"). Returns the index just past the first such stop phrase. Only where the
+/// session is in a stop context (a task starts or runs); in Idle the wake phrase counts at
+/// the start only.
+pub fn wake_then_stop(words: &[String]) -> Option<usize> {
+    (0..words.len()).find_map(|at| {
+        let rest = words.get(at..)?;
+        WAKE_PHRASES
+            .iter()
+            .filter(|p| p.len() <= rest.len() && rest.iter().zip(p.iter()).all(|(w, p)| w == p))
+            .find_map(|p| {
+                let after = at + p.len();
+                match phrase_len(words.get(after..)?, STOP_PHRASES) {
+                    0 => None,
+                    n => Some(after + n),
+                }
+            })
+    })
+}
+
+/// The stop grammar's second form, read on words: `words` is made only of stop phrases and
+/// wake phrases, in any order and number, with at least one stop phrase ("Stop, stop!",
+/// "Stop, Jarvis!", "Cancel, cancel"). Acts only where a bare stop does.
+pub fn only_stop_words(words: &[String]) -> bool {
+    let mut at = 0;
+    let mut stops = 0usize;
+    while at < words.len() {
+        let rest = words.get(at..).unwrap_or(&[]);
+        let stop = phrase_len(rest, STOP_PHRASES);
+        let wake = phrase_len(rest, WAKE_PHRASES);
+        match (stop, wake) {
+            (0, 0) => return false,
+            (s, w) if s >= w => {
+                stops += 1;
+                at += s;
+            }
+            (_, w) => at += w,
+        }
+    }
+    stops > 0
 }
 
 /// One word and where it is in the text (byte offsets).

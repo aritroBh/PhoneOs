@@ -67,11 +67,22 @@ pub enum VoiceEvent {
     RequestTask { request: u64, event: VoiceTaskEvent },
     LockChanged { locked: bool },
     ForegroundChanged { active: bool },
+    SceneChanged { scene: VoiceScene },
     AudioInterrupted { began: bool, should_resume: bool },
     RouteChanged,
     SettingsChanged { settings: VoiceSettings },
     TranscriptConfirmed { text: String },
     TranscriptDiscarded,
+}
+
+/// Where Jarvis is on the screen (`jarvis_voice::AppScene`): the shell's scene phase.
+/// `inactive` is covered (an alert, Control Centre, the App Switcher): stop words work, a
+/// hands-free request starts nothing and gets no reply, no answer is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum VoiceScene {
+    Active,
+    Inactive,
+    Background,
 }
 
 /// The cue played.
@@ -247,6 +258,13 @@ impl From<VoiceEvent> for v::VoiceEvent {
             },
             VoiceEvent::LockChanged { locked } => v::VoiceEvent::LockChanged { locked },
             VoiceEvent::ForegroundChanged { active } => v::VoiceEvent::ForegroundChanged { active },
+            VoiceEvent::SceneChanged { scene } => v::VoiceEvent::SceneChanged {
+                scene: match scene {
+                    VoiceScene::Active => v::AppScene::Active,
+                    VoiceScene::Inactive => v::AppScene::Inactive,
+                    VoiceScene::Background => v::AppScene::Background,
+                },
+            },
             VoiceEvent::AudioInterrupted {
                 began,
                 should_resume,

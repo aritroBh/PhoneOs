@@ -50,6 +50,10 @@ public struct LiveRun: Sendable, Equatable {
     public var task: String = ""
     /// The skill the run uses ("Using skill: …"), `nil` for a plain task.
     public var skillName: String?
+    /// The task was started by voice without a touch (heard by the microphone, so not the
+    /// owner's words): the run view says so wherever it offers "Run again" (which starts the
+    /// same words as the owner's own, on that touch).
+    public var heardByVoice: Bool = false
     public var status: Status = .standingBy
     /// The core's step counter.
     public var stepNumber: Int = 0
@@ -77,10 +81,16 @@ public struct LiveRun: Sendable, Equatable {
     private var modelChoseSinceLastAct = false
     private var lastReplyAction: String?
 
-    public init(task: String = "", maxSteps: Int = 0, skillName: String? = nil) {
+    public init(task: String = "", maxSteps: Int = 0, skillName: String? = nil, heardByVoice: Bool = false) {
         self.task = task
         self.maxSteps = maxSteps
         self.skillName = skillName
+        self.heardByVoice = heardByVoice
+    }
+
+    /// The mark shown beside the task and "Run again" for a voice-started run.
+    public var voiceMark: String? {
+        heardByVoice ? "Heard by voice. Run again starts these words as yours." : nil
     }
 
     public var isRunning: Bool {
@@ -130,7 +140,7 @@ public struct LiveRun: Sendable, Equatable {
         case .started(let spec):
             let budget = maxSteps
             let skill = skillName
-            self = LiveRun(task: spec.text, maxSteps: budget, skillName: skill)
+            self = LiveRun(task: spec.text, maxSteps: budget, skillName: skill, heardByVoice: spec.voice)
             status = .driving
         case .effect(let effect, _):
             switch effect {

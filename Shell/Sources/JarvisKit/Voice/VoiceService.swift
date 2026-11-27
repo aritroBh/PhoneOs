@@ -77,10 +77,22 @@ public final class VoiceService {
 
     private var inbox: [VoiceEvent] = []
     private var working = false
+    /// The tasks reading the ports' streams. Made on the first `start()` and kept for the
+    /// service's life: every port hands out one stream for its lifetime, and cancelling a
+    /// task that iterates an `AsyncStream` finishes that stream for good, so a consumer
+    /// cancelled by `stop()` could never be made again. While stopped, what they read is
+    /// dropped (`send` steps nothing), and the ids of recognitions and armings are never
+    /// reused, so an old core's results are ignored after a restart.
     private var consumers: [Task<Void, Never>] = []
     private var ticker: Task<Void, Never>?
     private var observer: UUID?
     private var running = false
+    /// `start()` is waiting for the previous `stop()`'s cleanup.
+    private var starting = false
+    /// `stop()`'s cleanup (stop the ports, stop speaking, deactivate the audio session):
+    /// the next `start()` awaits it before anything is armed, so the deactivation cannot
+    /// land after the new core activated the session.
+    private var cleanup: Task<Void, Never>?
 
     private var recognitionId: UInt64 = 0
     private var recognizing = false
@@ -93,10 +105,10 @@ public final class VoiceService {
     /// id. Tokens are never reused in a service's lifetime, unlike request ids across cores.
     private var tokens: [UInt64: (generation: UInt64, request: UInt64)] = [:]
     private var nextToken: UInt64 = 1
-    /// The phone's lock and Jarvis's place in front, as last reported (kept while stopped,
-    /// told to the core on every `start()`).
+    /// The phone's lock and Jarvis's scene, as last reported (kept while stopped, told to
+    /// the core on every `start()`).
     private var locked = false
-    private var inFront = true
+    private var scene: VoiceScene = .active
 
     /// `tickInterval` nil: no timer (tests call `tick()`).
     public init(ports: VoicePorts, center: TaskCenter, settings: VoiceSettings? = nil,
@@ -135,17 +147,29 @@ public final class VoiceService {
     /// available, and hands the core the owner's settings (arming the wake word when it is
     /// on).
     public func start() async {
-        guard !running else { return }
+        guard !running, !starting else { return }
+        if let cleanup {
+            // The previous `stop()`'s port calls finish first (M4). A `stop()` meanwhile
+            // cancels this start (`starting` is cleared).
+            starting = true
+            let generation = self.generation
+            await cleanup.value
+            guard starting, generation == self.generation else { return }
+            starting = false
+            self.cleanup = nil
+        }
         running = true
-        consume(ports.recognizer.events()) { $0.recognized($1) }
-        consume(ports.wakeWord.events()) { $0.wake($1) }
-        consume(ports.synthesizer.events()) { service, id in service.send(.speechFinished(utteranceId: id)) }
-        consume(ports.audio.events()) { $0.audio($1) }
+        if consumers.isEmpty {
+            consume(ports.recognizer.events()) { $0.recognized($1) }
+            consume(ports.wakeWord.events()) { $0.wake($1) }
+            consume(ports.synthesizer.events()) { service, id in service.send(.speechFinished(utteranceId: id)) }
+            consume(ports.audio.events()) { $0.audio($1) }
+        }
         observer = center.observe { [weak self] event in self?.taskEvent(event) }
-        // The core starts unlocked and in front: tell it what the app reported (before
+        // The core starts unlocked and active: tell it what the app reported (before
         // anything can be armed).
         send(.lockChanged(locked: locked))
-        send(.foregroundChanged(active: inFront))
+        send(.sceneChanged(scene: scene))
         if center.session != nil || center.workflow != nil {
             // A task that runs already is one started elsewhere (this core issued no
             // request yet).
@@ -172,14 +196,19 @@ public final class VoiceService {
     /// word again; a task still running then is "started elsewhere" to it (its sessions'
     /// tokens belong to the old core and are reported without a request id).
     public func stop() {
+        if starting {
+            // A `start()` waiting for the previous cleanup: it does not go on.
+            starting = false
+            generation &+= 1
+            return
+        }
         guard running else { return }
         running = false
         generation &+= 1
         inbox.removeAll()
         ticker?.cancel()
         ticker = nil
-        for consumer in consumers { consumer.cancel() }
-        consumers = []
+        // The consumers are kept (see `consumers`).
         if let observer { center.stopObserving(observer) }
         observer = nil
         if !poisoned {
@@ -193,7 +222,10 @@ public final class VoiceService {
         let (recognition, arming, wasRecognizing, wasArmed) = (recognitionId, armId, recognizing, armed)
         recognizing = false
         armed = false
-        Task {
+        // Tracked, after any earlier cleanup: `start()` awaits it.
+        let previous = cleanup
+        cleanup = Task {
+            await previous?.value
             if wasRecognizing { await ports.recognizer.stop(id: recognition) }
             if wasArmed { await ports.wakeWord.disarm(id: arming) }
             await ports.synthesizer.stopSpeaking()
@@ -201,6 +233,11 @@ public final class VoiceService {
         }
         transcript = nil
         changed()
+    }
+
+    /// Waits until `stop()`'s port calls are done (tests).
+    public func waitForCleanup() async {
+        await cleanup?.value
     }
 
     private func consume<Element: Sendable>(_ stream: AsyncStream<Element>,
@@ -245,12 +282,24 @@ public final class VoiceService {
         send(.lockChanged(locked: locked))
     }
 
-    /// Jarvis came to the front or left it (the app: in the background or not). Kept while
-    /// the service is stopped, like the lock.
+    /// Jarvis came to the front or left it: `true` is `.active`, `false` `.background`.
+    /// Kept while the service is stopped, like the lock.
     public func setForeground(_ active: Bool) {
-        inFront = active
-        send(.foregroundChanged(active: active))
+        setScene(active ? .active : .background)
     }
+
+    /// Jarvis's scene, from the app's scene phase: `.active`; `.inactive` while covered (a
+    /// permission alert, Control Centre, Notification Centre, the App Switcher: the
+    /// microphone stays on and the stop words work, but a hands-free request starts nothing
+    /// and gets no reply, and no answer is read); `.background`. Kept while the service is
+    /// stopped, like the lock.
+    public func setScene(_ scene: VoiceScene) {
+        self.scene = scene
+        send(.sceneChanged(scene: scene))
+    }
+
+    /// The scene last reported.
+    public var currentScene: VoiceScene { scene }
 
     /// Time passed (the timer calls it; tests call it after moving their clock).
     public func tick() {

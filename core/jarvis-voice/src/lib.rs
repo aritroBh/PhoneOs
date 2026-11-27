@@ -17,10 +17,16 @@
 //! 2. A spoken word never approves anything. While a question is pending, voice can only
 //!    stop the task or is ignored; there is no spoken "yes".
 //! 3. "Stop", "cancel", "never mind", "abort" always work after the wake phrase, and
-//!    without it while Jarvis speaks or a voice exchange is open (barge-in): from a final
-//!    transcript, or from a partial that has not changed for [`ENDPOINT_SILENCE_MS`]. A
-//!    recogniser that fails during the task is started again after [`WAKE_RETRY_MS`], as
-//!    often as it fails.
+//!    without it while Jarvis speaks or a voice exchange is open (barge-in). In a stop
+//!    context (the voice task starts or runs, or another task runs and the wake word's
+//!    stream listens) they are read on the transcript's words not read yet: a wake phrase
+//!    right before a stop phrase anywhere stops ("…the weather. Jarvis, stop", "Jarvis,
+//!    stop the music"), at once when other words surround it; a transcript made only of
+//!    stop and wake phrases ("Stop, stop!", "Stop, Jarvis!") stops where a bare stop may,
+//!    on a final or once its words have not changed for [`ENDPOINT_SILENCE_MS`]. A bare
+//!    stop inside other speech never stops. A stop acts once; words heard before the stop
+//!    context began are not read as its stop. A recogniser that fails during the task is
+//!    started again after [`WAKE_RETRY_MS`], as often as it fails.
 //! 4. Jarvis does not hear itself: while it speaks and for [`SPEAKING_TAIL_MS`] after,
 //!    transcripts are ignored except the stop words, and a transcript contained in what it
 //!    is saying or just said is ignored. While it reads a (model-written) answer and for
@@ -28,7 +34,9 @@
 //!    exchange opens. No line Jarvis says contains the wake phrase.
 //! 5. What is spoken is an output to the room: fixed phrases ([`phrases`]); the task's
 //!    answer only when [`SpeakAnswers::WhenUnlocked`] allows it, the phone is unlocked and
-//!    Jarvis is in front, cleaned and capped ([`answer_line`]).
+//!    Jarvis is active ([`AppScene::Active`]), cleaned and capped ([`answer_line`]).
+//!    While Jarvis is covered ([`AppScene::Inactive`]) a hands-free request starts nothing
+//!    and gets no reply; the stop words still work.
 //! 6. Nothing starts from a partial transcript: only a final one, the endpoint timeout over
 //!    the last partial (marked `endpointed`), or a transcript confirmed by touch. A
 //!    transcript over [`MAX_TRANSCRIPT_CHARS`], or over [`MAX_PARSE_CHARS`] once its
@@ -62,8 +70,8 @@ mod session;
 mod types;
 
 pub use parse::{
-    contains_wake_word, parse_utterance, Utterance, MAX_PARSE_CHARS, MAX_TRANSCRIPT_CHARS,
-    STOP_PHRASES, WAKE_PHRASES,
+    contains_wake_word, only_stop_words, parse_utterance, wake_then_stop, Utterance,
+    MAX_PARSE_CHARS, MAX_TRANSCRIPT_CHARS, STOP_PHRASES, WAKE_PHRASES,
 };
 pub use phrases::{answer_line, clean_spoken, MAX_SPOKEN_ANSWER_CHARS};
 pub use session::{
@@ -71,6 +79,6 @@ pub use session::{
     MAX_SPEAKING_MS, MAX_UTTERANCE_MS, SPEAKING_TAIL_MS, START_TIMEOUT_MS, WAKE_RETRY_MS,
 };
 pub use types::{
-    CueKind, SpeakAnswers, TaskEvent, UtteranceKind, VoiceEffect, VoiceEvent, VoicePhase,
+    AppScene, CueKind, SpeakAnswers, TaskEvent, UtteranceKind, VoiceEffect, VoiceEvent, VoicePhase,
     VoiceSettings, VoiceStatus,
 };

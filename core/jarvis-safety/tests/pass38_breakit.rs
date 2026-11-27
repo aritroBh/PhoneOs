@@ -846,7 +846,7 @@ fn sound_a_twenty_thousand_element_screen_costs_what_an_ordinary_one_does() {
         app_screen(els)
     };
     let time = |s: &CompactScreen| {
-        (0..2)
+        (0..1)
             .map(|_| {
                 let t = std::time::Instant::now();
                 let _ = evaluate(
@@ -869,8 +869,16 @@ fn sound_a_twenty_thousand_element_screen_costs_what_an_ordinary_one_does() {
             })
             .fold(f64::INFINITY, f64::min)
     };
-    let ordinary = time(&build(false));
-    let other = time(&build(true));
+    // Changed when the second voice fixes landed: the two screens are timed in turn, four
+    // rounds, and the best of each is compared (it was two runs of one screen, then two of
+    // the other). Beside the whole workspace's tests a burst of load during one screen's
+    // two runs failed the comparison once (5.51 s against 0.91 s). The bound is unchanged.
+    let (plain, mixed) = (build(false), build(true));
+    let (mut ordinary, mut other) = (f64::INFINITY, f64::INFINITY);
+    for _ in 0..4 {
+        ordinary = ordinary.min(time(&plain));
+        other = other.min(time(&mixed));
+    }
     println!("20,000 elements: ordinary {ordinary:.3} s, other scripts {other:.3} s");
     assert!(other <= 6.0 * ordinary, "{other} vs {ordinary}");
 }

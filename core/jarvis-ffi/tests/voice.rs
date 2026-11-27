@@ -8,7 +8,7 @@
 
 use jarvis_core_ffi::{
     default_voice_settings, voice_origin_to_proto, voice_timings, JarvisError, JarvisVoice,
-    TaskSpec, VoiceEffect, VoiceEvent, VoicePhase, VoiceSettings, VoiceSpeakAnswers,
+    TaskSpec, VoiceEffect, VoiceEvent, VoicePhase, VoiceScene, VoiceSettings, VoiceSpeakAnswers,
     VoiceTaskEvent, VoiceTaskOrigin,
 };
 use jarvis_proto as p;
@@ -192,4 +192,37 @@ fn the_request_id_crosses_the_ffi_both_ways() {
         .unwrap();
     assert!(late.contains(&VoiceEffect::StopTask), "{late:?}");
     assert_eq!(voice.status().unwrap().phase, VoicePhase::Idle);
+}
+
+/// The scene crosses the FFI: covered (inactive) keeps the wake word armed but a hands-free
+/// request starts nothing and says nothing; active again, it starts.
+#[test]
+fn the_scene_crosses_the_ffi() {
+    let voice = JarvisVoice::new(wake_on());
+    voice.step(10, VoiceEvent::Tick).unwrap();
+    let inactive = VoiceEvent::SceneChanged {
+        scene: VoiceScene::Inactive,
+    };
+    voice.step(15, inactive).unwrap();
+    assert!(voice.status().unwrap().wake_armed);
+    let heard = || VoiceEvent::FinalTranscript {
+        text: "Hey Jarvis, open Settings".into(),
+    };
+    let out = voice.step(20, heard()).unwrap();
+    assert!(out.is_empty(), "{out:?}");
+    let active = VoiceEvent::SceneChanged {
+        scene: VoiceScene::Active,
+    };
+    voice.step(25, active).unwrap();
+    let out = voice.step(30, heard()).unwrap();
+    assert!(
+        out.iter()
+            .any(|e| matches!(e, VoiceEffect::StartTask { .. })),
+        "{out:?}"
+    );
+    let background = VoiceEvent::SceneChanged {
+        scene: VoiceScene::Background,
+    };
+    let out = voice.step(35, background).unwrap();
+    assert!(out.contains(&VoiceEffect::StopRecognizer), "{out:?}");
 }

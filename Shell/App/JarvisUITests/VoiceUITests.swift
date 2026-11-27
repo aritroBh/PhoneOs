@@ -35,4 +35,32 @@ final class VoiceUITests: QATestCase {
         require(status, "the run result after declining", timeout: 30, in: app)
         XCTAssertNotEqual(status.label, "Done")
     }
+
+    /// M1: a long push-to-talk transcript (`-jarvis-voice-scripted-long`) is shown whole on
+    /// the confirm row: the field holds the full text and grew past one line, so its end is
+    /// on screen before Start.
+    @MainActor
+    func testALongPushToTalkTranscriptIsShownWhole() {
+        let app = launchPlayground(extraArguments: ["-jarvis-voice-scripted-long"])
+
+        let mic = app.buttons["ask.mic"]
+        require(mic, "the push-to-talk button", timeout: 30, in: app)
+        mic.tap()
+
+        // A vertical text field is a text view to XCUITest; look it up by identifier only.
+        let field = app.descendants(matching: .any)["voice.transcript.text"]
+        require(field, "the confirm row's text", timeout: 30, in: app)
+        let full = "Open Notes, make a new note called shopping list, "
+            + "and write milk, eggs, bread, two kinds of cheese, coffee beans, olive oil, tomatoes, "
+            + "basil, rice and the batteries for the kitchen clock, then pin it to the top so I see "
+            + "it first thing tomorrow morning"
+        XCTAssertEqual(field.value as? String, full, "the row does not hold the whole transcript")
+        // One line of this field is under 50 points tall (16 pt text, 10 pt padding each
+        // side, 44 pt minimum); the long transcript needs several.
+        XCTAssertGreaterThan(field.frame.height, 90, "the field did not grow past one line: \(field.frame)")
+        let window = app.windows.firstMatch.frame
+        XCTAssertLessThanOrEqual(field.frame.maxY, window.maxY, "the field's end is off screen: \(field.frame)")
+        XCTAssertTrue(app.staticTexts["voice.transcript.count"].exists, "the character count is not shown")
+        XCTAssertTrue(app.buttons["voice.transcript.start"].exists, "Start is not offered")
+    }
 }

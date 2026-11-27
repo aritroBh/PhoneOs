@@ -70,9 +70,10 @@ final class FakeWakeWord: WakeWordDetecting {
         return disarms.withLock { $0.contains(last) } ? nil : last
     }
 
-    /// The room says `text` (one utterance) while armed.
-    func hear(_ text: String) {
-        sink.yield(.final(id: arms.withLock { $0.last ?? 0 }, text: text))
+    /// The room says `text` (one utterance) while armed (as arming `id`, the latest by
+    /// default).
+    func hear(_ text: String, id: UInt64? = nil) {
+        sink.yield(.final(id: id ?? arms.withLock { $0.last ?? 0 }, text: text))
     }
 }
 
@@ -123,6 +124,10 @@ final class FakeAudioSession: AudioSessionControlling {
     let activations = Mutex(0)
     let deactivations = Mutex(0)
     let failActivation = Mutex(false)
+    /// "activate" / "deactivate", in the order they completed.
+    let order = Mutex<[String]>([])
+    /// A deactivation takes this long (a slow cleanup).
+    let deactivateDelay = Mutex<Duration?>(nil)
 
     init() {
         (stream, sink) = AsyncStream.makeStream(of: AudioSessionEvent.self)
@@ -133,9 +138,14 @@ final class FakeAudioSession: AudioSessionControlling {
     func activate() async throws {
         if failActivation.withLock({ $0 }) { throw InjectedError(message: "the audio session is busy") }
         activations.withLock { $0 += 1 }
+        order.withLock { $0.append("activate") }
     }
 
-    func deactivate() async { deactivations.withLock { $0 += 1 } }
+    func deactivate() async {
+        if let delay = deactivateDelay.withLock({ $0 }) { try? await Task.sleep(for: delay) }
+        deactivations.withLock { $0 += 1 }
+        order.withLock { $0.append("deactivate") }
+    }
 
     func interrupt() { sink.yield(.interruptionBegan) }
     func endInterruption(shouldResume: Bool) { sink.yield(.interruptionEnded(shouldResume: shouldResume)) }

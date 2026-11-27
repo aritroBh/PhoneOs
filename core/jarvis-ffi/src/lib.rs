@@ -108,7 +108,7 @@ pub use viewer::{
 };
 pub use voice::{
     default_voice_settings, voice_origin_to_proto, voice_timings, JarvisVoice, VoiceCue,
-    VoiceEffect, VoiceEvent, VoicePhase, VoiceSettings, VoiceSpeakAnswers, VoiceStatus,
+    VoiceEffect, VoiceEvent, VoicePhase, VoiceScene, VoiceSettings, VoiceSpeakAnswers, VoiceStatus,
     VoiceTaskEvent, VoiceTaskOrigin, VoiceTimings, VoiceUtteranceKind,
 };
 pub use workflows::{

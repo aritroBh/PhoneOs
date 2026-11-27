@@ -15,6 +15,12 @@ public enum ScriptedVoice {
     /// The UI test's script: "Hey Jarvis, open Settings", then "yes" during the task.
     public static let uiTestWakeLines = ["Hey Jarvis, open Settings"]
     public static let uiTestRecognizerLines = ["yes"]
+    /// The UI test of the confirm row (`-jarvis-voice-scripted-long`): push to talk hears
+    /// this long request (under the core's request cap), whose end must stay visible.
+    public static let uiTestLongTranscript = "Open Notes, make a new note called shopping list, "
+        + "and write milk, eggs, bread, two kinds of cheese, coffee beans, olive oil, tomatoes, "
+        + "basil, rice and the batteries for the kitchen clock, then pin it to the top so I see "
+        + "it first thing tomorrow morning"
 
     public static func ports(wakeLines: [String], recognizerLines: [String],
                              delay: Duration = .milliseconds(500)) -> VoicePorts {

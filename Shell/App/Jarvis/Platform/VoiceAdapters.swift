@@ -49,23 +49,64 @@ enum MicrophoneError: LocalizedError {
 
 /// The one microphone tap. The recogniser and the wake word never run at once (the core
 /// never asks for both), so one engine serves both; whoever starts last owns it.
+///
+/// M3, no deadlock with the audio thread: `removeTap` and `engine.stop()` wait for a tap
+/// callback in flight to return, so the tap callback must never wait for a lock that a
+/// thread calling them holds. `start` and `stop` therefore hold `lock` only to swap
+/// `request` (never across `installTap`, `removeTap`, `engine.start()` or `engine.stop()`),
+/// and the callback takes it with `lock.try()`: when another thread holds it (a swap, a few
+/// instructions), that one buffer is dropped instead of waiting. A dropped buffer during a
+/// start or stop loses a few milliseconds of audio at the edge of a recognition; a
+/// deadlock would freeze the microphone and the thread that stops it. `engineLock`
+/// serializes the engine calls themselves (never taken by the callback).
+///
+/// M2, no silent dead microphone: when the engine's configuration changes (a route or
+/// format change, another app taking the input) the engine stops and the tap feeds
+/// nothing. `AVAudioEngineConfigurationChange` and an engine found not running when a tap
+/// is expected end the current recognition with a failure (`onFailure`), which the core
+/// retries.
 final class Microphone: @unchecked Sendable {
     private let engine = AVAudioEngine()
+    /// Guards `request` and `onFailure` only. Taken by the tap callback with `try()`.
     private let lock = NSLock()
+    /// Serializes the engine calls of `start` and `stop`. Never taken by the tap callback.
+    private let engineLock = NSLock()
     private var request: SFSpeechAudioBufferRecognitionRequest?
+    /// Called (once) when the engine stops under the current request.
+    private var onFailure: (@Sendable (String) -> Void)?
+    private var observer: NSObjectProtocol?
+    /// While a request is fed: checks every second that the engine still runs (M2).
+    private var watchdog: DispatchSourceTimer?
 
-    func start(feeding request: SFSpeechAudioBufferRecognitionRequest) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        self.request = request
+    init() {
+        observer = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+        ) { [weak self] _ in
+            self?.fail("The audio input changed.")
+        }
+    }
+
+    deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    /// Feeds `request` from the microphone; `onFailure` is called (once, from any thread) if
+    /// the engine stops while it is being fed.
+    func start(feeding request: SFSpeechAudioBufferRecognitionRequest,
+               onFailure: @escaping @Sendable (String) -> Void) throws {
+        engineLock.lock()
+        defer { engineLock.unlock() }
         let input = engine.inputNode
         // With no usable input (a simulator host without a microphone, a route that just
         // went away) the format has no rate or channels, and installing a tap with it
         // raises an Objective-C exception that ends the app. Fail the recognition instead.
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
-            self.request = nil
             throw MicrophoneError.noInput
+        }
+        lock.withLock {
+            self.request = request
+            self.onFailure = onFailure
         }
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self] buffer, _ in
@@ -73,25 +114,69 @@ final class Microphone: @unchecked Sendable {
         }
         if !engine.isRunning {
             engine.prepare()
-            try engine.start()
+            do {
+                try engine.start()
+            } catch {
+                lock.withLock {
+                    if self.request === request {
+                        self.request = nil
+                        self.onFailure = nil
+                    }
+                }
+                input.removeTap(onBus: 0)
+                throw error
+            }
+        }
+        if watchdog == nil {
+            let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+            timer.schedule(deadline: .now() + 1, repeating: 1)
+            timer.setEventHandler { [weak self] in self?.checkRunning() }
+            timer.resume()
+            watchdog = timer
         }
     }
 
     /// Stops feeding `request` (and the engine) if it is the one being fed.
     func stop(_ request: SFSpeechAudioBufferRecognitionRequest?) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard request == nil || request === self.request else { return }
-        self.request = nil
+        engineLock.lock()
+        defer { engineLock.unlock() }
+        let mine: Bool = lock.withLock {
+            guard request == nil || request === self.request else { return false }
+            self.request = nil
+            self.onFailure = nil
+            return true
+        }
+        guard mine else { return }
+        watchdog?.cancel()
+        watchdog = nil
+        // Outside `lock`: these wait for a tap callback in flight (see M3 above).
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
     }
 
+    /// The engine stopped under the current request: it ends with a failure.
+    private func fail(_ reason: String) {
+        let failure: (@Sendable (String) -> Void)? = lock.withLock {
+            guard self.request != nil else { return nil }
+            let failure = self.onFailure
+            self.onFailure = nil
+            return failure
+        }
+        failure?(reason)
+    }
+
     private func append(_ buffer: AVAudioPCMBuffer) {
-        lock.lock()
+        // Never waits (M3): busy means a start or stop is swapping the request.
+        guard lock.try() else { return }
         let request = self.request
         lock.unlock()
         request?.append(buffer)
+    }
+
+    /// A tap is expected (a recognition is being fed) but the engine is not running.
+    func checkRunning() {
+        let expected = lock.withLock { request != nil }
+        if expected && !engine.isRunning { fail("The microphone stopped.") }
     }
 }
 
@@ -135,10 +220,12 @@ final class Recognition: @unchecked Sendable {
             guard let self else { return }
             if let result, result.isFinal {
                 if self.end() { report(.final(result.bestTranscription.formattedString)) }
+                self.release()
             } else if let result {
                 if !self.isEnded { report(.partial(result.bestTranscription.formattedString)) }
             } else if let error {
                 if self.end() { report(.failed(error.localizedDescription)) }
+                self.release()
             }
         }
         lock.lock()
@@ -151,7 +238,13 @@ final class Recognition: @unchecked Sendable {
         self.task = task
         var failure: (any Error)?
         do {
-            try microphone.start(feeding: request)
+            // M2: the engine stopping under this recognition (a configuration change, or
+            // found not running) ends it with a failure the core retries.
+            try microphone.start(feeding: request) { [weak self] reason in
+                guard let self else { return }
+                if self.end() { report(.failed(reason)) }
+                self.cancelTask()
+            }
         } catch {
             failure = error
         }
@@ -179,11 +272,22 @@ final class Recognition: @unchecked Sendable {
         microphone.stop(request)
     }
 
+    /// Cancels the task and releases it and the recogniser (nothing more is wanted of them).
     private func cancelTask() {
         lock.lock()
         let task = self.task
+        self.task = nil
+        recognizer = nil
         lock.unlock()
         task?.cancel()
+    }
+
+    /// The task has ended by itself (final or failed): it and the recogniser are released.
+    private func release() {
+        lock.lock()
+        task = nil
+        recognizer = nil
+        lock.unlock()
     }
 
     private var isEnded: Bool {

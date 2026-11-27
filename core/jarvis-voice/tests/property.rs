@@ -19,6 +19,14 @@
 //!   `Started` arrives (whenever it arrives), never in "On it."; otherwise no task.
 //! - A `Started` without the core's id (none, or one it never issued) never makes the core
 //!   speak, start the recogniser for it, or take it for the voice task.
+//! - No `StartTask` and no answer read while Jarvis is not active (covered or in the
+//!   background).
+//! - In a stop context (the voice task starts or runs, or another task runs), a transcript
+//!   whose words hold a wake phrase right before a stop phrase ends in `StopTask` at once (a
+//!   final; a partial with other words around it), and a transcript with neither that nor
+//!   only stop and wake words (a bare stop inside other speech) never stops. Checked on
+//!   streams whose every transcript was heard in the stop context.
+//! - One stop acts once: after a stop, the same words again on that stream stop nothing.
 //!
 //! Task events travel as the shell sends them: most with the latest request's id (the task
 //! the shell started for it), others with none (a task started elsewhere) or a wrong id.
@@ -28,8 +36,9 @@ use std::collections::HashSet;
 
 use jarvis_voice::phrases::ON_IT;
 use jarvis_voice::{
-    contains_wake_word, SpeakAnswers, TaskEvent, UtteranceKind, VoiceEffect, VoiceEvent,
-    VoicePhase, VoiceSession, VoiceSettings, ECHO_WINDOW_MS, MAX_SPEAKING_MS, START_TIMEOUT_MS,
+    contains_wake_word, only_stop_words, parse_utterance, wake_then_stop, AppScene, SpeakAnswers,
+    TaskEvent, UtteranceKind, VoiceEffect, VoiceEvent, VoicePhase, VoiceSession, VoiceSettings,
+    ECHO_WINDOW_MS, MAX_SPEAKING_MS, START_TIMEOUT_MS,
 };
 
 struct Rng(u64);
@@ -79,6 +88,16 @@ const TEXTS: &[&str] = &[
     "\u{200B}hey\u{200B} jarvis\u{202E} open",
     "Hey Jarvís, abort",
     "🦄🦄🦄",
+    "and the weather tonight is mild. Jarvis, stop",
+    "Jarvis, stop the weather tonight is mild",
+    "Hey Jarvis stop the music",
+    "and then I told him to stop",
+    "stop the music",
+    "Stop, stop!",
+    "Stop, Jarvis!",
+    "Jarvis, stop. Jarvis, stop.",
+    "Cancel, cancel",
+    "the news at nine, hey jarvis never mind and more news",
 ];
 
 fn text(rng: &mut Rng) -> String {
@@ -186,8 +205,19 @@ fn event(rng: &mut Rng, spoken: &[u64], last_request: Option<u64>) -> (u64, Voic
         15 => VoiceEvent::LockChanged {
             locked: rng.below(2) == 0,
         },
-        16 => VoiceEvent::ForegroundChanged {
-            active: rng.below(3) > 0,
+        16 => match rng.below(4) {
+            0 => VoiceEvent::ForegroundChanged {
+                active: rng.below(3) > 0,
+            },
+            1 => VoiceEvent::SceneChanged {
+                scene: AppScene::Inactive,
+            },
+            2 => VoiceEvent::SceneChanged {
+                scene: AppScene::Background,
+            },
+            _ => VoiceEvent::SceneChanged {
+                scene: AppScene::Active,
+            },
         },
         17 => VoiceEvent::AudioInterrupted {
             began: rng.below(2) == 0,
@@ -219,6 +249,14 @@ struct Model {
     answer_window_until: u64,
     /// Requests a stop was acted on for while they were starting.
     stopped_while_starting: HashSet<u64>,
+    /// Jarvis is not active (covered or in the background).
+    not_active: bool,
+    /// The current listening stream heard a transcript outside a stop context.
+    stream_dirty: bool,
+    /// The words that made the current stream's latest stop, once one acted.
+    stream_stop_words: Option<Vec<String>>,
+    /// The current stream's latest partial words.
+    stream_partial: Vec<String>,
 }
 
 impl Model {
@@ -234,6 +272,10 @@ fn random_sequences_keep_every_safety_property() {
     let mut answers_read = 0usize;
     let mut stopped_starts = 0usize;
     let mut foreign_starts = 0usize;
+    let mut wake_stops = 0usize;
+    let mut bare_inside = 0usize;
+    let mut repeats = 0usize;
+    let mut not_active_heard = 0usize;
     for seq in 0..4_000 {
         let initial = settings(&mut rng);
         let mut session = VoiceSession::new(initial);
@@ -270,14 +312,98 @@ fn random_sequences_keep_every_safety_property() {
                 }
             }
             let ctx = format!("seq {seq} step {step}: {e:?}");
-            let before = session.status().phase;
+            let status = session.status();
+            let before = status.phase.clone();
             let out = session.step(now, e.clone());
+            // The stop grammar in a stop context, on a stream heard only in it.
+            let stop_context = matches!(
+                before,
+                VoicePhase::Starting | VoicePhase::TaskRunning { .. }
+            ) || (before == VoicePhase::Idle && status.other_task_running);
+            let mic_on = status.wake_armed || status.recognizing;
+            // Only a transcript that reaches a listening stream is read (and parsed).
+            let heard = match &e {
+                VoiceEvent::PartialTranscript { text } if mic_on => {
+                    Some((parse_utterance(text), false))
+                }
+                VoiceEvent::FinalTranscript { text } if mic_on => {
+                    Some((parse_utterance(text), true))
+                }
+                _ => None,
+            };
+            let stopped = out.contains(&VoiceEffect::StopTask);
+            if let Some((u, is_final)) = &heard {
+                if model.not_active {
+                    not_active_heard += 1;
+                }
+                if stop_context && !model.stream_dirty {
+                    let words = &u.words;
+                    let wake_stop = wake_then_stop(words).is_some();
+                    let only = only_stop_words(words);
+                    let repeated = model
+                        .stream_stop_words
+                        .as_ref()
+                        .is_some_and(|w| w.len() >= words.len() && w.starts_with(words));
+                    if repeated {
+                        repeats += 1;
+                        assert!(!stopped, "{ctx}: one stop acted twice: {out:?}");
+                    } else if model.stream_stop_words.is_none() && wake_stop && (*is_final || !only)
+                    {
+                        wake_stops += 1;
+                        assert!(stopped, "{ctx}: wake + stop did not stop: {out:?}");
+                    }
+                    if model.stream_stop_words.is_none() && !wake_stop && !only {
+                        bare_inside += 1;
+                        assert!(!stopped, "{ctx}: other speech stopped: {out:?}");
+                    }
+                }
+                if !stop_context {
+                    model.stream_dirty = true;
+                }
+            }
+            if stopped {
+                let words = match &heard {
+                    Some((u, _)) => u.words.clone(),
+                    None => model.stream_partial.clone(),
+                };
+                model.stream_stop_words = Some(words);
+            }
+            if let Some((u, false)) = &heard {
+                model.stream_partial = u.words.clone();
+            }
+            // A stop context that began or ended over a stream that heard something: what it
+            // heard is read for the next context (never read as its stop).
+            let after = session.status();
+            let stop_context_after = matches!(
+                after.phase,
+                VoicePhase::Starting | VoicePhase::TaskRunning { .. }
+            ) || (after.phase == VoicePhase::Idle
+                && after.other_task_running);
+            if stop_context_after != stop_context && !model.stream_partial.is_empty() {
+                model.stream_dirty = true;
+            }
+            // A new stream: a final or a failure ends one, a start or an arming begins one.
+            if matches!(
+                e,
+                VoiceEvent::FinalTranscript { .. } | VoiceEvent::RecognizerFailed { .. }
+            ) || out
+                .iter()
+                .any(|x| matches!(x, VoiceEffect::StartRecognizer | VoiceEffect::ArmWakeWord))
+            {
+                model.stream_dirty = false;
+                model.stream_stop_words = None;
+                model.stream_partial.clear();
+            }
             for effect in &out {
                 match effect {
                     VoiceEffect::StartTask {
                         origin, request, ..
                     } => {
                         starts += 1;
+                        assert!(
+                            !model.not_active,
+                            "{ctx}: StartTask while Jarvis is not active"
+                        );
                         let allowed = match &e {
                             VoiceEvent::FinalTranscript { .. } => *origin == TaskOrigin::Voice,
                             VoiceEvent::TranscriptConfirmed { .. } => *origin == TaskOrigin::Phone,
@@ -320,7 +446,7 @@ fn random_sequences_keep_every_safety_property() {
                             answers_read += 1;
                             assert_eq!(*kind, UtteranceKind::Answer, "{ctx}: {text:?}");
                             assert!(
-                                !model.locked && model.speak_answers,
+                                !model.locked && model.speak_answers && !model.not_active,
                                 "{ctx}: answer read aloud (locked {}, setting {})",
                                 model.locked,
                                 model.speak_answers
@@ -406,6 +532,8 @@ fn random_sequences_keep_every_safety_property() {
                 _ => (None, None),
             };
             match &e {
+                VoiceEvent::ForegroundChanged { active } => model.not_active = !*active,
+                VoiceEvent::SceneChanged { scene } => model.not_active = *scene != AppScene::Active,
                 VoiceEvent::LockChanged { locked } => model.locked = *locked,
                 VoiceEvent::SettingsChanged(s) => {
                     model.speak_answers = s.speak_answers == SpeakAnswers::WhenUnlocked;
@@ -445,6 +573,19 @@ fn random_sequences_keep_every_safety_property() {
     assert!(
         foreign_starts > 1_000,
         "only {foreign_starts} foreign starts"
+    );
+    assert!(
+        wake_stops > 100,
+        "only {wake_stops} wake + stop transcripts"
+    );
+    assert!(
+        bare_inside > 100,
+        "only {bare_inside} other-speech transcripts"
+    );
+    assert!(repeats > 20, "only {repeats} repeated stops");
+    assert!(
+        not_active_heard > 100,
+        "only {not_active_heard} transcripts while not active"
     );
 }
 

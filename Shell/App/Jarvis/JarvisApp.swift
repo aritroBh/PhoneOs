@@ -90,9 +90,9 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             model.sceneBecameActive(phase == .active)
         }
-        // Voice's "in front" (R4): the background only, from the first phase on.
+        // Voice's scene, from the first phase on: active, covered (inactive) or background.
         .onChange(of: scenePhase, initial: true) { _, phase in
-            model.voiceSceneChanged(inBackground: phase == .background)
+            model.voiceSceneChanged(phase)
         }
         .task {
             await model.refresh()

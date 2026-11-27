@@ -5218,22 +5218,27 @@ impl Session {
         } else {
             None
         };
+        // Voice break-it fixes: a task that is not the owner's words (heard by the
+        // microphone, asked by a paired device) teaches nothing: no learned flow (what it
+        // did would be replayed for the owner's own later task with the same words) and no
+        // result counted on a flow it replayed (failures retire the owner's flow, successes
+        // keep one alive and refresh its last use, which decides eviction).
+        let owner = self.task.origin.is_owner_words();
         match (&self.replayed_flow, self.replay_diverged) {
             (Some(id), false) if success => {
-                self.memory.flows.record_result(id, true, now);
+                if owner {
+                    self.memory.flows.record_result(id, true, now);
+                }
             }
             (Some(id), _) if failed => {
-                self.memory.flows.record_result(id, false, now);
+                if owner {
+                    self.memory.flows.record_result(id, false, now);
+                }
             }
             _ => {
                 // A lock that left a step's result unknown makes the recording unreliable
                 // (it may lack a step that did happen): learn nothing from this session.
-                // Voice break-it fixes: a task that is not the owner's words (heard by the
-                // microphone, asked by a paired device) teaches nothing either: what it did
-                // would be replayed for the owner's own later task with the same words.
-                if let Some(flow) =
-                    recorded.filter(|_| !self.lock_uncertain && self.task.origin.is_owner_words())
-                {
+                if let Some(flow) = recorded.filter(|_| !self.lock_uncertain && owner) {
                     self.memory.flows.upsert(flow);
                 }
             }

@@ -39,6 +39,19 @@ struct RunView: View {
                     .accessibilityLabel("Using skill: \(skill)")
                     .accessibilityIdentifier("run.skill")
                 }
+                if live.heardByVoice {
+                    // Started by voice without a touch: not the owner's words.
+                    Label {
+                        Text("Heard by voice")
+                    } icon: {
+                        Image.decorative(.microphone, size: Theme.iconCompact)
+                    }
+                    .font(Theme.meta.weight(.semibold))
+                    .foregroundStyle(Theme.textSoft)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Heard by voice")
+                    .accessibilityIdentifier("run.heardByVoice")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 4)
@@ -86,18 +99,29 @@ struct RunView: View {
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityIdentifier("run.stop")
         } else {
-            HStack(spacing: Theme.gap) {
-                Button("New task") { model.dismissRun() }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .accessibilityIdentifier("run.newTask")
-                Button("Run again") {
-                    let task = live.task
-                    let skill = model.lastSkill
-                    model.dismissRun()
-                    model.runAgain(task, skill: skill)
+            VStack(alignment: .leading, spacing: Theme.gapSmall) {
+                if let mark = live.voiceMark {
+                    // "Run again" on a voice-started run starts the same words as the
+                    // owner's (this touch): said where the button is.
+                    Text(mark)
+                        .font(Theme.meta)
+                        .foregroundStyle(Theme.textSoft)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("run.runAgain.voice")
                 }
-                .buttonStyle(PrimaryButtonStyle())
-                .accessibilityIdentifier("run.runAgain")
+                HStack(spacing: Theme.gap) {
+                    Button("New task") { model.dismissRun() }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("run.newTask")
+                    Button("Run again") {
+                        let task = live.task
+                        let skill = model.lastSkill
+                        model.dismissRun()
+                        model.runAgain(task, skill: skill)
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("run.runAgain")
+                }
             }
         }
     }

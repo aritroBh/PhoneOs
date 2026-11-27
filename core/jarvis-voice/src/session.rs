@@ -32,15 +32,15 @@
 use jarvis_proto::TaskOrigin;
 
 use crate::parse::{
-    clean_request, contained_in, contains_wake_word, parse_utterance, word_list, Utterance,
-    MAX_TRANSCRIPT_CHARS,
+    clean_request, contained_in, contains_wake_word, only_stop_words, parse_utterance,
+    wake_then_stop, word_list, Utterance, MAX_TRANSCRIPT_CHARS,
 };
 use crate::phrases::{
     answer_line, clean_spoken, APPROVAL_ON_PHONE, BUSY, COULD_NOT, DONE, DONE_ANSWER_ON_PHONE,
     NOT_CAUGHT, ON_IT, STOPPED, TOO_LONG,
 };
 use crate::types::{
-    CueKind, SpeakAnswers, TaskEvent, UtteranceKind, VoiceEffect, VoiceEvent, VoicePhase,
+    AppScene, CueKind, SpeakAnswers, TaskEvent, UtteranceKind, VoiceEffect, VoiceEvent, VoicePhase,
     VoiceSettings, VoiceStatus,
 };
 
@@ -148,10 +148,13 @@ struct Late {
     say_stopped: bool,
 }
 
-/// A partial that reads as the stop words outside Listening, waiting for the endpoint.
+/// A partial in a stop context made only of stop and wake phrases, waiting for the endpoint
+/// (its words unchanged for [`ENDPOINT_SILENCE_MS`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingStop {
-    text: String,
+    /// The unread words of the partial (compared as words: "Stop" and "Stop." are one).
+    words: Vec<String>,
+    /// A wake phrase comes right before a stop phrase in them.
     wake: bool,
     since_ms: u64,
 }
@@ -163,7 +166,8 @@ pub struct VoiceSession {
     settings: VoiceSettings,
     now: u64,
     locked: bool,
-    foreground: bool,
+    /// Jarvis active, covered (inactive) or in the background.
+    scene: AppScene,
     /// Between an interruption's begin and end.
     interrupted: bool,
     /// An interruption ended without "should resume": nothing is armed again until Jarvis
@@ -200,6 +204,14 @@ pub struct VoiceSession {
     wake_retry_at: u64,
     /// A partial stop outside Listening, waiting for the endpoint.
     pending_stop: Option<PendingStop>,
+    /// The words of the current listening stream's latest partial (one recognition, or the
+    /// wake word's stream until its next final): on-device transcripts keep everything
+    /// heard since the recognition started.
+    stream_words: usize,
+    /// The words of the current stream before this index are read already (a stop acted on,
+    /// or heard before the stop context began): they are never read as a stop again, and a
+    /// stream with read words starts nothing.
+    stop_from: usize,
 }
 
 /// Effects of one step.
@@ -227,7 +239,7 @@ impl VoiceSession {
             settings,
             now: 0,
             locked: false,
-            foreground: true,
+            scene: AppScene::Active,
             interrupted: false,
             resume_blocked: false,
             phase: Phase::Idle,
@@ -247,6 +259,8 @@ impl VoiceSession {
             barge_in_retry_at: 0,
             wake_retry_at: 0,
             pending_stop: None,
+            stream_words: 0,
+            stop_from: 0,
         }
     }
 
@@ -281,6 +295,7 @@ impl VoiceSession {
         self.now = self.now.max(now_ms);
         let mut out = Out::default();
         self.expire();
+        let was_stop_context = self.stop_context();
         match event {
             VoiceEvent::WakeDetected => self.on_wake_detected(&mut out),
             VoiceEvent::PushToTalk { pressed } => self.on_push_to_talk(&mut out, pressed),
@@ -294,7 +309,15 @@ impl VoiceSession {
                 self.on_task(&mut out, Some(request), event);
             }
             VoiceEvent::LockChanged { locked } => self.on_lock(&mut out, locked),
-            VoiceEvent::ForegroundChanged { active } => self.on_foreground(&mut out, active),
+            VoiceEvent::ForegroundChanged { active } => self.on_scene(
+                &mut out,
+                if active {
+                    AppScene::Active
+                } else {
+                    AppScene::Background
+                },
+            ),
+            VoiceEvent::SceneChanged { scene } => self.on_scene(&mut out, scene),
             VoiceEvent::AudioInterrupted {
                 began,
                 should_resume,
@@ -309,8 +332,34 @@ impl VoiceSession {
                 }
             }
         }
+        if !was_stop_context && self.stop_context() {
+            // What the current stream heard before the stop context began is not read as a
+            // stop for it.
+            self.consume_stream();
+        }
         self.reconcile(&mut out);
+        if out
+            .0
+            .iter()
+            .any(|e| matches!(e, VoiceEffect::StartRecognizer | VoiceEffect::ArmWakeWord))
+        {
+            // A new recognition (or arming) starts with nothing heard.
+            self.reset_stream();
+        }
         out.0
+    }
+
+    /// The current stream's words so far are read: none is read as a stop again.
+    fn consume_stream(&mut self) {
+        self.stop_from = self.stream_words;
+        self.pending_stop = None;
+    }
+
+    /// The current stream ended (a final, a failure) or a new one starts.
+    fn reset_stream(&mut self) {
+        self.stream_words = 0;
+        self.stop_from = 0;
+        self.pending_stop = None;
     }
 
     // -----------------------------------------------------------------------------------
@@ -323,6 +372,7 @@ impl VoiceSession {
             || self.phase != Phase::Idle
             || self.quiet()
             || self.answer_window()
+            || !self.active()
         {
             return;
         }
@@ -342,7 +392,9 @@ impl VoiceSession {
             }
             return;
         }
-        if self.locked || self.interrupted || !self.foreground {
+        // A new exchange only while Jarvis is active (a touch cannot land on it while it is
+        // covered or in the background).
+        if self.locked || self.interrupted || !self.active() {
             return;
         }
         match self.phase {
@@ -380,22 +432,9 @@ impl VoiceSession {
             return;
         }
         let heard = parse_utterance(text);
+        self.stream_words = heard.words.len();
         if self.stop_context() {
-            // Barge-in, or the wake word's stream while another task runs: only the stop
-            // words act on a partial, once it has not changed for the endpoint (stopping is
-            // the safe direction: neither the echo rule nor the speaking tail holds it).
-            if self.is_stop_for_now(&heard) {
-                let same = self.pending_stop.as_ref().is_some_and(|p| p.text == text);
-                if !same {
-                    self.pending_stop = Some(PendingStop {
-                        text: text.to_owned(),
-                        wake: heard.wake,
-                        since_ms: self.now,
-                    });
-                }
-            } else {
-                self.pending_stop = None;
-            }
+            self.read_stop_partial(out, &heard);
             return;
         }
         if self.quiet() || self.is_echo(&heard) {
@@ -403,11 +442,13 @@ impl VoiceSession {
         }
         let now = self.now;
         let answer_window = self.answer_window();
+        let opens = self.active() && self.stop_from == 0;
         match &mut self.phase {
             Phase::Idle => {
                 // The wake word's own stream: a wake phrase opens the exchange and the same
-                // stream goes on carrying the request. Not while an answer echoes.
-                if !heard.wake || answer_window {
+                // stream goes on carrying the request. Not while an answer echoes, not while
+                // Jarvis is covered, and not on a stream whose start was read already.
+                if !heard.wake || answer_window || !opens {
                     return;
                 }
                 let mut l = Listen::new(false, now);
@@ -439,12 +480,26 @@ impl VoiceSession {
             // One utterance per recognition: it has ended by itself.
             self.mic = Mic::Off;
         }
-        self.pending_stop = None;
         let heard = parse_utterance(text);
+        let from = self.stop_from.min(heard.words.len());
+        // The recognition is over (the wake word's stream starts a new one).
+        self.reset_stream();
         // The stop words come first: while Jarvis speaks, and even when they repeat what it
-        // says (stopping is the safe direction).
-        if self.is_stop_for_now(&heard) {
+        // says (stopping is the safe direction). In a stop context they are read on the
+        // words not read yet (see `read_stop_partial`).
+        if self.stop_context() {
+            let fresh = heard.words.get(from..).unwrap_or(&[]);
+            let wake_stop = wake_then_stop(fresh).is_some();
+            if wake_stop || (self.bare_stop_allowed() && only_stop_words(fresh)) {
+                self.stop(out, wake_stop);
+                return;
+            }
+        } else if from == 0 && self.is_stop_for_now(&heard) {
             self.stop(out, heard.wake);
+            return;
+        }
+        if from > 0 {
+            // Its start was read already (a stop acted on): nothing more comes of it.
             return;
         }
         if self.quiet() || self.is_echo(&heard) {
@@ -458,10 +513,51 @@ impl VoiceSession {
         self.on_request_heard(out, &heard, false);
     }
 
-    /// The stop words, in a form that acts now: after the wake phrase, or while an exchange
-    /// is open or Jarvis speaks.
+    /// The stop words, in a form that acts now outside a stop context: after the wake
+    /// phrase, or while an exchange is open or Jarvis speaks.
     fn is_stop_for_now(&self, heard: &Utterance) -> bool {
-        heard.is_stop() && (heard.wake || self.exchange_open() || self.quiet())
+        heard.is_stop() && (heard.wake || self.bare_stop_allowed())
+    }
+
+    /// A stop without the wake phrase acts: while an exchange is open (barge-in on the voice
+    /// task) or Jarvis speaks.
+    fn bare_stop_allowed(&self) -> bool {
+        self.exchange_open() || self.quiet()
+    }
+
+    /// A partial in a stop context (barge-in while the voice task starts or runs, the wake
+    /// word's stream while another task runs), read on its unread words. Stopping is the
+    /// safe direction, so neither the echo rule nor the speaking tail holds it:
+    ///
+    /// - a wake phrase right before a stop phrase, with other words around it ("...the
+    ///   weather tonight. Jarvis, stop", "Jarvis, stop the weather..."): stops at once (a
+    ///   playing video never gives the silence an endpoint needs);
+    /// - only stop and wake phrases ("Stop, stop!", "Jarvis, stop"), where a wake phrase
+    ///   comes right before a stop or a bare stop is allowed: stops once its words have not
+    ///   changed for [`ENDPOINT_SILENCE_MS`] (or on the final);
+    /// - anything else ("...and then I told him to stop"): nothing, and a waiting stop is
+    ///   dropped.
+    ///
+    /// A stop acted on marks the stream's words read, so it acts once.
+    fn read_stop_partial(&mut self, out: &mut Out, heard: &Utterance) {
+        let from = self.stop_from.min(heard.words.len());
+        let fresh = heard.words.get(from..).unwrap_or(&[]);
+        let wake_stop = wake_then_stop(fresh).is_some();
+        if only_stop_words(fresh) && (wake_stop || self.bare_stop_allowed()) {
+            let same = self.pending_stop.as_ref().is_some_and(|p| p.words == fresh);
+            if !same {
+                self.pending_stop = Some(PendingStop {
+                    words: fresh.to_vec(),
+                    wake: wake_stop,
+                    since_ms: self.now,
+                });
+            }
+        } else if wake_stop {
+            self.consume_stream();
+            self.stop(out, true);
+        } else {
+            self.pending_stop = None;
+        }
     }
 
     /// Where only the stop words are read (from finals, and from partials at the endpoint).
@@ -475,6 +571,12 @@ impl VoiceSession {
 
     /// A whole utterance (a final transcript, or the last partial at the endpoint).
     fn on_request_heard(&mut self, out: &mut Out, heard: &Utterance, endpointed: bool) {
+        // Covered (or in the background): the wake phrase gets no exchange and nothing is
+        // said ("I am busy." included). A push-to-talk exchange already open goes on to its
+        // row.
+        if !self.active() && !matches!(&self.phase, Phase::Listening(l) if l.ptt) {
+            return;
+        }
         match &self.phase {
             Phase::Idle => {
                 if !heard.wake {
@@ -529,14 +631,16 @@ impl VoiceSession {
             return;
         }
         let answer_window = self.answer_window();
-        if !ptt && answer_window {
+        if !ptt && (answer_window || !self.active()) {
             // Never reached (hands-free listening does not open in the window); kept so no
             // path starts a task from what the room may be echoing.
             self.end_exchange(out, None);
             return;
         }
         self.stop_recognizer(out);
-        if ptt && (self.settings.confirm_push_to_talk || answer_window) {
+        // Covered or in the window: even with confirmation off, a push-to-talk request waits
+        // for a touch on Start.
+        if ptt && (self.settings.confirm_push_to_talk || answer_window || !self.active()) {
             out.push(show(request, true, true, endpointed));
             self.phase = Phase::Confirming {
                 text: request.to_owned(),
@@ -565,7 +669,9 @@ impl VoiceSession {
     }
 
     fn on_confirmed(&mut self, out: &mut Out, text: &str) {
-        if !matches!(self.phase, Phase::Confirming { .. }) {
+        // A touch on Start lands only while Jarvis is active; a confirmation reported while
+        // it is covered or in the background leaves the row waiting.
+        if !matches!(self.phase, Phase::Confirming { .. }) || !self.active() {
             return;
         }
         if text.chars().nth(MAX_TRANSCRIPT_CHARS).is_some() {
@@ -593,6 +699,7 @@ impl VoiceSession {
             Mic::Off => {}
             Mic::Wake => {
                 self.mic = Mic::Off;
+                self.reset_stream();
                 self.wake_retry_at = self.now.saturating_add(WAKE_RETRY_MS);
                 if matches!(self.phase, Phase::Listening(_)) {
                     self.end_exchange(out, Some(NOT_CAUGHT));
@@ -600,6 +707,7 @@ impl VoiceSession {
             }
             Mic::Recognizer => {
                 self.mic = Mic::Off;
+                self.reset_stream();
                 match self.phase {
                     Phase::Listening(_) => self.end_exchange(out, Some(NOT_CAUGHT)),
                     Phase::TaskRunning { .. } | Phase::Starting { .. } => {
@@ -703,6 +811,7 @@ impl VoiceSession {
                 let wake = p.wake;
                 self.pending_stop = None;
                 if self.stop_context() {
+                    self.consume_stream();
                     self.stop(out, wake);
                 }
             }
@@ -793,6 +902,12 @@ impl VoiceSession {
                             question: false,
                             request,
                         };
+                        // The shell runs one task at a time: once the voice task has started
+                        // nothing else runs, whatever an earlier start (with an id never
+                        // issued, or a late one being stopped) made this believe.
+                        self.other_task = false;
+                        self.other_stop_requested = false;
+                        self.late = None;
                         if self.stop_requested {
                             out.push(VoiceEffect::StopTask);
                         } else {
@@ -907,7 +1022,7 @@ impl VoiceSession {
             self.say(out, DONE, UtteranceKind::Status);
             return;
         };
-        if self.locked || !self.foreground {
+        if self.locked || !self.active() {
             self.say(out, DONE_ANSWER_ON_PHONE, UtteranceKind::Status);
             return;
         }
@@ -1026,20 +1141,33 @@ impl VoiceSession {
         }
     }
 
-    fn on_foreground(&mut self, out: &mut Out, active: bool) {
-        self.foreground = active;
-        if active {
+    fn on_scene(&mut self, out: &mut Out, scene: AppScene) {
+        self.scene = scene;
+        if scene == AppScene::Active {
             self.resume_blocked = false;
             return;
         }
-        // An answer is read only while Jarvis is in front (fixed phrases may finish).
+        // An answer is read only while Jarvis is active (fixed phrases may finish).
         if self.speaking_answer() {
             self.stop_speaking(out);
+        }
+        if scene == AppScene::Inactive {
+            // Covered: the microphone stays on (the stop words still work) but a hands-free
+            // exchange starts nothing; push to talk is the owner's touch and goes on.
+            if matches!(&self.phase, Phase::Listening(l) if !l.ptt) {
+                self.end_exchange(out, None);
+            }
+            return;
         }
         if matches!(self.phase, Phase::Listening(_)) {
             self.end_exchange(out, None);
         }
         self.stop_recognizer(out);
+    }
+
+    /// Jarvis is active (in front and not covered).
+    fn active(&self) -> bool {
+        self.scene == AppScene::Active
     }
 
     fn on_interruption(&mut self, out: &mut Out, began: bool, should_resume: bool) {
@@ -1084,7 +1212,10 @@ impl VoiceSession {
 
     /// The microphone may run at all.
     fn can_listen(&self) -> bool {
-        self.foreground && !self.locked && !self.interrupted && !self.resume_blocked
+        self.scene != AppScene::Background
+            && !self.locked
+            && !self.interrupted
+            && !self.resume_blocked
     }
 
     /// While a task started elsewhere runs, the wake phrase alone does not open an exchange

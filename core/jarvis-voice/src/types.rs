@@ -119,11 +119,18 @@ pub enum VoiceEvent {
         /// Locked now.
         locked: bool,
     },
-    /// Jarvis came to the front or left it. The foreground recogniser (and so the first
-    /// wake-word implementation) runs only while Jarvis is in front.
+    /// Jarvis came to the front or left it: `true` is [`AppScene::Active`], `false`
+    /// [`AppScene::Background`] (a shell that knows the covered state sends
+    /// [`Self::SceneChanged`]). The foreground recogniser (and so the first wake-word
+    /// implementation) runs only while Jarvis is not in the background.
     ForegroundChanged {
         /// In front now.
         active: bool,
+    },
+    /// Jarvis's scene: active, covered (inactive) or in the background.
+    SceneChanged {
+        /// The scene now.
+        scene: AppScene,
     },
     /// The audio session was interrupted (a phone call, Siri, an alarm) or the interruption
     /// ended.
@@ -144,6 +151,22 @@ pub enum VoiceEvent {
     },
     /// The owner dismissed the transcript row.
     TranscriptDiscarded,
+}
+
+/// Where Jarvis is on the screen, as the shell's scene reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AppScene {
+    /// In front and not covered: hands-free requests start, answers may be read.
+    #[default]
+    Active,
+    /// In front but covered (a permission alert, Control Centre, Notification Centre, the
+    /// App Switcher): the microphone stays on and the stop words still work, but the wake
+    /// phrase gets no exchange (nothing is said, nothing starts), no new push to talk opens,
+    /// a confirmation does not start, and no answer is read. A push-to-talk exchange already
+    /// open goes on to its row.
+    Inactive,
+    /// In the background: nothing listens.
+    Background,
 }
 
 /// The sound played when Jarvis starts listening for a request.

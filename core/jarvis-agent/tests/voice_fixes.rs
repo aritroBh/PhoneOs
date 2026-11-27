@@ -86,3 +86,81 @@ fn a_typed_task_still_teaches() {
         later.acts
     );
 }
+
+// ---- Second review (f5): counts on a learned flow are teaching too ------------------
+
+/// The owner's taught flow ("Search lamps", typed and approved).
+fn owner_flow() -> MemoryStore {
+    let first = search_lamps(TaskOrigin::Phone);
+    assert!(first.memory.flows.find("Search lamps").is_some());
+    first.memory
+}
+
+fn the_flow(memory: &MemoryStore) -> jarvis_memory::Flow {
+    memory.flows.flows().first().cloned().expect("the flow")
+}
+
+/// A replay that fails (the screen is not the search screen), for `origin`.
+fn failing_replay(origin: TaskOrigin, memory: MemoryStore, id: &str) -> Run {
+    run_spec(
+        config(),
+        TaskSpec::new(id, "Search lamps").from_origin(origin),
+        memory,
+        Phone::still(home_screen()),
+        Script::model(&[r#"{"action":"fail","reason":"cannot"}"#]),
+    )
+}
+
+/// A replay that succeeds (every question approved on the phone), for `origin`.
+fn succeeding_replay(origin: TaskOrigin, memory: MemoryStore, id: &str) -> Run {
+    run_spec(
+        config(),
+        TaskSpec::new(id, "Search lamps").from_origin(origin),
+        memory,
+        search_phone(),
+        Script::model(&[r#"{"action":"done","summary":"ok"}"#]).decisions(&[true, true, true]),
+    )
+}
+
+/// Neither a failed nor a successful replay by a task that is not the owner's words counts
+/// on the owner's flow: no success, no failure, no retirement, no new last use.
+#[test]
+fn a_task_that_is_not_the_owners_words_counts_nothing_on_a_flow() {
+    for origin in [TaskOrigin::Voice, TaskOrigin::Remote] {
+        let mut memory = owner_flow();
+        let before = the_flow(&memory);
+        for i in 0..4 {
+            memory = failing_replay(origin, memory, &format!("f{i}")).memory;
+            memory = succeeding_replay(origin, memory, &format!("s{i}")).memory;
+        }
+        let after = the_flow(&memory);
+        assert_eq!(after.successes, before.successes, "{origin:?}: {after:?}");
+        assert_eq!(after.failures, before.failures, "{origin:?}: {after:?}");
+        assert_eq!(
+            after.last_used_ms, before.last_used_ms,
+            "{origin:?}: {after:?}"
+        );
+        assert!(!after.retired, "{origin:?}: {after:?}");
+        assert!(memory.flows.find("Search lamps").is_some(), "{origin:?}");
+    }
+}
+
+/// The owner's own typed replays still count, both ways: failures retire the flow.
+#[test]
+fn a_typed_task_still_counts_on_its_flow() {
+    let memory = owner_flow();
+    let before = the_flow(&memory);
+    let r = succeeding_replay(TaskOrigin::Phone, memory, "s1");
+    let after = the_flow(&r.memory);
+    assert_eq!(after.successes, before.successes + 1, "{after:?}");
+    let mut memory = r.memory;
+    for i in 0..4 {
+        memory = failing_replay(TaskOrigin::Phone, memory, &format!("f{i}")).memory;
+    }
+    let after = the_flow(&memory);
+    assert!(after.failures > before.failures, "{after:?}");
+    assert!(
+        after.retired,
+        "the owner's own failures no longer retire: {after:?}"
+    );
+}

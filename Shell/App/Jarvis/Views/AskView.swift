@@ -364,6 +364,14 @@ private struct VoiceTranscriptRow: View {
     var transcript: VoiceService.Transcript
     @State private var text = ""
 
+    /// The core's request cap (a longer request is refused, never cut).
+    private static let maxChars = Int(clamping: voiceTimings().maxRequestChars)
+    /// The count is shown once the transcript is long.
+    private static let countFrom = 80
+    /// Lines the field grows to: about 32 characters a line at 16 pt on the narrowest
+    /// phone, so the cap fits with room to spare.
+    private static let maxLines = 12
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.gapSmall) {
             Label {
@@ -374,14 +382,25 @@ private struct VoiceTranscriptRow: View {
             }
             .foregroundStyle(Theme.textSecondary)
             if transcript.needsConfirm {
-                TextField("", text: $text)
+                // The whole transcript, never one line that hides its end: the field grows
+                // to `Self.maxLines` (enough for the core's request cap at this font on a
+                // phone) and scrolls past that.
+                TextField("", text: $text, axis: .vertical)
+                    .lineLimit(1...Self.maxLines)
                     .font(.system(size: 16))
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                     .frame(minHeight: Theme.minTarget)
                     .modifier(Bezeled(fill: Theme.surface, radius: Theme.radiusButton, stroke: Theme.controlBezel))
                     .accessibilityLabel("What Jarvis heard")
                     .accessibilityIdentifier("voice.transcript.text")
+                if text.count > Self.countFrom {
+                    Text("\(text.count) of \(Self.maxChars) characters")
+                        .font(Theme.meta)
+                        .foregroundStyle(text.count > Self.maxChars ? Theme.textPrimary : Theme.textTertiary)
+                        .accessibilityIdentifier("voice.transcript.count")
+                }
                 HStack(spacing: Theme.gap) {
                     Button("Discard") { model.discardVoiceTranscript() }
                         .buttonStyle(SecondaryButtonStyle())

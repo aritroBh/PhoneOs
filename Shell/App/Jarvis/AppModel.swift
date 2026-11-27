@@ -30,6 +30,9 @@ struct LaunchOptions {
     /// ports instead of the microphone, with the wake word on: it hears "Hey Jarvis, open
     /// Settings" once, then "yes" every time the recogniser starts.
     var voiceScripted: Bool
+    /// `-jarvis-voice-scripted-long` (with `-jarvis-playground`): voice uses `ScriptedVoice`'s
+    /// ports with the wake word off; push to talk hears `ScriptedVoice.uiTestLongTranscript`.
+    var voiceScriptedLong: Bool
 
     static let current = LaunchOptions(arguments: ProcessInfo.processInfo.arguments)
 
@@ -42,6 +45,7 @@ struct LaunchOptions {
         seedScheduledWorkflow = arguments.contains("-jarvis-seed-scheduled-workflow")
         seedRemoteDevice = arguments.contains("-jarvis-seed-remote-device")
         voiceScripted = arguments.contains("-jarvis-voice-scripted")
+        voiceScriptedLong = arguments.contains("-jarvis-voice-scripted-long")
     }
 }
 
@@ -241,10 +245,17 @@ final class AppModel: ObservableObject {
     /// chose, and stop through `stop()`, like the Stop button.
     private(set) lazy var voice: VoiceService = {
         let scripted = launch.playground && launch.voiceScripted
-        let ports = scripted
-            ? ScriptedVoice.ports(wakeLines: ScriptedVoice.uiTestWakeLines,
-                                  recognizerLines: ScriptedVoice.uiTestRecognizerLines, delay: .seconds(1))
-            : VoiceAdapters.ports()
+        let scriptedLong = launch.playground && launch.voiceScriptedLong
+        let ports: VoicePorts
+        if scriptedLong {
+            ports = ScriptedVoice.ports(wakeLines: [], recognizerLines: [ScriptedVoice.uiTestLongTranscript],
+                                        delay: .seconds(1))
+        } else if scripted {
+            ports = ScriptedVoice.ports(wakeLines: ScriptedVoice.uiTestWakeLines,
+                                        recognizerLines: ScriptedVoice.uiTestRecognizerLines, delay: .seconds(1))
+        } else {
+            ports = VoiceAdapters.ports()
+        }
         let service = VoiceService(
             ports: ports, center: center, settings: voiceSettings,
             startTask: { [weak self] text, origin, request in
@@ -684,7 +695,8 @@ final class AppModel: ObservableObject {
             if awayPhase != .off { exitAway() }
             lastTask = session.text
             lastSkill = session.skill
-            live = LiveRun(task: session.text, maxSteps: Int(settings.clampedMaxSteps), skillName: session.skill?.name)
+            live = LiveRun(task: session.text, maxSteps: Int(settings.clampedMaxSteps), skillName: session.skill?.name,
+                           heardByVoice: session.origin.isVoice)
             resetViewer(framesEnabled: settings.liveViewScreenshots)
             if session.origin.workflow == nil { showingRun = true }
         case .session(_, let runEvent):
@@ -1186,12 +1198,18 @@ final class AppModel: ObservableObject {
         settings.awayProximity = on
     }
 
-    /// Voice's "in front", from the scene phase (RootView): only `.background` takes Jarvis out
-    /// of the front. `.inactive` (a permission alert, Control Centre, the app switcher being
-    /// pulled) does not cut an exchange: the recogniser or the wake word keep listening
-    /// while the alert or the panel is over Jarvis, and an answer keeps being read.
-    func voiceSceneChanged(inBackground: Bool) {
-        voice.setForeground(!inBackground)
+    /// Voice's scene, from the scene phase (RootView). `.inactive` (a permission alert,
+    /// Control Centre, Notification Centre, the App Switcher) is covered: the microphone
+    /// keeps listening so the stop words work, but a hands-free request starts nothing and
+    /// gets no reply, no answer is read, and a push-to-talk exchange already open goes on to
+    /// its row. `.background`: nothing listens.
+    func voiceSceneChanged(_ phase: ScenePhase) {
+        switch phase {
+        case .active: voice.setScene(.active)
+        case .inactive: voice.setScene(.inactive)
+        case .background: voice.setScene(.background)
+        @unknown default: voice.setScene(.inactive)
+        }
     }
 
     /// Scene phase changes (RootView): the screen is put back whenever Jarvis is not active;
