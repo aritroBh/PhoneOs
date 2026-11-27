@@ -669,6 +669,24 @@ final class TopLayerRunnerTests: QATestCase {
         return parts.joined(separator: "; ")
     }
 
+    /// The fingerprint of `app`'s screen once it has stopped changing: two readings half a
+    /// second apart that agree, within ten seconds (the last reading otherwise). Mac run 175:
+    /// Shortcuts' toolbar button read "add" (its symbol's name) two seconds after launch and
+    /// "Create Shortcut" a second later, so a "before" taken too early differed from the
+    /// "after" with no touch at all.
+    @MainActor
+    private func settledFingerprint(_ app: XCUIApplication) async -> String {
+        var last = fingerprint(app)
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(500))
+            let next = fingerprint(app)
+            if next == last { return next }
+            last = next
+        }
+        return last
+    }
+
     /// `frontBundleId()` timed over `n` calls, for the record.
     @MainActor
     private func timed(_ runner: XCUITestPhoneRunner, _ n: Int) async throws -> String {
@@ -742,7 +760,7 @@ final class TopLayerRunnerTests: QATestCase {
         XCTAssertFalse(offLook.deviceLocked)
         XCTAssertTrue(offLook.notes.contains(FrontApp.unidentifiedNote), "no note says an app Jarvis cannot identify is in front: \(offLook.notes)")
         XCTAssertFalse(offLook.notes.contains { $0.contains("Home Screen") && !$0.contains("does not show") }, "\(offLook.notes)")
-        let before = fingerprint(target)
+        let before = await settledFingerprint(target)
         let width = offLook.screenSize.width, height = offLook.screenSize.height
         let swipe = RunnerCommand.swipe(from: Point(x: width * 0.85, y: height * 0.5), to: Point(x: width * 0.15, y: height * 0.5), durationMs: 300)
         var synthesized: [String] = []
@@ -929,7 +947,7 @@ final class TopLayerRunnerTests: QATestCase {
             // (iii) A tap planned on Settings, at a point of the surface: stale at once (no
             // banner wait), and the surface is unchanged.
             let p = pointOnSurface(board, c.surface, screen: look.screenSize)
-            let boardBefore = fingerprint(board)
+            let boardBefore = await settledFingerprint(board)
             let tappedAt = Date()
             let stale = try await runner.perform(.tap(x: p.x, y: p.y), expect: CommandExpect(bundleId: Self.settingsId))
             let took = Date().timeIntervalSince(tappedAt)
