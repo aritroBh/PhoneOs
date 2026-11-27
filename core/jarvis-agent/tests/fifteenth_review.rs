@@ -569,6 +569,42 @@ fn r2_a_remote_task_text_is_not_the_owners() {
     assert!(remote.acts.is_empty(), "{:?}", remote.acts);
 }
 
+/// Voice: a task the microphone started without a touch (`TaskOrigin::Voice`) is not the
+/// owner's words either, exactly as R2 for a remote task: the same typing asks on the
+/// phone. (A video or a call on speaker can say the request.)
+#[test]
+fn voice_task_text_is_not_the_owners() {
+    let task = "Tell Mallory I am running late";
+    let script = || {
+        Script::model(&[
+            &format!(
+                r#"{{"action":"type","element":{},"text":"running late"}}"#,
+                index_of(&chat(None), "Message")
+            ),
+            r#"{"action":"done","summary":"ok"}"#,
+        ])
+    };
+    let voice = run_spec(
+        config(),
+        jarvis_proto::TaskSpec::new("t", task).from_origin(jarvis_proto::TaskOrigin::Voice),
+        MemoryStore::new(),
+        chat_phone(),
+        script(),
+    );
+    assert_eq!(voice.confirms.len(), 1, "{:#?}", voice.confirms);
+    assert!(voice.confirms[0].phone_only);
+    assert!(voice.acts.is_empty(), "{:?}", voice.acts);
+    // The same words confirmed by touch are the owner's (the shell starts them as Phone).
+    let confirmed = run_spec(
+        config(),
+        jarvis_proto::TaskSpec::new("t", task),
+        MemoryStore::new(),
+        chat_phone(),
+        script(),
+    );
+    assert!(confirmed.confirms.is_empty(), "{:#?}", confirmed.confirms);
+}
+
 /// R1 (F2): a profile value the owner did not mark sensitive counts as the owner's words;
 /// one marked sensitive always asks, phone only, naming the key and never the value.
 #[test]

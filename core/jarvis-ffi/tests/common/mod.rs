@@ -171,6 +171,7 @@ pub fn task() -> TaskSpec {
         id: "t1".to_owned(),
         text: "Turn off Wi-Fi".to_owned(),
         remote: false,
+        voice: false,
     }
 }
 

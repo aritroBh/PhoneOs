@@ -73,6 +73,35 @@ public func riskCategoryTitle(_ category: RiskCategory) -> String {
     }
 }
 
+/// Codable mirror of the core's `VoiceSpeakAnswers`.
+public enum SpeakAnswersOption: String, Codable, CaseIterable, Sendable, Identifiable {
+    case never
+    case whenUnlocked = "when_unlocked"
+
+    public var id: String { rawValue }
+
+    public var core: VoiceSpeakAnswers {
+        switch self {
+        case .never: .never
+        case .whenUnlocked: .whenUnlocked
+        }
+    }
+
+    public var title: String {
+        switch self {
+        case .never: "Never"
+        case .whenUnlocked: "When unlocked"
+        }
+    }
+}
+
+extension JarvisSettings {
+    /// The core's voice settings from these (push to talk always confirms by touch).
+    public var voice: VoiceSettings {
+        VoiceSettings(wakeWord: voiceWakeWord, speakAnswers: voiceSpeakAnswers.core, confirmPushToTalk: true)
+    }
+}
+
 /// Codable mirror of `TrustLevel`.
 public enum TrustLevelOption: String, Codable, CaseIterable, Sendable, Identifiable {
     case trusted
@@ -227,6 +256,12 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
     /// outline of the screen only. On by default; a value that cannot be decoded reads as on
     /// (the default). Separate from `liveViewScreenshots`.
     public var approvalScreenshots: Bool
+    /// Voice: listen for "Hey Jarvis" while Jarvis is in front. Off by default; push to talk
+    /// works without it. A value that cannot be decoded reads as off.
+    public var voiceWakeWord: Bool
+    /// Voice: when the task's answer is read aloud. Never by default, never while the phone
+    /// is locked; a value that cannot be decoded reads as never.
+    public var voiceSpeakAnswers: SpeakAnswersOption
 
     public static let defaultAppTrust: [AppTrust] = [
         AppTrust(bundleIdPrefix: "com.apple.Preferences", name: "Settings", level: .guarded),
@@ -256,8 +291,12 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         awayProximity: Bool = false,
         remoteControlEnabled: Bool = false,
         liveViewScreenshots: Bool = false,
-        approvalScreenshots: Bool = true
+        approvalScreenshots: Bool = true,
+        voiceWakeWord: Bool = false,
+        voiceSpeakAnswers: SpeakAnswersOption = .never
     ) {
+        self.voiceWakeWord = voiceWakeWord
+        self.voiceSpeakAnswers = voiceSpeakAnswers
         self.policyMode = policyMode
         self.firstUseApproval = firstUseApproval
         self.relaxedCategories = relaxedCategories
@@ -301,6 +340,8 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         case remoteControlEnabled = "remote_control_enabled"
         case liveViewScreenshots = "live_view_screenshots"
         case approvalScreenshots = "approval_screenshots"
+        case voiceWakeWord = "voice_wake_word"
+        case voiceSpeakAnswers = "voice_speak_answers"
     }
 
     /// Decoding has two rules. A **missing** key takes the default, so older files keep
@@ -338,6 +379,10 @@ public struct JarvisSettings: Codable, Sendable, Equatable {
         remoteControlEnabled = try Self.strict(c, .remoteControlEnabled, d.remoteControlEnabled)
         liveViewScreenshots = (try? c.decodeIfPresent(Bool.self, forKey: .liveViewScreenshots)) ?? d.liveViewScreenshots
         approvalScreenshots = (try? c.decodeIfPresent(Bool.self, forKey: .approvalScreenshots)) ?? d.approvalScreenshots
+        // Voice: a value that cannot be used reads as the default, which listens and says
+        // less (wake word off, answers never spoken).
+        voiceWakeWord = (try? c.decodeIfPresent(Bool.self, forKey: .voiceWakeWord)) ?? d.voiceWakeWord
+        voiceSpeakAnswers = (try? c.decodeIfPresent(SpeakAnswersOption.self, forKey: .voiceSpeakAnswers)) ?? d.voiceSpeakAnswers
     }
 
     /// The keys whose value must decode when present (see `init(from:)`).

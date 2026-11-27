@@ -25,6 +25,15 @@ public enum TaskOrigin: Sendable, Equatable {
     case remote(taskId: UInt64, deviceId: String, deviceName: String?)
     /// A step of a workflow run.
     case workflow(WorkflowRunTag)
+    /// Heard by the microphone and started without a touch (`VoiceService`, the core's
+    /// `TaskOrigin::Voice`): not the owner's words for any gate, as strict as `.remote`. A
+    /// transcript the owner confirmed by touch starts as `.owner`.
+    case voice
+
+    /// The core's origin flags for `TaskSpec`: whether the text is a paired device's or the
+    /// microphone's (either one makes it not the owner's words).
+    public var isRemote: Bool { remoteTaskId != nil }
+    public var isVoice: Bool { self == .voice }
 
     public var workflow: WorkflowRunTag? {
         if case .workflow(let tag) = self { return tag }

@@ -26,6 +26,10 @@ struct LaunchOptions {
     /// `-jarvis-seed-remote-device` (with `-jarvis-playground`): turn remote control on and
     /// pair an in-process device ("Test Mac") over the in-memory transport.
     var seedRemoteDevice: Bool
+    /// `-jarvis-voice-scripted` (with `-jarvis-playground`): voice uses `ScriptedVoice`'s
+    /// ports instead of the microphone, with the wake word on: it hears "Hey Jarvis, open
+    /// Settings" once, then "yes" every time the recogniser starts.
+    var voiceScripted: Bool
 
     static let current = LaunchOptions(arguments: ProcessInfo.processInfo.arguments)
 
@@ -37,6 +41,7 @@ struct LaunchOptions {
         seedAmbiguousSkills = arguments.contains("-jarvis-seed-ambiguous-skills")
         seedScheduledWorkflow = arguments.contains("-jarvis-seed-scheduled-workflow")
         seedRemoteDevice = arguments.contains("-jarvis-seed-remote-device")
+        voiceScripted = arguments.contains("-jarvis-voice-scripted")
     }
 }
 
@@ -75,6 +80,7 @@ final class AppModel: ObservableObject {
             } catch {
                 setupError = SettingsGate.unsavedMessage(error)
             }
+            if settings.voice != oldValue.voice { voice.setSettings(voiceSettings) }
         }
     }
     /// Why the owner's rules cannot be used yet (tasks are refused with these words).
@@ -143,6 +149,17 @@ final class AppModel: ObservableObject {
 
     // Apps
     @Published private(set) var toolSpecs: [ToolSpec] = []
+
+    // Voice
+    /// The transcript row on Ask (a push-to-talk transcript waits here for Start).
+    @Published private(set) var voiceTranscript: VoiceService.Transcript?
+    /// The core's voice exchange (listening, confirming, a task it started).
+    @Published private(set) var voicePhase: VoicePhase = .idle
+    /// On-device recognition can run (the mic button is offered).
+    @Published private(set) var voiceAvailable = false
+    @Published private(set) var voiceError: String?
+    /// Playground: final transcripts heard while a question was pending (the UI test reads it).
+    @Published private(set) var voiceHeardDuringQuestion = 0
 
     // Away mode
     @Published private(set) var awayPhase: AwayModeController.Phase = .off
@@ -219,6 +236,34 @@ final class AppModel: ObservableObject {
         service.onChange = { [weak self] in self?.mirrorRemote() }
         return service
     }()
+    /// Voice: the wake phrase, push to talk and spoken status lines. Tasks start through the
+    /// same entry as Ask (`startVoiceRun` → `TaskCenter.start`) with the origin the core
+    /// chose, and stop through `stop()`, like the Stop button.
+    private(set) lazy var voice: VoiceService = {
+        let scripted = launch.playground && launch.voiceScripted
+        let ports = scripted
+            ? ScriptedVoice.ports(wakeLines: ScriptedVoice.uiTestWakeLines,
+                                  recognizerLines: ScriptedVoice.uiTestRecognizerLines, delay: .seconds(1))
+            : VoiceAdapters.ports()
+        let service = VoiceService(
+            ports: ports, center: center, settings: voiceSettings,
+            startTask: { [weak self] text, origin in
+                guard let self else { return .busy }
+                return self.startVoiceRun(text, origin: origin)
+            },
+            stopTask: { [weak self] in self?.stop() }
+        )
+        service.onChange = { [weak self] in self?.mirrorVoice() }
+        return service
+    }()
+
+    /// The core's voice settings: the owner's, with the wake word on for the scripted UI test.
+    private var voiceSettings: VoiceSettings {
+        var s = settings.voice
+        if launch.playground && launch.voiceScripted { s.wakeWord = true }
+        return s
+    }
+
     private lazy var away = AwayModeController(
         display: UIKitAwayDisplay(), acknowledged: settings.awayAcknowledged, proximity: settings.awayProximity
     )
@@ -319,6 +364,7 @@ final class AppModel: ObservableObject {
                 // Unlocked again: the approval picture may be captured again.
                 self?.coordinator.approvalFrames.isPhoneUnlocked = true
                 self?.reloadSettings()
+                self?.voice.setLocked(false)
             }
         }
         protectedDataLockObserver = NotificationCenter.default.addObserver(
@@ -326,7 +372,11 @@ final class AppModel: ObservableObject {
         ) { [weak self] _ in
             // The phone is locking: the approval picture goes now, and none is kept until
             // it is unlocked again.
-            MainActor.assumeIsolated { self?.coordinator.approvalFrames.isPhoneUnlocked = false }
+            MainActor.assumeIsolated {
+                self?.coordinator.approvalFrames.isPhoneUnlocked = false
+                // Voice: no answer is read aloud on a locked phone, and nothing listens.
+                self?.voice.setLocked(true)
+            }
         }
         mirrorSettingsProblem()
         if launch.playground && launch.seedRemoteDevice {
@@ -336,6 +386,7 @@ final class AppModel: ObservableObject {
         if let runnerKeyProblem { setupError = runnerKeyProblem }
         if launch.playground && launch.seedRemoteDevice { seedRemoteDevice() }
         refreshNotificationAccess()
+        Task { [weak self] in await self?.voice.start() }
     }
 
     private static func seedSkills(_ launch: LaunchOptions, at url: URL) {
@@ -497,6 +548,55 @@ final class AppModel: ObservableObject {
         case .failure(let refusal):
             if refusal != .emptyTask { setupError = refusal.description }
             return nil
+        }
+    }
+
+    /// Starts a task voice asked for, through the same entry as Ask's plain tasks, with the
+    /// core's origin (`.voice` without a touch, `.owner` for a transcript confirmed on Ask).
+    /// Skills and workflows are not matched for voice: the words run as they were heard.
+    private func startVoiceRun(_ text: String, origin: TaskOrigin) -> TaskCenter.Refusal? {
+        setupError = nil
+        switch center.start(text, skill: nil, origin: origin) {
+        case .success:
+            requestNotificationPermission()
+            return nil
+        case .failure(let refusal):
+            if refusal != .emptyTask { setupError = refusal.description }
+            return refusal
+        }
+    }
+
+    // MARK: - Voice
+
+    /// The mic button: starts listening, or ends the request while listening.
+    func toggleTalk() {
+        voice.pushToTalk(pressed: voicePhase != .listening)
+    }
+
+    /// Start on the transcript row (the text as the owner left it).
+    func confirmVoiceTranscript(_ text: String) {
+        voice.confirmTranscript(text)
+    }
+
+    func discardVoiceTranscript() {
+        voice.discardTranscript()
+    }
+
+    func setVoiceWakeWord(_ on: Bool) {
+        settings.voiceWakeWord = on
+    }
+
+    func setVoiceSpeakAnswers(_ option: SpeakAnswersOption) {
+        settings.voiceSpeakAnswers = option
+    }
+
+    private func mirrorVoice() {
+        if voiceTranscript != voice.transcript { voiceTranscript = voice.transcript }
+        if voicePhase != voice.status.phase { voicePhase = voice.status.phase }
+        if voiceAvailable != voice.canPushToTalk { voiceAvailable = voice.canPushToTalk }
+        if voiceError != voice.lastError { voiceError = voice.lastError }
+        if voiceHeardDuringQuestion != voice.heardWhileQuestionPending {
+            voiceHeardDuringQuestion = voice.heardWhileQuestionPending
         }
     }
 
@@ -1089,6 +1189,8 @@ final class AppModel: ObservableObject {
         // the background: when Jarvis asks, the target app is in front, and the owner is on
         // the way to the sheet. It goes when the question is resolved or the phone locks.
         appIsActive = active
+        // The foreground recogniser (and so the wake word) runs only while Jarvis is in front.
+        voice.setForeground(active)
         if active {
             reloadSettings()
             away.appReturnedToForeground()

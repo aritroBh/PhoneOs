@@ -10,6 +10,7 @@ members = [
     "jarvis-remote",
     "jarvis-runner",
     "jarvis-viewer",
+    "jarvis-voice",
     "jarvis-sim",
     "jarvis-ffi",
 ]
@@ -46,6 +47,7 @@ jarvis-skills = { path = "jarvis-skills" }
 jarvis-remote = { path = "jarvis-remote" }
 jarvis-runner = { path = "jarvis-runner" }
 jarvis-viewer = { path = "jarvis-viewer" }
+jarvis-voice = { path = "jarvis-voice" }
 
 # Tuned for the iOS static library (jarvis-ffi). `panic = "unwind"` is load-bearing: the
 # FFI layer catches panics with `catch_unwind`, which `abort` would turn into a crash.

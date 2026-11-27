@@ -119,8 +119,8 @@ use jarvis_proto::{
     render_rows, Action, Answerer, AppInfo, BarNode, CompactScreen, ConfirmRequest, ConfirmStage,
     ConfirmTarget, Effect, Element, Event, ImageRef, Key, ModelRequest, Observation, Outcome,
     OutcomeStatus, Point, Progress, QuestionRow, QuestionRowKind, RawInput, RawNode, RequestKind,
-    RiskCategory, RunnerCommand, SessionConfig, Size, TaskOrigin, TaskSpec, TimedEvent, ToolCall,
-    ToolResult, ToolSpec,
+    RiskCategory, RunnerCommand, SessionConfig, Size, TaskSpec, TimedEvent, ToolCall, ToolResult,
+    ToolSpec,
 };
 use jarvis_safety::gestures::denormalize;
 use jarvis_safety::{
@@ -832,8 +832,10 @@ impl Session {
     /// neither its text nor the skill arguments it supplied: only the skill's instructions
     /// stored on the phone count. The profile values the owner did not mark sensitive count
     /// (the owner stored them to be typed; an exemption resting on the owner's own flag).
+    /// Voice: a task the microphone started without a touch (`TaskOrigin::Voice`) takes the
+    /// remote branch (`TaskOrigin::is_owner_words`).
     fn owner_texts(&self) -> Vec<&str> {
-        let phone = self.task.origin == TaskOrigin::Phone;
+        let phone = self.task.origin.is_owner_words();
         let mut out = Vec::new();
         if phone {
             out.push(self.task.text.as_str());

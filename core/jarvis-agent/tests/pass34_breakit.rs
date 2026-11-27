@@ -412,6 +412,43 @@ fn s3_a_remote_task_replaying_a_learned_slot_asks() {
     );
 }
 
+/// Voice: the same learned slot replayed for a task the microphone started without a touch
+/// asks like the remote one (the words were heard, not typed or confirmed by touch).
+#[test]
+fn voice_task_replaying_a_learned_slot_asks() {
+    let field = index(&search_screen(true, None), "Search");
+    let learn = run(
+        config(),
+        "Search lamps",
+        MemoryStore::new(),
+        search_phone(),
+        Script::model(&[
+            &format!(r#"{{"action":"type","element":{field},"text":"lamps"}}"#),
+            r#"{"action":"done","summary":"ok"}"#,
+        ]),
+    );
+    let voice = run_spec(
+        config(),
+        TaskSpec::new("t2", "Search chairs").from_origin(TaskOrigin::Voice),
+        learn.memory,
+        search_phone(),
+        Script::model(&[r#"{"action":"done","summary":"ok"}"#]),
+    );
+    assert!(
+        voice.confirms.iter().any(|c| c.phone_only),
+        "{:#?}",
+        voice.confirms
+    );
+    assert!(
+        !voice
+            .acts
+            .iter()
+            .any(|c| typed_text(c).is_some_and(|t| t.contains("chairs"))),
+        "{:?}",
+        voice.acts
+    );
+}
+
 /// A look that came back without a screenshot (pass 33: the oversize one left out) never
 /// makes the next request a vision one: a `tap_point` the model then chooses is refused,
 /// whatever the page drew.

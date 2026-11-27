@@ -14,7 +14,7 @@
 /// (U+0600..U+0605, U+06DD, U+070F, U+0890, U+0891, U+08E2, U+110BD, U+110CD) and the
 /// Egyptian hieroglyph format controls (U+13430..U+1343F) were missing; the table the test
 /// walks is `jarvis_remote::text::FORMAT_RANGES` (copied: this crate does not depend on it).
-pub(crate) fn is_invisible(c: char) -> bool {
+pub fn is_invisible(c: char) -> bool {
     let u = u32::from(c);
     if c.is_control() {
         // Whitespace controls (tab, newline...) are handled as whitespace by callers.
@@ -55,7 +55,7 @@ pub(crate) fn is_invisible(c: char) -> bool {
 }
 
 /// True for combining marks, which are dropped before matching so `P\u{301}ay` reads `pay`.
-pub(crate) fn is_combining(c: char) -> bool {
+pub fn is_combining(c: char) -> bool {
     matches!(
         u32::from(c),
         0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F
@@ -253,7 +253,7 @@ pub(crate) fn fold_confusable(c: char) -> char {
 
 /// Folds one character for look-alike-insensitive comparison: fullwidth and styled forms
 /// to ASCII, lowercase, then Cyrillic/Greek/accented look-alikes to ASCII letters.
-pub(crate) fn fold_char(c: char) -> char {
+pub fn fold_char(c: char) -> char {
     let c = fold_digit(fold_styled(fold_fullwidth(c)));
     if let Some(a) = fold_upper_confusable(c) {
         return a;

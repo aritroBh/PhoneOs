@@ -776,6 +776,11 @@ pub struct TaskSpec {
     /// phone; its text is then not the owner's words for the typing gate.
     #[uniffi(default = false)]
     pub remote: bool,
+    /// Voice: the microphone started the task without a touch (`TaskOrigin::Voice`); its
+    /// text is then not the owner's words for any gate, as for `remote`. With both set the
+    /// task is a remote one (equally strict).
+    #[uniffi(default = false)]
+    pub voice: bool,
 }
 
 /// An installed app the agent may open by name.

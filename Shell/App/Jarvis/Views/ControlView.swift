@@ -114,6 +114,46 @@ struct ControlView: View {
                             .accessibilityIdentifier("control.approval.footnote")
                     }
 
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionLabel(text: "Voice")
+                        VStack(spacing: 0) {
+                            SwitchRow(title: "Listen for \u{201C}Hey Jarvis\u{201D}", icon: .microphone, isOn: Binding(
+                                get: { model.settings.voiceWakeWord },
+                                set: { model.setVoiceWakeWord($0) }
+                            ), identifier: "voice.wakeWord")
+                            Divider().overlay(Theme.bezel)
+                            HStack(spacing: Theme.gap) {
+                                Text("Read answers aloud").font(Theme.body).foregroundStyle(Theme.textPrimary)
+                                Spacer()
+                                Picker("Read answers aloud", selection: Binding(
+                                    get: { model.settings.voiceSpeakAnswers },
+                                    set: { model.setVoiceSpeakAnswers($0) }
+                                )) {
+                                    ForEach(SpeakAnswersOption.allCases) { option in
+                                        Text(option.title).tag(option)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .accessibilityIdentifier("voice.speakAnswers")
+                            }
+                            .padding(.horizontal, Theme.gutter)
+                            .frame(minHeight: 52)
+                        }
+                        .card()
+                        Text("Only while Jarvis is open in front. Anything the phone or the room plays can say \u{201C}Hey Jarvis\u{201D}: a task started by voice asks before typing your words, and approvals are always a tap on the phone, never spoken. Answers are never read aloud while the phone is locked.")
+                            .font(Theme.meta)
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 4)
+                            .accessibilityIdentifier("voice.footnote")
+                        if let error = model.voiceError {
+                            Text(error)
+                                .font(Theme.meta)
+                                .foregroundStyle(Theme.errorText)
+                                .accessibilityIdentifier("voice.error")
+                        }
+                    }
+
                     VStack(alignment: .leading, spacing: 8) {
                         SectionLabel(text: "How careful")
                         HStack(spacing: 2) {

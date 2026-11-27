@@ -1142,5 +1142,46 @@ do {
     check("Live view stream checks", false, "\(error)")
 }
 
+// MARK: - Voice
+
+do {
+    let defaults = defaultVoiceSettings()
+    check("voice: the wake word is off and answers are never spoken by default",
+          !defaults.wakeWord && defaults.speakAnswers == .never && defaults.confirmPushToTalk)
+    let voice = JarvisVoice(settings: VoiceSettings(wakeWord: true, speakAnswers: .never, confirmPushToTalk: true))
+    let armed = try voice.step(nowMs: 10, event: .tick)
+    check("voice: turning the wake word on activates audio, then arms it",
+          armed == [.activateAudioSession, .armWakeWord], "\(armed)")
+    let heard = try voice.step(nowMs: 20, event: .finalTranscript(text: "Hey Jarvis, open Settings"))
+    check("voice: a hands-free request starts as a voice task",
+          heard.contains(.startTask(text: "open Settings", origin: .voice)), "\(heard)")
+    _ = try voice.step(nowMs: 30, event: .task(event: .started))
+    _ = try voice.step(nowMs: 40, event: .task(event: .waitingForApproval))
+    let yes = try voice.step(nowMs: 9_000, event: .finalTranscript(text: "yes"))
+    let status = try voice.status()
+    check("voice: a spoken yes while a question is pending does nothing",
+          !yes.contains(where: { if case .startTask = $0 { true } else { $0 == .stopTask } })
+              && status.phase == .taskRunning(questionPending: true), "\(yes) \(status)")
+    let stop = try voice.step(nowMs: 9_100, event: .finalTranscript(text: "stop"))
+    check("voice: stop without the wake phrase stops the voice task", stop.contains(.stopTask), "\(stop)")
+    let spec = TaskSpec(id: "v", text: "open Settings", voice: true)
+    check("voice: the task spec carries the voice origin", spec.voice && !spec.remote)
+    voice.debugPanicNextStep()
+    do {
+        _ = try voice.step(nowMs: 9_200, event: .tick)
+        check("voice: a panic in step is contained", false, "no error")
+    } catch JarvisError.Internal {
+        check("voice: a panic in step is contained", true)
+    }
+    do {
+        _ = try voice.status()
+        check("voice: the object is poisoned after a panic", false, "no error")
+    } catch JarvisError.Poisoned {
+        check("voice: the object is poisoned after a panic", true)
+    }
+} catch {
+    check("voice checks", false, "\(error)")
+}
+
 print("\(failures == 0 ? "PASS" : "FAIL") swift smoke: \(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

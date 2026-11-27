@@ -1599,18 +1599,26 @@ impl From<p::TaskSpec> for TaskSpec {
             id,
             text,
             remote: origin == p::TaskOrigin::Remote,
+            voice: origin == p::TaskOrigin::Voice,
         }
     }
 }
 
 impl From<TaskSpec> for p::TaskSpec {
     fn from(v: TaskSpec) -> Self {
-        let TaskSpec { id, text, remote } = v;
+        let TaskSpec {
+            id,
+            text,
+            remote,
+            voice,
+        } = v;
         p::TaskSpec {
             id,
             text,
             origin: if remote {
                 p::TaskOrigin::Remote
+            } else if voice {
+                p::TaskOrigin::Voice
             } else {
                 p::TaskOrigin::Phone
             },

@@ -107,6 +107,7 @@ fn drive(
             id: "probe".to_owned(),
             text: "probe".to_owned(),
             remote: false,
+            voice: false,
         },
         String::new(),
     )

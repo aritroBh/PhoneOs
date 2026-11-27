@@ -11,12 +11,32 @@ use crate::tool::ToolSpec;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskOrigin {
-    /// Typed or spoken on the phone itself: the owner's own words.
+    /// Typed on the phone itself, or a spoken transcript the owner confirmed by touch
+    /// before it started: the owner's own words.
     #[default]
     Phone,
     /// Sent by a paired remote device: not the owner's words for the typing gate (text the
     /// model types for it asks on the phone).
     Remote,
+    /// Heard by the microphone and started without a touch (the hands-free wake phrase, or
+    /// push to talk without the confirm step). The microphone cannot tell the owner's voice
+    /// from a video, a call on speaker or another person in the room, and the recogniser
+    /// may mishear: for every gate this is treated at least as strictly as [`Self::Remote`]
+    /// (its text is not the owner's words).
+    Voice,
+}
+
+impl TaskOrigin {
+    /// Whether the task's text (and the skill arguments it supplied) are the owner's own
+    /// words: only for a request typed, or confirmed by touch, on the phone. Every other
+    /// origin takes the non-owner branch of each gate. A full match, so that a new origin
+    /// has to choose.
+    pub fn is_owner_words(self) -> bool {
+        match self {
+            TaskOrigin::Phone => true,
+            TaskOrigin::Remote | TaskOrigin::Voice => false,
+        }
+    }
 }
 
 /// What the user asked for.

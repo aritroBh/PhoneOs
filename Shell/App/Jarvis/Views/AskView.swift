@@ -97,6 +97,11 @@ struct AskView: View {
                 .padding(.top, 32)
                 .padding(.bottom, 24)
             }
+            if let transcript = model.voiceTranscript {
+                VoiceTranscriptRow(transcript: transcript)
+                    .padding(.horizontal, Theme.gutter)
+                    .padding(.bottom, Theme.gapSmall)
+            }
             composer
         }
         .screenBackground()
@@ -156,6 +161,21 @@ struct AskView: View {
                 .frame(minHeight: Theme.minTarget)
                 .accessibilityLabel("Task for Jarvis")
                 .accessibilityIdentifier("ask.composer")
+            if model.voiceAvailable {
+                // Push to talk: tap to listen, tap again to end the request. The transcript
+                // then waits on the row above for Start.
+                let listening = model.voicePhase == .listening
+                Button { model.toggleTalk() } label: {
+                    Image.decorative(listening ? .stop : .microphone, size: Theme.iconStandard)
+                        .foregroundStyle(listening ? Theme.primaryText : Theme.textSoft)
+                        .frame(width: Theme.minTarget, height: Theme.minTarget)
+                        .background(Circle().fill(listening ? Theme.primaryFill : Theme.raisedHigh))
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isRunning)
+                .accessibilityLabel(listening ? "Stop listening" : "Speak a task")
+                .accessibilityIdentifier("ask.mic")
+            }
             Button(action: send) {
                 Image.decorative(.send, size: Theme.iconStandard)
                     .foregroundStyle(Theme.primaryText)
@@ -333,5 +353,55 @@ struct SkillChoiceSheet: View {
                 .buttonStyle(PrimaryButtonStyle())
                 .accessibilityIdentifier("skill.args.run")
         }
+    }
+}
+
+/// What the microphone heard. A push-to-talk transcript waits here: the owner may edit it,
+/// and only Start (a touch) runs it, as the owner's own words. A hands-free request is
+/// shown as heard while it starts.
+private struct VoiceTranscriptRow: View {
+    @EnvironmentObject private var model: AppModel
+    var transcript: VoiceService.Transcript
+    @State private var text = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.gapSmall) {
+            Label {
+                Text(transcript.needsConfirm ? "Heard. Check it, then Start." : "Heard")
+                    .font(Theme.meta)
+            } icon: {
+                Image.decorative(.microphone, size: Theme.iconCompact)
+            }
+            .foregroundStyle(Theme.textSecondary)
+            if transcript.needsConfirm {
+                TextField("", text: $text)
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: Theme.minTarget)
+                    .modifier(Bezeled(fill: Theme.surface, radius: Theme.radiusButton, stroke: Theme.controlBezel))
+                    .accessibilityLabel("What Jarvis heard")
+                    .accessibilityIdentifier("voice.transcript.text")
+                HStack(spacing: Theme.gap) {
+                    Button("Discard") { model.discardVoiceTranscript() }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("voice.transcript.discard")
+                    Button("Start") { model.confirmVoiceTranscript(text) }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty || model.isRunning)
+                        .accessibilityIdentifier("voice.transcript.start")
+                }
+            } else {
+                Text(transcript.text)
+                    .font(Theme.body)
+                    .foregroundStyle(Theme.textPrimary)
+                    .accessibilityIdentifier("voice.transcript")
+            }
+        }
+        .padding(Theme.gap)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card(radius: Theme.radiusElement)
+        .onAppear { text = transcript.text }
+        .onChange(of: transcript) { _, new in text = new.text }
     }
 }

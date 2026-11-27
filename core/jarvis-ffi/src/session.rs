@@ -333,6 +333,7 @@ mod tests {
             id: "t".to_owned(),
             text: "Turn off Wi-Fi".to_owned(),
             remote: false,
+            voice: false,
         };
         JarvisSession::new(config, task, String::new()).unwrap()
     }

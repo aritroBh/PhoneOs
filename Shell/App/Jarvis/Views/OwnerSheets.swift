@@ -109,6 +109,14 @@ struct ConfirmationSheet: View {
                     .buttonStyle(PrimaryButtonStyle())
                     .accessibilityIdentifier("confirm.approve")
             }
+            if model.launch.playground && model.launch.voiceScripted {
+                // The voice UI test's evidence: scripted words reached the core while this
+                // question was open (and approved nothing).
+                Text("Heard while asking: \(model.voiceHeardDuringQuestion)")
+                    .font(Theme.meta)
+                    .foregroundStyle(Theme.textTertiary)
+                    .accessibilityIdentifier("voice.qa.heard")
+            }
         }
         .padding(.horizontal, 20)
         .padding(.top, 28)

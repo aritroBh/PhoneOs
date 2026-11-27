@@ -35,6 +35,10 @@
 //!   authenticated loopback runner protocol (`start`, `receive`, `request`, `reply`,
 //!   `isOpen`), plus `runnerProtocolVersion()` ([`JarvisRunnerClientChannel`]; the logic is
 //!   the `jarvis-runner` crate, shell duties in `runner_channel.rs`).
+//! - `JarvisVoice(settings:)`: the voice state machine (`step(nowMs:event:) throws ->
+//!   [VoiceEffect]`, `status()`, `settings()`), plus `voiceTimings()` and
+//!   `defaultVoiceSettings()` ([`JarvisVoice`]; the logic is the `jarvis-voice` crate,
+//!   records carry a `Voice` prefix).
 //! - Free functions: `actionJsonSchema()`, `actionGbnf()`, `systemPrompt()`,
 //!   `coreVersion()`, `parseRunnerTextToScreen(snapshot:)`, `defaultPolicy()`,
 //!   `defaultModelProfile()`, `defaultSessionConfig()`, and for the Live view
@@ -76,6 +80,7 @@ mod session;
 mod skills;
 pub mod types;
 mod viewer;
+mod voice;
 mod workflows;
 
 pub use error::JarvisError;
@@ -100,6 +105,11 @@ pub use viewer::{
     CoreViewerElementKind, CoreViewerFrameKey, CoreViewerGesture, CoreViewerOutcome,
     CoreViewerScreen, CoreViewerScreenInfo, CoreViewerSource, CoreViewerStep, CoreViewerStepState,
     CoreViewerTimeline, CoreViewerUpdate, JarvisViewer,
+};
+pub use voice::{
+    default_voice_settings, voice_origin_to_proto, voice_timings, JarvisVoice, VoiceCue,
+    VoiceEffect, VoiceEvent, VoicePhase, VoiceSettings, VoiceSpeakAnswers, VoiceStatus,
+    VoiceTaskEvent, VoiceTaskOrigin, VoiceTimings, VoiceUtteranceKind,
 };
 pub use workflows::{
     default_run_limits, resolve_utterance, schedule_is_due, schedule_minutes_since_last,

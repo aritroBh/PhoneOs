@@ -84,7 +84,11 @@ targets:
         # Jarvis itself asks for none of these outside the Playground.
         NSLocationWhenInUseUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
         NSCameraUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
-        NSMicrophoneUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
+        # Voice (App/Jarvis/Platform/VoiceAdapters.swift): the microphone for push to talk and,
+        # when the owner turns it on, "Hey Jarvis" while Jarvis is open. Recognition is
+        # on-device only. (The QA Playground also raises this prompt once in simulator tests.)
+        NSMicrophoneUsageDescription: "Jarvis listens when you tap the microphone, and for “Hey Jarvis” while Jarvis is open if you turn that on in Control."
+        NSSpeechRecognitionUsageDescription: "Jarvis turns what you say into a task on this iPhone. Speech is recognised on the device and never sent to a server."
         NSContactsUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
         NSPhotoLibraryUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."
         NSPhotoLibraryAddUsageDescription: "Only the QA Playground asks for this, to record the system prompt in simulator tests."

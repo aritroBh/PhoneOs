@@ -142,6 +142,10 @@ pub use sanitize::{
     sanitize_screen_text, sanitize_screen_text_with_limit, MAX_SCREEN_TEXT_CHARS, SCREEN_BLOCK_END,
     SCREEN_BLOCK_START,
 };
+/// The character classes behind matching, for other crates that match words the same way
+/// (`jarvis-voice`: the wake phrase, the stop words and the spoken-text cleaner use this
+/// crate's notion of an invisible character rather than a copy).
+pub use text::{fold_char, is_combining, is_invisible};
 pub use text::{label_is_foreign, label_is_unreadable, FOREIGN_UI_WORDS};
 pub use validate::{
     url_scheme, validate_action, wait_level, ActionError, ALLOWED_URL_SCHEMES, MAX_LONG_PRESS_MS,

@@ -571,6 +571,7 @@ dependencies = [
  "jarvis-safety",
  "jarvis-skills",
  "jarvis-viewer",
+ "jarvis-voice",
  "serde_json",
  "thiserror",
  "uniffi",
@@ -689,6 +690,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "jarvis-voice"
+version = "0.1.0"
+dependencies = [
+ "jarvis-proto",
+ "jarvis-safety",
 ]
 
 [[package]]

@@ -719,3 +719,20 @@ fn session_config_skill_is_optional_and_omitted_when_absent() {
     let null: SessionConfig = serde_json::from_str(r#"{"skill":null}"#).unwrap();
     assert!(null.skill.is_none());
 }
+
+/// Voice: `TaskOrigin::Voice` is `"voice"` on the wire, task JSON written before it (no
+/// `origin`, or `phone`/`remote`) loads unchanged, and only `Phone` is the owner's words.
+#[test]
+fn task_origin_voice_wire_and_old_json() {
+    let voice = TaskSpec::new("t-v", "Open Settings").from_origin(TaskOrigin::Voice);
+    let v = round_trip(&voice);
+    assert_eq!(v["origin"], json!("voice"));
+    let old: TaskSpec = serde_json::from_str(r#"{"id":"t","text":"Open Settings"}"#).unwrap();
+    assert_eq!(old.origin, TaskOrigin::Phone);
+    let remote: TaskSpec =
+        serde_json::from_str(r#"{"id":"t","text":"x","origin":"remote"}"#).unwrap();
+    assert_eq!(remote.origin, TaskOrigin::Remote);
+    assert!(TaskOrigin::Phone.is_owner_words());
+    assert!(!TaskOrigin::Remote.is_owner_words());
+    assert!(!TaskOrigin::Voice.is_owner_words());
+}
