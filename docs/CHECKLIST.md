@@ -84,7 +84,7 @@ Waiting for a Mac build (app code changed after `18bc128`, the last commit compi
 - [~] Away mode in the app (logic Linux-tested; staying dark while another app is in front needs spike S7)
 - [x] Before the first unlock: stores never overwrite an unreadable file; tasks are refused until the rules can be read
 - [x] Lock state read before every command; nothing is sent to a phone that reads locked
-- [ ] Audio-session interruption recovery (with voice)
+- [~] Audio-session interruption recovery (with voice): the core's rule landed with the voice slice (`1073262`) — an interruption stops the recogniser and speech, an exchange cut by it is discarded and never started later, listening re-arms only when the system says to resume; a route loss stops speech. Not run on a device
 - [ ] Siri AI `ToolIntent` + app skills bundle experiment
 
 ## Live view (cursor)
@@ -272,7 +272,7 @@ Watch Jarvis act: a phone-shaped viewer in the run screen shows the screen Jarvi
 
 ## Later phases
 
-- [ ] Voice: wake word, STT, TTS
+- [~] Voice: wake word, STT, TTS — **first slice landed (`1073262`, mic guard `b3dbc41`; core 2,163, Swift 514, Swift smoke 159, eval 36/36, bench held)**: new sans-IO crate `jarvis-voice` (events in, effects out) decides everything; Swift only listens and speaks behind four ports (recogniser, synthesiser, wake word, audio session). "Hey Jarvis, <request>" starts a task hands-free; the mic button on Ask is push to talk, and its transcript waits for a touch on Start. Rules: a voice-started task is not the owner's words (`TaskOrigin::Voice`: text it types asks on the phone, like a remote task) — the microphone cannot tell the owner from a video or a call on speaker; a spoken word never approves anything (there is no spoken yes); "Jarvis, stop" always stops; Jarvis ignores what it hears while it speaks and what it just said; spoken lines are fixed phrases ("I need your approval on the phone.", never the question); the model's answer is read aloud only by a setting (off by default) and never while locked; the wake word is off by default; nothing starts from a partial transcript; recognition is on-device only, with no server fallback. Nothing of it is sent to a paired device. Not done: listening in the background or while another app is in front (no background audio mode yet, so no barge-in while a task drives another app); a dedicated keyword engine (today the recogniser's own transcript is the wake word, foreground only); English only; no speaker verification ("treat my voice as me" is an open owner decision); Bluetooth microphones. Mac-only adapters, views and one UI test (scripted recogniser) not compiled yet. A break-it review is next
 - [ ] Native tools + Shortcuts bridge + Connections screen
 - [ ] Away mode on the device (black screen, brightness, proximity, return-to-dark after each task): after S7
 - [ ] Background operation, Live Activity, notifications
