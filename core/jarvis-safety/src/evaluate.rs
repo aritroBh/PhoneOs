@@ -1885,11 +1885,24 @@ pub fn evaluate_sheeted(
     // Review pass 35/36: the pressed control's own words and their look-alike character
     // sets (`DeIete`, `BIock`, `Rem0ve`, `Send M0ney`) each give a category, all carried
     // (on the screen as classified: a browser's Forward is read as Back).
-    for c in crate::classify::reading_risks(action, read) {
+    // Review pass 39 (F6): for every control the classification reads as a tap (a
+    // `tap_point`'s, a swipe's), not only a tap's or long press's target.
+    let readings = crate::classify::press_readings(action, read);
+    for c in readings.risks.iter().copied() {
         category = carry(&mut carried, category, c);
     }
     // Review pass 37 (F5): a label read only after the normalisation keeps `Unverified`.
-    if crate::classify::unread_label_beside_a_category(action, read) {
+    if readings.unread_beside {
+        category = carry(&mut carried, category, RiskCategory::Unverified);
+    }
+    // Review pass 39 (F3, F4): a control whose drawing the tables cannot read for an
+    // attack-shaped reason (an intruder inside a Latin word, a mixed-script look-alike word,
+    // a drawn format character, past the length or soft-boundary bound) is its own fact,
+    // as a screen not read completely is: asked on the phone only at every trust level
+    // (no relaxed category and no `Trusted` app lets it through), and refused while the
+    // owner denies any category (below). It still carries every category its readings give.
+    let unreadable = readings.unreadable;
+    if unreadable {
         category = carry(&mut carried, category, RiskCategory::Unverified);
     }
     // Audit of real trees (C2): an SF Symbol named by the identifier of the pressed control
@@ -1966,7 +1979,9 @@ pub fn evaluate_sheeted(
         unclear = true;
     }
     // Probe round 3 (F6): a credential typed beside a password asks whatever was relaxed.
-    let mut forced = credential || emergency;
+    // Review pass 39: so does what cannot be read.
+    unclear |= unreadable;
+    let mut forced = credential || emergency || unreadable;
     for url in navigated_links(action, screen) {
         if !owner_gave_url(&url, owner) {
             // A call link stays `Call` (it asks as one); any other link sends.
@@ -2058,6 +2073,13 @@ pub fn evaluate_sheeted(
         .find(|c| crate::gate::gate(policy, **c) == Gate::Deny)
     {
         return Decision::Deny(format!("{denied:?} actions are not allowed"));
+    }
+    // Review pass 39 (F4): what cannot be read may be of a denied category: while the owner
+    // denies any, it is refused (as on a screen not read completely).
+    if unreadable && !policy.deny_categories.is_empty() {
+        return Decision::Deny(
+            "a control's text could not be read, and it may be of a category the owner does not allow".to_owned(),
+        );
     }
     // Rule P (and the hand-on items) ask whatever the owner relaxed (only a denial refuses).
     let gate_of = |c: RiskCategory| {
@@ -4955,7 +4977,34 @@ fn amount_alone(f: &AmountFact) -> String {
                 .unwrap_or(-1.0)
                 .total_cmp(&amount_value(y).unwrap_or(-1.0))
         });
-    fact_entry(best.as_deref().unwrap_or(&f.text), MAX_AMOUNT_CHARS)
+    let entry = fact_entry(best.as_deref().unwrap_or(&f.text), MAX_AMOUNT_CHARS);
+    if n_chars(&entry) <= MAX_AMOUNT_CHARS {
+        return entry;
+    }
+    // Review pass 39 (F8): an amount inside one long run of text (`xxx…x£1`) is a range of
+    // that whole run; shown alone it is its digits with what touches them (a currency sign
+    // or code, a sign), within `MAX_AMOUNT_CHARS` by construction.
+    amount_core(&entry, MAX_AMOUNT_CHARS)
+}
+
+/// Review pass 39 (F8): the part of `entry` from four characters before its first digit to
+/// four after its last, cut to `max` characters (`…` marking a cut) when still longer.
+fn amount_core(entry: &str, max: usize) -> String {
+    let chars: Vec<char> = entry.chars().collect();
+    let first = chars.iter().position(char::is_ascii_digit);
+    let last = chars.iter().rposition(char::is_ascii_digit);
+    let core: String = match (first, last) {
+        (Some(a), Some(b)) => {
+            let lo = a.saturating_sub(4);
+            let hi = b.saturating_add(5).min(chars.len());
+            let head = if lo > 0 { "…" } else { "" };
+            let tail = if hi < chars.len() { "…" } else { "" };
+            let mid: String = chars.get(lo..hi).unwrap_or_default().iter().collect();
+            format!("{head}{}{tail}", mid.trim())
+        }
+        _ => entry.to_owned(),
+    };
+    hard_cut(&core, max)
 }
 
 /// Slot 2 (ninth review): `. Amounts on screen: Total $5,000.00; …; and N more`, within

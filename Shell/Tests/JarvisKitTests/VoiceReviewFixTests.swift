@@ -112,7 +112,10 @@ struct VoiceReviewFixTests {
         await w.service.start()
         try await eventually("armed") { w.wake.armed != nil }
         w.wake.hear("Hey Jarvis, turn off Wi-Fi")
-        try await eventually("the row is shown") { w.service.transcript?.text == "turn off Wi-Fi" }
+        // The row of a hands-free request is there only until its task ends, which can be
+        // sooner than one poll of the service (it timed out once on the Mac host): the
+        // harness records every row shown, and that record is what is waited on.
+        try await eventually("the row is shown") { w.transcripts.contains { $0.text == "turn off Wi-Fi" } }
         try await eventually("the task ended") {
             w.app.center.session == nil && w.service.isSettled && w.service.status.phase == .idle
         }

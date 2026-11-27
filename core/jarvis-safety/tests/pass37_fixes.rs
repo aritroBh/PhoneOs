@@ -426,8 +426,10 @@ fn b_an_overlong_tab_or_key_is_unverified() {
             RiskCategory::Unverified,
             "{role:?}"
         );
+        // Review pass 39: past the length bound it cannot be read: refused while the owner
+        // denies a category (it was asked).
         let d = decide_as(&deny, role.clone(), &l);
-        assert!(matches!(d, Decision::Confirm(_)), "{role:?}: {}", short(&d));
+        assert!(matches!(d, Decision::Deny(_)), "{role:?}: {}", short(&d));
     }
     // Ordinary tabs and keys read as before.
     assert_eq!(tap_as(Role::Tab, "Library"), RiskCategory::None);
@@ -471,7 +473,10 @@ fn fuzz_the_normalisation_is_bounded_and_idempotent() {
             })
             .collect();
         let once = normalized(&t);
-        assert!(once.chars().count() <= t.chars().count(), "{t:?}");
+        // Review pass 39: never more characters than the input with its multi-letter
+        // compatibility forms written as their letters (`㎯` is `rads`).
+        let letters = jarvis_safety::reference::expanded(&t);
+        assert!(once.chars().count() <= letters.chars().count(), "{t:?}");
         assert_eq!(normalized(&once), once, "{t:?}");
         if k % 10 == 0 {
             for l in [t.as_str(), once.as_str()] {

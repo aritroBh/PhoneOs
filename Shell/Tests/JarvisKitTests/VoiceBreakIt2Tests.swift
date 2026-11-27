@@ -45,7 +45,13 @@ struct VoiceBreakIt2Tests {
         h.wake.hear("Hey Jarvis, turn off Wi-Fi")
         let heard = await waitUntil(seconds: 3) { !h.specs.isEmpty || h.service.transcript != nil }
         #expect(heard, "the request heard after the restart never reached the core")
-        #expect(h.service.status.phase == .idle || !h.specs.isEmpty)
+        // Changed after the Mac host run of 60b7845: the last line read the phase at the
+        // instant the row appeared and wanted "idle or already started"; on the Mac the row
+        // is seen while the start is still on its way (phase starting, no spec yet) and the
+        // line failed although the request had reached the core. It now waits for what it
+        // meant, and asks for more: the request heard after the restart starts its task.
+        let started = await waitUntil(seconds: 3) { !h.specs.isEmpty }
+        #expect(started, "the request heard after the restart never started (phase \(h.service.status.phase))")
     }
 
     /// A push-to-talk transcript confirmed by touch starts as the owner's words: the spec is

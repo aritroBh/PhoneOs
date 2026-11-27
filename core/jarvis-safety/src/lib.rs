@@ -67,6 +67,14 @@ pub use app::{
 pub use approval::{approval_context, ApprovalContext};
 pub use budget::{Budget, BudgetVerdict};
 pub use classify::classify;
+/// Review pass 39: whether `action` presses or types into something whose drawing the tables
+/// cannot read for an attack-shaped reason (an intruder inside a Latin word, a mixed-script
+/// look-alike word, a drawn format character, past the length or soft-boundary bound): the
+/// gate asks it on the phone only at every trust level and refuses it while the owner denies
+/// any category; the session never lets an earlier approval cover it.
+pub fn cannot_be_read(action: &jarvis_proto::Action, screen: &jarvis_proto::CompactScreen) -> bool {
+    classify::cannot_be_read(action, screen)
+}
 pub use confine::check_confinement;
 pub use evaluate::{
     classify_from, egress_owned, evaluate, evaluate_confined, evaluate_egress, evaluate_flowing,
@@ -140,6 +148,22 @@ pub mod reference {
         crate::norm::has_intruder(text)
     }
 
+    /// Review pass 39: `text` with every multi-letter compatibility form written as its
+    /// letters (`㏒` log), as both readings take it before the normalisation.
+    pub fn expanded(text: &str) -> String {
+        crate::norm::expanded(text).into_owned()
+    }
+
+    /// Review pass 39: whether `action` presses or types into something whose drawing the
+    /// tables cannot read (`crate::classify::cannot_be_read`: asked on the phone only at
+    /// every trust level, refused while any category is denied).
+    pub fn cannot_be_read(
+        action: &jarvis_proto::Action,
+        screen: &jarvis_proto::CompactScreen,
+    ) -> bool {
+        crate::classify::cannot_be_read(action, screen)
+    }
+
     /// Review pass 37 (F8): the soft boundaries of `text`'s look-alike units.
     pub fn soft_boundaries(text: &str) -> usize {
         crate::sets::with_units(text, crate::sets::soft_boundaries)
@@ -147,6 +171,12 @@ pub mod reference {
 
     /// Review pass 37 (F8): the most soft boundaries a label may hold for the sets to walk.
     pub const MAX_SOFT_BOUNDARIES: usize = crate::sets::MAX_SOFT_BOUNDARIES;
+
+    /// Review pass 39: the normalisation steps taken on this thread so far (one per
+    /// character a reading normalises, one per multi-letter lookup).
+    pub fn norm_steps() -> u64 {
+        crate::norm::norm_steps()
+    }
 
     /// Review pass 37 (F8): the look-alike trie steps walked on this thread so far.
     pub fn walk_steps() -> u64 {

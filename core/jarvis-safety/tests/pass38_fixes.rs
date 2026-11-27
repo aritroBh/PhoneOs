@@ -13,6 +13,9 @@
 #[path = "generated/assigned.rs"]
 mod assigned;
 mod common;
+#[cfg(feature = "reference")]
+#[path = "generated/emoji.rs"]
+mod emoji;
 
 use common::{app_screen, button, el, field, label};
 use jarvis_proto::{Action, Policy, RiskCategory, Role};
@@ -461,11 +464,24 @@ fn allowed_class(c: char, at_edge: bool) -> Option<&'static str> {
     if WORD_PUNCTUATION.contains(&f) {
         return Some("word punctuation: a visible break inside the word");
     }
-    if at_edge && !f.is_alphabetic() {
+    // Review pass 39 (F1): at the edge only an emoji (Extended_Pictographic or
+    // Emoji_Presentation, emoji-data.txt 15.1.0) or a listed arrow, chevron, check mark or
+    // cross; it was any non-letter (CJK strokes and radicals were allowed there).
+    let emoji = emoji::EMOJI
+        .iter()
+        .any(|&(a, b)| (a..=b).contains(&u32::from(f)));
+    if at_edge && !f.is_alphabetic() && (emoji || EDGE_SYMBOLS.contains(&f)) {
         return Some("at the word's edge (arrow, check mark, pictograph): visibly not a letter");
     }
     None
 }
+
+/// Review pass 39: the arrows, chevrons, check marks and crosses a word may hold at its edge.
+#[cfg(feature = "reference")]
+const EDGE_SYMBOLS: &[char] = &[
+    '\u{2039}', '\u{203A}', '\u{AB}', '\u{BB}', '\u{2190}', '\u{2191}', '\u{2192}', '\u{2193}',
+    '\u{2713}', '\u{2714}', '\u{2715}', '\u{2716}', '\u{D7}',
+];
 
 /// The class, for EVERY assigned code point of Unicode 15.1 (287,346, private use
 /// included): `De{c}ete Account`, `{c}og Out`, `Ca{c}{c}` and `P{c}y`, tapped as a Button
@@ -483,6 +499,10 @@ fn every_code_point_in_a_risk_word_asks_or_is_known() {
             .map(|&(a, b)| b - a + 1)
             .sum::<u32>(),
         assigned::ASSIGNED_COUNT
+    );
+    assert_eq!(
+        emoji::EMOJI.iter().map(|&(a, b)| b - a + 1).sum::<u32>(),
+        emoji::EMOJI_COUNT
     );
     let cps: Vec<char> = assigned::ASSIGNED
         .iter()

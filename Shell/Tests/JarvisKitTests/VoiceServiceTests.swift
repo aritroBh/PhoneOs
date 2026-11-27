@@ -198,6 +198,11 @@ struct VoiceServiceTests {
         // The owner types a task on Ask.
         _ = h.app.center.start("Turn off Wi-Fi")
         try await eventually("the core knows another task runs") { h.service.isSettled && h.service.status.otherTaskRunning }
+        // The typed task's own start is recorded before the request is heard: the count
+        // below is then "the voice request started nothing". (Read without this wait, the
+        // typed task's start had once not been recorded yet when "I am busy." was said, and
+        // the count was 0.)
+        try await eventually("the typed task's start is recorded") { h.specs.count == 1 }
         h.wake.hear("Hey Jarvis, delete my account")
         try await eventually("busy") { h.synth.texts.contains("I am busy.") }
         #expect(h.specs.count == 1)

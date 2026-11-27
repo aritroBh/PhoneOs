@@ -37,8 +37,19 @@
 //! normalising once ([`normalized`]), and no character yields more than one.
 //!
 //! Review pass 38: [`has_intruder`] says which characters of a label are *known* inside a
-//! word that reads as Latin; any other character there makes a pressable control
-//! `Unverified`.
+//! word that reads as Latin; any other character there makes a control `Unverified`.
+//!
+//! Review pass 39: (a) before the pass, a character whose compatibility decomposition is
+//! several ASCII letters ([`crate::compat::COMPAT_LETTERS`]: `㏒` log, `㎈` cal, `ﬁ` fi) is
+//! written as those letters ([`expanded`]; both readings call it), so such a character
+//! yields its letters, every other at most one piece; (b) the Prepended_Concatenation_Mark
+//! format characters (U+0600..U+0605, U+06DD, U+070F, U+0890, U+0891, U+08E2, U+110BD,
+//! U+110CD) are drawn by fonts: kept as characters, not dropped; (c) the edge class is the
+//! emoji ([`crate::compat::EMOJI_RANGES`], emoji-data.txt 15.1.0), not every wide symbol;
+//! (d) a word with no ASCII letter whose letters fold to ASCII beside letters of another
+//! script family ([`crate::compat::SCRIPT_RANGES`]) holds an intruder.
+
+use std::borrow::Cow;
 
 use crate::text::{
     emoji_word, fold_confusable, fold_digit, fold_fullwidth, fold_styled, fold_upper_confusable,
@@ -70,7 +81,7 @@ pub(crate) fn is_narrow_space(c: char) -> bool {
 /// ([`crate::compat::COMPAT_FOLD`]), if any.
 pub(crate) fn compat_fold(c: char) -> Option<char> {
     let u = u32::from(c);
-    if u < 0xA0 {
+    if u < 0xA0 || !in_block(u, HAS_FOLD) {
         return None;
     }
     crate::compat::COMPAT_FOLD
@@ -80,10 +91,148 @@ pub(crate) fn compat_fold(c: char) -> Option<char> {
         .map(|&(_, a)| char::from(a))
 }
 
+/// Review pass 39: which tables have an entry in each block of 256 code points (the first
+/// level of a two-level lookup): a character of a block without one is answered without a
+/// binary search (Hangul, most CJK and other scripts' letters).
+const HAS_FOLD: u8 = 1;
+const HAS_BASE: u8 = 2;
+const HAS_MARK: u8 = 4;
+const HAS_SCRIPT: u8 = 8;
+const HAS_EMOJI: u8 = 16;
+
+/// Number of 256-code-point blocks (U+0000..U+10FFFF).
+const BLOCKS: usize = 0x1100;
+
+/// Every table's blocks ([`HAS_FOLD`] …), worked out at compile time.
+// A constant: an index out of bounds would fail the build, never run.
+#[allow(clippy::indexing_slicing)]
+const fn block_table() -> [u8; BLOCKS] {
+    let mut b = [0u8; BLOCKS];
+    let mut i = 0;
+    while i < crate::compat::COMPAT_FOLD.len() {
+        b[(crate::compat::COMPAT_FOLD[i].0 >> 8) as usize] |= HAS_FOLD;
+        i += 1;
+    }
+    i = 0;
+    while i < BASE_OF.len() {
+        b[(BASE_OF[i].0 >> 8) as usize] |= HAS_BASE;
+        i += 1;
+    }
+    i = 0;
+    while i < MARK_RANGES.len() {
+        let mut k = MARK_RANGES[i].0 >> 8;
+        while k <= MARK_RANGES[i].1 >> 8 {
+            b[k as usize] |= HAS_MARK;
+            k += 1;
+        }
+        i += 1;
+    }
+    i = 0;
+    while i < crate::compat::SCRIPT_RANGES.len() {
+        let mut k = crate::compat::SCRIPT_RANGES[i].0 >> 8;
+        while k <= crate::compat::SCRIPT_RANGES[i].1 >> 8 {
+            b[k as usize] |= HAS_SCRIPT;
+            k += 1;
+        }
+        i += 1;
+    }
+    i = 0;
+    while i < crate::compat::EMOJI_RANGES.len() {
+        let mut k = crate::compat::EMOJI_RANGES[i].0 >> 8;
+        while k <= crate::compat::EMOJI_RANGES[i].1 >> 8 {
+            b[k as usize] |= HAS_EMOJI;
+            k += 1;
+        }
+        i += 1;
+    }
+    b
+}
+
+static BLOCK_TABLE: [u8; BLOCKS] = block_table();
+
+/// Whether the block of `u` holds an entry of the table `bit` stands for.
+fn in_block(u: u32, bit: u8) -> bool {
+    usize::try_from(u >> 8)
+        .ok()
+        .and_then(|k| BLOCK_TABLE.get(k))
+        .is_some_and(|b| b & bit != 0)
+}
+
+#[cfg(feature = "reference")]
+thread_local! {
+    /// Review pass 39: the normalisation steps on this thread (one per character a reading
+    /// normalises, one per multi-letter lookup; tests count work by it).
+    static NORM_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[inline]
+fn norm_step() {
+    #[cfg(feature = "reference")]
+    NORM_STEPS.with(|c| c.set(c.get().saturating_add(1)));
+}
+
+/// The normalisation steps on this thread so far (feature `reference`, for tests).
+#[cfg(feature = "reference")]
+pub(crate) fn norm_steps() -> u64 {
+    NORM_STEPS.with(std::cell::Cell::get)
+}
+
+/// Review pass 39: the ASCII letters (two or more) `c`'s compatibility decomposition
+/// reduces to ([`crate::compat::COMPAT_LETTERS`]), if any.
+pub(crate) fn compat_letters(c: char) -> Option<&'static str> {
+    if !in_letters_span(c) {
+        return None;
+    }
+    norm_step();
+    let u = u32::from(c);
+    crate::compat::COMPAT_LETTERS
+        .binary_search_by_key(&u, |&(k, _)| k)
+        .ok()
+        .and_then(|k| crate::compat::COMPAT_LETTERS.get(k))
+        .map(|&(_, s)| s)
+}
+
+/// Review pass 39: whether `c` lies in a span of [`crate::compat::COMPAT_LETTERS_SPANS`]
+/// (eight comparisons at most: no table search for the characters of other scripts).
+fn in_letters_span(c: char) -> bool {
+    let u = u32::from(c);
+    u >= 0x132
+        && crate::compat::COMPAT_LETTERS_SPANS
+            .iter()
+            .any(|&(lo, hi)| lo <= u && u <= hi)
+}
+
+/// Review pass 39: `text` with every character of [`compat_letters`] written as its letters
+/// (`㏒ Out` is `log Out`); borrowed when it holds none. Both readings, the intruder rule's
+/// length and the soft-boundary bound read a label through it.
+pub(crate) fn expanded(text: &str) -> Cow<'_, str> {
+    if text.is_ascii() || !text.chars().any(|c| compat_letters(c).is_some()) {
+        // (Review pass 39: `compat_letters` searches only inside its spans.)
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 8);
+    for c in text.chars() {
+        match compat_letters(c) {
+            Some(s) => out.push_str(s),
+            None => out.push(c),
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// Review pass 39: a Prepended_Concatenation_Mark (a format character fonts draw).
+pub(crate) fn is_drawn_format(c: char) -> bool {
+    let u = u32::from(c);
+    (0x600..=0x110CD).contains(&u)
+        && crate::compat::PREPENDED_CONCATENATION_MARKS
+            .binary_search(&u)
+            .is_ok()
+}
+
 /// Whether `c` is a nonspacing or enclosing mark (General_Category Mn or Me, Unicode 15.1).
 pub(crate) fn is_mark(c: char) -> bool {
     let u = u32::from(c);
-    if u < 0x0300 {
+    if u < 0x0300 || !in_block(u, HAS_MARK) {
         return false;
     }
     let k = MARK_RANGES.partition_point(|&(_, hi)| hi < u);
@@ -94,7 +243,7 @@ pub(crate) fn is_mark(c: char) -> bool {
 /// ([`BASE_OF`]); `c` otherwise.
 pub(crate) fn base_of(c: char) -> char {
     let u = u32::from(c);
-    if u < 0xC0 {
+    if u < 0xC0 || !in_block(u, HAS_BASE) {
         return c;
     }
     match BASE_OF.binary_search_by_key(&u, |&(k, _)| k) {
@@ -120,9 +269,40 @@ fn ascii_piece(c: char) -> Option<Piece> {
 
 /// The normalisation of one character of a label (see the module documentation).
 pub(crate) fn piece(raw: char) -> Option<Piece> {
+    norm_step();
     if raw.is_ascii() {
         return ascii_piece(raw);
     }
+    // Review pass 39: each reading of a label (the tokenizer, the sets, the intruder rule)
+    // normalises its characters; the last ones normalised are remembered per thread, so a
+    // label is normalised once per decision however many readings it has.
+    let slot = (u32::from(raw) as usize) % PIECE_MEMO;
+    MEMO.with(|m| {
+        let Ok(mut memo) = m.try_borrow_mut() else {
+            return piece_uncached(raw);
+        };
+        match memo.get_mut(slot) {
+            Some(&mut (c, p)) if c == raw => p,
+            Some(e) => {
+                let p = piece_uncached(raw);
+                *e = (raw, p);
+                p
+            }
+            None => piece_uncached(raw),
+        }
+    })
+}
+
+/// Slots of the per-thread memo of [`piece`] (direct-mapped by code point).
+const PIECE_MEMO: usize = 64;
+
+thread_local! {
+    static MEMO: std::cell::RefCell<[(char, Option<Piece>); PIECE_MEMO]> =
+        const { std::cell::RefCell::new([('\0', None); PIECE_MEMO]) };
+}
+
+/// [`piece`] for a character outside ASCII, worked out.
+fn piece_uncached(raw: char) -> Option<Piece> {
     if let Some(w) = emoji_word(raw) {
         return Some(Piece::Emoji(w));
     }
@@ -135,6 +315,10 @@ pub(crate) fn piece(raw: char) -> Option<Piece> {
     }
     if is_narrow_space(c) {
         return Some(Piece::Narrow);
+    }
+    // Review pass 39: a format character that fonts draw is a character, not nothing.
+    if is_drawn_format(c) {
+        return Some(Piece::Char(c));
     }
     if is_invisible(c) || is_combining(c) || is_apostrophe(c) {
         return None;
@@ -182,23 +366,38 @@ fn is_edge_symbol(c: char) -> bool {
     )
 }
 
-/// Review pass 38: whether `c` is a pictograph ([`crate::compat::PICTOGRAPH_RANGES`]: an
-/// approximation of Emoji_Presentation, see `tools/gen_compat.py`).
-fn is_pictograph(c: char) -> bool {
+/// Review pass 39: whether `c` is an emoji ([`crate::compat::EMOJI_RANGES`]: assigned and
+/// Extended_Pictographic or Emoji_Presentation, emoji-data.txt 15.1.0). It replaces pass
+/// 38's approximation (General_Category So with East_Asian_Width W), which let the CJK
+/// strokes and radicals in (`Ca㇑㇑` was allowed).
+fn is_emoji(c: char) -> bool {
     let u = u32::from(c);
-    if u < 0x2000 {
+    if u < 0xA9 || !in_block(u, HAS_EMOJI) {
         return false;
     }
-    let r = &crate::compat::PICTOGRAPH_RANGES;
+    let r = &crate::compat::EMOJI_RANGES;
     let k = r.partition_point(|&(_, hi)| hi < u);
     r.get(k).is_some_and(|&(lo, _)| lo <= u)
 }
 
-/// A pictograph a word may hold at its edge: not one drawn as a letter (the negative
-/// squared and circled letters are alphabetic; the regional indicators are drawn as boxed
-/// letters alone).
+/// An emoji a word may hold at its edge: not one drawn as a letter (the negative squared
+/// and circled letters are alphabetic; the regional indicators are drawn as boxed letters
+/// alone). Every other symbol at a word's edge is an intruder (review pass 39).
 fn is_edge_pictograph(c: char) -> bool {
-    is_pictograph(c) && !c.is_alphabetic() && !matches!(u32::from(c), 0x1F1E6..=0x1F1FF)
+    is_emoji(c) && !c.is_alphabetic() && !matches!(u32::from(c), 0x1F1E6..=0x1F1FF)
+}
+
+/// Review pass 39: the script family of letter `c` ([`crate::compat::SCRIPT_RANGES`]: Han,
+/// Hiragana, Katakana, Hangul and Bopomofo are one family), `None` for a Common or Inherited
+/// letter.
+fn script_family(c: char) -> Option<u8> {
+    let u = u32::from(c);
+    if !in_block(u, HAS_SCRIPT) {
+        return None;
+    }
+    let r = &crate::compat::SCRIPT_RANGES;
+    let k = r.partition_point(|&(_, hi, _)| hi < u);
+    r.get(k).filter(|&&(lo, _, _)| lo <= u).map(|&(_, _, f)| f)
 }
 
 /// Whether the normalised character `c` (outside ASCII) is a letter the tables read as an
@@ -228,16 +427,32 @@ fn folds_to_ascii_letter(c: char) -> bool {
 ///   ASCII);
 /// * word punctuation ([`is_word_punctuation`]), or a currency sign next to a digit;
 /// * at the word's edge only (no letter or digit of the word on both sides): an arrow,
-///   chevron, check mark or cross ([`is_edge_symbol`]), a pictograph ([`is_pictograph`])
-///   or an icon emoji read as a word.
+///   chevron, check mark or cross ([`is_edge_symbol`]), an emoji ([`is_edge_pictograph`],
+///   review pass 39: real emoji only) or an icon emoji read as a word;
+/// * review pass 39: a multi-letter compatibility form ([`compat_letters`]: `㏒`, `ﬁ`) only
+///   when it is the word's one source of letters (`㏒ Out`, `5㎞`): beside other letters
+///   (`㏒out`, `Ca㏒㏒`, `Proﬁle`) it is drawn as a condensed square or ligature, not as the
+///   letters the readings take it for.
 ///
 /// Everything else there — a letter of any script that does not fold (`ǀ ǁ ß þ ŋ`), a
-/// number form, a mathematical, box-drawing or dingbat symbol, a halfwidth or small form
-/// (`∣ │ ⏐ ￨ ❘ ׀ ¦ ‖ ﹫ ﹩`), an emoji between two letters — is an intruder: the tables do
-/// not know what it is drawn as. A word with no such letter (a Japanese or Cyrillic word, a
-/// lone emoji, a price) is not read by this rule.
+/// number form, a mathematical, box-drawing or dingbat symbol, a CJK stroke or radical, a
+/// halfwidth or small form (`∣ │ ⏐ ￨ ❘ ׀ ¦ ‖ ﹫ ﹩`), an emoji between two letters, a drawn
+/// format character (review pass 39: `U+0890`) — is an intruder: the tables do not know
+/// what it is drawn as. A word with no such letter (a Japanese or Cyrillic word, a lone
+/// emoji, a price) is not read by this rule, except (review pass 39, F7) a word with no
+/// ASCII letter whose letters fold to ASCII beside letters of another script family
+/// ([`script_family`]: `Ѕеㅣㅣ`, Cyrillic look-alikes and Hangul): a mixed-script look-alike
+/// word, an intruder whatever its row. A word in one script (Russian, Greek, Japanese) is
+/// left to the other-language rules.
 pub(crate) fn has_intruder(text: &str) -> bool {
     !text.is_ascii() && text.split(char::is_whitespace).any(word_has_intruder)
+}
+
+thread_local! {
+    /// Review pass 39: each character of the word [`word_has_intruder`] reads, with its
+    /// piece and whether it is a multi-letter form (one normalisation per character).
+    static WORD: std::cell::RefCell<Vec<(char, Option<Piece>, bool)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// [`has_intruder`] for one word.
@@ -245,19 +460,50 @@ fn word_has_intruder(word: &str) -> bool {
     if word.is_ascii() {
         return false;
     }
+    WORD.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut buf) => word_has_intruder_in(word, &mut buf),
+        Err(_) => word_has_intruder_in(word, &mut Vec::new()),
+    })
+}
+
+fn word_has_intruder_in(word: &str, buf: &mut Vec<(char, Option<Piece>, bool)>) -> bool {
+    buf.clear();
     let (mut ascii, mut folded, mut foreign) = (false, false, false);
+    // Review pass 39: letters from characters other than multi-letter forms, and how many
+    // multi-letter forms; the script families of the letters (F7).
+    let (mut own_letters, mut multi) = (false, 0usize);
+    let (mut family, mut mixed) = (None::<u8>, false);
     let (mut first, mut last) = (usize::MAX, 0usize);
     for (k, raw) in word.chars().enumerate() {
-        let alnum = match piece(raw) {
+        if compat_letters(raw).is_some() {
+            buf.push((raw, None, true));
+            ascii = true;
+            multi += 1;
+            first = first.min(k);
+            last = k;
+            continue;
+        }
+        let p = piece(raw);
+        buf.push((raw, p, false));
+        let alnum = match p {
             Some(Piece::Char(c)) if c.is_ascii() => {
                 ascii |= c.is_ascii_alphabetic();
+                own_letters |= c.is_ascii_alphabetic();
                 c.is_ascii_alphanumeric()
             }
             Some(Piece::Char(c)) if c.is_alphabetic() => {
+                own_letters = true;
                 if folds_to_ascii_letter(c) {
                     folded = true;
                 } else if !is_readable_letter(c) {
                     foreign = true;
+                }
+                // The script only matters beside a look-alike letter (F7).
+                if !ascii {
+                    if let Some(f) = script_family(c) {
+                        mixed |= family.is_some_and(|g| g != f);
+                        family = Some(f);
+                    }
                 }
                 true
             }
@@ -269,15 +515,27 @@ fn word_has_intruder(word: &str) -> bool {
             last = k;
         }
     }
+    if !ascii && folded && mixed {
+        // Review pass 39 (F7): look-alike letters mixed with another script's.
+        return true;
+    }
     if !ascii && !(folded && !foreign) {
         return false;
     }
+    // Review pass 39: a multi-letter form is known only as the word's one source of letters.
+    let multi_known = multi == 1 && !own_letters;
     let mut prev: Option<char> = None;
-    let mut chars = word.chars().enumerate().peekable();
-    while let Some((k, raw)) = chars.next() {
-        let next = chars.peek().map(|&(_, c)| c);
+    for (k, &(raw, p, is_multi)) in buf.iter().enumerate() {
+        let next = buf.get(k + 1).map(|&(c, _, _)| c);
         let edge = k <= first || k >= last;
-        let known = match piece(raw) {
+        if is_multi {
+            if !multi_known {
+                return true;
+            }
+            prev = Some(raw);
+            continue;
+        }
+        let known = match p {
             None | Some(Piece::Narrow) => true,
             Some(Piece::Emoji(_)) => edge,
             Some(Piece::Char(c)) => {
@@ -304,9 +562,11 @@ fn word_has_intruder(word: &str) -> bool {
 pub(crate) const NARROW: char = '\u{2009}';
 
 /// `text` normalised, as a string: each [`Piece`] as its character, a narrow space as
-/// [`NARROW`], an icon emoji as itself. At most as many characters as `text`.
+/// [`NARROW`], an icon emoji as itself. At most as many characters as `text`, but for the
+/// multi-letter forms of [`expanded`] (review pass 39).
 #[cfg(any(test, feature = "reference"))]
 pub(crate) fn normalized(text: &str) -> String {
+    let text = expanded(text);
     let mut out = String::with_capacity(text.len());
     for raw in text.chars() {
         match piece(raw) {
@@ -2684,7 +2944,11 @@ mod tests {
             let Some(c) = char::from_u32(u) else { continue };
             marks += u32::from(is_mark(c));
             let once = normalized(&c.to_string());
-            assert!(once.chars().count() <= 1, "U+{u:04X}");
+            // Review pass 39: a multi-letter compatibility form yields its letters.
+            match compat_letters(c) {
+                Some(l) => assert_eq!(once, l, "U+{u:04X}"),
+                None => assert!(once.chars().count() <= 1, "U+{u:04X}"),
+            }
             assert_eq!(normalized(&once), once, "U+{u:04X}");
         }
         // Unicode 15.1: 1,985 Mn and 13 Me.
@@ -2722,10 +2986,87 @@ mod tests {
         ] {
             assert_eq!(normalized(&c.to_string()), a, "U+{:04X}", u32::from(c));
         }
-        // No single letter: kept (an intruder inside a Latin word).
-        for c in ['\u{FB00}', '\u{2122}', '\u{FE6B}', '\u{1C0}', '\u{1F17F}'] {
+        // No single letter: kept (an intruder inside a Latin word). Review pass 39: the
+        // ligature U+FB00 `ﬀ` is two letters now (`COMPAT_LETTERS`, below).
+        for c in ['\u{2122}', '\u{FE6B}', '\u{1C0}', '\u{1F17F}'] {
             assert_eq!(normalized(&c.to_string()), c.to_string(), "{c:?}");
         }
+    }
+
+    /// Review pass 39: the multi-letter fold is the generated table, unedited, sorted, and
+    /// writes the squares and ligatures as their letters; emoji, currency signs and the
+    /// numero sign are not in it.
+    #[test]
+    fn the_multi_letter_fold_is_the_recipe() {
+        use crate::compat::{COMPAT_LETTERS, COMPAT_LETTERS_HASH, COMPAT_LETTERS_LEN};
+        assert_eq!(COMPAT_LETTERS.len(), COMPAT_LETTERS_LEN);
+        let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+        for &(cp, l) in &COMPAT_LETTERS {
+            for b in format!("{cp}:{l};").bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0100_0000_01B3);
+            }
+        }
+        assert_eq!(h, COMPAT_LETTERS_HASH);
+        assert!(COMPAT_LETTERS
+            .windows(2)
+            .all(|w| matches!(w, [a, b] if a.0 < b.0)));
+        assert!(COMPAT_LETTERS
+            .iter()
+            .all(|&(_, l)| l.len() >= 2 && l.bytes().all(|b| b.is_ascii_alphabetic())));
+        for (c, l) in [
+            ('\u{33D2}', "log"),
+            ('\u{3388}', "cal"),
+            ('\u{33CC}', "in"),
+            ('\u{FB00}', "ff"),
+            ('\u{FB01}', "fi"),
+            ('\u{1C5}', "Dz"),
+            ('\u{2161}', "II"),
+            ('\u{2121}', "TEL"),
+        ] {
+            assert_eq!(normalized(&c.to_string()), l, "U+{:04X}", u32::from(c));
+        }
+        for c in ['\u{2122}', '\u{1F197}', '\u{20A8}', '\u{2116}'] {
+            assert_eq!(compat_letters(c), None, "{c:?}");
+        }
+        assert_eq!(normalized("\u{33D2} Out"), "log Out");
+    }
+
+    /// Review pass 39: the edge class is the emoji table; the drawn format characters are
+    /// kept; mixed-script look-alike words and multi-letter forms beside letters intrude.
+    #[test]
+    fn pass39_intruders() {
+        for t in [
+            "Ca\u{31D1}\u{31D1}",
+            "Ca\u{2F01}\u{2F01}",
+            "\u{31D7}og Out",
+            "De\u{890}ete",
+            "Ca\u{891}\u{891}",
+            "L\u{6DD}g Out",
+            "Ca\u{110BD}\u{110BD}",
+            "\u{405}\u{435}\u{3163}\u{3163}",
+            "\u{33D2}out",
+            "Ca\u{33D2}\u{33D2}",
+            "\u{33CC}vite",
+        ] {
+            assert!(has_intruder(t), "{t:?}");
+        }
+        for t in [
+            "\u{33D2} Out",
+            "5\u{339E}",
+            "Pay\u{1F4B8}",
+            "Done\u{2705}",
+            "\u{2B50}Favorites",
+            "\u{423}\u{434}\u{430}\u{43B}\u{438}\u{442}\u{44C}",
+            "\u{394}\u{3B9}\u{3B1}\u{3B3}\u{3C1}\u{3B1}\u{3C6}\u{3AE}",
+            "\u{524A}\u{9664}",
+            "\u{30ED}\u{30B0}\u{30A2}\u{30A6}\u{30C8}",
+            "\u{D55C}\u{AD6D}\u{C5B4}",
+            "Apple\u{2122}",
+        ] {
+            assert!(!has_intruder(t), "{t:?}");
+        }
+        assert_eq!(normalized("De\u{890}ete"), "De\u{890}ete");
     }
 
     /// Review pass 38: the intruder rule on the reviewer's characters and on ordinary text.

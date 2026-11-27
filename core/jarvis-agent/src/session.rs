@@ -4705,8 +4705,11 @@ impl Session {
         // covers this Return, unless the screen after the typing asks for more: a riskier
         // category, phone only where the approval was not, or a question that reads
         // differently on this screen (another recipient, another amount).
-        let covered =
-            typing
+        // Review pass 39: a Return whose field or key cannot be read is never covered by an
+        // earlier approval (it is asked again, on the phone).
+        let unreadable = jarvis_safety::cannot_be_read(&executed, &self.current.screen);
+        let covered = !unreadable
+            && typing
                 .covers_return
                 .as_ref()
                 .is_some_and(|(category, phone_only, summary)| {

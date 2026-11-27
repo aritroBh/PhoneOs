@@ -102,9 +102,12 @@ pub(crate) fn digit_value(c: char) -> Option<u32> {
         return c.to_digit(10);
     }
     let u = u32::from(c);
-    DIGIT_ZEROS
-        .iter()
-        .find(|&&z| u >= z && u - z < 10)
+    // Review pass 39: a binary search (the zeros are sorted and ten apart at least; a test
+    // checks it); a linear scan here was most of the cost of other scripts' labels.
+    let k = DIGIT_ZEROS.partition_point(|&z| z <= u);
+    k.checked_sub(1)
+        .and_then(|k| DIGIT_ZEROS.get(k))
+        .filter(|&&z| u - z < 10)
         .map(|&z| u - z)
 }
 
@@ -561,9 +564,12 @@ pub const FOREIGN_UI_WORDS: &[&str] = &[
 
 /// True when `label` contains a word of [`FOREIGN_UI_WORDS`].
 pub(crate) fn has_foreign_word(label: &str) -> bool {
-    tokens(&bounded(label))
-        .iter()
-        .any(|t| FOREIGN_UI_WORDS.contains(&t.as_str()))
+    foreign_word_in(&tokens(&bounded(label)))
+}
+
+/// [`has_foreign_word`] on the label's tokens, already read (review pass 39).
+pub(crate) fn foreign_word_in(toks: &[String]) -> bool {
+    toks.iter().any(|t| FOREIGN_UI_WORDS.contains(&t.as_str()))
 }
 
 /// True when `label` contains an accented or extended Latin letter (`ä`, `é`, `ß`, `ñ`,
@@ -607,6 +613,8 @@ pub(crate) fn emoji_word(c: char) -> Option<&'static str> {
 /// without splitting, a precomposed letter reads as its base letter; a few icon emoji
 /// (wastebasket, money, outbox) read as words.
 pub(crate) fn tokens(text: &str) -> Vec<String> {
+    // Review pass 39: multi-letter compatibility forms are their letters (`㏒` log).
+    let text = crate::norm::expanded(text);
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
     // Class of the previous kept character: 0 none, 1 lower, 2 upper, 3 digit.
@@ -690,6 +698,40 @@ pub(crate) fn tokens(text: &str) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+/// Review pass 39 (F5): whether a whitespace-delimited word is a number with its
+/// separators and currency sign (`$12.50`, `£1,000`, `1-800-555-0199`, `12:30`, `3.5%`,
+/// `(555)`): a digit, and otherwise only digits, `. , - : / % + ( ) #` and currency signs.
+fn is_number_word(word: &str) -> bool {
+    let mut digit = false;
+    for c in word.chars() {
+        if is_digit(c) {
+            digit = true;
+        } else if !(matches!(c, '.' | ',' | '-' | ':' | '/' | '%' | '+' | '(' | ')' | '#')
+            || is_currency_symbol(c))
+        {
+            return false;
+        }
+    }
+    digit
+}
+
+/// Review pass 39 (F5): how many words a list row's text holds where a row's words are
+/// counted (a long free-text row is content): the tokenizer's words, but a number with its
+/// separators and currency sign ([`is_number_word`]) is one, so `Pay $12.50 now` and
+/// `Call 1-800-555-0199` are short command rows. A model name stays two words (`S60`).
+pub(crate) fn row_words(text: &str) -> usize {
+    text.split(char::is_whitespace)
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            if is_number_word(w) {
+                1
+            } else {
+                tokens(w).len()
+            }
+        })
+        .sum()
 }
 
 /// True for currency symbols that mark a price.
@@ -805,6 +847,16 @@ pub(crate) fn has_money_in(text: &str, toks: Option<&[String]>) -> bool {
             return true;
         }
     }
+    // Review pass 39: a currency word needs a number beside it, and a number token needs a
+    // character that reads as a digit: without one, no tokens to read (other scripts' words
+    // were tokenized here once per word of every amount search).
+    if toks.is_none()
+        && !text.chars().any(|c| {
+            c.is_numeric() || crate::norm::compat_fold(c).is_some_and(|a| a.is_ascii_digit())
+        })
+    {
+        return false;
+    }
     words(text)
 }
 
@@ -918,14 +970,41 @@ mod tests {
         ('\u{E0020}', '\u{E007F}'),
     ];
 
+    /// Review pass 39: the digit zeros are sorted and ten apart (the binary search of
+    /// `digit_value` relies on it), and it gives what the linear scan gave, everywhere.
+    #[test]
+    fn digit_value_by_binary_search_is_the_scan() {
+        assert!(DIGIT_ZEROS
+            .windows(2)
+            .all(|w| matches!(w, [a, b] if b - a >= 10)));
+        for u in 0x80..=0x10FFFFu32 {
+            let Some(c) = char::from_u32(u) else { continue };
+            let scan = DIGIT_ZEROS
+                .iter()
+                .find(|&&z| u >= z && u - z < 10)
+                .map(|&z| u - z);
+            assert_eq!(digit_value(c), scan, "U+{u:04X}");
+        }
+    }
+
     /// Review pass 35: every Cf character is invisible to matching: it splits no word.
+    /// Review pass 39: but the 13 Prepended_Concatenation_Marks, which fonts draw: they
+    /// are characters to the readings (a separator to the plain tokenizer, an intruder
+    /// inside a Latin word); `is_invisible` (the voice crate's) still lists them.
     #[test]
     fn every_format_character_is_invisible() {
         let mut count = 0u32;
+        let mut drawn = 0u32;
         for (lo, hi) in FORMAT_RANGES {
             for c in lo..=hi {
                 count += 1;
                 assert!(is_invisible(c), "U+{:04X}", u32::from(c));
+                if crate::norm::is_drawn_format(c) {
+                    drawn += 1;
+                    assert_eq!(tokens(&format!("De{c}lete")), ["de", "lete"]);
+                    assert!(crate::norm::has_intruder(&format!("De{c}lete")));
+                    continue;
+                }
                 assert_eq!(
                     tokens(&format!("De{c}lete")),
                     ["delete"],
@@ -935,6 +1014,10 @@ mod tests {
             }
         }
         assert_eq!(count, 170, "Unicode 15.1 has 170 Cf characters");
+        assert_eq!(
+            drawn, 13,
+            "Unicode 15.1 has 13 Prepended_Concatenation_Marks"
+        );
     }
 
     #[test]

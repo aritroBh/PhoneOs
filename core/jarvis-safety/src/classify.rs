@@ -19,7 +19,7 @@ use crate::phrases::{
 use crate::redact::contains_secret;
 use crate::sets::{any_units, hard_words, match_sets_whole, match_units, whole_units, with_units};
 use crate::text::{
-    bounded, has_foreign_word, has_money, has_non_english_letters, label_is_unreadable, tokens,
+    bounded, has_foreign_word, has_non_english_letters, label_is_unreadable, tokens,
     CURRENCY_WORDS, MAX_LABEL_CHARS,
 };
 use crate::validate::{looks_like_url, url_scheme};
@@ -291,9 +291,13 @@ fn signal_of(el: &Element, tables: &[&[Phrase]]) -> Signal {
         return Signal::default();
     }
     let text = element_text(el);
-    let toks = tokens(&text);
-    let cat = match_tokens(&toks, tables).category;
-    let money = crate::text::has_money_in(&text, Some(&toks));
+    signal_with(&text, &tokens(&text), tables)
+}
+
+/// [`signal_of`] on the element's text and its tokens, already read.
+fn signal_with(text: &str, toks: &[String], tables: &[&[Phrase]]) -> Signal {
+    let cat = match_tokens(toks, tables).category;
+    let money = crate::text::has_money_in(text, Some(toks));
     Signal {
         risk: if money {
             max_risk(cat, RiskCategory::Payment)
@@ -305,7 +309,7 @@ fn signal_of(el: &Element, tables: &[&[Phrase]]) -> Signal {
         purchase_words: matches!(cat, RiskCategory::Purchase | RiskCategory::Payment),
         share_sheet: toks.iter().any(|t| t == "airdrop")
             || toks.windows(2).any(|w| w == ["air", "drop"]),
-        settings_words: match_tokens(&toks, &[SETTINGS_CONTEXT_PHRASES]).category
+        settings_words: match_tokens(toks, &[SETTINGS_CONTEXT_PHRASES]).category
             != RiskCategory::None,
     }
 }
@@ -408,11 +412,23 @@ impl<'a> Reader<'a> {
             if let Some(t) = look_get(self.screen, |c| c.tally.clone()).flatten() {
                 return t;
             }
+            // Review pass 39: each element's signal is kept (excluding one takes its own
+            // out without reading it again), its tokens shared with its own reading.
             let mut t = Tally::default();
-            for el in &self.screen.elements {
-                t.add(signal_of(el, &self.tables));
-            }
-            look_put(self.screen, |c| c.tally = Some(t.clone()));
+            let signals: Vec<Signal> = self
+                .screen
+                .elements
+                .iter()
+                .map(|el| {
+                    let sig = self.signal(el);
+                    t.add(sig);
+                    sig
+                })
+                .collect();
+            look_put(self.screen, |c| {
+                c.tally = Some(t.clone());
+                c.signals = Some(std::rc::Rc::new(signals));
+            });
             t
         });
         // Every element with that index (indices are unique on a compacted screen). Review
@@ -431,11 +447,12 @@ impl<'a> Reader<'a> {
         let (minus, excluded) = match positions.get(&exclude) {
             None => (Signal::default(), 0),
             Some(&(k, n)) => (
-                self.screen
-                    .elements
-                    .get(k)
-                    .map(|el| signal_of(el, &self.tables))
-                    .unwrap_or_default(),
+                look_get(self.screen, |c| {
+                    c.signals.as_ref().and_then(|v| v.get(k).copied())
+                })
+                .flatten()
+                .or_else(|| self.screen.elements.get(k).map(|el| self.signal(el)))
+                .unwrap_or_default(),
                 n,
             ),
         };
@@ -454,6 +471,16 @@ impl<'a> Reader<'a> {
             return t.without(Signal::default());
         }
         tally.without(minus)
+    }
+
+    /// [`signal_of`] `el`, its tokens read once per look ([`element_tokens`]).
+    fn signal(&self, el: &Element) -> Signal {
+        if el.role == Role::Key {
+            return Signal::default();
+        }
+        let text = element_text(el);
+        let toks = element_tokens(el, self, &text);
+        signal_with(&text, &toks, &self.tables)
     }
 
     /// Whether `el` (a cell or button) has a sibling beside it (see [`is_list_row`]).
@@ -500,7 +527,12 @@ fn row_command_tokens(el: &Element, screen: &CompactScreen) -> Option<Vec<String
     (lr.category != RiskCategory::None || lr.generic).then_some(seg)
 }
 
-fn own_label_risk(el: &Element, toks: &[String], screen: &CompactScreen) -> (LabelRisk, bool) {
+fn own_label_risk(
+    el: &Element,
+    toks: &[String],
+    screen: &CompactScreen,
+    label_toks: Option<&Vec<String>>,
+) -> (LabelRisk, bool) {
     if let Some(cat) = sf_symbol_risk(&el.label) {
         // A symbol name: its meaning, or "unlabeled" when unknown.
         let generic = cat == RiskCategory::None;
@@ -516,7 +548,10 @@ fn own_label_risk(el: &Element, toks: &[String], screen: &CompactScreen) -> (Lab
     // Probe round 3 (F4, F6): the OS's own whole labels (`WHOLE_LABEL_PHRASES`), read on
     // the whole label of a pressable control only (a text "Card" is no icon-only control).
     if is_pressable(&el.role) {
-        let whole = match_whole(&tokens(&el.label), &[WHOLE_LABEL_PHRASES]);
+        let whole = match label_toks {
+            Some(t) => match_whole(t, &[WHOLE_LABEL_PHRASES]),
+            None => match_whole(&tokens(&el.label), &[WHOLE_LABEL_PHRASES]),
+        };
         lr.category = max_risk(lr.category, whole.category);
     }
     (lr, toks.is_empty())
@@ -566,6 +601,38 @@ fn element_risks(el: &Element, r: &Reader<'_>) -> (RiskCategory, RiskCategory, b
     (plain, sets, unverified)
 }
 
+/// Review pass 39: the tokens of `text` (`el`'s [`element_text`]), read once per look.
+fn element_tokens(el: &Element, r: &Reader<'_>, text: &str) -> std::rc::Rc<Vec<String>> {
+    let at = position(r.screen, el);
+    if let Some(hit) = at.and_then(|k| look_get(r.screen, |c| c.toks.get(&k).cloned()).flatten()) {
+        return hit;
+    }
+    let toks = std::rc::Rc::new(tokens(text));
+    if let Some(k) = at {
+        look_put(r.screen, |c| {
+            c.toks.insert(k, toks.clone());
+        });
+    }
+    toks
+}
+
+/// Review pass 39: whether `el`'s label or value holds an intruder, once per look.
+fn intruder_cached(el: &Element, r: &Reader<'_>) -> bool {
+    let at = position(r.screen, el);
+    if let Some(hit) =
+        at.and_then(|k| look_get(r.screen, |c| c.intruders.get(&k).copied()).flatten())
+    {
+        return hit;
+    }
+    let found = intruder_in(el);
+    if let Some(k) = at {
+        look_put(r.screen, |c| {
+            c.intruders.insert(k, found);
+        });
+    }
+    found
+}
+
 /// The position of `el` in `screen.elements` when it is one of them (by address).
 fn position(screen: &CompactScreen, el: &Element) -> Option<usize> {
     let base = screen.elements.as_ptr() as usize;
@@ -579,36 +646,56 @@ fn position(screen: &CompactScreen, el: &Element) -> Option<usize> {
 /// Review pass 35/36: the categories of a tap on the target of `action` (a tap or long
 /// press): by its own words first, then by their look-alike character sets — kept both
 /// (the gate carries them all: a denial of any refuses). Empty when the sets give nothing.
+/// Review pass 39 (F6): for every element [`read_targets`] reads as a tap (see
+/// [`press_readings`]).
+#[cfg(any(test, feature = "reference"))]
 pub(crate) fn reading_risks(action: &Action, screen: &CompactScreen) -> Vec<RiskCategory> {
-    let (Action::Tap { element } | Action::LongPress { element, .. }) = action else {
-        return Vec::new();
-    };
-    let Some(el) = screen.get(*element) else {
-        return Vec::new();
-    };
-    let r = Reader::new(screen);
-    let (plain, sets, _) = element_risks(el, &r);
-    if sets == RiskCategory::None {
-        return Vec::new();
-    }
-    vec![plain, sets]
+    press_readings(action, screen).risks
 }
 
-/// Review pass 37 (F5): whether the target of `action` (a tap or long press) is a control
-/// whose label the tables cannot read as English (another language, an accented letter on
-/// a button, another script) while its words now give a definite category (`Sėnd` reads
-/// `SendMessage` after the canonical decomposition): the gate then carries `Unverified`
-/// beside that category, so the stripped reading adds a category and never takes the
-/// phone-only `Unverified` away.
-pub(crate) fn unread_label_beside_a_category(action: &Action, screen: &CompactScreen) -> bool {
-    let (Action::Tap { element } | Action::LongPress { element, .. }) = action else {
-        return false;
-    };
-    let Some(el) = screen.get(*element) else {
-        return false;
-    };
-    let (plain, _, unverified) = element_risks(el, &Reader::new(screen));
-    unverified && plain != UNREADABLE_RISK
+/// Review pass 39: what the gate carries beside `action`'s category from the words it
+/// reads, worked out once per decision.
+#[derive(Debug, Default)]
+pub(crate) struct PressReadings {
+    /// Review pass 35/36: each element's category by its own words and by their look-alike
+    /// sets, for every element [`read_targets`] reads as a tap whose sets give one (the
+    /// gate carries them all). Review pass 39 (F6): every control under a `tap_point`, a
+    /// swipe's element and the controls its path crosses, not only a tap's target.
+    pub risks: Vec<RiskCategory>,
+    /// Review pass 37 (F5): such an element's label the tables cannot read as English
+    /// (another language, an accented letter on a button, another script) while its words
+    /// now give a definite category (`Sėnd` reads `SendMessage` after the canonical
+    /// decomposition): the gate then carries `Unverified` beside that category, so the
+    /// stripped reading adds a category and never takes the phone-only `Unverified` away.
+    pub unread_beside: bool,
+    /// Review pass 39 (F3, F4): something whose words the gate reads cannot be read
+    /// ([`cannot_be_read`]).
+    pub unreadable: bool,
+}
+
+/// Review pass 39: [`PressReadings`] for `action` on `screen`.
+pub(crate) fn press_readings(action: &Action, screen: &CompactScreen) -> PressReadings {
+    let r = Reader::new(screen);
+    let mut out = PressReadings::default();
+    if let Action::Type {
+        element, submit, ..
+    } = action
+    {
+        out.unreadable = typing_unreadable(*element, *submit, screen);
+        return out;
+    }
+    for (el, tap) in read_targets(action, screen) {
+        out.unreadable |= cannot_read_in(el, &r);
+        if !tap {
+            continue;
+        }
+        let (plain, sets, unverified) = element_risks(el, &r);
+        if sets != RiskCategory::None {
+            out.risks.extend([plain, sets]);
+        }
+        out.unread_beside |= unverified && plain != UNREADABLE_RISK;
+    }
+    out
 }
 
 /// Review pass 36: the category of a tap on `el` by the look-alike character sets of its
@@ -684,7 +771,10 @@ fn element_risk_sets(el: &Element, r: &Reader<'_>, content_row: bool) -> RiskCat
     // item and its price is left to the plain reading's priced-row rule).
     let priced_row =
         el.role == Role::Cell && risk == RiskCategory::None && !lr.generic && !price_verb;
-    if !priced_row && !content_row && has_money(&text) {
+    if !priced_row
+        && !content_row
+        && crate::text::has_money_in(&text, Some(&element_tokens(el, r, &text)))
+    {
         risk = match risk {
             RiskCategory::SendMessage | RiskCategory::Payment => RiskCategory::Payment,
             other => max_risk(other, RiskCategory::Purchase),
@@ -713,9 +803,14 @@ fn too_soft(text: &str) -> bool {
         && with_units(text, crate::sets::soft_boundaries) > crate::sets::MAX_SOFT_BOUNDARIES
 }
 
-/// Whether `text` is longer than [`MAX_CONTROL_LABEL_CHARS`].
+/// Whether `text` is longer than [`MAX_CONTROL_LABEL_CHARS`] (review pass 39: counted
+/// after the multi-letter compatibility forms are written as their letters).
 fn too_long(text: &str) -> bool {
-    text.len() > MAX_CONTROL_LABEL_CHARS && text.chars().count() > MAX_CONTROL_LABEL_CHARS
+    if text.len() <= MAX_CONTROL_LABEL_CHARS / 4 {
+        return false;
+    }
+    let t = crate::norm::expanded(text);
+    t.len() > MAX_CONTROL_LABEL_CHARS && t.chars().count() > MAX_CONTROL_LABEL_CHARS
 }
 
 /// Review pass 36: whether `label` is, as a whole, a sign-in word
@@ -764,16 +859,23 @@ fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool, bool
     if pressable && too_soft(&text) {
         return (UNREADABLE_RISK, false, true);
     }
-    let all_toks = tokens(&text);
+    let all_toks = element_tokens(el, r, &text);
     // A long free-text row is content: its words only count when its first segment is a
     // command in its own right. App rules (keyed by app, not words) still apply.
-    let content_row = is_free_text_role(&el.role) && all_toks.len() > MAX_ROW_LABEL_WORDS;
+    // Review pass 39 (F5): a number with its separators and currency sign (`$12.50`,
+    // `1-800-555-0199`, `12:30`) is one word here (`crate::text::row_words`).
+    let content_row = is_free_text_role(&el.role)
+        && all_toks.len() > MAX_ROW_LABEL_WORDS
+        && crate::text::row_words(&text) > MAX_ROW_LABEL_WORDS;
+    // Review pass 39: the whole label's tokens are the text's when it is the label alone.
+    let label_toks = (text == el.label).then(|| all_toks.clone());
+    let text_toks = all_toks.clone();
     let toks = if content_row {
-        row_command_tokens(el, screen).unwrap_or_default()
+        std::rc::Rc::new(row_command_tokens(el, screen).unwrap_or_default())
     } else {
         all_toks
     };
-    let (lr, mut no_label) = own_label_risk(el, &toks, screen);
+    let (lr, mut no_label) = own_label_risk(el, &toks, screen, label_toks.as_deref());
     if content_row {
         no_label = false;
     }
@@ -782,7 +884,10 @@ fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool, bool
         // The keyboard's backspace key is labelled "delete".
         risk = RiskCategory::None;
     }
-    if has_money(&text) && !content_row && !is_priced_item_row(el, &toks, lr) {
+    if crate::text::has_money_in(&text, Some(&text_toks))
+        && !content_row
+        && !is_priced_item_row(el, &toks, lr)
+    {
         risk = match risk {
             RiskCategory::SendMessage | RiskCategory::Payment => RiskCategory::Payment,
             other => max_risk(other, RiskCategory::Purchase),
@@ -842,8 +947,10 @@ fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool, bool
     }
     // Latin-script accents are only a language signal on controls: rows and texts carry
     // names ("José", "Café Central").
-    let foreign = has_foreign_word(&el.label)
-        || (!is_free_text_role(&el.role) && has_non_english_letters(&el.label));
+    let foreign = match &label_toks {
+        Some(t) => crate::text::foreign_word_in(t),
+        None => has_foreign_word(&el.label),
+    } || (!is_free_text_role(&el.role) && has_non_english_letters(&el.label));
     let unread_words = label_is_unreadable(&el.label)
         || el.value.as_deref().is_some_and(label_is_unreadable)
         || foreign;
@@ -854,7 +961,8 @@ fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool, bool
     // Review pass 38: a character the tables do not know inside a word that reads as Latin
     // (`Deǀete`, `Ca∣∣`, `P﹫y`) makes every pressable control `Unverified` — a long row, a
     // tab and a key too: what it is drawn as is unknown, so its words are not trusted.
-    let intruder = pressable && intruder_in(el);
+    // Review pass 39 (F3): a text and an image too — a tap on one is read by its words.
+    let intruder = intruder_cached(el, r);
     if intruder {
         risk = max_risk(risk, UNREADABLE_RISK);
     }
@@ -865,6 +973,131 @@ fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool, bool
 /// ([`crate::norm::has_intruder`]).
 fn intruder_in(el: &Element) -> bool {
     has_intruder(&el.label) || el.value.as_deref().is_some_and(has_intruder)
+}
+
+/// Review pass 39: the elements whose words the gate reads to decide `action`, each with
+/// whether it is read as a tap of it ([`element_risk`]: a tap, a long press, every control
+/// under a `tap_point` that the classification reads, a swipe's or sideways scroll's own
+/// element and the controls its path crosses that are read so) or by its words alone (a
+/// vertical swipe on an element that is not adjustable).
+pub(crate) fn read_targets<'a>(
+    action: &Action,
+    screen: &'a CompactScreen,
+) -> Vec<(&'a Element, bool)> {
+    let r = Reader::new(screen);
+    match action {
+        Action::Tap { element } | Action::LongPress { element, .. } => screen
+            .get(*element)
+            .filter(|e| !e.role.is_text_input())
+            .map(|e| vec![(e, true)])
+            .unwrap_or_default(),
+        Action::TapPoint { x, y } => {
+            if !(x.is_finite() && y.is_finite()) {
+                return Vec::new();
+            }
+            let p = Point::new(x * screen.size.width, y * screen.size.height);
+            let hits: Vec<&Element> = screen
+                .elements
+                .iter()
+                .filter(|e| e.frame.contains(p) && !screen.cues.is_unplaced(e.index))
+                .collect();
+            let pressable: Vec<(&Element, bool)> = hits
+                .iter()
+                .filter(|e| is_pressable(&e.role))
+                .map(|e| (*e, true))
+                .collect();
+            if !pressable.is_empty() {
+                return pressable;
+            }
+            hits.into_iter()
+                .filter(|e| !e.role.is_text_input())
+                .map(|e| (e, true))
+                .collect()
+        }
+        Action::Swipe { direction, element } | Action::Scroll { direction, element } => {
+            let kind = if matches!(action, Action::Swipe { .. }) {
+                GestureKind::Swipe
+            } else {
+                GestureKind::Scroll
+            };
+            let finger = finger_direction(kind, *direction);
+            let sideways = matches!(finger, Direction::Left | Direction::Right);
+            let target = element.and_then(|i| screen.get(i));
+            let mut out = Vec::new();
+            if let Some(el) = target {
+                if kind == GestureKind::Swipe || sideways || is_adjustable(el) {
+                    out.push((el, sideways || is_adjustable(el)));
+                }
+            }
+            if let Ok(g) = drag_gesture(kind, *direction, target.map(|e| e.frame), screen) {
+                for el in crossed_controls(&r, g.from, g.to, finger) {
+                    if !target.is_some_and(|t| t.index == el.index) {
+                        out.push((el, sideways || is_adjustable(el)));
+                    }
+                }
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Review pass 39: whether `action` presses or types into something whose words cannot be
+/// read ([`cannot_read_in`] for every [`read_targets`] element; for typing, the field's label
+/// or placeholder — the credential test reads them — and, with Return, the Return key's
+/// labels). The gate asks such an action on the phone only at every trust level, never
+/// covered by a relaxed category, and refuses it while the owner denies any category.
+pub(crate) fn cannot_be_read(action: &Action, screen: &CompactScreen) -> bool {
+    press_readings(action, screen).unreadable
+}
+
+/// Review pass 39: whether the drawing of `el`'s words cannot be read for an attack-shaped
+/// reason — an intruder in its label or value ([`crate::norm::has_intruder`]: an unknown
+/// character inside a Latin word, a multi-letter form beside letters, a drawn format
+/// character, a mixed-script look-alike word), a label or value longer than
+/// [`MAX_CONTROL_LABEL_CHARS`], or more soft boundaries than
+/// [`crate::sets::MAX_SOFT_BOUNDARIES`]. Every role whose words are read (a text input's
+/// are not: a tap only focuses it). Not the merely unknown (another script, an unknown
+/// symbol name): that is `Unverified` alone.
+/// Once per element per look.
+fn cannot_read_in(el: &Element, r: &Reader<'_>) -> bool {
+    let at = position(r.screen, el);
+    if let Some(hit) = at.and_then(|k| look_get(r.screen, |c| c.unread.get(&k).copied()).flatten())
+    {
+        return hit;
+    }
+    let unread = !el.role.is_text_input()
+        && (intruder_cached(el, r)
+            || too_long(&el.label)
+            || el.value.as_deref().is_some_and(too_long)
+            || too_soft(&element_text(el)));
+    if let Some(k) = at {
+        look_put(r.screen, |c| {
+            c.unread.insert(k, unread);
+        });
+    }
+    unread
+}
+
+/// Review pass 39: typing into `element` (the focused field without one), and Return with
+/// `submit`: the field's label or placeholder holds an intruder or is longer than the
+/// matcher reads, or a Return key label holds an intruder.
+fn typing_unreadable(element: Option<u32>, submit: bool, screen: &CompactScreen) -> bool {
+    let over = |s: &str| s.len() > MAX_LABEL_CHARS && s.chars().count() > MAX_LABEL_CHARS;
+    let field = type_target(element, screen).is_some_and(|t| {
+        field_intruder(t) || over(&t.label) || t.placeholder.as_deref().is_some_and(over)
+    });
+    let key = submit
+        && (screen
+            .cues
+            .return_key_words()
+            .iter()
+            .any(|l| has_intruder(l))
+            || screen
+                .elements
+                .iter()
+                .any(|e| e.role == Role::Key && has_intruder(&e.label)));
+    field || key
 }
 
 /// The element `Type` lands in: the given one, or the focused text input.
@@ -1516,6 +1749,14 @@ pub(crate) struct LookCache {
     tally: Option<Tally>,
     risks: HashMap<usize, (RiskCategory, RiskCategory, bool)>,
     points: HashMap<(u64, u64), (RiskCategory, Option<usize>)>,
+    /// Review pass 39: each element's [`cannot_read_in`].
+    unread: HashMap<usize, bool>,
+    /// Review pass 39: each element's signal to the context (with `tally`).
+    signals: Option<std::rc::Rc<Vec<Signal>>>,
+    /// Review pass 39: each element's tokens ([`element_tokens`]).
+    toks: HashMap<usize, std::rc::Rc<Vec<String>>>,
+    /// Review pass 39: whether each element holds an intruder ([`intruder_cached`]).
+    intruders: HashMap<usize, bool>,
 }
 
 thread_local! {

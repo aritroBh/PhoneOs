@@ -155,12 +155,15 @@ fn is_lookalike_symbol(c: char) -> bool {
 
 /// Review pass 38: whether `c` is punctuation that is a soft boundary inside a word: ASCII
 /// punctuation and symbols other than the look-alike symbols (`@ $ | !`, read as letters),
-/// and the word punctuation of [`is_word_punctuation`].
+/// the word punctuation of [`is_word_punctuation`] and (review pass 39) the drawn format
+/// characters ([`crate::norm::is_drawn_format`]).
 fn is_soft_punctuation(c: char) -> bool {
     if c.is_ascii() {
         c.is_ascii_punctuation() && !is_lookalike_symbol(c)
     } else {
-        is_word_punctuation(c)
+        // Review pass 39: a drawn format character (`U+0890`) too: the word is read across
+        // it (as when it was dropped), and the intruder rule asks.
+        is_word_punctuation(c) || crate::norm::is_drawn_format(c)
     }
 }
 
@@ -168,6 +171,8 @@ fn is_soft_punctuation(c: char) -> bool {
 /// through the normalisation the plain tokenizer shares ([`crate::norm::piece`]).
 pub(crate) fn build_units(text: &str, out: &mut Vec<Unit>) {
     out.clear();
+    // Review pass 39: multi-letter compatibility forms are their letters (`㏒` log).
+    let text = crate::norm::expanded(text);
     let push = |u: Unit, out: &mut Vec<Unit>| {
         if u.kind == Kind::Sep && out.last().is_some_and(|l| l.kind == Kind::Sep) {
             return;
@@ -525,6 +530,19 @@ struct Hit {
     folded: bool,
 }
 
+/// Review pass 39 (F5): whether the match `units[start..end]` is a run of digits alone cut
+/// out of a word at a soft boundary (the `60` of `S60`, `90` of `XC90`, `60` of `60ft`): a
+/// number, not letters — a look-alike reading made only of digits counts only together with
+/// a letter of its word (`Lo9`, `8in`, `S3nd`) or as a whole word of its own.
+fn numbers_cut_out(units: &[Unit], start: usize, end: usize) -> bool {
+    let Some(run) = units.get(start..end) else {
+        return false;
+    };
+    let inside = |u: Option<&Unit>| u.is_some_and(|u| u.kind != Kind::Sep);
+    run.iter().all(|u| u.kind == Kind::Digit)
+        && (inside(start.checked_sub(1).and_then(|p| units.get(p))) || inside(units.get(end)))
+}
+
 struct Walk<'a> {
     trie: &'a Trie,
     units: &'a [Unit],
@@ -538,7 +556,11 @@ impl Walk<'_> {
         #[cfg(feature = "reference")]
         WALK_STEPS.with(|c| c.set(c.get().saturating_add(1)));
         let units = self.units;
-        if pos > self.start && boundary(units, pos) && self.whole_end.is_none_or(|e| e == pos) {
+        if pos > self.start
+            && boundary(units, pos)
+            && self.whole_end.is_none_or(|e| e == pos)
+            && !numbers_cut_out(units, self.start, pos)
+        {
             for &(category, generic) in self.trie.ends.get(node).into_iter().flatten() {
                 out.push(Hit {
                     start: self.start,
@@ -714,17 +736,20 @@ pub(crate) fn match_units(units: &[Unit], tables: &[&[Phrase]], beyond_plain: bo
 
 /// How many words the units hold between hard boundaries (separators): the plain
 /// tokenizer's count without its splits at case and letter/digit steps. Review pass 38:
-/// punctuation inside a word still separates words here (`£32,995` is two, as before the
-/// punctuation became a soft boundary), so whether a row is content does not change.
+/// punctuation inside a word still separates words here, so whether a row is content does
+/// not change. Review pass 39 (F5): but not between two digits — a number with its
+/// separators is one word (`£32,995`, `$12.50`, `1-800-555-0199`), as the plain reading
+/// counts it ([`crate::text::row_words`]).
 pub(crate) fn hard_words(units: &[Unit]) -> usize {
     units
         .iter()
         .enumerate()
         .filter(|(k, x)| {
+            let prev = k.checked_sub(1).and_then(|p| units.get(p));
             x.kind != Kind::Sep
-                && (x.soft == Soft::Punct
-                    || k.checked_sub(1)
-                        .is_none_or(|p| units.get(p).is_none_or(|y| y.kind == Kind::Sep)))
+                && ((x.soft == Soft::Punct
+                    && !(x.kind == Kind::Digit && prev.is_some_and(|y| y.kind == Kind::Digit)))
+                    || prev.is_none_or(|y| y.kind == Kind::Sep))
         })
         .count()
 }
