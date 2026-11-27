@@ -698,6 +698,11 @@ const REVEAL_CHECKS: usize = 32;
 const REVEAL_OVERLAP_SHARE: f64 = 0.25;
 /// Review pass 36 (F7): how far an action container's size may differ from its row's.
 const REVEAL_SIZE_SLACK: f64 = 1.0;
+/// Review pass 37 (F9): how far apart (in points) an action container and a *displaced*
+/// cell of its rows may lie for the container to read as that row's revealed strip, and
+/// how far a cell's x-origin may differ from its column's for it to stay on the column
+/// lattice ([`revealed_rows`]).
+const REVEAL_LATTICE_SLACK: f64 = 4.0;
 /// Mac run 161: at most this many crossed cells' rows are read for an action container
 /// ([`revealed_rows`]; each button checked reads them): the second reading is a weaker,
 /// added signal, so past it the remaining rows are left to the first.
@@ -724,13 +729,27 @@ const REVEAL_BANDS: usize = 64;
 ///    sides, or with a frame that is not a number, reads as pulled both ways (unsure: fail
 ///    closed). Missed: a shifted row that stays inside its list (a two-column list's right
 ///    column in one list), left to the second reading.
-/// 2. **An action container** (weaker; not required — UIKit tables, Mail and Messages may
-///    place actions differently, not measured): a drawn `Button` held by no `Cell`, whose
-///    nearest scrollable ancestor is a `Table` or `CollectionView` and which lies inside a
-///    direct child of that list (no wider in height than a row), with its centre in the
-///    rows of a `Cell` of that list: that band is revealed, pulled left when the container's
-///    buttons hug its trailing edge (trailing actions), right when they hug its leading
-///    edge, both ways when neither.
+/// 2. **An action container** (weaker for SwiftUI and UIKit collection lists, where the
+///    first reading is enough; the only reading for a `UITableView`, Mac run 170): a drawn
+///    `Button` held by no `Cell`, whose nearest scrollable ancestor is a `Table` or
+///    `CollectionView` and which lies inside a direct child of that list (no wider in
+///    height than a row), with its centre in the rows of a `Cell` of that list: that band
+///    is revealed, pulled left when the container's buttons hug its trailing edge (trailing
+///    actions), right when they hug its leading edge, both ways when neither. The container
+///    must lie where the row was (review pass 36: overlapping a cell of its rows by
+///    [`REVEAL_OVERLAP_SHARE`] of the narrower, or that cell's size) or, review pass 37
+///    (F9), abut or overlap (within [`REVEAL_LATTICE_SLACK`]) a cell of its rows that is
+///    **displaced**: whose whole frame's x-origin differs by more than
+///    [`REVEAL_LATTICE_SLACK`] from that of every other cell of its list in other rows that
+///    would share its column (overlapping it sideways) — off the column lattice the other
+///    rows establish, with at least one such cell (a carousel's single row has none; a
+///    carousel or grid scrolled sideways moves all its cells together). **Loose buttons**
+///    (Mac run 170, `UITableView`): a `Button` that is itself a direct child of the list
+///    — the table lists its actions after all its cells, with no container, and the `Cell`
+///    does not move (only its content inside it) — reads as a revealed action of the cell
+///    whose rows hold it (vertical overlap at least half the button's height) and whose
+///    x-range holds at least half of its width; its side is that cell's, the buttons of one
+///    cell are read together.
 ///
 /// A band is the row's rows across its whole list's width (a drag over the buttons' side
 /// crosses it, not only one over the shifted cell). Linear in the drawn nodes, plus at most
@@ -836,8 +855,25 @@ fn revealed_rows(
         };
         child.push(c);
     }
-    // Per container: (container, its frame, its buttons' union).
-    let mut groups: Vec<(u32, jarvis_proto::Rect, jarvis_proto::Rect)> = Vec::new();
+    // Review pass 37 (F9): which crossed cells are displaced, off the column lattice of the
+    // other rows of their list (the first REVEAL_BANDS of them; each reads the cells once).
+    let displaced: Vec<bool> = bands
+        .iter()
+        .take(REVEAL_BANDS)
+        .map(|&(s, f, _)| {
+            let mut column = cells.iter().filter(|&&(s2, g)| {
+                s2 == s && g != f && !rows_meet(f, g) && g.x < f.max_x() && f.x < g.max_x()
+            });
+            let first = column.next();
+            first.is_some()
+                && first
+                    .into_iter()
+                    .chain(column)
+                    .all(|&(_, g)| (g.x - f.x).abs() > REVEAL_LATTICE_SLACK)
+        })
+        .collect();
+    // Per container: (container or loose cell key, its side, its buttons' union).
+    let mut groups: Vec<(u64, jarvis_proto::Rect, jarvis_proto::Rect)> = Vec::new();
     for n in t.nodes {
         if n.role != Role::Button || n.keyboard || n.in_cell || n.frame.is_empty() {
             continue;
@@ -858,6 +894,28 @@ fn revealed_rows(
             || crate::hit::raw_node(t, c)
                 .is_some_and(|k| k.role == Role::Cell || k.frame.height > row_height)
         {
+            continue;
+        }
+        // Mac run 170 (UITableView): a loose button, itself the list's direct child, is a
+        // revealed action of the cell whose rows and width hold it.
+        if c == n.node {
+            let b = n.frame;
+            let holder = bands.iter().take(REVEAL_BANDS).position(|&(s2, g, _)| {
+                let v = b.max_y().min(g.max_y()) - b.y.max(g.y);
+                let h = b.max_x().min(g.max_x()) - b.x.max(g.x);
+                s2 == s && v >= 0.5 * b.height && h >= 0.5 * b.width
+            });
+            let Some((k, &(_, g, _))) = holder.and_then(|k| bands.get(k).map(|x| (k, x))) else {
+                continue;
+            };
+            let key = (1u64 << 32) | u64::try_from(k).unwrap_or(u64::from(u32::MAX));
+            match groups.last_mut() {
+                Some(grp) if grp.0 == key => {
+                    let (x0, x1) = (grp.2.x.min(b.x), grp.2.max_x().max(b.max_x()));
+                    grp.2 = jarvis_proto::Rect::new(x0, grp.2.y, x1 - x0, grp.2.height);
+                }
+                _ => groups.push((key, g, b)),
+            }
             continue;
         }
         let centre = n.frame.center();
@@ -885,10 +943,24 @@ fn revealed_rows(
                 && rows_meet(side, g)
                 && (same_size || overlap >= REVEAL_OVERLAP_SHARE * side.width.min(g.width))
         });
-        if !over_a_row {
+        // Review pass 37 (F9): or beside a displaced cell of its rows (the strip it vacated).
+        let beside_displaced = || {
+            bands
+                .iter()
+                .take(REVEAL_BANDS)
+                .zip(&displaced)
+                .any(|(&(s2, g, _), &d)| {
+                    d && s2 == s
+                        && rows_meet(side, g)
+                        && side.x <= g.max_x() + REVEAL_LATTICE_SLACK
+                        && g.x <= side.max_x() + REVEAL_LATTICE_SLACK
+                })
+        };
+        if !over_a_row && !beside_displaced() {
             continue;
         }
         // The container's buttons together (a subtree's nodes are contiguous).
+        let c = u64::from(c);
         match groups.last_mut() {
             Some(g) if g.0 == c => {
                 let (x0, x1) = (g.2.x.min(n.frame.x), g.2.max_x().max(n.frame.max_x()));
@@ -1790,6 +1862,10 @@ pub fn evaluate_sheeted(
     // (on the screen as classified: a browser's Forward is read as Back).
     for c in crate::classify::reading_risks(action, read) {
         category = carry(&mut carried, category, c);
+    }
+    // Review pass 37 (F5): a label read only after the normalisation keeps `Unverified`.
+    if crate::classify::unread_label_beside_a_category(action, read) {
+        category = carry(&mut carried, category, RiskCategory::Unverified);
     }
     // Audit of real trees (C2): an SF Symbol named by the identifier of the pressed control
     // or of an image inside it raises the category, whatever its label says or in which

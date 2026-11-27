@@ -1028,6 +1028,31 @@ pub(crate) fn any_tokens(toks: &[String], table: &[Phrase]) -> bool {
     })
 }
 
+/// Review pass 37 (F7): whether every token of `toks` lies inside a literal match of a
+/// phrase of `table` (matches may sit side by side: `No thanks, close`): the label *is*
+/// such words, not merely holds one. `false` for no tokens.
+pub(crate) fn covers_all(toks: &[String], table: &[Phrase]) -> bool {
+    if toks.is_empty() {
+        return false;
+    }
+    with_compiled(table, |c| {
+        // The furthest end any match starting at or before each token reaches.
+        let mut reach = 0usize;
+        for (i, t) in toks.iter().enumerate() {
+            for (words, _) in c.by_first.get(t).into_iter().flatten() {
+                let end = i.saturating_add(words.len());
+                if toks.get(i..end) == Some(words.as_slice()) {
+                    reach = reach.max(end);
+                }
+            }
+            if reach <= i {
+                return false;
+            }
+        }
+        true
+    })
+}
+
 /// Applies only the phrases of `tables` that cover *all* of `toks` (spelled-out letters
 /// joined too).
 pub(crate) fn match_whole(toks: &[String], tables: &[&[Phrase]]) -> LabelRisk {

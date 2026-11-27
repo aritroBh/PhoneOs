@@ -1,22 +1,25 @@
 //! Review pass 36: risk phrases matched against the look-alike **character sets** of a
 //! label, in place of pass 35's enumerated readings.
 //!
-//! After the tokenizer's normalisation (invisible and format characters and combining marks
-//! dropped, apostrophes removed without a split, fullwidth, styled, Cyrillic and Greek
-//! look-alikes folded, every decimal digit read as its ASCII digit) each visible character
-//! of a label is one [`Unit`] that stands for a **set** of characters:
+//! After the normalisation the plain tokenizer shares ([`crate::norm`], review pass 37:
+//! canonical decomposition, every Mn/Me mark and every invisible or format character
+//! dropped, apostrophes removed without a split, fullwidth, styled and every script's
+//! digits folded; Cyrillic and Greek look-alikes folded here) each visible character of a
+//! label is one [`Unit`] that stands for a **set** of characters:
 //!
 //! * a letter for itself lowercased; a capital `I` (or a letter that folds to one) for `i`
 //!   and `l`; a lowercase `l` for `l` and `i` where a capital `I` would be natural (first in
 //!   its word, or beside an uppercase letter);
 //! * a digit for itself, and where its run of look-alike characters touches a letter of the
-//!   same word also `0` o, `1` i/l, `3` e, `4` a, `5` s, `7` t, `8` b;
-//! * `@` (not in an email address) a, `$` s, `|` i/l touching a letter of the word, and
-//!   `!` i/l with a letter on both sides; any other symbol or space separates words.
+//!   same word also `0` o, `1` i/l, `2` z, `3` e, `4` a, `5` s, `6` b/g, `7` t, `8` b,
+//!   `9` g;
+//! * `@` a (except the last `@` of an email-shaped word), `$` s, `|` and `¡` i/l, `€` e/c,
+//!   `¢` c, `¥` y, `£` l/e touching a letter of the word, and `!` i/l with a letter on both
+//!   sides, decided after the spelled-out joins; any other symbol or space separates words.
 //!
 //! Boundaries: hard ones (a separator, the start and the end) and soft ones (a lowercase to
 //! uppercase step, an uppercase letter before an uppercase letter followed by a lowercase
-//! one, a letter/digit step, the joins of a spelled-out `P a y`). A phrase matches when its
+//! one, a letter/digit step, the joins of a spelled-out `P a y`, a narrow space). A phrase matches when its
 //! characters are in the units' sets position by position from a boundary to a boundary;
 //! soft boundaries inside the match are ignored, a hard one is allowed only where the phrase
 //! has a space, and a space of the phrase may also fall on a soft boundary or on none
@@ -37,11 +40,9 @@ use std::sync::OnceLock;
 
 use jarvis_proto::RiskCategory;
 
+use crate::norm::{piece, Piece};
 use crate::phrases::{max_risk, LabelRisk, Phrase};
-use crate::text::{
-    email_shaped, emoji_word, fold_confusable, fold_digit, fold_fullwidth, fold_styled,
-    fold_upper_confusable, tokens, transparent,
-};
+use crate::text::{fold_confusable, fold_fullwidth, fold_upper_confusable, tokens};
 
 /// The trie symbol of a phrase space (letters are 0..26, digits 26..36).
 const SPACE: u8 = 36;
@@ -88,6 +89,8 @@ pub(crate) struct Unit {
     src: char,
     /// A capital `I` or a letter that folds to one.
     capital_i: bool,
+    /// Review pass 37 (F3): a narrow space lies before it inside its word (a soft boundary).
+    narrow: bool,
 }
 
 fn sym_of(b: char) -> Option<u8> {
@@ -107,44 +110,94 @@ fn is_letter(k: Kind) -> bool {
     matches!(k, Kind::Lower | Kind::Upper | Kind::Caseless)
 }
 
-/// The letters a digit or symbol of a word stands for (review pass 35's table).
+/// The letters a digit or symbol of a word stands for (review pass 35's table; review pass
+/// 37 (F6): `¡` i/l, `€` e/c, `¢` c, `¥` y, `£` l/e, `9` g, `6` b/g, `2` z).
 fn lookalike_letters(c: char) -> &'static [char] {
     match c {
         '0' => &['o'],
-        '1' | '|' | '!' => &['i', 'l'],
+        '1' | '|' | '!' | '\u{A1}' => &['i', 'l'],
+        '2' => &['z'],
         '3' => &['e'],
         '4' | '@' => &['a'],
         '5' | '$' => &['s'],
+        '6' => &['b', 'g'],
         '7' => &['t'],
         '8' => &['b'],
+        '9' => &['g'],
+        '\u{20AC}' => &['e', 'c'],
+        '\u{A2}' => &['c'],
+        '\u{A5}' => &['y'],
+        '\u{A3}' => &['l', 'e'],
         _ => &[],
     }
 }
 
-/// Builds the units of `text` into `out` (cleared first).
+/// A symbol that may be read as a letter where it touches one (`!` and `¡` aside: see
+/// [`build_units`]).
+fn is_lookalike_symbol(c: char) -> bool {
+    matches!(
+        c,
+        '@' | '$' | '|' | '!' | '\u{A1}' | '\u{20AC}' | '\u{A2}' | '\u{A5}' | '\u{A3}'
+    )
+}
+
+/// Review pass 37 (F1): the `@`s of `text` (by character position) that keep their plain
+/// meaning. In each whitespace-separated word (a narrow space separates too), the **last**
+/// `@` when a `.` follows it in that word: the word is an email address or a handle at a
+/// host, and an address has one `@`. Every other `@` of the label — in another word, or
+/// before the last one of its word — may read as `a` (`P@y anna@mail.com`).
+fn email_ats(text: &str, out: &mut Vec<usize>) {
+    out.clear();
+    if !text.contains(['@', '\u{FF20}']) {
+        return;
+    }
+    let mut last_at: Option<usize> = None;
+    let mut dot = false;
+    for (k, raw) in text.chars().chain(std::iter::once(' ')).enumerate() {
+        let c = fold_fullwidth(raw);
+        if c.is_whitespace() {
+            if let (Some(a), true) = (last_at, dot) {
+                out.push(a);
+            }
+            last_at = None;
+            dot = false;
+        } else if c == '@' {
+            last_at = Some(k);
+            dot = false;
+        } else if c == '.' && last_at.is_some() {
+            dot = true;
+        }
+    }
+}
+
+/// Builds the units of `text` into `out` (cleared first). Every character first goes
+/// through the normalisation the plain tokenizer shares ([`crate::norm::piece`]).
 pub(crate) fn build_units(text: &str, out: &mut Vec<Unit>) {
     out.clear();
-    let email = email_shaped(text);
+    let mut ats = Vec::new();
+    email_ats(text, &mut ats);
     let push = |u: Unit, out: &mut Vec<Unit>| {
         if u.kind == Kind::Sep && out.last().is_some_and(|l| l.kind == Kind::Sep) {
             return;
         }
         out.push(u);
     };
-    for raw in text.chars() {
-        if transparent(raw) {
-            continue;
-        }
-        if emoji_word(raw).is_some() {
-            push(Unit::default(), out);
-            continue;
-        }
-        let c = if raw.is_ascii() {
-            raw
-        } else {
-            fold_digit(fold_styled(fold_fullwidth(raw)))
+    let mut narrow = false;
+    for (k, raw) in text.chars().enumerate() {
+        let c = match piece(raw) {
+            None => continue,
+            Some(Piece::Narrow) => {
+                narrow = true;
+                continue;
+            }
+            Some(Piece::Emoji(_)) => {
+                narrow = false;
+                push(Unit::default(), out);
+                continue;
+            }
+            Some(Piece::Char(c)) => c,
         };
-        let unit = if c.is_ascii_digit() {
+        let mut unit = if c.is_ascii_digit() {
             Unit {
                 set: bit(c),
                 lit: sym_of(c).unwrap_or(NO_LIT),
@@ -152,8 +205,9 @@ pub(crate) fn build_units(text: &str, out: &mut Vec<Unit>) {
                 src: c,
                 ..Unit::default()
             }
-        } else if matches!(c, '$' | '|' | '!') || (c == '@' && !email) {
-            // A candidate: decided below (read as a letter, or a separator).
+        } else if is_lookalike_symbol(c) && !(c == '@' && ats.contains(&k)) {
+            // A candidate: decided below, after the spelled-out joins (review pass 37,
+            // F2: `$ E N D` is one word whose `$` touches its `E`).
             Unit {
                 lit: NO_LIT,
                 kind: Kind::Sym,
@@ -204,8 +258,18 @@ pub(crate) fn build_units(text: &str, out: &mut Vec<Unit>) {
         } else {
             Unit::default()
         };
+        // Review pass 37 (F3): a narrow space inside a word is a soft boundary (the plain
+        // tokenizer splits there; the eye sees one word).
+        if std::mem::take(&mut narrow)
+            && unit.kind != Kind::Sep
+            && out.last().is_some_and(|l| l.kind != Kind::Sep)
+        {
+            unit.soft = Soft::Step;
+            unit.narrow = true;
+        }
         push(unit, out);
     }
+    glue_spelled(out);
     let kind_at = |out: &[Unit], k: Option<usize>| k.and_then(|k| out.get(k)).map(|u| u.kind);
     // Symbols: a letter when their run of look-alikes touches a letter (`!` on both sides).
     let n = out.len();
@@ -242,7 +306,6 @@ pub(crate) fn build_units(text: &str, out: &mut Vec<Unit>) {
     }
     // A symbol that stayed a separator may now stand next to another one.
     out.dedup_by(|b, a| a.kind == Kind::Sep && b.kind == Kind::Sep);
-    glue_spelled(out);
     // Digits (after the joins: `D.3.L.E.T.E` is one word), `I` and `l`, soft boundaries.
     let n = out.len();
     let mut k = 0usize;
@@ -279,7 +342,7 @@ pub(crate) fn build_units(text: &str, out: &mut Vec<Unit>) {
         if u.capital_i {
             u.set |= bit('l');
         }
-        let word_initial = prev.is_none_or(|p| p == Kind::Sep);
+        let word_initial = u.narrow || prev.is_none_or(|p| p == Kind::Sep);
         if u.kind == Kind::Lower
             && u.src == 'l'
             && (word_initial || prev == Some(Kind::Upper) || next == Some(Kind::Upper))
@@ -468,6 +531,8 @@ struct Walk<'a> {
 
 impl Walk<'_> {
     fn go(&self, node: usize, pos: usize, (literal, folded): (bool, bool), out: &mut Vec<Hit>) {
+        #[cfg(feature = "reference")]
+        WALK_STEPS.with(|c| c.set(c.get().saturating_add(1)));
         let units = self.units;
         if pos > self.start && boundary(units, pos) && self.whole_end.is_none_or(|e| e == pos) {
             for &(category, generic) in self.trie.ends.get(node).into_iter().flatten() {
@@ -507,6 +572,35 @@ thread_local! {
     static UNITS: RefCell<Vec<Unit>> = const { RefCell::new(Vec::new()) };
 }
 
+#[cfg(feature = "reference")]
+thread_local! {
+    /// Review pass 37 (F8): the trie steps walked on this thread (tests count work by it).
+    static WALK_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The trie steps walked on this thread so far (feature `reference`, for tests).
+#[cfg(feature = "reference")]
+pub(crate) fn walk_steps() -> u64 {
+    WALK_STEPS.with(std::cell::Cell::get)
+}
+
+/// Review pass 37 (F8): the most soft boundaries (case and letter/digit steps, spelled-out
+/// joins, narrow spaces) a label's units may hold for the sets to walk it. Every soft
+/// boundary is a start of the walk, so a label of alternating letters and digits (`a1a1…`,
+/// 511 of them in 512 characters) cost 4 to 5 times an ordinary one. Measured
+/// (`jarvis-observe/tests/pass37_fixes.rs`): the most any label, value, label and value
+/// together, placeholder or identifier of the 142 real trees in the fixtures holds is 30 (a
+/// Safari tab identifier, `TabDocument?IsLoadedUsingDesktopUserAgent=false&…`); this bound
+/// is more than three times that. A pressable control whose label and value hold more is
+/// `Unverified` (asked) without either reading, as a label past 512 characters is; on
+/// other texts the sets give `Unverified` without the walk.
+pub(crate) const MAX_SOFT_BOUNDARIES: usize = 96;
+
+/// The soft boundaries of `units` ([`MAX_SOFT_BOUNDARIES`]).
+pub(crate) fn soft_boundaries(units: &[Unit]) -> usize {
+    units.iter().filter(|u| u.soft != Soft::No).count()
+}
+
 /// Runs `f` with the units of `text` (a buffer reused per thread: no allocation once warm).
 pub(crate) fn with_units<R>(text: &str, f: impl FnOnce(&[Unit]) -> R) -> R {
     UNITS.with(|cell| match cell.try_borrow_mut() {
@@ -528,6 +622,19 @@ fn hits(units: &[Unit], tables: &[&[Phrase]], whole: bool, out: &mut Vec<Hit>) {
     let first = usize::from(units.first().is_some_and(|u| u.kind == Kind::Sep));
     let last = units.len() - usize::from(units.last().is_some_and(|u| u.kind == Kind::Sep));
     if first >= last {
+        return;
+    }
+    // Review pass 37 (F8): a label with more soft boundaries than any real one is asked
+    // without the walk (every boundary starts one).
+    if soft_boundaries(units) > MAX_SOFT_BOUNDARIES {
+        out.push(Hit {
+            start: first,
+            end: last,
+            category: RiskCategory::Unverified,
+            generic: false,
+            literal: false,
+            folded: true,
+        });
         return;
     }
     for table in tables {

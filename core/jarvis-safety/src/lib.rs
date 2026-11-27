@@ -48,6 +48,7 @@ mod flow;
 mod gate;
 pub mod gestures;
 mod hit;
+mod norm;
 mod phrases;
 mod redact;
 mod sanitize;
@@ -125,6 +126,24 @@ pub mod reference {
     /// character sets alone (what the sets add to [`crate::label_risk`]).
     pub fn lookalike_label_risk(text: &str) -> jarvis_proto::RiskCategory {
         crate::classify::lookalike_label_risk(text)
+    }
+
+    /// Review pass 37: `text` through the one normalisation both readings share.
+    pub fn normalized(text: &str) -> String {
+        crate::norm::normalized(text)
+    }
+
+    /// Review pass 37 (F8): the soft boundaries of `text`'s look-alike units.
+    pub fn soft_boundaries(text: &str) -> usize {
+        crate::sets::with_units(text, crate::sets::soft_boundaries)
+    }
+
+    /// Review pass 37 (F8): the most soft boundaries a label may hold for the sets to walk.
+    pub const MAX_SOFT_BOUNDARIES: usize = crate::sets::MAX_SOFT_BOUNDARIES;
+
+    /// Review pass 37 (F8): the look-alike trie steps walked on this thread so far.
+    pub fn walk_steps() -> u64 {
+        crate::sets::walk_steps()
     }
 }
 pub use phrases::{

@@ -9,8 +9,8 @@ use jarvis_proto::{
 
 use crate::gestures::{drag_gesture, finger_direction, GestureKind};
 use crate::phrases::{
-    action_tables, in_app, match_label, match_label_read, match_tokens, match_whole, max_risk,
-    severity, sf_symbol_risk, LabelRisk, Phrase, RuleTarget, ACTION_PHRASES, APP_RULES,
+    action_tables, covers_all, in_app, match_label, match_label_read, match_tokens, match_whole,
+    max_risk, severity, sf_symbol_risk, LabelRisk, Phrase, RuleTarget, ACTION_PHRASES, APP_RULES,
     COMPOSE_FIELD_PHRASES, CONTEXT_PHRASES, CREDENTIAL_FIELD_PHRASES, NAVIGATION_PHRASES,
     PRICE_VERB_PHRASES, SETTINGS_ACTION_PHRASES, SETTINGS_BUNDLE_ID, SETTINGS_CONTEXT_PHRASES,
     SHARE_SAFE_PHRASES, SIGN_IN_PHRASES, WHOLE_LABEL_PHRASES,
@@ -19,7 +19,7 @@ use crate::redact::contains_secret;
 use crate::sets::{any_units, hard_words, match_sets_whole, match_units, whole_units, with_units};
 use crate::text::{
     bounded, has_foreign_word, has_money, has_non_english_letters, label_is_unreadable, tokens,
-    CURRENCY_WORDS,
+    CURRENCY_WORDS, MAX_LABEL_CHARS,
 };
 use crate::validate::{looks_like_url, url_scheme};
 use jarvis_proto::SPRINGBOARD_BUNDLE_ID;
@@ -41,8 +41,9 @@ pub(crate) const MAX_SCANNED_CONTROLS: usize = 32;
 pub(crate) const UNREADABLE_RISK: RiskCategory = RiskCategory::Unverified;
 
 /// Review pass 36 (F8): the longest label or value of a control that is classified by its
-/// words. A pressable control (not a tab or key) whose label or value is longer is
-/// `Unverified` without its words being read: asked, never truncated and trusted. Basis:
+/// words. A pressable control whose label or value is longer is `Unverified` without its
+/// words being read: asked, never truncated and trusted (review pass 37: tabs and keys too;
+/// a 600-character tab ending in `De1ete` was read truncated and allowed). Basis:
 /// the longest label of any real tree in the repository (106 trees) is 383 characters (a
 /// Spotlight result `Cell`); the longest `Button` label is 102 (a lock-screen
 /// notification).
@@ -542,24 +543,26 @@ fn is_priced_item_row(el: &Element, toks: &[String], lr: LabelRisk) -> bool {
 /// ([`element_risk_read`]) and of their look-alike character sets ([`element_risk_sets`],
 /// review pass 36). Computed once per element per look (review pass 36, F8).
 pub(crate) fn element_risk(el: &Element, r: &Reader<'_>) -> RiskCategory {
-    let (plain, sets) = element_risks(el, r);
+    let (plain, sets, _) = element_risks(el, r);
     max_risk(plain, sets)
 }
 
-/// `el`'s category by its own words and by their look-alike sets, cached per look.
-fn element_risks(el: &Element, r: &Reader<'_>) -> (RiskCategory, RiskCategory) {
+/// `el`'s category by its own words and by their look-alike sets, and whether it is a
+/// control the tables cannot read (`Unverified` raised by its label: another script or
+/// language, no label, too long), cached per look.
+fn element_risks(el: &Element, r: &Reader<'_>) -> (RiskCategory, RiskCategory, bool) {
     let at = position(r.screen, el);
     if let Some(hit) = at.and_then(|k| look_get(r.screen, |c| c.risks.get(&k).copied()).flatten()) {
         return hit;
     }
-    let (plain, content_row) = element_risk_plain(el, r);
+    let (plain, content_row, unverified) = element_risk_plain(el, r);
     let sets = element_risk_sets(el, r, content_row);
     if let Some(k) = at {
         look_put(r.screen, |c| {
-            c.risks.insert(k, (plain, sets));
+            c.risks.insert(k, (plain, sets, unverified));
         });
     }
-    (plain, sets)
+    (plain, sets, unverified)
 }
 
 /// The position of `el` in `screen.elements` when it is one of them (by address).
@@ -583,11 +586,28 @@ pub(crate) fn reading_risks(action: &Action, screen: &CompactScreen) -> Vec<Risk
         return Vec::new();
     };
     let r = Reader::new(screen);
-    let (plain, sets) = element_risks(el, &r);
+    let (plain, sets, _) = element_risks(el, &r);
     if sets == RiskCategory::None {
         return Vec::new();
     }
     vec![plain, sets]
+}
+
+/// Review pass 37 (F5): whether the target of `action` (a tap or long press) is a control
+/// whose label the tables cannot read as English (another language, an accented letter on
+/// a button, another script) while its words now give a definite category (`Sėnd` reads
+/// `SendMessage` after the canonical decomposition): the gate then carries `Unverified`
+/// beside that category, so the stripped reading adds a category and never takes the
+/// phone-only `Unverified` away.
+pub(crate) fn unread_label_beside_a_category(action: &Action, screen: &CompactScreen) -> bool {
+    let (Action::Tap { element } | Action::LongPress { element, .. }) = action else {
+        return false;
+    };
+    let Some(el) = screen.get(*element) else {
+        return false;
+    };
+    let (plain, _, unverified) = element_risks(el, &Reader::new(screen));
+    unverified && plain != UNREADABLE_RISK
 }
 
 /// Review pass 36: the category of a tap on `el` by the look-alike character sets of its
@@ -610,6 +630,10 @@ fn element_risk_sets(el: &Element, r: &Reader<'_>, content_row: bool) -> RiskCat
     let tables = action_tables(&screen.app_bundle_id);
     let text = element_text(el);
     let pressable = is_pressable(&el.role);
+    if pressable && too_soft(&text) {
+        // Unverified by the plain reading, without either reading (review pass 37, F8).
+        return RiskCategory::None;
+    }
     // One reading of the units per text (review pass 36, F8). A long free-text row is
     // content (see `element_risk_read`). Its words are counted between separators here:
     // `Device Rem0ve` is two words, not the plain reading's four tokens. When the plain
@@ -681,6 +705,13 @@ fn element_risk_sets(el: &Element, r: &Reader<'_>, content_row: bool) -> RiskCat
     risk
 }
 
+/// Review pass 37 (F8): whether `text`'s look-alike units hold more soft boundaries than
+/// [`crate::sets::MAX_SOFT_BOUNDARIES`] (only a text of more characters can).
+fn too_soft(text: &str) -> bool {
+    text.len() > crate::sets::MAX_SOFT_BOUNDARIES
+        && with_units(text, crate::sets::soft_boundaries) > crate::sets::MAX_SOFT_BOUNDARIES
+}
+
 /// Whether `text` is longer than [`MAX_CONTROL_LABEL_CHARS`].
 fn too_long(text: &str) -> bool {
     text.len() > MAX_CONTROL_LABEL_CHARS && text.chars().count() > MAX_CONTROL_LABEL_CHARS
@@ -708,24 +739,28 @@ fn element_risk_read(el: &Element, r: &Reader<'_>) -> RiskCategory {
     element_risk_plain(el, r).0
 }
 
-/// [`element_risk_read`], and whether `el` is a long free-text row (content).
-fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool) {
+/// [`element_risk_read`], whether `el` is a long free-text row (content), and whether its
+/// label made it `Unverified` (see [`reading_risks`]).
+fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool, bool) {
     let screen = r.screen;
     if el.role.is_text_input() {
         // Tapping a field only focuses it.
-        return (RiskCategory::None, false);
+        return (RiskCategory::None, false, false);
     }
     let pressable = is_pressable(&el.role);
     // Review pass 36 (F8): a control named by more than a control's name holds is asked
     // without reading its words (never truncate-and-trust; a page of such labels costs no
-    // more than measuring them).
-    if pressable
-        && !matches!(el.role, Role::Tab | Role::Key)
-        && (too_long(&el.label) || el.value.as_deref().is_some_and(too_long))
-    {
-        return (UNREADABLE_RISK, false);
+    // more than measuring them). Review pass 37: tabs and keys too (their labels were read
+    // truncated, and the sets skip such a label).
+    if pressable && (too_long(&el.label) || el.value.as_deref().is_some_and(too_long)) {
+        return (UNREADABLE_RISK, false, true);
     }
     let text = element_text(el);
+    // Review pass 37 (F8): so is one whose words hold more soft boundaries than any real
+    // label (`a1a1…`): asked without reading them, by neither reading.
+    if pressable && too_soft(&text) {
+        return (UNREADABLE_RISK, false, true);
+    }
     let all_toks = tokens(&text);
     // A long free-text row is content: its words only count when its first segment is a
     // command in its own right. App rules (keyed by app, not words) still apply.
@@ -750,7 +785,10 @@ fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool) {
             other => max_risk(other, RiskCategory::Purchase),
         };
     }
-    let navigation = matches_any(&toks, NAVIGATION_PHRASES);
+    // Review pass 37 (F7): a control is plainly navigation only when its label *is*
+    // navigation words (every word inside a literal navigation phrase: `Back`, `Not now`,
+    // `Close`), not when one stands anywhere among others (`Swipe up Back`, `Slide Help`).
+    let navigation = covers_all(&toks, NAVIGATION_PHRASES);
     let plain_target = pressable && !matches!(el.role, Role::Tab | Role::Key) && !navigation;
     for rule in APP_RULES
         .iter()
@@ -787,7 +825,10 @@ fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool) {
         {
             risk = max_risk(risk, RiskCategory::Purchase);
         }
-        if plain_target && ctx.share_sheet && !matches_any(&toks, SHARE_SAFE_PHRASES) {
+        // Review pass 37 (F7): on a share sheet a row stays on the device only when its
+        // label is share-safe words alone (`Copy`, `Save Image`); a row naming a person or
+        // a device beside such a word (`Copy Anna's iPhone`) sends.
+        if plain_target && ctx.share_sheet && !covers_all(&toks, SHARE_SAFE_PHRASES) {
             risk = max_risk(risk, RiskCategory::SendMessage);
         }
         // On a checkout screen, any button that is not plainly navigation may be the one
@@ -800,14 +841,14 @@ fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool) {
     // names ("José", "Café Central").
     let foreign = has_foreign_word(&el.label)
         || (!is_free_text_role(&el.role) && has_non_english_letters(&el.label));
-    let unreadable = label_is_unreadable(&el.label)
+    let unread_words = label_is_unreadable(&el.label)
         || el.value.as_deref().is_some_and(label_is_unreadable)
-        || foreign
-        || unlabeled;
-    if pressable && !content_row && !matches!(el.role, Role::Tab | Role::Key) && unreadable {
+        || foreign;
+    let asked = pressable && !content_row && !matches!(el.role, Role::Tab | Role::Key);
+    if asked && (unread_words || unlabeled) {
         risk = max_risk(risk, UNREADABLE_RISK);
     }
-    (risk, content_row)
+    (risk, content_row, asked && unread_words)
 }
 
 /// The element `Type` lands in: the given one, or the focused text input.
@@ -927,10 +968,17 @@ fn submit_risk(target: Option<&Element>, text: &str, r: &Reader<'_>) -> RiskCate
     // Review pass 35: the field's own label and placeholder in every look-alike reading.
     let field_words = |t: &str| match_label_read(t, &tables).category;
     let named = target.map_or(RiskCategory::None, |t| {
-        max_risk(
-            field_words(&t.label),
-            field_words(t.placeholder.as_deref().unwrap_or("")),
-        )
+        let placeholder = t.placeholder.as_deref().unwrap_or("");
+        let named = max_risk(field_words(&t.label), field_words(placeholder));
+        // Review pass 37: a label or placeholder longer than the matcher reads is read
+        // truncated (its head and tail): a risk word in the cut middle is lost, so such a
+        // field is `Unverified` at least (asked, never truncated and trusted).
+        let over = |s: &str| s.len() > MAX_LABEL_CHARS && s.chars().count() > MAX_LABEL_CHARS;
+        if over(&t.label) || over(placeholder) {
+            max_risk(named, UNREADABLE_RISK)
+        } else {
+            named
+        }
     });
     // In a multi-line text view a Return key that is not a submit label inserts a line
     // break: the typed text is content there, not a command (a note "buy milk"). Audit C1:
@@ -1437,7 +1485,7 @@ fn swipe_risk(el: &Element, direction: Direction, r: &Reader<'_>) -> RiskCategor
 pub(crate) struct LookCache {
     screen: usize,
     tally: Option<Tally>,
-    risks: HashMap<usize, (RiskCategory, RiskCategory)>,
+    risks: HashMap<usize, (RiskCategory, RiskCategory, bool)>,
     points: HashMap<(u64, u64), (RiskCategory, Option<usize>)>,
 }
 

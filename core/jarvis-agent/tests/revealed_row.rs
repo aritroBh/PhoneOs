@@ -981,8 +981,10 @@ fn property_carousels_and_pagers_never_read_as_revealed() {
 // 5. The survey over every real tree in the fixtures.
 // ---------------------------------------------------------------------------------------
 
-/// The captures known to show a row's actions (each with the row it shows).
-const KNOWN_REVEALED: [&str; 14] = [
+/// The captures known to show a row's actions (each with the row it shows). Mac run 170
+/// (P13h, UIKit): the table's and the collection list's revealed captures (with the
+/// runner's trees) are added.
+const KNOWN_REVEALED: [&str; 22] = [
     "p13b-swipe-narrow-02-revealed-1-tree.txt",
     "p13c-swipe-columns-02-revealed-1-tree.txt",
     "p13d-swipe-leading-02-revealed-1-tree.txt",
@@ -996,6 +998,14 @@ const KNOWN_REVEALED: [&str; 14] = [
     "p13f-revealed-tree-11-revealed-leading-one-row-tree.txt",
     "p13f-revealed-tree-12-revealed-leading-one-row-runner-tree.txt",
     "p13g-revealed-tap-02-revealed-tap-row-1-tree.txt",
+    "p13h-uikit-02-table-trailing-revealed-tree.txt",
+    "p13h-uikit-04-table-trailing-revealed-runner-tree.txt",
+    "p13h-uikit-07-table-leading-revealed-tree.txt",
+    "p13h-uikit-09-table-leading-revealed-runner-tree.txt",
+    "p13h-uikit-12-collection-trailing-revealed-tree.txt",
+    "p13h-uikit-14-collection-trailing-revealed-runner-tree.txt",
+    "p13h-uikit-17-collection-leading-revealed-tree.txt",
+    "p13h-uikit-19-collection-leading-revealed-runner-tree.txt",
     "p4d-controls-03-row1-after-runner-swipe-tree.txt",
 ];
 

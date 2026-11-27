@@ -115,11 +115,21 @@ fn f3_send_m0ney_is_remotely_approvable() {
 /// Sound (new coverage): the non-ASCII tricks of target A3 on the same words are caught:
 /// Turkish dotted capital I asks as Unverified; Cyrillic, Greek, fullwidth, styled and
 /// zero-width forms keep their category; combining marks are dropped.
+/// Review pass 37 (F5): `İ` decomposes canonically to `I` and a combining dot, so
+/// `SUBMİT` and `SİGN OUT` now read as the words they draw (`SendMessage`,
+/// `AccountChange`); the other-language signal still carries `Unverified` beside it, so
+/// the question stays phone only (checked below).
 #[test]
 fn sound_unicode_tricks_on_risk_words_are_caught() {
+    for label in ["SUBMİT", "SİGN OUT"] {
+        match decide(&Policy::default(), label) {
+            Decision::Confirm(c) => assert!(c.phone_only, "{label:?}: {c:?}"),
+            other => panic!("{label:?}: {other:?}"),
+        }
+    }
     for (label, want) in [
-        ("SUBMİT", RiskCategory::Unverified),
-        ("SİGN OUT", RiskCategory::Unverified),
+        ("SUBMİT", RiskCategory::SendMessage),
+        ("SİGN OUT", RiskCategory::AccountChange),
         ("Dele\u{0301}te", RiskCategory::Delete),
         ("Deletе", RiskCategory::Delete),
         ("DELETE AССOUNT", RiskCategory::Delete),

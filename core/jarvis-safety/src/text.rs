@@ -55,7 +55,15 @@ pub fn is_invisible(c: char) -> bool {
 }
 
 /// True for combining marks, which are dropped before matching so `P\u{301}ay` reads `pay`.
+/// Review pass 37 (F4): every nonspacing or enclosing mark (General_Category Mn and Me,
+/// Unicode 15.1, [`crate::norm::is_mark`]), and every code point of the five combining
+/// blocks read before (their unassigned ones too).
 pub fn is_combining(c: char) -> bool {
+    in_combining_blocks(c) || crate::norm::is_mark(c)
+}
+
+/// The five combining-mark blocks (U+0300.., U+1AB0.., U+1DC0.., U+20D0.., U+FE20..).
+fn in_combining_blocks(c: char) -> bool {
     matches!(
         u32::from(c),
         0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F
@@ -437,7 +445,10 @@ pub(crate) fn mixed_script(value: &str) -> bool {
 fn is_readable_letter(c: char) -> bool {
     fold_char(c).is_ascii()
         || matches!(u32::from(c), 0x00C0..=0x024F | 0x1E00..=0x1EFF)
-        || is_combining(c)
+        // Review pass 37: only the five blocks read before. A mark of another block that is
+        // also alphabetic (a Devanagari vowel sign) keeps the label unreadable: the
+        // normalised reading adds its words' category, `Unverified` stays carried.
+        || in_combining_blocks(c)
 }
 
 /// True when the phrase tables cannot read `label`: it contains letters of a script they
@@ -589,10 +600,12 @@ pub(crate) fn emoji_word(c: char) -> Option<&'static str> {
 
 /// Splits `text` into lowercase, look-alike-folded word tokens.
 ///
-/// Boundaries: any non-alphanumeric character, a lowercase→uppercase transition
-/// (`PlaceOrder` → `place order`) and a letter↔digit transition (`Pay42` → `pay 42`).
-/// Invisible characters, combining marks and apostrophes are removed without splitting;
-/// a few icon emoji (wastebasket, money, outbox) read as words.
+/// Boundaries: any non-alphanumeric character (a narrow space too), a lowercase→uppercase
+/// transition (`PlaceOrder` → `place order`) and a letter↔digit transition (`Pay42` → `pay
+/// 42`). Every character first goes through [`crate::norm::piece`] (review pass 37):
+/// invisible characters, every nonspacing or enclosing mark and apostrophes are removed
+/// without splitting, a precomposed letter reads as its base letter; a few icon emoji
+/// (wastebasket, money, outbox) read as words.
 pub(crate) fn tokens(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -630,18 +643,22 @@ pub(crate) fn tokens(text: &str) -> Vec<String> {
             prev_class = class;
             continue;
         }
-        if is_invisible(raw) || is_combining(raw) || is_apostrophe(raw) {
-            continue;
-        }
-        if let Some(word) = emoji_word(raw) {
-            if !cur.is_empty() {
-                out.push(std::mem::take(&mut cur));
+        // Review pass 37: the one normalisation both readings share (`crate::norm`): marks
+        // of every block dropped, precomposed letters read as their base, narrow spaces a
+        // space here (a soft boundary to the sets).
+        let c = match crate::norm::piece(raw) {
+            None => continue,
+            Some(crate::norm::Piece::Emoji(word)) => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                out.push(word.to_owned());
+                prev_class = 0;
+                continue;
             }
-            out.push(word.to_owned());
-            prev_class = 0;
-            continue;
-        }
-        let c = fold_digit(fold_styled(fold_fullwidth(raw)));
+            Some(crate::norm::Piece::Narrow) => ' ',
+            Some(crate::norm::Piece::Char(c)) => c,
+        };
         if !c.is_alphanumeric() {
             if !cur.is_empty() {
                 out.push(std::mem::take(&mut cur));
@@ -673,24 +690,6 @@ pub(crate) fn tokens(text: &str) -> Vec<String> {
         out.push(cur);
     }
     out
-}
-
-/// Whether `text` holds an `@` followed by a `.` in the same run of non-space characters
-/// (an email address or a handle at a host): its `@` is not a letter.
-pub(crate) fn email_shaped(text: &str) -> bool {
-    text.contains('@')
-        && text.split_whitespace().any(|w| {
-            w.split_once('@')
-                .is_some_and(|(_, host)| host.contains('.'))
-        })
-}
-
-/// Characters [`tokens`] removes without splitting a word: they do not separate letters
-/// for the look-alike rules either.
-pub(crate) fn transparent(c: char) -> bool {
-    c == '\'' || c == '`' || (c.is_ascii_control() && !c.is_ascii_whitespace()) || {
-        !c.is_ascii() && (is_invisible(c) || is_combining(c) || is_apostrophe(c))
-    }
 }
 
 /// True for currency symbols that mark a price.
