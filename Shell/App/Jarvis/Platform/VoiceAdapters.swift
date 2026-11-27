@@ -249,17 +249,17 @@ final class OnDeviceSpeechRecognizer: SpeechRecognizing, @unchecked Sendable {
     }
 
     func finish(id: UInt64) async {
-        lock.lock()
-        let recognition = current?.id == id ? current?.recognition : nil
-        lock.unlock()
+        let recognition = lock.withLock { current?.id == id ? current?.recognition : nil }
         recognition?.finish()
     }
 
     func stop(id: UInt64) async {
-        lock.lock()
-        let recognition = current?.id == id ? current?.recognition : nil
-        if current?.id == id { current = nil }
-        lock.unlock()
+        let recognition: Recognition? = lock.withLock {
+            guard current?.id == id else { return nil }
+            let recognition = current?.recognition
+            current = nil
+            return recognition
+        }
         recognition?.cancel()
     }
 
@@ -308,14 +308,13 @@ final class ForegroundWakeWord: WakeWordDetecting, @unchecked Sendable {
 
     func arm(id: UInt64) async {
         // Armed before the permission await, so a `disarm(id)` in that window wins.
-        lock.lock()
-        armedId = id
-        lock.unlock()
+        lock.withLock { armedId = id }
         let allowed = await VoiceAdapters.authorize()
-        lock.lock()
-        let still = armedId == id
-        if still && !allowed { armedId = nil }
-        lock.unlock()
+        let still: Bool = lock.withLock {
+            let still = armedId == id
+            if still && !allowed { armedId = nil }
+            return still
+        }
         guard still else { return }
         guard allowed else {
             sink.yield(.failed(id: id, reason: "Speech recognition or the microphone is not allowed."))
@@ -325,15 +324,13 @@ final class ForegroundWakeWord: WakeWordDetecting, @unchecked Sendable {
     }
 
     func disarm(id: UInt64) async {
-        lock.lock()
-        guard armedId == id else {
-            lock.unlock()
-            return
+        let recognition: Recognition? = lock.withLock {
+            guard armedId == id else { return nil }
+            armedId = nil
+            let recognition = self.recognition
+            self.recognition = nil
+            return recognition
         }
-        armedId = nil
-        let recognition = self.recognition
-        self.recognition = nil
-        lock.unlock()
         recognition?.cancel()
     }
 
@@ -390,12 +387,14 @@ final class SystemSpeechSynthesizer: NSObject, SpeechSynthesizing, AVSpeechSynth
     func events() -> AsyncStream<UInt64> { stream }
 
     func speak(_ text: String, id: UInt64) async {
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        lock.lock()
-        ids[ObjectIdentifier(utterance)] = id
-        lock.unlock()
-        await MainActor.run { synthesizer.speak(utterance) }
+        // The utterance is made on the main actor, where the synthesiser takes it: it is
+        // not Sendable and never crosses.
+        await MainActor.run {
+            let utterance = AVSpeechUtterance(string: text)
+            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+            lock.withLock { ids[ObjectIdentifier(utterance)] = id }
+            synthesizer.speak(utterance)
+        }
     }
 
     func stopSpeaking() async {
