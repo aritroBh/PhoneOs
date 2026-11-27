@@ -16,7 +16,7 @@ use common::ios::parse_screen;
 use jarvis_observe::compact;
 use jarvis_proto::{Action, RiskCategory};
 use jarvis_safety::label_risk;
-use jarvis_safety::reference::{lookalike_readings, tap_reading_risks};
+use jarvis_safety::reference::{lookalike_label_risk, tap_reading_risks};
 
 /// Every typed-tree fixture of the workspace (a file the dump parser reads).
 fn real_trees() -> Vec<(String, String)> {
@@ -97,16 +97,13 @@ fn no_real_label_changes_category_by_a_lookalike_reading() {
                     ));
                 }
             }
-            // The control's own words through the action phrases (Rule C's reading).
+            // The control's own words through the action phrases (Rule C's reading); review
+            // pass 36: by their look-alike character sets.
             for t in std::iter::once(&el.label).chain(el.value.as_ref()) {
                 let plain = label_risk(t);
-                for r in lookalike_readings(t).into_iter().flatten() {
-                    let got = label_risk(&r);
-                    if got != RiskCategory::None && got != plain {
-                        changed.push(format!(
-                            "{path}: text {t:?} reads {r:?}: {plain:?} -> {got:?}"
-                        ));
-                    }
+                let got = lookalike_label_risk(t);
+                if got != RiskCategory::None && got != plain {
+                    changed.push(format!("{path}: text {t:?}: {plain:?} -> {got:?}"));
                 }
             }
         }

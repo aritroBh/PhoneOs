@@ -1573,3 +1573,36 @@ fn f7h_landscape() {
     );
     assert!(area.y <= 440.0 - 162.0, "{area:?}");
 }
+
+/// Review pass 36 (residual of F2): the dialog's "Sign In" drawn with a lowercase `l` for
+/// the capital `I` ("Sign ln", "Log ln", "SIGN lN") is the button that sends the password
+/// form: asked as an account action like "Sign In"; refused under a policy that denies
+/// account changes.
+#[test]
+fn f6_a_lookalike_sign_in_beside_the_password_is_an_account_action() {
+    for drawn in ["Sign ln", "Log ln", "SIGN lN", "Sign\u{200B} ln"] {
+        let mut s = parse(BASIC_AUTH);
+        let mut done = 0;
+        edit(&mut s.root, &mut |n| {
+            if n.role == Role::Button && n.label.as_deref() == Some("Sign In") {
+                n.label = Some(drawn.to_owned());
+                done += 1;
+            }
+        });
+        assert_eq!(done, 1, "{drawn}");
+        let d = decide(&default_policy(), &tap(&s, drawn), &s);
+        assert_eq!(
+            asked(&d),
+            Some(RiskCategory::AccountChange),
+            "{drawn}: {d:?}"
+        );
+        let deny = Policy {
+            deny_categories: vec![RiskCategory::AccountChange],
+            ..default_policy()
+        };
+        assert!(
+            matches!(decide(&deny, &tap(&s, drawn), &s), Decision::Deny(_)),
+            "{drawn}"
+        );
+    }
+}

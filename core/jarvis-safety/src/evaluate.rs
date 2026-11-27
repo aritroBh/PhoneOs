@@ -689,6 +689,15 @@ const CAROUSEL_GAP: f64 = 40.0;
 /// closed: refused that way). A real drag crosses one row of a list, or two cells of a
 /// carousel's edge.
 const REVEAL_CHECKS: usize = 32;
+/// Review pass 36 (F7): the share of the narrower of an action container and a cell of its
+/// rows their x-ranges must overlap for the container to read as a revealed row's
+/// ([`revealed_rows`]).
+/// Measured on the revealed captures (ios26_probes3 p13*): the largest overlap per
+/// container is 0.32 to 0.73 for full-width rows, 0.10 for a 200-pt row shifted 180 pt
+/// (caught by its size); a footer beside the last card overlaps none.
+const REVEAL_OVERLAP_SHARE: f64 = 0.25;
+/// Review pass 36 (F7): how far an action container's size may differ from its row's.
+const REVEAL_SIZE_SLACK: f64 = 1.0;
 /// Mac run 161: at most this many crossed cells' rows are read for an action container
 /// ([`revealed_rows`]; each button checked reads them): the second reading is a weaker,
 /// added signal, so past it the remaining rows are left to the first.
@@ -859,8 +868,27 @@ fn revealed_rows(
         if !in_band {
             continue;
         }
-        // The container's buttons together (a subtree's nodes are contiguous).
+        // Review pass 36 (F7): a revealed row's container lies where the row was: at the
+        // shifted cell's rest frame (P13f: the container and the cell are both 400 x 52),
+        // over part of the shifted cell; a carousel's footer ("See All" after the last
+        // card) lies beside the cards and is not a card's size. The container must, with a
+        // cell of its list in its rows, either overlap it by [`REVEAL_OVERLAP_SHARE`] of
+        // the narrower of the two, or be that cell's size (within [`REVEAL_SIZE_SLACK`]: a
+        // narrow row shifted by about its width, which the captures show overlapping its
+        // container by a tenth).
         let side = crate::hit::raw_node(t, c).map_or(l, |k| k.frame);
+        let over_a_row = cells.iter().any(|&(s2, g)| {
+            let overlap = side.max_x().min(g.max_x()) - side.x.max(g.x);
+            let same_size = (side.width - g.width).abs() <= REVEAL_SIZE_SLACK
+                && (side.height - g.height).abs() <= REVEAL_SIZE_SLACK;
+            s2 == s
+                && rows_meet(side, g)
+                && (same_size || overlap >= REVEAL_OVERLAP_SHARE * side.width.min(g.width))
+        });
+        if !over_a_row {
+            continue;
+        }
+        // The container's buttons together (a subtree's nodes are contiguous).
         match groups.last_mut() {
             Some(g) if g.0 == c => {
                 let (x0, x1) = (g.2.x.min(n.frame.x), g.2.max_x().max(n.frame.max_x()));
@@ -1359,18 +1387,8 @@ fn sign_in_press(action: &Action, screen: &CompactScreen, tree: Option<&ScreenTr
         Actuation::Press(e) => e,
         _ => return false,
     };
-    // Review pass 35: the label's own words or any look-alike reading of them.
-    let sign_in = |label: &str| {
-        let words = crate::text::tokens(label);
-        crate::phrases::match_whole(&words, &[crate::phrases::SIGN_IN_PHRASES]).category
-            != RiskCategory::None
-    };
-    (sign_in(&el.label)
-        || crate::text::lookalike_readings(&el.label)
-            .into_iter()
-            .flatten()
-            .any(|r| sign_in(&r)))
-        && beside_password(el, tree)
+    // Review pass 35/36: the label's own words or their look-alike sets (`Sign ln`).
+    crate::classify::sign_in_words(&el.label) && beside_password(el, tree)
 }
 
 /// Probe round 3 (F6; review L4): whether a drawn `SecureTextField` other than `el` lies in
@@ -1687,6 +1705,9 @@ pub fn evaluate_sheeted(
     tainted: bool,
     share_sheet: Option<bool>,
 ) -> Decision {
+    // Review pass 36 (F8): every classification of this screen during the decision is
+    // worked out once (the point's target, each control's category, the context counts).
+    let _look = crate::classify::look_scope(screen);
     if let Err(e) = validate_action(action, screen) {
         return Decision::Deny(clean(&e.to_string(), MAX_SUMMARY_CHARS));
     }
@@ -1750,24 +1771,24 @@ pub fn evaluate_sheeted(
         // Leaving a denied app stays possible; how it is gated does not depend on it.
         level = app_level(&without_app_denials(policy), &affected_app);
     }
-    let mut category = match browser_forward(action, screen, tree) {
-        // Narrowing (b), ninth review: a "Forward" in a system bar that also holds "Back"
-        // is a browser's navigation, read like "Back" (not the send phrase "forward").
-        Some(index) => {
-            let mut nav = screen.clone();
-            if let Some(e) = nav.elements.iter_mut().find(|e| e.index == index) {
-                e.label = "Back".to_owned();
-            }
-            classify_from(action, &nav, tool, source)
+    // Narrowing (b), ninth review: a "Forward" in a system bar that also holds "Back" is a
+    // browser's navigation, read like "Back" (not the send phrase "forward").
+    let nav = browser_forward(action, screen, tree).map(|index| {
+        let mut nav = screen.clone();
+        if let Some(e) = nav.elements.iter_mut().find(|e| e.index == index) {
+            e.label = "Back".to_owned();
         }
-        None => classify_from(action, screen, tool, source),
-    };
+        nav
+    });
+    let read = nav.as_ref().unwrap_or(screen);
+    let mut category = classify_from(action, read, tool, source);
     // Review pass 28 (H2): every category a rule attaches is carried, not only the riskiest:
     // the question shows the riskiest, and a denial of ANY carried category refuses.
     let mut carried: Vec<RiskCategory> = vec![category];
-    // Review pass 35 (F1–F3): the pressed control's own words and every look-alike reading
-    // of them (`DeIete`, `Rem0ve`, `Send M0ney`) each give a category, all carried.
-    for c in crate::classify::reading_risks(action, screen) {
+    // Review pass 35/36: the pressed control's own words and their look-alike character
+    // sets (`DeIete`, `BIock`, `Rem0ve`, `Send M0ney`) each give a category, all carried
+    // (on the screen as classified: a browser's Forward is read as Back).
+    for c in crate::classify::reading_risks(action, read) {
         category = carry(&mut carried, category, c);
     }
     // Audit of real trees (C2): an SF Symbol named by the identifier of the pressed control
@@ -2468,7 +2489,7 @@ fn amount_shown(v: &str) -> bool {
 fn own_category(action: &Action, screen: &CompactScreen) -> RiskCategory {
     let tables = crate::phrases::action_tables(&screen.app_bundle_id);
     let own = |text: &str| crate::phrases::match_label(text, &tables).category;
-    // Review pass 35: a control's own words in every look-alike reading.
+    // Review pass 35/36: a control's own words and their look-alike character sets.
     let own_read = |text: &str| crate::phrases::match_label_read(text, &tables).category;
     match actuation(action, screen) {
         Actuation::Press(t) | Actuation::Drag(t) => own_read(&crate::classify::element_text(t)),
@@ -7353,6 +7374,20 @@ fn summarize_with(
     } = fact_screen(raw, target_index, tree);
     let redacted = redact_screen(&read_capped(&reduced));
     let screen = &redacted;
+    // Review pass 36 (F8): the question's own screen is classified once too (the action
+    // line is tried at several lengths, each resolving a point's target). A point's target
+    // there is the one the decision found on the raw screen (its risk decided there; the
+    // question's copy has its labels cut and redacted).
+    let _look = crate::classify::look_scope(screen);
+    if let Action::TapPoint { x, y } = action {
+        crate::classify::look_seed_point(
+            screen,
+            *x,
+            *y,
+            crate::classify::tap_point(*x, *y, raw).0,
+            target_index,
+        );
+    }
     let target = target_index.and_then(|i| screen.get(i));
     let anchor = Anchor::new(target, tree);
     // Thirteenth review: a drag sends the form of the control it actuates (its element, or

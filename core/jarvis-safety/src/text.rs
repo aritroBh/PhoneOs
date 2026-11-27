@@ -167,7 +167,7 @@ pub(crate) fn is_sc(c: char) -> bool {
 
 /// Maps a letter from Unicode's styled alphabets (mathematical bold/italic/script...,
 /// circled letters) back to ASCII.
-fn fold_styled(c: char) -> char {
+pub(crate) fn fold_styled(c: char) -> char {
     let u = u32::from(c);
     let letter = |i: u32| -> char {
         let base = if i < 26 { 0x41 + i } else { 0x61 + (i - 26) };
@@ -217,7 +217,7 @@ fn fold_letterlike(c: char) -> char {
 
 /// Folds a lowercase character that looks like an ASCII letter (Cyrillic, Greek, accented
 /// Latin) to that letter. Applied after lowercasing.
-fn fold_confusable(c: char) -> char {
+pub(crate) fn fold_confusable(c: char) -> char {
     match c {
         'а' | 'α' | 'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' | 'ᴀ' | 'ɑ' => {
             'a'
@@ -265,7 +265,7 @@ pub(crate) fn fold_char(c: char) -> char {
 /// Folds an uppercase Greek or Cyrillic letter that looks like an ASCII capital to that
 /// letter, lowercased. Checked before lowercasing, because some capitals look like a
 /// different Latin letter than their lowercase forms do (Greek `Ν` is `N`, `ν` is `v`).
-fn fold_upper_confusable(c: char) -> Option<char> {
+pub(crate) fn fold_upper_confusable(c: char) -> Option<char> {
     Some(match c {
         'Α' | 'А' => 'a',
         'Β' | 'В' => 'b',
@@ -578,7 +578,7 @@ pub(crate) fn is_apostrophe(c: char) -> bool {
 }
 
 /// Icon characters used as button labels, read as the word they stand for.
-fn emoji_word(c: char) -> Option<&'static str> {
+pub(crate) fn emoji_word(c: char) -> Option<&'static str> {
     match c {
         '\u{1F5D1}' => Some("trash"),
         '\u{1F4B8}' => Some("pay"),
@@ -675,31 +675,9 @@ pub(crate) fn tokens(text: &str) -> Vec<String> {
     out
 }
 
-/// Review pass 35 (F1–F3): the ASCII look-alikes a system font draws almost like a letter,
-/// with the letter each stands for (the digit `1` and the bars `|`/`!` stand for `l` in one
-/// reading and `i` in the other; see [`lookalike_readings`]).
-fn lookalike_letter(c: char, i_reading: bool) -> Option<char> {
-    Some(match c {
-        '0' => 'o',
-        '1' | '|' | '!' => {
-            if i_reading {
-                'i'
-            } else {
-                'l'
-            }
-        }
-        '3' => 'e',
-        '4' | '@' => 'a',
-        '5' | '$' => 's',
-        '7' => 't',
-        '8' => 'b',
-        _ => return None,
-    })
-}
-
 /// Whether `text` holds an `@` followed by a `.` in the same run of non-space characters
 /// (an email address or a handle at a host): its `@` is not a letter.
-fn email_shaped(text: &str) -> bool {
+pub(crate) fn email_shaped(text: &str) -> bool {
     text.contains('@')
         && text.split_whitespace().any(|w| {
             w.split_once('@')
@@ -707,230 +685,12 @@ fn email_shaped(text: &str) -> bool {
         })
 }
 
-/// Whether `c` stands for `l` or `i` depending on the reading.
-fn is_two_way(c: char) -> bool {
-    matches!(c, '1' | '|' | '!')
-}
-
 /// Characters [`tokens`] removes without splitting a word: they do not separate letters
 /// for the look-alike rules either.
-fn transparent(c: char) -> bool {
+pub(crate) fn transparent(c: char) -> bool {
     c == '\'' || c == '`' || (c.is_ascii_control() && !c.is_ascii_whitespace()) || {
         !c.is_ascii() && (is_invisible(c) || is_combining(c) || is_apostrophe(c))
     }
-}
-
-/// How a visible character takes part in a word, for the look-alike rules.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Lower,
-    Upper,
-    /// A letter without case (another script): a letter, never a case boundary.
-    Caseless,
-    /// A digit or symbol of [`lookalike_letter`].
-    Look,
-    /// Anything else (a space, punctuation, a digit that is no look-alike).
-    Other,
-}
-
-fn kind(c: char, email: bool) -> Kind {
-    if lookalike_letter(c, false).is_some() && !(email && c == '@') {
-        Kind::Look
-    } else if c.is_lowercase() {
-        Kind::Lower
-    } else if c.is_uppercase() {
-        Kind::Upper
-    } else if c.is_alphabetic() {
-        Kind::Caseless
-    } else {
-        Kind::Other
-    }
-}
-
-fn is_letter(k: Kind) -> bool {
-    matches!(k, Kind::Lower | Kind::Upper | Kind::Caseless)
-}
-
-/// One pass without allocating: whether `text` holds a look-alike in a fold position
-/// ([`lookalike_readings`]), and whether one of them reads two ways (`1`, `|`, `!`).
-fn lookalike_scan(text: &str) -> Option<bool> {
-    let email = email_shaped(text);
-    let mut prev = Kind::Other;
-    // The run of look-alike characters being read: touches a letter on its left; holds a
-    // character other than `!`; holds a two-way character.
-    let mut run: Option<(bool, bool, bool)> = None;
-    // A lowercase `l` right after an uppercase letter, waiting for its right neighbour.
-    let mut pending_l = false;
-    let mut found = false;
-    let mut two_way = false;
-    // Lowercase-to-capital steps inside the current word.
-    let mut steps = 0u8;
-    for c in text.chars() {
-        if transparent(c) {
-            continue;
-        }
-        let k = kind(c, email);
-        if !is_letter(k) && k != Kind::Look {
-            steps = 0;
-        } else if prev == Kind::Lower && k == Kind::Upper {
-            steps = steps.saturating_add(1);
-            found |= steps >= 2;
-        }
-        if pending_l {
-            pending_l = false;
-            if k == Kind::Upper || !is_letter(k) {
-                found = true;
-            }
-        }
-        if k == Kind::Look {
-            let r = run.get_or_insert((is_letter(prev), false, false));
-            r.1 |= c != '!';
-            r.2 |= is_two_way(c);
-            if r.0 && r.1 {
-                found = true;
-                two_way |= r.2;
-            }
-        } else if let Some((left, other, tw)) = run.take() {
-            let right = is_letter(k);
-            if (other && (left || right)) || (left && right) {
-                found = true;
-                two_way |= tw;
-            }
-        }
-        match (c, prev) {
-            ('I', Kind::Lower) => found = true,
-            ('l', Kind::Upper) => pending_l = true,
-            _ => {}
-        }
-        prev = k;
-    }
-    if pending_l {
-        found = true;
-    }
-    if let Some((left, other, tw)) = run {
-        if other && left {
-            found = true;
-            two_way |= tw;
-        }
-    }
-    found.then_some(two_way)
-}
-
-/// Review pass 35 (F1–F3): the look-alike readings of `text`, `None` (without allocating)
-/// when it holds no ASCII look-alike in a fold position. A label is classified by its own
-/// tokens **and** by every reading, and carries every category any of them gives.
-///
-/// Fold positions (only inside a word, so a number, a version or a price is never read as
-/// letters): a capital `I` right after a lowercase letter reads `l` (`DeIete`, `CanceI`);
-/// a lowercase `l` right after a capital and before a capital or the end of the word reads
-/// `I` (`SUBMlT`); a run of the digits and symbols `0`→o, `1`→l/i, `3`→e, `4`→a, `5`→s,
-/// `7`→t, `8`→b, `@`→a, `$`→s, `|`→l/i touching a letter on either side, and `!`→l/i only
-/// with a letter on both sides (`Go!` stays punctuation). Each folded character takes the
-/// case of the letter beside it, so folding never adds a camel-case split. `1`, `|` and
-/// `!` give two readings (all as `l`, all as `i`); otherwise there is one. Characters
-/// [`tokens`] drops without splitting (invisible, combining, apostrophes) do not separate.
-pub(crate) fn lookalike_readings(text: &str) -> Option<Vec<String>> {
-    let two_way = lookalike_scan(text)?;
-    let email = email_shaped(text);
-    let chars: Vec<char> = text.chars().collect();
-    let visible: Vec<usize> = (0..chars.len())
-        .filter(|&i| chars.get(i).is_some_and(|c| !transparent(*c)))
-        .collect();
-    let at = |v: Option<usize>| -> Option<char> {
-        v.and_then(|v| visible.get(v))
-            .and_then(|&i| chars.get(i))
-            .copied()
-    };
-    let readings: &[bool] = if two_way { &[false, true] } else { &[false] };
-    let mut out = Vec::with_capacity(readings.len());
-    for &i_reading in readings {
-        let mut folded = chars.clone();
-        let mut v = 0usize;
-        while v < visible.len() {
-            let Some(c) = at(Some(v)) else { break };
-            let prev = v.checked_sub(1).and_then(|p| at(Some(p)));
-            let next = at(v.checked_add(1));
-            let pos = visible.get(v).copied().unwrap_or(0);
-            match c {
-                'I' if prev.is_some_and(|p| kind(p, email) == Kind::Lower) => {
-                    if let Some(slot) = folded.get_mut(pos) {
-                        *slot = 'l';
-                    }
-                }
-                'l' if prev.is_some_and(|p| kind(p, email) == Kind::Upper)
-                    && next.is_none_or(|n| {
-                        kind(n, email) == Kind::Upper || !is_letter(kind(n, email))
-                    }) =>
-                {
-                    if let Some(slot) = folded.get_mut(pos) {
-                        *slot = 'I';
-                    }
-                }
-                _ => {}
-            }
-            if kind(c, email) != Kind::Look {
-                v += 1;
-                continue;
-            }
-            // The whole run of look-alikes from `v`.
-            let mut end = v;
-            while at(Some(end)).is_some_and(|c| kind(c, email) == Kind::Look) {
-                end += 1;
-            }
-            let left = prev.filter(|p| is_letter(kind(*p, email)));
-            let right = at(Some(end)).filter(|n| is_letter(kind(*n, email)));
-            for w in v..end {
-                let Some(c) = at(Some(w)) else { continue };
-                let fold = if c == '!' {
-                    left.is_some() && right.is_some()
-                } else {
-                    left.is_some() || right.is_some()
-                };
-                if !fold {
-                    continue;
-                }
-                let upper = left
-                    .or(right)
-                    .is_some_and(|n| kind(n, email) == Kind::Upper);
-                if let (Some(l), Some(&p)) = (lookalike_letter(c, i_reading), visible.get(w)) {
-                    if let Some(slot) = folded.get_mut(p) {
-                        *slot = if upper { l.to_ascii_uppercase() } else { l };
-                    }
-                }
-            }
-            v = end;
-        }
-        // A word with two lowercase-to-capital steps or more (`DeLeTe`, `ReMoVe`) is also
-        // read whole, without the camel-case splits.
-        let mut start = 0usize;
-        while start < visible.len() {
-            let word = |v: usize| at(Some(v)).is_some_and(|c| kind(c, email) != Kind::Other);
-            if !word(start) {
-                start += 1;
-                continue;
-            }
-            let mut end = start;
-            let mut steps = 0u8;
-            while word(end) {
-                let lower_before = end > start
-                    && at(end.checked_sub(1)).is_some_and(|p| kind(p, email) == Kind::Lower);
-                if lower_before && at(Some(end)).is_some_and(|c| kind(c, email) == Kind::Upper) {
-                    steps = steps.saturating_add(1);
-                }
-                end += 1;
-            }
-            if steps >= 2 {
-                for w in start..end {
-                    if let Some(slot) = visible.get(w).and_then(|&p| folded.get_mut(p)) {
-                        *slot = slot.to_lowercase().next().unwrap_or(*slot);
-                    }
-                }
-            }
-            start = end;
-        }
-        out.push(folded.into_iter().collect());
-    }
-    Some(out)
 }
 
 /// True for currency symbols that mark a price.
@@ -1051,14 +811,14 @@ pub(crate) fn has_money_in(text: &str, toks: Option<&[String]>) -> bool {
 
 /// Whether `toks` hold a currency code or word next to a number (see [`has_money`]).
 fn money_tokens(toks: &[String]) -> bool {
+    // Review pass 36 (F8): the neighbours first (cheap), the word list only beside a number.
+    let is_num = |j: Option<usize>| {
+        j.and_then(|j| toks.get(j))
+            .is_some_and(|s| s.chars().all(|c| c.is_ascii_digit()))
+    };
     toks.iter().enumerate().any(|(i, t)| {
-        CURRENCY_WORDS.contains(&t.as_str()) && {
-            let is_num = |j: Option<usize>| {
-                j.and_then(|j| toks.get(j))
-                    .is_some_and(|s| s.chars().all(|c| c.is_ascii_digit()))
-            };
-            is_num(i.checked_sub(1)) || is_num(i.checked_add(1))
-        }
+        (is_num(i.checked_sub(1)) || is_num(i.checked_add(1)))
+            && CURRENCY_WORDS.contains(&t.as_str())
     })
 }
 
@@ -1176,53 +936,6 @@ mod tests {
             }
         }
         assert_eq!(count, 170, "Unicode 15.1 has 170 Cf characters");
-    }
-
-    #[test]
-    fn lookalike_readings_fold_only_inside_words() {
-        let read = |t: &str| lookalike_readings(t);
-        // Ordinary labels: no reading, nothing allocated.
-        for t in [
-            "Settings",
-            "Delete Account",
-            "Cancel",
-            "Top 10",
-            "iOS 26",
-            "Pay $5.00",
-            "Go!",
-            "10:41",
-            "john@example.com",
-            "PlaceOrder",
-            "iPhone",
-            "",
-        ] {
-            assert_eq!(read(t), None, "{t:?}");
-        }
-        for (t, want) in [
-            ("DeIete", &["Delete"][..]),
-            ("CanceI Subscription", &["Cancel Subscription"]),
-            ("SUBMlT", &["SUBMIT"]),
-            ("Sign 0ut", &["Sign out"]),
-            ("D0NATE", &["DONATE"]),
-            ("Send M0ney", &["Send MOney"]),
-            ("Subm1t", &["Submlt", "Submit"]),
-            ("De!ete", &["Delete", "Deiete"]),
-            ("P@y $end", &["PAy send"]),
-            ("DeLeTe", &["delete"]),
-            ("Rem\u{200B}0ve", &["Rem\u{200B}ove"]),
-            // A number beside a word is read too, and stays harmless.
-            ("5G", &["SG"]),
-        ] {
-            let want: Vec<String> = want.iter().map(|w| (*w).to_owned()).collect();
-            assert_eq!(read(t), Some(want), "{t:?}");
-        }
-        // A number alone is not read.
-        assert_eq!(read("Top 10 5"), None);
-        // Folding adds no camel-case split.
-        assert_eq!(
-            read("Send M0ney").map(|r| r.iter().map(|t| tokens(t)).collect::<Vec<_>>()),
-            Some(vec![vec!["send".to_owned(), "money".to_owned()]])
-        );
     }
 
     #[test]

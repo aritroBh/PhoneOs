@@ -881,34 +881,42 @@ fn compile(table: &[Phrase]) -> Compiled {
     Compiled { by_first }
 }
 
+/// Every table the crate matches against.
+pub(crate) fn all_tables() -> Vec<&'static [Phrase]> {
+    let mut all: Vec<&'static [Phrase]> = vec![
+        ACTION_PHRASES,
+        CONTEXT_PHRASES,
+        CREDENTIAL_FIELD_PHRASES,
+        HIDDEN_FIELD_PHRASES,
+        COMPOSE_FIELD_PHRASES,
+        SETTINGS_CONTEXT_PHRASES,
+        SETTINGS_ACTION_PHRASES,
+        NAVIGATION_PHRASES,
+        PRICE_VERB_PHRASES,
+        SHARE_SAFE_PHRASES,
+        WHOLE_LABEL_PHRASES,
+        SIGN_IN_PHRASES,
+    ];
+    all.extend(APP_PHRASES.iter().map(|(_, t)| *t));
+    all
+}
+
 /// Every table the crate matches against, compiled once.
 fn compiled_tables() -> &'static [(&'static [Phrase], Compiled)] {
     static TABLES: OnceLock<Vec<(&'static [Phrase], Compiled)>> = OnceLock::new();
-    TABLES.get_or_init(|| {
-        let mut all: Vec<&'static [Phrase]> = vec![
-            ACTION_PHRASES,
-            CONTEXT_PHRASES,
-            CREDENTIAL_FIELD_PHRASES,
-            HIDDEN_FIELD_PHRASES,
-            COMPOSE_FIELD_PHRASES,
-            SETTINGS_CONTEXT_PHRASES,
-            SETTINGS_ACTION_PHRASES,
-            NAVIGATION_PHRASES,
-            PRICE_VERB_PHRASES,
-            SHARE_SAFE_PHRASES,
-            WHOLE_LABEL_PHRASES,
-            SIGN_IN_PHRASES,
-        ];
-        all.extend(APP_PHRASES.iter().map(|(_, t)| *t));
-        all.into_iter().map(|t| (t, compile(t))).collect()
-    })
+    TABLES.get_or_init(|| all_tables().into_iter().map(|t| (t, compile(t))).collect())
 }
 
 /// Runs `f` with the compiled form of `table` (cached for the crate's own tables).
 fn with_compiled<R>(table: &[Phrase], f: impl FnOnce(&Compiled) -> R) -> R {
     let cached = compiled_tables()
         .iter()
-        .find(|(t, _)| t.len() == table.len() && *t == table);
+        .find(|(t, _)| std::ptr::eq(t.as_ptr(), table.as_ptr()) && t.len() == table.len())
+        .or_else(|| {
+            compiled_tables()
+                .iter()
+                .find(|(t, _)| t.len() == table.len() && *t == table)
+        });
     match cached {
         Some((_, c)) => f(c),
         None => f(&compile(table)),
@@ -945,6 +953,12 @@ fn join_spelled(toks: &[String]) -> Vec<String> {
 /// letters joined; the riskier reading wins.
 pub(crate) fn match_tokens(toks: &[String], tables: &[&[Phrase]]) -> LabelRisk {
     let plain = match_tokens_once(toks, tables);
+    // Review pass 36 (F8): no copy of the tokens when no two single letters are adjacent
+    // (the joined tokens would be the same).
+    let single = |t: &String| t.chars().count() == 1 && t.chars().all(char::is_alphabetic);
+    if !toks.windows(2).any(|w| w.iter().all(single)) {
+        return plain;
+    }
     let joined = join_spelled(toks);
     if joined.as_slice() == toks {
         return plain;
@@ -999,6 +1013,21 @@ fn match_tokens_once(toks: &[String], tables: &[&[Phrase]]) -> LabelRisk {
     out
 }
 
+/// Whether any phrase of `table` (even a `None` row) appears in `toks`: the same answer as
+/// trying every phrase at every position, through the compiled index (review pass 36, F8:
+/// it was a fresh tokenization of every phrase per call).
+pub(crate) fn any_tokens(toks: &[String], table: &[Phrase]) -> bool {
+    with_compiled(table, |c| {
+        toks.iter().enumerate().any(|(i, t)| {
+            c.by_first.get(t).is_some_and(|cands| {
+                cands.iter().any(|(words, _)| {
+                    toks.get(i..i.saturating_add(words.len())) == Some(words.as_slice())
+                })
+            })
+        })
+    })
+}
+
 /// Applies only the phrases of `tables` that cover *all* of `toks` (spelled-out letters
 /// joined too).
 pub(crate) fn match_whole(toks: &[String], tables: &[&[Phrase]]) -> LabelRisk {
@@ -1027,19 +1056,17 @@ pub(crate) fn match_label(label: &str, tables: &[&[Phrase]]) -> LabelRisk {
     match_tokens(&tokens(&bounded(label)), tables)
 }
 
-/// Review pass 35 (F1–F3): [`match_label`] over `label`'s own tokens and every look-alike
-/// reading of it ([`crate::text::lookalike_readings`]): the riskiest category any reading
-/// gives, generic when any reading is. The same as `match_label` (and no allocation more)
-/// for a label without a look-alike in a fold position.
+/// Review pass 36: [`match_label`] over `label`'s own tokens **and** the look-alike
+/// character sets of it ([`crate::sets::match_sets`]): the riskier category, generic when
+/// either is. The plain reading is unchanged; the sets only add.
 pub(crate) fn match_label_read(label: &str, tables: &[&[Phrase]]) -> LabelRisk {
     let b = bounded(label);
-    let mut lr = match_tokens(&tokens(&b), tables);
-    for reading in crate::text::lookalike_readings(&b).into_iter().flatten() {
-        let o = match_tokens(&tokens(&reading), tables);
-        lr.category = max_risk(lr.category, o.category);
-        lr.generic |= o.generic;
+    let lr = match_tokens(&tokens(&b), tables);
+    let o = crate::sets::match_sets(&b, tables);
+    LabelRisk {
+        category: max_risk(lr.category, o.category),
+        generic: lr.generic || o.generic,
     }
-    lr
 }
 
 /// Whether `bundle_id` starts with `prefix`, ignoring ASCII case.

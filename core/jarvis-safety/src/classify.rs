@@ -13,12 +13,13 @@ use crate::phrases::{
     severity, sf_symbol_risk, LabelRisk, Phrase, RuleTarget, ACTION_PHRASES, APP_RULES,
     COMPOSE_FIELD_PHRASES, CONTEXT_PHRASES, CREDENTIAL_FIELD_PHRASES, NAVIGATION_PHRASES,
     PRICE_VERB_PHRASES, SETTINGS_ACTION_PHRASES, SETTINGS_BUNDLE_ID, SETTINGS_CONTEXT_PHRASES,
-    SHARE_SAFE_PHRASES, WHOLE_LABEL_PHRASES,
+    SHARE_SAFE_PHRASES, SIGN_IN_PHRASES, WHOLE_LABEL_PHRASES,
 };
 use crate::redact::contains_secret;
+use crate::sets::{any_units, hard_words, match_sets_whole, match_units, whole_units, with_units};
 use crate::text::{
-    bounded, has_foreign_word, has_money, has_non_english_letters, label_is_unreadable,
-    lookalike_readings, tokens, CURRENCY_WORDS,
+    bounded, has_foreign_word, has_money, has_non_english_letters, label_is_unreadable, tokens,
+    CURRENCY_WORDS,
 };
 use crate::validate::{looks_like_url, url_scheme};
 use jarvis_proto::SPRINGBOARD_BUNDLE_ID;
@@ -38,6 +39,14 @@ pub(crate) const MAX_SCANNED_CONTROLS: usize = 32;
 /// ranks below every definite signal, so a known trash symbol or a checkout screen still
 /// wins.
 pub(crate) const UNREADABLE_RISK: RiskCategory = RiskCategory::Unverified;
+
+/// Review pass 36 (F8): the longest label or value of a control that is classified by its
+/// words. A pressable control (not a tab or key) whose label or value is longer is
+/// `Unverified` without its words being read: asked, never truncated and trusted. Basis:
+/// the longest label of any real tree in the repository (106 trees) is 383 characters (a
+/// Spotlight result `Cell`); the longest `Button` label is 102 (a lock-screen
+/// notification).
+pub(crate) const MAX_CONTROL_LABEL_CHARS: usize = 512;
 
 /// Most string arguments of one tool call that are read.
 pub(crate) const MAX_TOOL_STRINGS: usize = 64;
@@ -207,10 +216,7 @@ pub(crate) fn is_pressable(role: &Role) -> bool {
 
 /// Whether any phrase of `table` matches `toks` (even a `None` row).
 fn matches_any(toks: &[String], table: &[Phrase]) -> bool {
-    table.iter().any(|p| {
-        let words = tokens(p.text);
-        !words.is_empty() && toks.windows(words.len()).any(|w| w == words.as_slice())
-    })
+    crate::phrases::any_tokens(toks, table)
 }
 
 /// True when the text contains a phone-number-like run: 7–15 digits joined by spaces,
@@ -308,7 +314,7 @@ const RISK_LEVELS: usize = 16;
 /// Every element's [`Signal`] on a screen, counted, so the context of a decision "apart
 /// from element N" is the whole count minus that one element's signal: one pass over the
 /// screen per classification, however many controls are evaluated.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Tally {
     risks: [u32; RISK_LEVELS],
     money: u32,
@@ -395,10 +401,16 @@ impl<'a> Reader<'a> {
     /// its own signal out of the counts.
     pub(crate) fn context(&self, exclude: Option<u32>) -> Context {
         let tally = self.tally.get_or_init(|| {
+            // Review pass 36 (F8): read once per look (every reader of the screen the gate
+            // is deciding on shares it).
+            if let Some(t) = look_get(self.screen, |c| c.tally.clone()).flatten() {
+                return t;
+            }
             let mut t = Tally::default();
             for el in &self.screen.elements {
                 t.add(signal_of(el, &self.tables));
             }
+            look_put(self.screen, |c| c.tally = Some(t.clone()));
             t
         });
         // Every element with that index (indices are unique on a compacted screen). Review
@@ -526,60 +538,43 @@ fn is_priced_item_row(el: &Element, toks: &[String], lr: LabelRisk) -> bool {
         && names_something
 }
 
-/// Review pass 35 (F1–F3): `el` once per look-alike reading of its label and value
-/// ([`lookalike_readings`]), the texts replaced by the reading; `None` (without allocating)
-/// when neither holds a look-alike in a fold position, and for text inputs (a tap only
-/// focuses them; their value is the owner's or the model's text, not the control's name).
-fn element_readings(el: &Element) -> Option<Vec<Element>> {
-    if el.role.is_text_input() {
-        return None;
-    }
-    let label = lookalike_readings(&bounded(&el.label));
-    let value = el
-        .value
-        .as_deref()
-        .and_then(|v| lookalike_readings(&bounded(v)));
-    if label.is_none() && value.is_none() {
-        return None;
-    }
-    let n = label
-        .as_ref()
-        .map_or(0, Vec::len)
-        .max(value.as_ref().map_or(0, Vec::len));
-    let pick = |rs: &Option<Vec<String>>, k: usize| -> Option<String> {
-        rs.as_ref().and_then(|rs| rs.get(k).or(rs.last())).cloned()
-    };
-    Some(
-        (0..n)
-            .map(|k| {
-                let mut e = el.clone();
-                if let Some(l) = pick(&label, k) {
-                    e.label = l;
-                }
-                if let Some(v) = pick(&value, k) {
-                    e.value = Some(v);
-                }
-                e
-            })
-            .collect(),
-    )
-}
-
-/// Risk of tapping (or long-pressing) `el`: the riskiest of its own words and of every
-/// look-alike reading of them (review pass 35).
+/// Risk of tapping (or long-pressing) `el`: the riskier of its own words
+/// ([`element_risk_read`]) and of their look-alike character sets ([`element_risk_sets`],
+/// review pass 36). Computed once per element per look (review pass 36, F8).
 pub(crate) fn element_risk(el: &Element, r: &Reader<'_>) -> RiskCategory {
-    let plain = element_risk_read(el, r);
-    match element_readings(el) {
-        None => plain,
-        Some(readings) => readings
-            .iter()
-            .fold(plain, |a, e| max_risk(a, element_risk_read(e, r))),
-    }
+    let (plain, sets) = element_risks(el, r);
+    max_risk(plain, sets)
 }
 
-/// Review pass 35: the category of a tap on the target of `action` (a tap or long press) by
-/// its own words and by each look-alike reading of them, every one kept (the gate carries
-/// them all: a denial of any refuses). Empty when the target has no look-alike reading.
+/// `el`'s category by its own words and by their look-alike sets, cached per look.
+fn element_risks(el: &Element, r: &Reader<'_>) -> (RiskCategory, RiskCategory) {
+    let at = position(r.screen, el);
+    if let Some(hit) = at.and_then(|k| look_get(r.screen, |c| c.risks.get(&k).copied()).flatten()) {
+        return hit;
+    }
+    let (plain, content_row) = element_risk_plain(el, r);
+    let sets = element_risk_sets(el, r, content_row);
+    if let Some(k) = at {
+        look_put(r.screen, |c| {
+            c.risks.insert(k, (plain, sets));
+        });
+    }
+    (plain, sets)
+}
+
+/// The position of `el` in `screen.elements` when it is one of them (by address).
+fn position(screen: &CompactScreen, el: &Element) -> Option<usize> {
+    let base = screen.elements.as_ptr() as usize;
+    let at = el as *const Element as usize;
+    let size = std::mem::size_of::<Element>().max(1);
+    let off = at.checked_sub(base)?;
+    let k = off / size;
+    (off % size == 0 && screen.elements.get(k).is_some_and(|e| std::ptr::eq(e, el))).then_some(k)
+}
+
+/// Review pass 35/36: the categories of a tap on the target of `action` (a tap or long
+/// press): by its own words first, then by their look-alike character sets — kept both
+/// (the gate carries them all: a denial of any refuses). Empty when the sets give nothing.
 pub(crate) fn reading_risks(action: &Action, screen: &CompactScreen) -> Vec<RiskCategory> {
     let (Action::Tap { element } | Action::LongPress { element, .. }) = action else {
         return Vec::new();
@@ -587,23 +582,149 @@ pub(crate) fn reading_risks(action: &Action, screen: &CompactScreen) -> Vec<Risk
     let Some(el) = screen.get(*element) else {
         return Vec::new();
     };
-    let Some(readings) = element_readings(el) else {
-        return Vec::new();
-    };
     let r = Reader::new(screen);
-    std::iter::once(element_risk_read(el, &r))
-        .chain(readings.iter().map(|e| element_risk_read(e, &r)))
-        .collect()
+    let (plain, sets) = element_risks(el, &r);
+    if sets == RiskCategory::None {
+        return Vec::new();
+    }
+    vec![plain, sets]
 }
 
-/// Risk of tapping (or long-pressing) `el` by one reading of its words.
+/// Review pass 36: the category of a tap on `el` by the look-alike character sets of its
+/// label and value ([`crate::sets`]): the phrase tables, a generic word's context, the
+/// settings and price verbs, a price beside a risk word, read as [`element_risk_read`]
+/// reads them. Only raises: lowering tests (navigation, share-safe words) and everything
+/// that does not depend on the words are left to the plain reading, whose category is
+/// carried beside this one. `None` for text inputs (a tap only focuses them), SF Symbol
+/// names, and a label or value longer than [`MAX_CONTROL_LABEL_CHARS`] (that control is
+/// unverified already).
+fn element_risk_sets(el: &Element, r: &Reader<'_>, content_row: bool) -> RiskCategory {
+    let screen = r.screen;
+    if el.role.is_text_input()
+        || too_long(&el.label)
+        || el.value.as_deref().is_some_and(too_long)
+        || sf_symbol_risk(&el.label).is_some()
+    {
+        return RiskCategory::None;
+    }
+    let tables = action_tables(&screen.app_bundle_id);
+    let text = element_text(el);
+    let pressable = is_pressable(&el.role);
+    // One reading of the units per text (review pass 36, F8). A long free-text row is
+    // content (see `element_risk_read`). Its words are counted between separators here:
+    // `Device Rem0ve` is two words, not the plain reading's four tokens. When the plain
+    // reading took the row as content and these words do not, only what a look-alike adds
+    // counts (`MacBook Air M3` stays a row's content).
+    let read = |u: &[crate::sets::Unit], beyond: bool, whole_here: bool| {
+        let mut lr = match_units(u, &tables, beyond);
+        if whole_here {
+            lr.category = max_risk(lr.category, whole_units(u, &[WHOLE_LABEL_PHRASES]).category);
+        }
+        (
+            lr,
+            any_units(u, SETTINGS_ACTION_PHRASES, false),
+            any_units(u, PRICE_VERB_PHRASES, false),
+        )
+    };
+    let label_is_text = el.value.as_deref().is_none_or(str::is_empty);
+    let words = with_units(&text, |u| {
+        let words_content = is_free_text_role(&el.role) && hard_words(u) > MAX_ROW_LABEL_WORDS;
+        let beyond = content_row && !words_content;
+        let here = (!words_content).then(|| read(u, beyond, pressable && !beyond && label_is_text));
+        (words_content, beyond, here)
+    });
+    let (content_row, beyond, here) = words;
+    let (mut lr, settings_verb, price_verb) = match here {
+        Some(r) => r,
+        None => {
+            let label = bounded(&el.label);
+            let first = label.split(',').next().unwrap_or("");
+            let command = match_sets_whole(first, &tables);
+            if command.category == RiskCategory::None && !command.generic {
+                return RiskCategory::None;
+            }
+            with_units(first, |u| read(u, false, false))
+        }
+    };
+    if pressable && !beyond && !(label_is_text && !content_row) {
+        let whole = match_sets_whole(&el.label, &[WHOLE_LABEL_PHRASES]);
+        lr.category = max_risk(lr.category, whole.category);
+    }
+    let mut risk = lr.category;
+    if el.role == Role::Key && risk == RiskCategory::Delete {
+        // The keyboard's backspace key is labelled "delete".
+        risk = RiskCategory::None;
+    }
+    // A price beside the words, as the plain reading takes it (a cell that only names an
+    // item and its price is left to the plain reading's priced-row rule).
+    let priced_row =
+        el.role == Role::Cell && risk == RiskCategory::None && !lr.generic && !price_verb;
+    if !priced_row && !content_row && has_money(&text) {
+        risk = match risk {
+            RiskCategory::SendMessage | RiskCategory::Payment => RiskCategory::Payment,
+            other => max_risk(other, RiskCategory::Purchase),
+        };
+    }
+    if lr.generic || settings_verb || price_verb {
+        let ctx = r.context(Some(el.index));
+        if lr.generic {
+            risk = max_risk(risk, ctx.risk);
+        }
+        let settings = ctx.settings_words || in_app(&screen.app_bundle_id, SETTINGS_BUNDLE_ID);
+        if settings && settings_verb {
+            risk = max_risk(risk, RiskCategory::AccountChange);
+        }
+        if (ctx.money || ctx.purchase_words) && !content_row && price_verb {
+            risk = max_risk(risk, RiskCategory::Purchase);
+        }
+    }
+    risk
+}
+
+/// Whether `text` is longer than [`MAX_CONTROL_LABEL_CHARS`].
+fn too_long(text: &str) -> bool {
+    text.len() > MAX_CONTROL_LABEL_CHARS && text.chars().count() > MAX_CONTROL_LABEL_CHARS
+}
+
+/// Review pass 36: whether `label` is, as a whole, a sign-in word
+/// ([`SIGN_IN_PHRASES`]) by its own words or their look-alike sets (`Sign ln`, `Log ln`).
+pub(crate) fn sign_in_words(label: &str) -> bool {
+    let b = bounded(label);
+    match_whole(&tokens(&b), &[SIGN_IN_PHRASES]).category != RiskCategory::None
+        || match_sets_whole(&b, &[SIGN_IN_PHRASES]).category != RiskCategory::None
+}
+
+/// Review pass 36: `text`'s category through the action phrases by its look-alike sets
+/// alone (tests and surveys).
+#[cfg(feature = "reference")]
+pub(crate) fn lookalike_label_risk(text: &str) -> RiskCategory {
+    crate::sets::match_sets(&bounded(text), &[ACTION_PHRASES]).category
+}
+
+/// Risk of tapping (or long-pressing) `el` by its own words (the classification before the
+/// look-alike sets).
+#[cfg(test)]
 fn element_risk_read(el: &Element, r: &Reader<'_>) -> RiskCategory {
+    element_risk_plain(el, r).0
+}
+
+/// [`element_risk_read`], and whether `el` is a long free-text row (content).
+fn element_risk_plain(el: &Element, r: &Reader<'_>) -> (RiskCategory, bool) {
     let screen = r.screen;
     if el.role.is_text_input() {
         // Tapping a field only focuses it.
-        return RiskCategory::None;
+        return (RiskCategory::None, false);
     }
     let pressable = is_pressable(&el.role);
+    // Review pass 36 (F8): a control named by more than a control's name holds is asked
+    // without reading its words (never truncate-and-trust; a page of such labels costs no
+    // more than measuring them).
+    if pressable
+        && !matches!(el.role, Role::Tab | Role::Key)
+        && (too_long(&el.label) || el.value.as_deref().is_some_and(too_long))
+    {
+        return (UNREADABLE_RISK, false);
+    }
     let text = element_text(el);
     let all_toks = tokens(&text);
     // A long free-text row is content: its words only count when its first segment is a
@@ -686,7 +807,7 @@ fn element_risk_read(el: &Element, r: &Reader<'_>) -> RiskCategory {
     if pressable && !content_row && !matches!(el.role, Role::Tab | Role::Key) && unreadable {
         risk = max_risk(risk, UNREADABLE_RISK);
     }
-    risk
+    (risk, content_row)
 }
 
 /// The element `Type` lands in: the given one, or the focused text input.
@@ -1308,6 +1429,105 @@ fn swipe_risk(el: &Element, direction: Direction, r: &Reader<'_>) -> RiskCategor
     }
 }
 
+/// Review pass 36 (F8): what the gate has worked out about the screen it is deciding on,
+/// shared by every reader of that screen during one decision ([`look_scope`]): the context
+/// counts, each element's categories and each point's target. Keyed by the screen's
+/// address, which cannot change or be reused while the scope borrows it.
+#[derive(Default)]
+pub(crate) struct LookCache {
+    screen: usize,
+    tally: Option<Tally>,
+    risks: HashMap<usize, (RiskCategory, RiskCategory)>,
+    points: HashMap<(u64, u64), (RiskCategory, Option<usize>)>,
+}
+
+thread_local! {
+    static LOOK: std::cell::RefCell<Vec<LookCache>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// While alive, classifications of `screen` are computed once and shared (see
+/// [`LookCache`]). Scopes nest; one for the screen already in scope adds nothing.
+pub(crate) struct LookScope<'a> {
+    pushed: bool,
+    _screen: std::marker::PhantomData<&'a CompactScreen>,
+}
+
+/// Opens a [`LookScope`] on `screen`.
+pub(crate) fn look_scope(screen: &CompactScreen) -> LookScope<'_> {
+    let key = screen as *const CompactScreen as usize;
+    let pushed = LOOK
+        .with(|l| {
+            l.try_borrow_mut().ok().map(|mut v| {
+                if v.iter().any(|c| c.screen == key) {
+                    false
+                } else {
+                    v.push(LookCache {
+                        screen: key,
+                        ..LookCache::default()
+                    });
+                    true
+                }
+            })
+        })
+        .unwrap_or(false);
+    LookScope {
+        pushed,
+        _screen: std::marker::PhantomData,
+    }
+}
+
+impl Drop for LookScope<'_> {
+    fn drop(&mut self) {
+        if self.pushed {
+            LOOK.with(|l| {
+                if let Ok(mut v) = l.try_borrow_mut() {
+                    v.pop();
+                }
+            });
+        }
+    }
+}
+
+/// `f` of the cache of `screen` when a scope is open on it.
+fn look_get<R>(screen: &CompactScreen, f: impl FnOnce(&LookCache) -> R) -> Option<R> {
+    let key = screen as *const CompactScreen as usize;
+    LOOK.with(|l| {
+        let v = l.try_borrow().ok()?;
+        v.iter().rev().find(|c| c.screen == key).map(f)
+    })
+}
+
+/// Records that the point `(x, y)` of `screen` (a scope open on it) lands on the element
+/// with `index` (its first one) with `risk`: a copy of a screen whose point was resolved on
+/// the original.
+pub(crate) fn look_seed_point(
+    screen: &CompactScreen,
+    x: f64,
+    y: f64,
+    risk: RiskCategory,
+    index: Option<u32>,
+) {
+    let at = index.and_then(|i| screen.elements.iter().position(|e| e.index == i));
+    if index.is_some() && at.is_none() {
+        return;
+    }
+    look_put(screen, |c| {
+        c.points.insert((x.to_bits(), y.to_bits()), (risk, at));
+    });
+}
+
+/// Updates the cache of `screen` when a scope is open on it.
+fn look_put(screen: &CompactScreen, f: impl FnOnce(&mut LookCache)) {
+    let key = screen as *const CompactScreen as usize;
+    LOOK.with(|l| {
+        if let Ok(mut v) = l.try_borrow_mut() {
+            if let Some(c) = v.iter_mut().rev().find(|c| c.screen == key) {
+                f(c);
+            }
+        }
+    });
+}
+
 /// Risk of tapping a normalized point, and the element it lands on.
 ///
 /// The target is the riskiest pressable element under the point (ties: the smallest);
@@ -1323,6 +1543,23 @@ pub(crate) fn tap_point(
 }
 
 fn tap_point_in<'a>(x: f64, y: f64, r: &Reader<'a>) -> (RiskCategory, Option<&'a Element>) {
+    let screen = r.screen;
+    // Review pass 36 (F8): one resolution per point per look.
+    let key = (x.to_bits(), y.to_bits());
+    if let Some((risk, at)) = look_get(screen, |c| c.points.get(&key).copied()).flatten() {
+        return (risk, at.and_then(|k| screen.elements.get(k)));
+    }
+    let (risk, el) = tap_point_uncached(x, y, r);
+    let at = el.and_then(|e| position(screen, e));
+    if el.is_none() || at.is_some() {
+        look_put(screen, |c| {
+            c.points.insert(key, (risk, at));
+        });
+    }
+    (risk, el)
+}
+
+fn tap_point_uncached<'a>(x: f64, y: f64, r: &Reader<'a>) -> (RiskCategory, Option<&'a Element>) {
     let screen = r.screen;
     if !(x.is_finite() && y.is_finite()) {
         return (r.context(None).risk, None);
