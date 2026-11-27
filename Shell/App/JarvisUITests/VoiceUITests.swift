@@ -43,6 +43,13 @@ final class VoiceUITests: QATestCase {
     func testALongPushToTalkTranscriptIsShownWhole() {
         let app = launchPlayground(extraArguments: ["-jarvis-voice-scripted-long"])
 
+        // Playground mode opens on the Playground tab; the microphone is on Ask. (Mac run of
+        // 5f28ad6: the test looked for the button on the Playground list and timed out.)
+        let inBar = app.tabBars.buttons["Ask"]
+        let ask = inBar.waitForExistence(timeout: 10) ? inBar : app.buttons["Ask"].firstMatch
+        require(ask, "the Ask tab", timeout: 10, in: app)
+        ask.tap()
+
         let mic = app.buttons["ask.mic"]
         require(mic, "the push-to-talk button", timeout: 30, in: app)
         mic.tap()
