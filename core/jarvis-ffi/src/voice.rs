@@ -51,7 +51,9 @@ pub enum VoiceTaskEvent {
     Stopped,
 }
 
-/// One input (`jarvis_voice::VoiceEvent`).
+/// One input (`jarvis_voice::VoiceEvent`). `Task`: an event of a task that is not a voice
+/// request's; `RequestTask`: an event of the task started for `StartTask` `request` (the id
+/// passed through).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum VoiceEvent {
     WakeDetected,
@@ -62,6 +64,7 @@ pub enum VoiceEvent {
     SpeechFinished { utterance_id: u64 },
     Tick,
     Task { event: VoiceTaskEvent },
+    RequestTask { request: u64, event: VoiceTaskEvent },
     LockChanged { locked: bool },
     ForegroundChanged { active: bool },
     AudioInterrupted { began: bool, should_resume: bool },
@@ -93,7 +96,8 @@ pub enum VoiceTaskOrigin {
     Voice,
 }
 
-/// One output (`jarvis_voice::VoiceEffect`), carried out in order.
+/// One output (`jarvis_voice::VoiceEffect`), carried out in order. `StartTask.request`: a fresh
+/// id; every event of the task started for it goes back as `VoiceEvent.requestTask`.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum VoiceEffect {
     ArmWakeWord,
@@ -120,6 +124,7 @@ pub enum VoiceEffect {
     StartTask {
         text: String,
         origin: VoiceTaskOrigin,
+        request: u64,
     },
     StopTask,
     ActivateAudioSession,
@@ -236,6 +241,10 @@ impl From<VoiceEvent> for v::VoiceEvent {
             }
             VoiceEvent::Tick => v::VoiceEvent::Tick,
             VoiceEvent::Task { event } => v::VoiceEvent::Task(event.into()),
+            VoiceEvent::RequestTask { request, event } => v::VoiceEvent::RequestTask {
+                request,
+                event: event.into(),
+            },
             VoiceEvent::LockChanged { locked } => v::VoiceEvent::LockChanged { locked },
             VoiceEvent::ForegroundChanged { active } => v::VoiceEvent::ForegroundChanged { active },
             VoiceEvent::AudioInterrupted {
@@ -294,8 +303,13 @@ impl From<v::VoiceEffect> for VoiceEffect {
                 endpointed,
             },
             v::VoiceEffect::ClearTranscript => VoiceEffect::ClearTranscript,
-            v::VoiceEffect::StartTask { text, origin } => VoiceEffect::StartTask {
+            v::VoiceEffect::StartTask {
                 text,
+                origin,
+                request,
+            } => VoiceEffect::StartTask {
+                text,
+                request,
                 // Only a transcript confirmed by touch is the owner's; anything else the
                 // core could ever say is at least as strict as voice.
                 origin: if origin.is_owner_words() {

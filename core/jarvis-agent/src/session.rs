@@ -5228,7 +5228,12 @@ impl Session {
             _ => {
                 // A lock that left a step's result unknown makes the recording unreliable
                 // (it may lack a step that did happen): learn nothing from this session.
-                if let Some(flow) = recorded.filter(|_| !self.lock_uncertain) {
+                // Voice break-it fixes: a task that is not the owner's words (heard by the
+                // microphone, asked by a paired device) teaches nothing either: what it did
+                // would be replayed for the owner's own later task with the same words.
+                if let Some(flow) =
+                    recorded.filter(|_| !self.lock_uncertain && self.task.origin.is_owner_words())
+                {
                     self.memory.flows.upsert(flow);
                 }
             }

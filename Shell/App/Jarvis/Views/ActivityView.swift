@@ -158,7 +158,7 @@ private struct ActivityRow: View {
             if let device = record.requestedBy { parts.append("from \(device)") }
             return parts.joined(separator: " · ")
         }
-        if let device = record.requestedBy { parts.append("from \(device)") }
+        if let requester = record.requesterText { parts.append(requester) }
         if let skill = record.skillName { parts.append("skill \(skill)") }
         if let app = record.apps.first { parts.append(app) }
         parts.append(record.status.title)

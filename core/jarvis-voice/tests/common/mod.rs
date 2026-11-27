@@ -15,6 +15,9 @@ pub struct Voice {
     pub log: Vec<VoiceEffect>,
     /// Utterances spoken and not reported finished yet.
     pub open: Vec<u64>,
+    /// The shell: the request id of the latest `StartTask` whose task has not been
+    /// reported refused or ended yet (`task` passes it through, as the shell does).
+    pub request: Option<u64>,
 }
 
 pub fn wake_on() -> VoiceSettings {
@@ -39,6 +42,7 @@ impl Voice {
             now: 1_000,
             log: Vec::new(),
             open: Vec::new(),
+            request: None,
         };
         v.send(VoiceEvent::Tick);
         v
@@ -53,6 +57,9 @@ impl Voice {
             }
             if matches!(e, VoiceEffect::StopSpeaking) {
                 self.open.clear();
+            }
+            if let VoiceEffect::StartTask { request, .. } = e {
+                self.request = Some(*request);
             }
         }
         self.log.extend(out.iter().cloned());
@@ -73,8 +80,34 @@ impl Voice {
         self.send(VoiceEvent::FinalTranscript { text: text.into() })
     }
 
+    /// An event of the task the shell started for the latest voice request (with its id),
+    /// or, when there is none, of a task started elsewhere.
     pub fn task(&mut self, e: TaskEvent) -> Vec<VoiceEffect> {
+        match self.request {
+            Some(request) => {
+                if matches!(
+                    e,
+                    TaskEvent::StartRefused { .. }
+                        | TaskEvent::FinishedOk { .. }
+                        | TaskEvent::Failed
+                        | TaskEvent::Stopped
+                ) {
+                    self.request = None;
+                }
+                self.send(VoiceEvent::RequestTask { request, event: e })
+            }
+            None => self.other(e),
+        }
+    }
+
+    /// An event of a task started elsewhere (no request id).
+    pub fn other(&mut self, e: TaskEvent) -> Vec<VoiceEffect> {
         self.send(VoiceEvent::Task(e))
+    }
+
+    /// An event reported for request `request` (whatever the shell believes).
+    pub fn for_request(&mut self, request: u64, e: TaskEvent) -> Vec<VoiceEffect> {
+        self.send(VoiceEvent::RequestTask { request, event: e })
     }
 
     /// Every open utterance finishes, then the speaking tail passes.
@@ -121,7 +154,18 @@ pub fn starts(effects: &[VoiceEffect]) -> Vec<(String, TaskOrigin)> {
     effects
         .iter()
         .filter_map(|e| match e {
-            VoiceEffect::StartTask { text, origin } => Some((text.clone(), *origin)),
+            VoiceEffect::StartTask { text, origin, .. } => Some((text.clone(), *origin)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The request ids of the `StartTask`s in `effects`.
+pub fn requests(effects: &[VoiceEffect]) -> Vec<u64> {
+    effects
+        .iter()
+        .filter_map(|e| match e {
+            VoiceEffect::StartTask { request, .. } => Some(*request),
             _ => None,
         })
         .collect()

@@ -17,19 +17,30 @@
 //! 2. A spoken word never approves anything. While a question is pending, voice can only
 //!    stop the task or is ignored; there is no spoken "yes".
 //! 3. "Stop", "cancel", "never mind", "abort" always work after the wake phrase, and
-//!    without it while Jarvis speaks or a voice exchange is open (barge-in).
+//!    without it while Jarvis speaks or a voice exchange is open (barge-in): from a final
+//!    transcript, or from a partial that has not changed for [`ENDPOINT_SILENCE_MS`]. A
+//!    recogniser that fails during the task is started again after [`WAKE_RETRY_MS`], as
+//!    often as it fails.
 //! 4. Jarvis does not hear itself: while it speaks and for [`SPEAKING_TAIL_MS`] after,
 //!    transcripts are ignored except the stop words, and a transcript contained in what it
-//!    is saying or just said is ignored. No line Jarvis says contains the wake phrase.
+//!    is saying or just said is ignored. While it reads a (model-written) answer and for
+//!    [`ECHO_WINDOW_MS`] after, heard text can only stop: no task starts and no listening
+//!    exchange opens. No line Jarvis says contains the wake phrase.
 //! 5. What is spoken is an output to the room: fixed phrases ([`phrases`]); the task's
-//!    answer only when [`SpeakAnswers::WhenUnlocked`] allows it and the phone is unlocked,
-//!    cleaned and capped ([`answer_line`]).
+//!    answer only when [`SpeakAnswers::WhenUnlocked`] allows it, the phone is unlocked and
+//!    Jarvis is in front, cleaned and capped ([`answer_line`]).
 //! 6. Nothing starts from a partial transcript: only a final one, the endpoint timeout over
-//!    the last partial (marked `endpointed`), or a transcript confirmed by touch.
+//!    the last partial (marked `endpointed`), or a transcript confirmed by touch. A
+//!    transcript over [`MAX_TRANSCRIPT_CHARS`], or over [`MAX_PARSE_CHARS`] once its
+//!    whitespace is collapsed, is refused, never cut.
 //! 7. The wake phrase is off by default; push to talk works without it and, by default,
 //!    shows the transcript for a touch on Start before anything runs.
 //! 8. While a task started elsewhere runs, a voice request is answered "I am busy." and
 //!    nothing starts; the stop words still stop it.
+//! 9. Every `StartTask` carries a fresh request id; only a start the shell reports with it
+//!    ([`VoiceEvent::RequestTask`]) is the voice task. A start without it is another task
+//!    (never spoken for, never listened for); a late start of an earlier request is
+//!    stopped.
 //!
 //! See `docs/ARCHITECTURE.md`, section *Voice*, for the state machine and the residuals.
 
@@ -50,7 +61,10 @@ pub mod phrases;
 mod session;
 mod types;
 
-pub use parse::{contains_wake_word, parse_utterance, Utterance, STOP_PHRASES, WAKE_PHRASES};
+pub use parse::{
+    contains_wake_word, parse_utterance, Utterance, MAX_PARSE_CHARS, MAX_TRANSCRIPT_CHARS,
+    STOP_PHRASES, WAKE_PHRASES,
+};
 pub use phrases::{answer_line, clean_spoken, MAX_SPOKEN_ANSWER_CHARS};
 pub use session::{
     VoiceSession, ECHO_WINDOW_MS, ENDPOINT_SILENCE_MS, LISTEN_NO_SPEECH_MS, MAX_REQUEST_CHARS,

@@ -40,8 +40,11 @@ public final class VoiceService {
         }
     }
 
-    /// Starts a task (`text`, `origin`); returns the refusal when it did not start.
-    public typealias StartTask = @MainActor (String, TaskOrigin) -> TaskCenter.Refusal?
+    /// Starts a task (`text`, `origin`, and the id of voice's request, which the session must
+    /// carry: `TaskCenter.start(_:skill:origin:voiceRequest:)`); returns the refusal when it
+    /// did not start. The id stands for the core's request id (passed through as a token
+    /// that is never reused, even after `stop()` replaces the core).
+    public typealias StartTask = @MainActor (String, TaskOrigin, UInt64) -> TaskCenter.Refusal?
     /// Stops the running task.
     public typealias StopTask = @MainActor () -> Void
 
@@ -83,6 +86,17 @@ public final class VoiceService {
     private var recognizing = false
     private var armId: UInt64 = 0
     private var armed = false
+    /// Bumped by `stop()` (which replaces the core): effects of a step from before it are not
+    /// carried out, and request ids of the old core are not passed to the new one.
+    private var generation: UInt64 = 0
+    /// What a session's `voiceRequest` stands for: the core (by generation) and its request
+    /// id. Tokens are never reused in a service's lifetime, unlike request ids across cores.
+    private var tokens: [UInt64: (generation: UInt64, request: UInt64)] = [:]
+    private var nextToken: UInt64 = 1
+    /// The phone's lock and Jarvis's place in front, as last reported (kept while stopped,
+    /// told to the core on every `start()`).
+    private var locked = false
+    private var inFront = true
 
     /// `tickInterval` nil: no timer (tests call `tick()`).
     public init(ports: VoicePorts, center: TaskCenter, settings: VoiceSettings? = nil,
@@ -94,8 +108,8 @@ public final class VoiceService {
         self.settings = settings
         self.clock = clock ?? SystemMonotonicClock()
         self.tickInterval = tickInterval
-        self.startTask = startTask ?? { [center] text, origin in
-            switch center.start(text, origin: origin) {
+        self.startTask = startTask ?? { [center] text, origin, request in
+            switch center.start(text, origin: origin, voiceRequest: request) {
             case .success: nil
             case .failure(let refusal): refusal
             }
@@ -128,11 +142,17 @@ public final class VoiceService {
         consume(ports.synthesizer.events()) { service, id in service.send(.speechFinished(utteranceId: id)) }
         consume(ports.audio.events()) { $0.audio($1) }
         observer = center.observe { [weak self] event in self?.taskEvent(event) }
+        // The core starts unlocked and in front: tell it what the app reported (before
+        // anything can be armed).
+        send(.lockChanged(locked: locked))
+        send(.foregroundChanged(active: inFront))
         if center.session != nil || center.workflow != nil {
-            // A task that runs already is one started elsewhere.
+            // A task that runs already is one started elsewhere (this core issued no
+            // request yet).
             send(.task(event: .started))
         }
         isAvailable = await ports.recognizer.isAvailable()
+        guard running else { return }
         send(.settingsChanged(settings: effective(settings)))
         if let tickInterval {
             ticker = Task { @MainActor [weak self] in
@@ -146,16 +166,29 @@ public final class VoiceService {
         changed()
     }
 
-    /// Stops everything: nothing listens or speaks afterwards.
+    /// Stops everything: nothing listens or speaks afterwards, no event is stepped and no
+    /// port is driven until `start()`. The core starts over (a fresh `JarvisVoice` that
+    /// knows nothing is armed, listening or speaking), so a later `start()` arms the wake
+    /// word again; a task still running then is "started elsewhere" to it (its sessions'
+    /// tokens belong to the old core and are reported without a request id).
     public func stop() {
         guard running else { return }
         running = false
+        generation &+= 1
+        inbox.removeAll()
         ticker?.cancel()
         ticker = nil
         for consumer in consumers { consumer.cancel() }
         consumers = []
         if let observer { center.stopObserving(observer) }
         observer = nil
+        if !poisoned {
+            var off = settings
+            off.wakeWord = false
+            core = JarvisVoice(settings: off)
+        }
+        status = VoiceStatus(phase: .idle, wakeArmed: false, recognizing: false, speaking: false,
+                             otherTaskRunning: false, interrupted: false)
         let ports = ports
         let (recognition, arming, wasRecognizing, wasArmed) = (recognitionId, armId, recognizing, armed)
         recognizing = false
@@ -205,13 +238,17 @@ public final class VoiceService {
         changed()
     }
 
-    /// The phone locked or unlocked.
+    /// The phone locked or unlocked. Kept while the service is stopped and told to the core
+    /// on `start()` (the app reports the lock state at launch, before starting).
     public func setLocked(_ locked: Bool) {
+        self.locked = locked
         send(.lockChanged(locked: locked))
     }
 
-    /// Jarvis came to the front or left it.
+    /// Jarvis came to the front or left it (the app: in the background or not). Kept while
+    /// the service is stopped, like the lock.
     public func setForeground(_ active: Bool) {
+        inFront = active
         send(.foregroundChanged(active: active))
     }
 
@@ -282,14 +319,14 @@ public final class VoiceService {
         case .sessionStarted(let session):
             // A workflow's steps are one task to voice: its start and end bracket them.
             guard session.origin.workflow == nil else { return }
-            send(.task(event: .started))
+            report(session, .started)
         case .session(let session, .update(let update)):
             guard session.origin.workflow == nil else { return }
             switch update {
             case .confirmationPending, .questionPending:
-                send(.task(event: .waitingForApproval))
+                report(session, .waitingForApproval)
             case .effectCompleted(.confirm, _), .effectCompleted(.askUser, _):
-                send(.task(event: .approvalAnswered))
+                report(session, .approvalAnswered)
             default:
                 break
             }
@@ -297,7 +334,7 @@ public final class VoiceService {
             break
         case .sessionFinished(let session, let outcome):
             guard session.origin.workflow == nil else { return }
-            send(.task(event: Self.taskEnd(outcome.outcome)))
+            report(session, Self.taskEnd(outcome.outcome))
         case .workflowStarted:
             send(.task(event: .started))
         case .workflowFinished(_, let outcome):
@@ -306,6 +343,23 @@ public final class VoiceService {
             case .stopped, .cancelled: send(.task(event: .stopped))
             default: send(.task(event: .failed))
             }
+        }
+    }
+
+    /// A session's event, with the core's request id when the session was started for one
+    /// (only then can the core take it for the voice task).
+    private func report(_ session: TaskCenter.Session, _ event: VoiceTaskEvent) {
+        let token = session.voiceRequest.flatMap { tokens[$0] }
+        switch event {
+        case .finishedOk, .failed, .stopped:
+            if let id = session.voiceRequest { tokens[id] = nil }
+        default:
+            break
+        }
+        if let token, token.generation == generation {
+            send(.requestTask(request: token.request, event: event))
+        } else {
+            send(.task(event: event))
         }
     }
 
@@ -321,7 +375,8 @@ public final class VoiceService {
     // MARK: - The inbox
 
     private func send(_ event: VoiceEvent) {
-        guard !poisoned else { return }
+        // Stopped: nothing is stepped (and so no port is driven) until `start()`.
+        guard !poisoned, running else { return }
         inbox.append(event)
         guard !working else { return }
         working = true
@@ -330,6 +385,7 @@ public final class VoiceService {
 
     private func drain() async {
         while !inbox.isEmpty {
+            let generation = self.generation
             let event = inbox.removeFirst()
             let effects: [VoiceEffect]
             do {
@@ -339,10 +395,18 @@ public final class VoiceService {
                 break
             }
             for effect in effects {
+                // `stop()` while this step's effects were carried out: the rest are dropped.
+                guard running, generation == self.generation else { break }
                 await perform(effect)
             }
+            guard generation == self.generation else { continue }
             if let now = try? core.status() { status = now }
-            if status.phase == .idle, transcript?.needsConfirm == false { transcript = nil }
+            // The row lives as long as its exchange: a row waiting for a touch only while the
+            // core is Confirming, any row only while an exchange is open.
+            if case .confirming = status.phase {
+            } else if transcript?.needsConfirm == true || status.phase == .idle {
+                transcript = nil
+            }
             changed()
         }
         working = false
@@ -378,13 +442,18 @@ public final class VoiceService {
             transcript = Transcript(text: text, isFinal: isFinal, needsConfirm: needsConfirm, endpointed: endpointed)
         case .clearTranscript:
             transcript = nil
-        case .startTask(let text, let origin):
+        case .startTask(let text, let origin, let request):
             // The origin is the core's: voice without a touch, the owner's words only for a
-            // transcript confirmed by touch.
-            let refusal = startTask(text, origin == .phone ? .owner : .voice)
+            // transcript confirmed by touch. The request id goes with the session, so its
+            // events (and this refusal) say which start they belong to.
+            let token = nextToken
+            nextToken &+= 1
+            tokens[token] = (generation, request)
+            let refusal = startTask(text, origin == .phone ? .owner : .voice, token)
             if let refusal {
+                tokens[token] = nil
                 let busy = if case .busy = refusal { true } else if case .workflowRunning = refusal { true } else { false }
-                send(.task(event: .startRefused(busy: busy)))
+                send(.requestTask(request: request, event: .startRefused(busy: busy)))
             }
         case .stopTask:
             stopTask()

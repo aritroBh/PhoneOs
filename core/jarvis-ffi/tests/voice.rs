@@ -47,14 +47,22 @@ fn a_hands_free_request_starts_as_voice_and_a_spoken_yes_does_nothing() {
             },
         )
         .unwrap();
-    assert!(out.contains(&VoiceEffect::StartTask {
-        text: "open Settings".into(),
-        origin: VoiceTaskOrigin::Voice
-    }));
+    let request = out
+        .iter()
+        .find_map(|e| match e {
+            VoiceEffect::StartTask {
+                text,
+                origin: VoiceTaskOrigin::Voice,
+                request,
+            } if text == "open Settings" => Some(*request),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{out:?}"));
     voice
         .step(
             30,
-            VoiceEvent::Task {
+            VoiceEvent::RequestTask {
+                request,
                 event: VoiceTaskEvent::Started,
             },
         )
@@ -62,7 +70,8 @@ fn a_hands_free_request_starts_as_voice_and_a_spoken_yes_does_nothing() {
     voice
         .step(
             40,
-            VoiceEvent::Task {
+            VoiceEvent::RequestTask {
+                request,
                 event: VoiceTaskEvent::WaitingForApproval,
             },
         )
@@ -124,4 +133,63 @@ fn a_panic_poisons_the_voice_object() {
         Err(JarvisError::Poisoned { .. })
     ));
     assert!(matches!(voice.status(), Err(JarvisError::Poisoned { .. })));
+}
+
+/// The request id crosses the FFI both ways: only a start reported with the id of the
+/// `StartTask` is the voice task; a start without it is another task's, and a late start
+/// of the request after it was answered is stopped.
+#[test]
+fn the_request_id_crosses_the_ffi_both_ways() {
+    let voice = JarvisVoice::new(wake_on());
+    voice.step(10, VoiceEvent::Tick).unwrap();
+    let out = voice
+        .step(
+            20,
+            VoiceEvent::FinalTranscript {
+                text: "Hey Jarvis, open Settings".into(),
+            },
+        )
+        .unwrap();
+    let request = out
+        .iter()
+        .find_map(|e| match e {
+            VoiceEffect::StartTask { request, .. } => Some(*request),
+            _ => None,
+        })
+        .unwrap();
+    let out = voice
+        .step(
+            30,
+            VoiceEvent::Task {
+                event: VoiceTaskEvent::Started,
+            },
+        )
+        .unwrap();
+    assert!(
+        !out.iter().any(|e| matches!(e, VoiceEffect::Speak { .. })),
+        "{out:?}"
+    );
+    assert_eq!(voice.status().unwrap().phase, VoicePhase::Starting);
+    assert!(voice.status().unwrap().other_task_running);
+    voice
+        .step(
+            40,
+            VoiceEvent::RequestTask {
+                request,
+                event: VoiceTaskEvent::StartRefused { busy: true },
+            },
+        )
+        .unwrap();
+    assert_eq!(voice.status().unwrap().phase, VoicePhase::Idle);
+    let late = voice
+        .step(
+            50,
+            VoiceEvent::RequestTask {
+                request,
+                event: VoiceTaskEvent::Started,
+            },
+        )
+        .unwrap();
+    assert!(late.contains(&VoiceEffect::StopTask), "{late:?}");
+    assert_eq!(voice.status().unwrap().phase, VoicePhase::Idle);
 }

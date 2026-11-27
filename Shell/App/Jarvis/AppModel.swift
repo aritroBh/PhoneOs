@@ -247,9 +247,9 @@ final class AppModel: ObservableObject {
             : VoiceAdapters.ports()
         let service = VoiceService(
             ports: ports, center: center, settings: voiceSettings,
-            startTask: { [weak self] text, origin in
+            startTask: { [weak self] text, origin, request in
                 guard let self else { return .busy }
-                return self.startVoiceRun(text, origin: origin)
+                return self.startVoiceRun(text, origin: origin, request: request)
             },
             stopTask: { [weak self] in self?.stop() }
         )
@@ -386,6 +386,9 @@ final class AppModel: ObservableObject {
         if let runnerKeyProblem { setupError = runnerKeyProblem }
         if launch.playground && launch.seedRemoteDevice { seedRemoteDevice() }
         refreshNotificationAccess()
+        // The lock state at launch (the notifications only report changes): no answer is
+        // read and nothing listens on a phone that launched locked.
+        voice.setLocked(!UIApplication.shared.isProtectedDataAvailable)
         Task { [weak self] in await self?.voice.start() }
     }
 
@@ -554,9 +557,11 @@ final class AppModel: ObservableObject {
     /// Starts a task voice asked for, through the same entry as Ask's plain tasks, with the
     /// core's origin (`.voice` without a touch, `.owner` for a transcript confirmed on Ask).
     /// Skills and workflows are not matched for voice: the words run as they were heard.
-    private func startVoiceRun(_ text: String, origin: TaskOrigin) -> TaskCenter.Refusal? {
+    /// `request` is voice's id for the request: the session carries it, so voice takes only
+    /// this session's start for its own.
+    private func startVoiceRun(_ text: String, origin: TaskOrigin, request: UInt64) -> TaskCenter.Refusal? {
         setupError = nil
-        switch center.start(text, skill: nil, origin: origin) {
+        switch center.start(text, skill: nil, origin: origin, voiceRequest: request) {
         case .success:
             requestNotificationPermission()
             return nil
@@ -1181,6 +1186,14 @@ final class AppModel: ObservableObject {
         settings.awayProximity = on
     }
 
+    /// Voice's "in front", from the scene phase (RootView): only `.background` takes Jarvis out
+    /// of the front. `.inactive` (a permission alert, Control Centre, the app switcher being
+    /// pulled) does not cut an exchange: the recogniser or the wake word keep listening
+    /// while the alert or the panel is over Jarvis, and an answer keeps being read.
+    func voiceSceneChanged(inBackground: Bool) {
+        voice.setForeground(!inBackground)
+    }
+
     /// Scene phase changes (RootView): the screen is put back whenever Jarvis is not active;
     /// schedules are checked when it comes back.
     func sceneBecameActive(_ active: Bool) {
@@ -1189,8 +1202,6 @@ final class AppModel: ObservableObject {
         // the background: when Jarvis asks, the target app is in front, and the owner is on
         // the way to the sheet. It goes when the question is resolved or the phone locks.
         appIsActive = active
-        // The foreground recogniser (and so the wake word) runs only while Jarvis is in front.
-        voice.setForeground(active)
         if active {
             reloadSettings()
             away.appReturnedToForeground()

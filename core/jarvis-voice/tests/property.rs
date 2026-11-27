@@ -14,11 +14,22 @@
 //! - No spoken line contains the wake word.
 //! - The answer text is spoken only as an answer line, while unlocked, with the setting
 //!   `WhenUnlocked`.
+//! - No `Voice` start while an answer is read or within `ECHO_WINDOW_MS` after it ended.
+//! - A stop acted on while a request was starting ends in `StopTask` when that request's
+//!   `Started` arrives (whenever it arrives), never in "On it."; otherwise no task.
+//! - A `Started` without the core's id (none, or one it never issued) never makes the core
+//!   speak, start the recogniser for it, or take it for the voice task.
+//!
+//! Task events travel as the shell sends them: most with the latest request's id (the task
+//! the shell started for it), others with none (a task started elsewhere) or a wrong id.
 
 use jarvis_proto::TaskOrigin;
+use std::collections::HashSet;
+
+use jarvis_voice::phrases::ON_IT;
 use jarvis_voice::{
     contains_wake_word, SpeakAnswers, TaskEvent, UtteranceKind, VoiceEffect, VoiceEvent,
-    VoiceSession, VoiceSettings, START_TIMEOUT_MS,
+    VoicePhase, VoiceSession, VoiceSettings, ECHO_WINDOW_MS, MAX_SPEAKING_MS, START_TIMEOUT_MS,
 };
 
 struct Rng(u64);
@@ -107,7 +118,40 @@ fn settings(rng: &mut Rng) -> VoiceSettings {
     }
 }
 
-fn event(rng: &mut Rng, spoken: &[u64]) -> (u64, VoiceEvent) {
+fn task_event(rng: &mut Rng) -> TaskEvent {
+    match rng.below(7) {
+        0 => TaskEvent::Started,
+        1 => TaskEvent::StartRefused {
+            busy: rng.below(2) == 0,
+        },
+        2 => TaskEvent::WaitingForApproval,
+        3 => TaskEvent::ApprovalAnswered,
+        4 => TaskEvent::FinishedOk {
+            answer: answer(rng),
+        },
+        5 => TaskEvent::Failed,
+        _ => TaskEvent::Stopped,
+    }
+}
+
+/// A task event as the shell may report it: for the latest request (most), for none, or for
+/// a wrong id (an earlier request, or one never issued).
+fn reported(rng: &mut Rng, last_request: Option<u64>, event: TaskEvent) -> VoiceEvent {
+    match (rng.below(10), last_request) {
+        (0..=5, Some(request)) => VoiceEvent::RequestTask { request, event },
+        (6, Some(request)) => VoiceEvent::RequestTask {
+            request: request.saturating_sub(1),
+            event,
+        },
+        (7, _) => VoiceEvent::RequestTask {
+            request: 1_000_000 + rng.next() % 5,
+            event,
+        },
+        _ => VoiceEvent::Task(event),
+    }
+}
+
+fn event(rng: &mut Rng, spoken: &[u64], last_request: Option<u64>) -> (u64, VoiceEvent) {
     let advance = match rng.below(6) {
         0 => 0,
         1 => u64::try_from(rng.below(20_000)).unwrap(),
@@ -129,22 +173,16 @@ fn event(rng: &mut Rng, spoken: &[u64]) -> (u64, VoiceEvent) {
             },
         },
         11 | 12 => VoiceEvent::Tick,
-        13 => VoiceEvent::Task(match rng.below(7) {
-            0 => TaskEvent::Started,
-            1 => TaskEvent::StartRefused {
-                busy: rng.below(2) == 0,
-            },
-            2 => TaskEvent::WaitingForApproval,
-            3 => TaskEvent::ApprovalAnswered,
-            4 => TaskEvent::FinishedOk {
+        13 => {
+            let e = task_event(rng);
+            reported(rng, last_request, e)
+        }
+        14 => {
+            let e = TaskEvent::FinishedOk {
                 answer: answer(rng),
-            },
-            5 => TaskEvent::Failed,
-            _ => TaskEvent::Stopped,
-        }),
-        14 => VoiceEvent::Task(TaskEvent::FinishedOk {
-            answer: answer(rng),
-        }),
+            };
+            reported(rng, last_request, e)
+        }
         15 => VoiceEvent::LockChanged {
             locked: rng.below(2) == 0,
         },
@@ -159,7 +197,7 @@ fn event(rng: &mut Rng, spoken: &[u64]) -> (u64, VoiceEvent) {
         19 => VoiceEvent::SettingsChanged(settings(rng)),
         20 => VoiceEvent::TranscriptConfirmed { text: text(rng) },
         21 => VoiceEvent::TranscriptDiscarded,
-        _ => VoiceEvent::Task(TaskEvent::Started),
+        _ => reported(rng, last_request, TaskEvent::Started),
     };
     (advance, e)
 }
@@ -170,8 +208,23 @@ struct Model {
     locked: bool,
     speak_answers: bool,
     running: bool,
-    awaiting_start: Option<u64>,
+    /// When the latest request was asked for, and its id, until it is answered or times out.
+    awaiting_start: Option<(u64, u64)>,
     partial_since_start: bool,
+    /// The latest `StartTask`'s request id.
+    last_request: Option<u64>,
+    /// Answer lines in flight: id and when they started.
+    answers: Vec<(u64, u64)>,
+    /// No `Voice` start before this (an answer ended less than `ECHO_WINDOW_MS` ago).
+    answer_window_until: u64,
+    /// Requests a stop was acted on for while they were starting.
+    stopped_while_starting: HashSet<u64>,
+}
+
+impl Model {
+    fn answer_ended(&mut self, now: u64) {
+        self.answer_window_until = self.answer_window_until.max(now + ECHO_WINDOW_MS);
+    }
 }
 
 #[test]
@@ -179,6 +232,8 @@ fn random_sequences_keep_every_safety_property() {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let mut starts = 0usize;
     let mut answers_read = 0usize;
+    let mut stopped_starts = 0usize;
+    let mut foreign_starts = 0usize;
     for seq in 0..4_000 {
         let initial = settings(&mut rng);
         let mut session = VoiceSession::new(initial);
@@ -189,21 +244,39 @@ fn random_sequences_keep_every_safety_property() {
         let mut now = 0u64;
         let mut spoken: Vec<u64> = Vec::new();
         for step in 0..150 {
-            let (advance, e) = event(&mut rng, &spoken);
+            let (advance, e) = event(&mut rng, &spoken, model.last_request);
             now = now.saturating_add(advance);
             // The start timeout, as the model sees it.
             if model
                 .awaiting_start
-                .is_some_and(|at| now.saturating_sub(at) >= START_TIMEOUT_MS)
+                .is_some_and(|(at, _)| now.saturating_sub(at) >= START_TIMEOUT_MS)
                 && matches!(e, VoiceEvent::Tick)
             {
                 model.awaiting_start = None;
             }
+            // Answers past the speaking cap count as ended at this step.
+            let (expired, open): (Vec<_>, Vec<_>) = model
+                .answers
+                .iter()
+                .partition(|(_, at)| now.saturating_sub(*at) >= MAX_SPEAKING_MS);
+            model.answers = open;
+            if !expired.is_empty() {
+                model.answer_ended(now);
+            }
+            if let VoiceEvent::SpeechFinished { utterance_id } = &e {
+                if let Some(i) = model.answers.iter().position(|(id, _)| id == utterance_id) {
+                    model.answers.remove(i);
+                    model.answer_ended(now);
+                }
+            }
             let ctx = format!("seq {seq} step {step}: {e:?}");
+            let before = session.status().phase;
             let out = session.step(now, e.clone());
             for effect in &out {
                 match effect {
-                    VoiceEffect::StartTask { origin, .. } => {
+                    VoiceEffect::StartTask {
+                        origin, request, ..
+                    } => {
                         starts += 1;
                         let allowed = match &e {
                             VoiceEvent::FinalTranscript { .. } => *origin == TaskOrigin::Voice,
@@ -219,7 +292,18 @@ fn random_sequences_keep_every_safety_property() {
                             model.awaiting_start.is_none(),
                             "{ctx}: a second StartTask before the first was answered"
                         );
-                        model.awaiting_start = Some(now);
+                        if *origin == TaskOrigin::Voice {
+                            assert!(
+                                model.answers.is_empty() && now >= model.answer_window_until,
+                                "{ctx}: a voice start while an answer echoes"
+                            );
+                        }
+                        assert!(
+                            model.last_request.is_none_or(|r| *request > r),
+                            "{ctx}: request id {request} not fresh"
+                        );
+                        model.awaiting_start = Some((now, *request));
+                        model.last_request = Some(*request);
                         model.partial_since_start = false;
                     }
                     VoiceEffect::Speak {
@@ -229,6 +313,9 @@ fn random_sequences_keep_every_safety_property() {
                     } => {
                         spoken.push(*utterance_id);
                         assert!(!contains_wake_word(text), "{ctx}: said {text:?}");
+                        if *kind == UtteranceKind::Answer {
+                            model.answers.push((*utterance_id, now));
+                        }
                         if text.contains(MARKER) {
                             answers_read += 1;
                             assert_eq!(*kind, UtteranceKind::Answer, "{ctx}: {text:?}");
@@ -240,28 +327,113 @@ fn random_sequences_keep_every_safety_property() {
                             );
                         }
                     }
+                    VoiceEffect::StopSpeaking => {
+                        if !model.answers.is_empty() {
+                            model.answers.clear();
+                            model.answer_ended(now);
+                        }
+                    }
+                    VoiceEffect::StopTask => {
+                        // A stop heard (a final, or a partial at the endpoint tick).
+                        let heard =
+                            matches!(e, VoiceEvent::FinalTranscript { .. } | VoiceEvent::Tick);
+                        if heard && before == VoicePhase::Starting {
+                            if let Some(r) = model.last_request {
+                                model.stopped_while_starting.insert(r);
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
+            // The request's own start, after a stop was acted on while it was starting.
+            if let VoiceEvent::RequestTask {
+                request,
+                event: TaskEvent::Started,
+            } = &e
+            {
+                if model.stopped_while_starting.remove(request) {
+                    assert!(
+                        out.contains(&VoiceEffect::StopTask),
+                        "{ctx}: a stopped request started and was not stopped: {out:?}"
+                    );
+                    stopped_starts += 1;
+                }
+                if model.last_request.is_some_and(|r| r == *request) {
+                    let said: Vec<_> = out
+                        .iter()
+                        .filter_map(|e| match e {
+                            VoiceEffect::Speak { text, .. } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect();
+                    if out.contains(&VoiceEffect::StopTask) {
+                        assert!(!said.contains(&ON_IT), "{ctx}: {said:?}");
+                    }
+                }
+            }
+            // A start that is not the core's request is never spoken or listened for.
+            let foreign = match &e {
+                VoiceEvent::Task(TaskEvent::Started) => true,
+                VoiceEvent::RequestTask {
+                    request,
+                    event: TaskEvent::Started,
+                } => model.last_request.is_none_or(|r| *request > r) || *request == 0,
+                _ => false,
+            };
+            if foreign {
+                foreign_starts += 1;
+                assert!(
+                    !out.iter().any(|e| matches!(
+                        e,
+                        VoiceEffect::Speak { .. } | VoiceEffect::StartRecognizer
+                    )),
+                    "{ctx}: a foreign start made the core speak or listen: {out:?}"
+                );
+                let after = session.status().phase;
+                assert!(
+                    !matches!(after, VoicePhase::TaskRunning { .. })
+                        || matches!(before, VoicePhase::TaskRunning { .. }),
+                    "{ctx}: a foreign start was taken for the voice task"
+                );
+            }
+            let answered = |model: &Model, request: Option<u64>| {
+                request.is_some() && model.awaiting_start.map(|(_, r)| r) == request
+            };
+            let (request, t) = match &e {
+                VoiceEvent::Task(t) => (None, Some(t)),
+                VoiceEvent::RequestTask { request, event } => (Some(*request), Some(event)),
+                _ => (None, None),
+            };
             match &e {
                 VoiceEvent::LockChanged { locked } => model.locked = *locked,
                 VoiceEvent::SettingsChanged(s) => {
                     model.speak_answers = s.speak_answers == SpeakAnswers::WhenUnlocked;
                 }
                 VoiceEvent::PartialTranscript { .. } => model.partial_since_start = true,
-                VoiceEvent::Task(t) => match t {
+                _ => {}
+            }
+            if let Some(t) = t {
+                match t {
                     TaskEvent::Started => {
                         model.running = true;
-                        model.awaiting_start = None;
+                        if answered(&model, request) {
+                            model.awaiting_start = None;
+                        }
                     }
-                    TaskEvent::StartRefused { .. } => model.awaiting_start = None,
+                    TaskEvent::StartRefused { .. } => {
+                        if answered(&model, request) {
+                            model.awaiting_start = None;
+                        }
+                    }
                     TaskEvent::FinishedOk { .. } | TaskEvent::Failed | TaskEvent::Stopped => {
                         model.running = false;
-                        model.awaiting_start = None;
+                        if answered(&model, request) {
+                            model.awaiting_start = None;
+                        }
                     }
                     TaskEvent::WaitingForApproval | TaskEvent::ApprovalAnswered => {}
-                },
-                _ => {}
+                }
             }
             let _ = session.status();
         }
@@ -269,6 +441,11 @@ fn random_sequences_keep_every_safety_property() {
     // The sequences reach the interesting places.
     assert!(starts > 500, "only {starts} starts");
     assert!(answers_read > 10, "only {answers_read} answers read");
+    assert!(stopped_starts > 10, "only {stopped_starts} stopped starts");
+    assert!(
+        foreign_starts > 1_000,
+        "only {foreign_starts} foreign starts"
+    );
 }
 
 #[test]

@@ -67,6 +67,11 @@ public final class TaskCenter {
         public let text: String
         public let skill: SkillContext?
         public let origin: TaskOrigin
+        /// Voice's id for the request this session was started for (the core's `StartTask`
+        /// request id, as `VoiceService` passes it through; it reports this session's
+        /// events with it); nil for every other start. Only a start with it is the voice
+        /// task.
+        public let voiceRequest: UInt64?
     }
 
     /// The workflow run holding the slot.
@@ -165,8 +170,10 @@ public final class TaskCenter {
     /// Starts `text` (under `skill`) for `origin`. Refused while the owner's rules cannot be
     /// used, while a session runs, and while a workflow runs unless the session is one of
     /// its steps. The returned task ends after
-    /// `.sessionFinished` went to every observer.
-    public func start(_ text: String, skill: SkillContext? = nil, origin: TaskOrigin = .owner)
+    /// `.sessionFinished` went to every observer. `voiceRequest`: voice's id for its request
+    /// when voice asks (kept on the session).
+    public func start(_ text: String, skill: SkillContext? = nil, origin: TaskOrigin = .owner,
+                      voiceRequest: UInt64? = nil)
         -> Result<Task<TaskRunOutcome, Never>, Refusal> {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .failure(.emptyTask) }
@@ -175,7 +182,7 @@ public final class TaskCenter {
         if let workflow, origin.workflow?.runId != workflow.runId {
             return .failure(.workflowRunning(workflow.name))
         }
-        let current = Session(id: UUID(), text: trimmed, skill: skill, origin: origin)
+        let current = Session(id: UUID(), text: trimmed, skill: skill, origin: origin, voiceRequest: voiceRequest)
         session = current
         emit(.sessionStarted(current))
 

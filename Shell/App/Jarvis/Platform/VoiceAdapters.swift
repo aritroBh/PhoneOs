@@ -105,8 +105,11 @@ final class Recognition: @unchecked Sendable {
 
     private let microphone: Microphone
     private let request = SFSpeechAudioBufferRecognitionRequest()
-    private var task: SFSpeechRecognitionTask?
     private let lock = NSLock()
+    /// Guarded by `lock`. The recogniser is kept for the life of its task (a task whose
+    /// recogniser is released can end early or never report).
+    private var recognizer: SFSpeechRecognizer?
+    private var task: SFSpeechRecognitionTask?
     private var ended = false
 
     init(microphone: Microphone) {
@@ -114,18 +117,21 @@ final class Recognition: @unchecked Sendable {
     }
 
     /// Starts; `report` is called from the recogniser's queue, at most one `.final` or
-    /// `.failed`, and nothing after `cancel()`.
+    /// `.failed`, and nothing after `cancel()`. A recognition cancelled before (or while) it
+    /// starts never touches the microphone: `ended` is checked under the lock before the tap
+    /// is installed, the tap is installed under the same lock, and checked again after.
     func start(report: @escaping @Sendable (Result) -> Void) {
+        guard !isEnded else { return }
         guard let recognizer = SFSpeechRecognizer(locale: VoiceAdapters.locale),
               recognizer.isAvailable, recognizer.supportsOnDeviceRecognition else {
-            report(.failed("On-device speech recognition is not available."))
+            if end() { report(.failed("On-device speech recognition is not available.")) }
             return
         }
         // On-device only: never server recognition.
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = true
         request.addsPunctuation = true
-        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+        let task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             guard let self else { return }
             if let result, result.isFinal {
                 if self.end() { report(.final(result.bestTranscription.formattedString)) }
@@ -135,11 +141,28 @@ final class Recognition: @unchecked Sendable {
                 if self.end() { report(.failed(error.localizedDescription)) }
             }
         }
+        lock.lock()
+        guard !ended else {
+            lock.unlock()
+            task.cancel()
+            return
+        }
+        self.recognizer = recognizer
+        self.task = task
+        var failure: (any Error)?
         do {
             try microphone.start(feeding: request)
         } catch {
-            if end() { report(.failed("The microphone could not start (\(error.localizedDescription)).")) }
-            task?.cancel()
+            failure = error
+        }
+        lock.unlock()
+        if let failure {
+            if end() { report(.failed("The microphone could not start (\(failure.localizedDescription)).")) }
+            cancelTask()
+        } else if isEnded {
+            // Cancelled right after the tap went in: take it down again.
+            microphone.stop(request)
+            cancelTask()
         }
     }
 
@@ -152,8 +175,15 @@ final class Recognition: @unchecked Sendable {
     /// Cancels: nothing more is reported.
     func cancel() {
         _ = end()
-        task?.cancel()
+        cancelTask()
         microphone.stop(request)
+    }
+
+    private func cancelTask() {
+        lock.lock()
+        let task = self.task
+        lock.unlock()
+        task?.cancel()
     }
 
     private var isEnded: Bool {
@@ -195,13 +225,19 @@ final class OnDeviceSpeechRecognizer: SpeechRecognizing, @unchecked Sendable {
     func events() -> AsyncStream<SpeechRecognitionEvent> { stream }
 
     func start(id: UInt64) async {
-        guard await VoiceAdapters.authorize() else {
-            sink.yield(.failed(id: id, reason: "Speech recognition or the microphone is not allowed."))
-            return
-        }
+        // Registered before the permission await, so a `stop(id)` in that window wins (it
+        // clears `current` and cancels the recognition, which then never starts).
         let recognition = Recognition(microphone: microphone)
         let previous = swap((id, recognition))
         previous?.recognition.cancel()
+        let allowed = await VoiceAdapters.authorize()
+        guard isCurrent(id, recognition) else { return }
+        guard allowed else {
+            _ = clear(id)
+            recognition.cancel()
+            sink.yield(.failed(id: id, reason: "Speech recognition or the microphone is not allowed."))
+            return
+        }
         let sink = sink
         recognition.start { result in
             switch result {
@@ -234,6 +270,21 @@ final class OnDeviceSpeechRecognizer: SpeechRecognizing, @unchecked Sendable {
         current = next
         return previous
     }
+
+    private func isCurrent(_ id: UInt64, _ recognition: Recognition) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return current?.id == id && current?.recognition === recognition
+    }
+
+    /// Forgets recognition `id` if it is the current one.
+    private func clear(_ id: UInt64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard current?.id == id else { return false }
+        current = nil
+        return true
+    }
 }
 
 /// The first wake-word implementation: the on-device recogniser listening continuously
@@ -256,13 +307,20 @@ final class ForegroundWakeWord: WakeWordDetecting, @unchecked Sendable {
     func events() -> AsyncStream<WakeWordEvent> { stream }
 
     func arm(id: UInt64) async {
-        guard await VoiceAdapters.authorize() else {
-            sink.yield(.failed(id: id, reason: "Speech recognition or the microphone is not allowed."))
-            return
-        }
+        // Armed before the permission await, so a `disarm(id)` in that window wins.
         lock.lock()
         armedId = id
         lock.unlock()
+        let allowed = await VoiceAdapters.authorize()
+        lock.lock()
+        let still = armedId == id
+        if still && !allowed { armedId = nil }
+        lock.unlock()
+        guard still else { return }
+        guard allowed else {
+            sink.yield(.failed(id: id, reason: "Speech recognition or the microphone is not allowed."))
+            return
+        }
         listen(id)
     }
 
@@ -291,6 +349,12 @@ final class ForegroundWakeWord: WakeWordDetecting, @unchecked Sendable {
         self.recognition = recognition
         lock.unlock()
         previous?.cancel()
+        // Disarmed meanwhile: this recognition never starts (a disarm after this check
+        // cancels it, and a cancelled recognition never touches the microphone).
+        lock.lock()
+        let still = armedId == id && self.recognition === recognition
+        lock.unlock()
+        guard still else { return }
         let sink = sink
         recognition.start { [weak self] result in
             switch result {

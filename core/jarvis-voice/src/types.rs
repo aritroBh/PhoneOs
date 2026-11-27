@@ -36,11 +36,14 @@ impl Default for VoiceSettings {
     }
 }
 
-/// What the shell reports about the task Jarvis runs (whoever started it).
+/// What the shell reports about the task Jarvis runs (whoever started it). Which task it is
+/// travels beside it: [`VoiceEvent::RequestTask`] for the task of a voice request (the id
+/// of its [`VoiceEffect::StartTask`]), [`VoiceEvent::Task`] for any other task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskEvent {
-    /// A task started. Right after [`VoiceEffect::StartTask`] it is the one voice asked for;
-    /// any other start is a task started elsewhere (Ask, a workflow, a paired device).
+    /// A task started. Only a start reported with the id of the request the core waits for
+    /// is the voice task; any other start is a task started elsewhere (Ask, a workflow, a
+    /// paired device), and a late start of an earlier voice request is stopped.
     Started,
     /// The shell refused [`VoiceEffect::StartTask`]; `busy` when another task or a workflow
     /// holds the slot.
@@ -99,8 +102,18 @@ pub enum VoiceEvent {
     },
     /// Time passed (the shell ticks a few times a second while voice is on).
     Tick,
-    /// What the task did.
+    /// What a task that is not a voice request's did (Ask, a workflow, a paired device):
+    /// the shell has no request id for it.
     Task(TaskEvent),
+    /// What the task the shell started for [`VoiceEffect::StartTask`] `request` did. The shell
+    /// passes the id through from the effect to every event of that task; a start the
+    /// shell made for anything else is reported as [`Self::Task`].
+    RequestTask {
+        /// The `request` of the `StartTask` this task was started for.
+        request: u64,
+        /// What it did.
+        event: TaskEvent,
+    },
     /// The phone locked or unlocked.
     LockChanged {
         /// Locked now.
@@ -198,6 +211,9 @@ pub enum VoiceEffect {
         text: String,
         /// `Voice` without a touch, `Phone` for a transcript the owner confirmed.
         origin: TaskOrigin,
+        /// A fresh id (never reused in a session): the shell reports every event of the
+        /// task it starts for this as [`VoiceEvent::RequestTask`] with it.
+        request: u64,
     },
     /// Stop the running task (the same path as the Stop button).
     StopTask,

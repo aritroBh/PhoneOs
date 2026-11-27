@@ -594,9 +594,17 @@ fn starting_refused_or_silent() {
     v.final_("Hey Jarvis, open Settings");
     assert!(said(&v.wait(START_TIMEOUT_MS - 1)).is_empty());
     assert_eq!(said(&v.wait(1)), [COULD_NOT]);
-    // A start that arrives after the timeout is someone else's: nothing is said for it.
+    // Voice break-it fixes (f1): a start of that request after the timeout is stopped, not
+    // adopted, and nothing more is said for it; a start without its id is someone else's.
     v.speech_done();
-    assert!(said(&v.task(TaskEvent::Started)).is_empty());
+    let out = v.task(TaskEvent::Started);
+    assert!(said(&out).is_empty());
+    assert!(has(&out, &VoiceEffect::StopTask));
+    assert_eq!(v.session.status().phase, VoicePhase::Idle);
+    assert!(v.session.status().other_task_running);
+    v.task(TaskEvent::Stopped);
+    let out = v.other(TaskEvent::Started);
+    assert!(said(&out).is_empty() && !has(&out, &VoiceEffect::StopTask));
     assert!(v.session.status().other_task_running);
 }
 

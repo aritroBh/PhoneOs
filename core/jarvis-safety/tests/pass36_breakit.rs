@@ -241,18 +241,25 @@ fn f8_lookalike_readings_multiply_the_cost_of_a_tap_point() {
         x: 196.0 / 393.0,
         y: 322.0 / 852.0,
     };
+    // The best of five runs each: one run of a few milliseconds on a loaded machine (the
+    // whole workspace's tests run beside it) failed this comparison by noise alone once the
+    // fix made both decisions short. The bound itself is unchanged.
     let mut times = Vec::new();
     for label in [&plain, &foldable] {
         let s = page(label);
-        let t = std::time::Instant::now();
-        let d = evaluate(&Policy::default(), &at, &s, None);
-        let dt = t.elapsed();
-        times.push(dt.as_secs_f64());
-        println!(
-            "tap_point over 3000 controls, label {:?}…: {dt:?} ({})",
-            &label[..8],
-            short(&d)
-        );
+        let mut best = f64::INFINITY;
+        for _ in 0..5 {
+            let t = std::time::Instant::now();
+            let d = evaluate(&Policy::default(), &at, &s, None);
+            let dt = t.elapsed();
+            best = best.min(dt.as_secs_f64());
+            println!(
+                "tap_point over 3000 controls, label {:?}…: {dt:?} ({})",
+                &label[..8],
+                short(&d)
+            );
+        }
+        times.push(best);
     }
     // The readings may cost, but not more than the words they are read beside.
     assert!(

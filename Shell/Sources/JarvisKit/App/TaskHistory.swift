@@ -56,11 +56,15 @@ public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
     public var sessionIds: [String]?
     /// The paired device that asked for the task (remote control), by name.
     public var requestedBy: String?
+    /// `true` when the microphone started the task without a touch (`TaskOrigin.voice`: not
+    /// the owner's words); absent otherwise, and in records written before voice. Kept apart
+    /// from `requestedBy` so no device name can read as voice.
+    public var heardByVoice: Bool?
 
     public init(id: String, task: String, status: Status, summary: String, steps: Int, modelCalls: Int,
                 durationMs: Int, apps: [String] = [], finishedAt: Date, skillId: String? = nil, skillName: String? = nil,
                 isWorkflow: Bool? = nil, workflowRunId: String? = nil, workflowName: String? = nil,
-                sessionIds: [String]? = nil, requestedBy: String? = nil) {
+                sessionIds: [String]? = nil, requestedBy: String? = nil, heardByVoice: Bool? = nil) {
         self.id = id
         self.task = task
         self.status = status
@@ -77,6 +81,7 @@ public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
         self.workflowName = workflowName
         self.sessionIds = sessionIds
         self.requestedBy = requestedBy
+        self.heardByVoice = heardByVoice
     }
 
     /// A record of a driver run.
@@ -88,7 +93,7 @@ public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
             durationMs: Int(clamping: result.outcome.durationMs), apps: apps, finishedAt: finishedAt,
             skillId: skill?.id, skillName: skill?.name,
             workflowRunId: origin.workflow?.runId, workflowName: origin.workflow?.name,
-            requestedBy: origin.remoteDeviceName
+            requestedBy: origin.remoteDeviceName, heardByVoice: origin.isVoice ? true : nil
         )
     }
 
@@ -100,6 +105,14 @@ public struct TaskRecord: Codable, Sendable, Equatable, Identifiable {
             steps: Int(outcome.stepsRun), modelCalls: 0, durationMs: durationMs, apps: [], finishedAt: finishedAt,
             isWorkflow: true, workflowRunId: runId, workflowName: name, sessionIds: sessionIds, requestedBy: requestedBy
         )
+    }
+
+    /// Who asked, as Activity shows it: "Voice" for a task the microphone started, "from
+    /// <device>" for a paired device's, nil for the owner's own.
+    public var requesterText: String? {
+        if heardByVoice == true { return "Voice" }
+        if let requestedBy { return "from \(requestedBy)" }
+        return nil
     }
 
     /// Whether this is one session of a workflow run (Activity shows it under the run).

@@ -1153,10 +1153,26 @@ do {
     check("voice: turning the wake word on activates audio, then arms it",
           armed == [.activateAudioSession, .armWakeWord], "\(armed)")
     let heard = try voice.step(nowMs: 20, event: .finalTranscript(text: "Hey Jarvis, open Settings"))
-    check("voice: a hands-free request starts as a voice task",
-          heard.contains(.startTask(text: "open Settings", origin: .voice)), "\(heard)")
-    _ = try voice.step(nowMs: 30, event: .task(event: .started))
-    _ = try voice.step(nowMs: 40, event: .task(event: .waitingForApproval))
+    let request: UInt64? = heard.lazy.compactMap { effect -> UInt64? in
+        if case .startTask(text: "open Settings", origin: .voice, let request) = effect { return request }
+        return nil
+    }.first
+    check("voice: a hands-free request starts as a voice task, with a request id",
+          request != nil && request != 0, "\(heard)")
+    let id = request ?? 0
+    // A start without the core's id is another task's: nothing is said for it.
+    let other = try voice.step(nowMs: 25, event: .task(event: .started))
+    let afterOther = try voice.status()
+    check("voice: a start without the request id is not the voice task",
+          !other.contains(where: { if case .speak = $0 { true } else { false } })
+              && afterOther.phase == .starting && afterOther.otherTaskRunning, "\(other) \(afterOther)")
+    _ = try voice.step(nowMs: 26, event: .task(event: .stopped))
+    let started = try voice.step(nowMs: 30, event: .requestTask(request: id, event: .started))
+    let afterStart = try voice.status()
+    check("voice: the start with the request id is the voice task",
+          started.contains(.speak(utteranceId: 1, text: "On it.", kind: .status))
+              && afterStart.phase == .taskRunning(questionPending: false), "\(started) \(afterStart)")
+    _ = try voice.step(nowMs: 40, event: .requestTask(request: id, event: .waitingForApproval))
     let yes = try voice.step(nowMs: 9_000, event: .finalTranscript(text: "yes"))
     let status = try voice.status()
     check("voice: a spoken yes while a question is pending does nothing",
@@ -1164,6 +1180,12 @@ do {
               && status.phase == .taskRunning(questionPending: true), "\(yes) \(status)")
     let stop = try voice.step(nowMs: 9_100, event: .finalTranscript(text: "stop"))
     check("voice: stop without the wake phrase stops the voice task", stop.contains(.stopTask), "\(stop)")
+    _ = try voice.step(nowMs: 9_150, event: .requestTask(request: id, event: .stopped))
+    // A second start reported for the same (answered) request is stopped, never adopted.
+    let late = try voice.step(nowMs: 9_160, event: .requestTask(request: id, event: .started))
+    let afterLate = try voice.status()
+    check("voice: a late start of an answered request is stopped",
+          late.contains(.stopTask) && afterLate.phase == .idle, "\(late) \(afterLate)")
     let spec = TaskSpec(id: "v", text: "open Settings", voice: true)
     check("voice: the task spec carries the voice origin", spec.voice && !spec.remote)
     voice.debugPanicNextStep()

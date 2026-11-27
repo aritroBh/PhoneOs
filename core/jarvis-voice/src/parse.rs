@@ -33,9 +33,16 @@ pub const STOP_PHRASES: &[&[&str]] = &[
 /// spelling that reads the same once spaces and punctuation are gone.
 const WAKE_WORD: &str = "jarvis";
 
-/// Transcripts are read up to this many characters (a longer one is refused as too long by
-/// the session anyway); keeps every step linear and bounded.
-const MAX_PARSE_CHARS: usize = 2_000;
+/// A transcript is read up to this many characters as it arrives (before anything else);
+/// a longer one is marked [`Utterance::too_long`] and refused by the session ("That was too
+/// long."). Keeps every step linear in this bound, whatever the recogniser (or a script)
+/// delivers.
+pub const MAX_TRANSCRIPT_CHARS: usize = 20_000;
+
+/// After its whitespace runs are collapsed, a transcript is read up to this many
+/// characters; a longer one is marked [`Utterance::too_long`] (refused, never cut). Far
+/// above the session's request cap, so a request at that cap always fits.
+pub const MAX_PARSE_CHARS: usize = 2_000;
 
 /// A transcript, read.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -49,6 +56,10 @@ pub struct Utterance {
     pub request_words: Vec<String>,
     /// Every word of the transcript, the wake phrase included (folded).
     pub words: Vec<String>,
+    /// The transcript was longer than [`MAX_TRANSCRIPT_CHARS`], or than [`MAX_PARSE_CHARS`]
+    /// once its whitespace runs were collapsed: only its start was read, and the session
+    /// refuses it as too long (it never acts on a cut request; the stop words still stop).
+    pub too_long: bool,
 }
 
 impl Utterance {
@@ -71,16 +82,29 @@ struct Word {
     end: usize,
 }
 
-/// Reads `text`: whether it starts with a wake phrase, and the request after it.
+/// Reads `text`: whether it starts with a wake phrase, and the request after it. Whitespace
+/// runs are collapsed first (padding never pushes the request past the bound); a transcript
+/// over either bound is read only in part and marked [`Utterance::too_long`]. A remainder
+/// that is itself only wake phrases ("Hey Jarvis, hey Jarvis") is the wake phrase alone.
 pub fn parse_utterance(text: &str) -> Utterance {
-    let text = bounded(text);
+    let (collapsed, mut too_long) = collapse_whitespace(text);
+    let text = bounded(&collapsed);
+    too_long |= text.len() < collapsed.len();
     let words = words(text);
-    let wake_len = WAKE_PHRASES
-        .iter()
-        .filter(|p| starts_with(&words, p))
-        .map(|p| p.len())
-        .max()
-        .unwrap_or(0);
+    let mut wake_len = wake_phrase_len(&words);
+    if wake_len > 0 {
+        // Nothing but wake phrases after the first: the wake phrase alone.
+        let mut at = wake_len;
+        while at < words.len() {
+            match wake_phrase_len(words.get(at..).unwrap_or(&[])) {
+                0 => break,
+                n => at += n,
+            }
+        }
+        if at == words.len() {
+            wake_len = at;
+        }
+    }
     let rest_start = match wake_len.checked_sub(1) {
         Some(last) => words.get(last).map_or(0, |w| w.end),
         None => 0,
@@ -95,7 +119,40 @@ pub fn parse_utterance(text: &str) -> Utterance {
             .map(|w| w.text.clone())
             .collect(),
         words: words.into_iter().map(|w| w.text).collect(),
+        too_long,
     }
+}
+
+/// The number of words of the longest wake phrase `words` starts with (0: none).
+fn wake_phrase_len(words: &[Word]) -> usize {
+    WAKE_PHRASES
+        .iter()
+        .filter(|p| starts_with(words, p))
+        .map(|p| p.len())
+        .max()
+        .unwrap_or(0)
+}
+
+/// The first [`MAX_TRANSCRIPT_CHARS`] characters of `text` with every whitespace run made one
+/// space, and whether `text` was longer than that bound.
+fn collapse_whitespace(text: &str) -> (String, bool) {
+    let mut out = String::with_capacity(text.len().min(4 * MAX_TRANSCRIPT_CHARS));
+    let mut in_space = false;
+    for (read, c) in text.chars().enumerate() {
+        if read == MAX_TRANSCRIPT_CHARS {
+            return (out, true);
+        }
+        if c.is_whitespace() {
+            if !in_space {
+                out.push(' ');
+                in_space = true;
+            }
+        } else {
+            out.push(c);
+            in_space = false;
+        }
+    }
+    (out, false)
 }
 
 /// Whether `text` contains the wake word in any spacing or punctuation ("Jarvis",

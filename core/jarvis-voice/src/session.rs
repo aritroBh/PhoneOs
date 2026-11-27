@@ -12,20 +12,29 @@
 //!    │                                                  hands-free ──────────┤
 //!    │                                                                       ▼
 //!    │◀──────────── refused / start timeout ───────────────────────────── Starting
-//!    │                                                                       │ Started
+//!    │                                                       Started(its request id)
 //!    │◀──── finished / failed / stopped ──────────────────────────────── TaskRunning
 //! ```
 //!
 //! Speaking overlays every phase: while an utterance is in flight, and for
 //! [`SPEAKING_TAIL_MS`] after the last one ended, transcripts are ignored except the stop
-//! words. Who listens is part of the state too: the wake word (`Mic::Wake`, armed only in
-//! Idle, or in a Listening exchange that it opened), the recogniser (`Mic::Recognizer`,
-//! one utterance at a time, restarted for barge-in while the voice-started task runs), or
-//! nothing. The audio session is active exactly while something listens or speaks.
+//! words; while a model-written answer is read and for [`ECHO_WINDOW_MS`] after it ended,
+//! heard text can only stop. Who listens is part of the state too: the wake word
+//! (`Mic::Wake`, armed only in Idle, or in a Listening exchange that it opened), the
+//! recogniser (`Mic::Recognizer`, one utterance at a time, restarted for barge-in while the
+//! voice-started task runs), or nothing. The audio session is active exactly while
+//! something listens or speaks.
+//!
+//! Every `StartTask` carries a fresh request id; only a `Started` reported with that id
+//! ([`VoiceEvent::RequestTask`]) is the voice task. Any other start is a task started
+//! elsewhere, and a late start of an earlier request (after the start timeout) is stopped.
 
 use jarvis_proto::TaskOrigin;
 
-use crate::parse::{contained_in, contains_wake_word, parse_utterance, word_list, Utterance};
+use crate::parse::{
+    clean_request, contained_in, contains_wake_word, parse_utterance, word_list, Utterance,
+    MAX_TRANSCRIPT_CHARS,
+};
 use crate::phrases::{
     answer_line, clean_spoken, APPROVAL_ON_PHONE, BUSY, COULD_NOT, DONE, DONE_ANSWER_ON_PHONE,
     NOT_CAUGHT, ON_IT, STOPPED, TOO_LONG,
@@ -40,7 +49,8 @@ use crate::types::{
 pub const LISTEN_NO_SPEECH_MS: u64 = 8_000;
 /// Silence after the last partial transcript for this long ends the utterance: the last
 /// partial is taken as the request (marked `endpointed`). Push to talk: measured from the
-/// release.
+/// release. Outside Listening (barge-in while the voice task starts and runs, the wake
+/// word's stream while another task runs) the same endpoint applies to the stop words only.
 pub const ENDPOINT_SILENCE_MS: u64 = 1_500;
 /// An utterance (from its first partial, or from the press for push to talk) longer than
 /// this is refused ("That was too long."), never cut.
@@ -52,15 +62,24 @@ pub const MAX_REQUEST_CHARS: usize = 300;
 /// this long: the room's echo of its own voice.
 pub const SPEAKING_TAIL_MS: u64 = 400;
 /// A transcript contained in a line Jarvis finished saying less than this long ago is
-/// ignored (its own voice, heard late).
+/// ignored (its own voice, heard late). While an answer (model-written text) is read and
+/// for this long after it ended, heard text can only stop: no task starts and no listening
+/// exchange opens, whatever the words.
 pub const ECHO_WINDOW_MS: u64 = 5_000;
 /// An utterance with no `SpeechFinished` after this long counts as finished (a lost
 /// callback must not mute the microphone for good).
 pub const MAX_SPEAKING_MS: u64 = 60_000;
-/// No `Started`/`StartRefused` this long after `StartTask`: the start counts as failed.
+/// No `Started`/`StartRefused` for the request this long after `StartTask`: the start
+/// counts as failed ("I could not do that.", once); a later start of that request is
+/// stopped.
 pub const START_TIMEOUT_MS: u64 = 10_000;
-/// After the wake word failed, it is armed again no sooner than this.
+/// After the wake word or the barge-in recogniser failed, it is started again no sooner
+/// than this (and again after every failure, for as long as it is wanted).
 pub const WAKE_RETRY_MS: u64 = 5_000;
+
+/// Requests remembered as "a stop was heard while it was starting" after their start
+/// timed out (so their late start says "Stopped."): the most recent ones.
+const MAX_REMEMBERED_STOPS: usize = 16;
 
 /// Who listens now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,8 +127,8 @@ enum Phase {
     Idle,
     Listening(Listen),
     Confirming { text: String },
-    Starting { since_ms: u64 },
-    TaskRunning { question: bool },
+    Starting { since_ms: u64, request: u64 },
+    TaskRunning { question: bool, request: u64 },
 }
 
 /// A line being said.
@@ -119,6 +138,22 @@ struct InFlight {
     words: Vec<String>,
     kind: UtteranceKind,
     started_ms: u64,
+}
+
+/// A late start of an earlier voice request, being stopped (never adopted).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Late {
+    request: u64,
+    /// A stop was heard while it was starting: "Stopped." when it has.
+    say_stopped: bool,
+}
+
+/// A partial that reads as the stop words outside Listening, waiting for the endpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingStop {
+    text: String,
+    wake: bool,
+    since_ms: u64,
 }
 
 /// The voice state machine. Create one per app run; feed it every [`VoiceEvent`] with the
@@ -142,16 +177,29 @@ pub struct VoiceSession {
     recent: Vec<(Vec<String>, u64)>,
     /// Transcripts are ignored (but the stop words) until this time.
     quiet_until: u64,
+    /// Heard text can only stop until this time (an answer was read; see
+    /// [`ECHO_WINDOW_MS`]).
+    answer_until: u64,
     next_utterance: u64,
-    /// A task started elsewhere runs.
+    /// The id the next `StartTask` carries.
+    next_request: u64,
+    /// A task started elsewhere (or a late start being stopped) runs.
     other_task: bool,
-    /// Voice asked to stop the running task; "Stopped." is said when it has.
+    /// Voice asked to stop the voice task (Starting or TaskRunning); "Stopped." is said when
+    /// it has.
     stop_requested: bool,
-    /// The recogniser failed during the voice-started task: no barge-in restart until the
-    /// next exchange.
-    barge_in_failed: bool,
+    /// Voice asked to stop a task started elsewhere; "Stopped." is said when it has.
+    other_stop_requested: bool,
+    /// Timed-out requests a stop was heard for (most recent last).
+    stopped_requests: Vec<u64>,
+    /// A late start of an earlier request runs and is being stopped.
+    late: Option<Late>,
+    /// The barge-in recogniser may not start before this time (it failed).
+    barge_in_retry_at: u64,
     /// The wake word may not be armed before this time (it failed).
     wake_retry_at: u64,
+    /// A partial stop outside Listening, waiting for the endpoint.
+    pending_stop: Option<PendingStop>,
 }
 
 /// Effects of one step.
@@ -188,11 +236,17 @@ impl VoiceSession {
             speaking: Vec::new(),
             recent: Vec::new(),
             quiet_until: 0,
+            answer_until: 0,
             next_utterance: 1,
+            next_request: 1,
             other_task: false,
             stop_requested: false,
-            barge_in_failed: false,
+            other_stop_requested: false,
+            stopped_requests: Vec::new(),
+            late: None,
+            barge_in_retry_at: 0,
             wake_retry_at: 0,
+            pending_stop: None,
         }
     }
 
@@ -209,7 +263,7 @@ impl VoiceSession {
                 Phase::Listening(_) => VoicePhase::Listening,
                 Phase::Confirming { text } => VoicePhase::Confirming { text: text.clone() },
                 Phase::Starting { .. } => VoicePhase::Starting,
-                Phase::TaskRunning { question } => VoicePhase::TaskRunning {
+                Phase::TaskRunning { question, .. } => VoicePhase::TaskRunning {
                     question_pending: *question,
                 },
             },
@@ -235,7 +289,10 @@ impl VoiceSession {
             VoiceEvent::RecognizerFailed { .. } => self.on_recognizer_failed(&mut out),
             VoiceEvent::SpeechFinished { utterance_id } => self.on_speech_finished(utterance_id),
             VoiceEvent::Tick => self.on_tick(&mut out),
-            VoiceEvent::Task(task) => self.on_task(&mut out, task),
+            VoiceEvent::Task(task) => self.on_task(&mut out, None, task),
+            VoiceEvent::RequestTask { request, event } => {
+                self.on_task(&mut out, Some(request), event);
+            }
             VoiceEvent::LockChanged { locked } => self.on_lock(&mut out, locked),
             VoiceEvent::ForegroundChanged { active } => self.on_foreground(&mut out, active),
             VoiceEvent::AudioInterrupted {
@@ -262,7 +319,11 @@ impl VoiceSession {
 
     fn on_wake_detected(&mut self, out: &mut Out) {
         // Only the armed wake word reports it; a late report after disarming is stale.
-        if self.mic != Mic::Wake || self.phase != Phase::Idle || self.quiet() {
+        if self.mic != Mic::Wake
+            || self.phase != Phase::Idle
+            || self.quiet()
+            || self.answer_window()
+        {
             return;
         }
         self.listen_for_request(out, false);
@@ -309,25 +370,44 @@ impl VoiceSession {
         }
         out.push(VoiceEffect::StartRecognizer);
         self.mic = Mic::Recognizer;
+        self.pending_stop = None;
         out.push(VoiceEffect::PlayCue(CueKind::Listening));
         self.phase = Phase::Listening(Listen::new(ptt, self.now));
     }
 
     fn on_partial(&mut self, out: &mut Out, text: &str) {
-        if self.mic == Mic::Off || self.quiet() {
+        if self.mic == Mic::Off {
             return;
         }
         let heard = parse_utterance(text);
-        if self.is_echo(&heard) {
+        if self.stop_context() {
+            // Barge-in, or the wake word's stream while another task runs: only the stop
+            // words act on a partial, once it has not changed for the endpoint (stopping is
+            // the safe direction: neither the echo rule nor the speaking tail holds it).
+            if self.is_stop_for_now(&heard) {
+                let same = self.pending_stop.as_ref().is_some_and(|p| p.text == text);
+                if !same {
+                    self.pending_stop = Some(PendingStop {
+                        text: text.to_owned(),
+                        wake: heard.wake,
+                        since_ms: self.now,
+                    });
+                }
+            } else {
+                self.pending_stop = None;
+            }
+            return;
+        }
+        if self.quiet() || self.is_echo(&heard) {
             return;
         }
         let now = self.now;
-        let blocked = self.other_task_blocks_listening();
+        let answer_window = self.answer_window();
         match &mut self.phase {
             Phase::Idle => {
                 // The wake word's own stream: a wake phrase opens the exchange and the same
-                // stream goes on carrying the request.
-                if !heard.wake || blocked {
+                // stream goes on carrying the request. Not while an answer echoes.
+                if !heard.wake || answer_window {
                     return;
                 }
                 let mut l = Listen::new(false, now);
@@ -344,7 +424,7 @@ impl VoiceSession {
                 return;
             }
         }
-        if heard.request.chars().count() > MAX_REQUEST_CHARS {
+        if heard.too_long || heard.request.chars().count() > MAX_REQUEST_CHARS {
             self.end_exchange(out, Some(TOO_LONG));
         } else if !heard.request_is_empty() {
             out.push(show(&heard.request, false, false, false));
@@ -359,17 +439,38 @@ impl VoiceSession {
             // One utterance per recognition: it has ended by itself.
             self.mic = Mic::Off;
         }
+        self.pending_stop = None;
         let heard = parse_utterance(text);
         // The stop words come first: while Jarvis speaks, and even when they repeat what it
         // says (stopping is the safe direction).
-        if heard.is_stop() && (heard.wake || self.exchange_open() || self.quiet()) {
-            self.stop(out);
+        if self.is_stop_for_now(&heard) {
+            self.stop(out, heard.wake);
             return;
         }
         if self.quiet() || self.is_echo(&heard) {
             return;
         }
+        // While an answer echoes, heard text only stops; a push-to-talk exchange goes on to
+        // the row (a touch decides).
+        if self.answer_window() && !matches!(&self.phase, Phase::Listening(l) if l.ptt) {
+            return;
+        }
         self.on_request_heard(out, &heard, false);
+    }
+
+    /// The stop words, in a form that acts now: after the wake phrase, or while an exchange
+    /// is open or Jarvis speaks.
+    fn is_stop_for_now(&self, heard: &Utterance) -> bool {
+        heard.is_stop() && (heard.wake || self.exchange_open() || self.quiet())
+    }
+
+    /// Where only the stop words are read (from finals, and from partials at the endpoint).
+    fn stop_context(&self) -> bool {
+        match self.phase {
+            Phase::Starting { .. } | Phase::TaskRunning { .. } => true,
+            Phase::Idle => self.other_task,
+            Phase::Listening(_) | Phase::Confirming { .. } => false,
+        }
     }
 
     /// A whole utterance (a final transcript, or the last partial at the endpoint).
@@ -379,7 +480,9 @@ impl VoiceSession {
                 if !heard.wake {
                     return;
                 }
-                if heard.request_is_empty() {
+                if heard.too_long {
+                    self.say(out, TOO_LONG, UtteranceKind::Status);
+                } else if heard.request_is_empty() {
                     if self.other_task_blocks_listening() {
                         self.say(out, BUSY, UtteranceKind::Status);
                     } else {
@@ -391,7 +494,9 @@ impl VoiceSession {
             }
             Phase::Listening(l) => {
                 let ptt = l.ptt;
-                if heard.request_is_empty() {
+                if heard.too_long {
+                    self.end_exchange(out, Some(TOO_LONG));
+                } else if heard.request_is_empty() {
                     if heard.wake && !ptt {
                         // "Hey Jarvis" and a pause: listen for the request itself.
                         self.listen_for_request(out, false);
@@ -423,8 +528,15 @@ impl VoiceSession {
             self.end_exchange(out, Some(BUSY));
             return;
         }
+        let answer_window = self.answer_window();
+        if !ptt && answer_window {
+            // Never reached (hands-free listening does not open in the window); kept so no
+            // path starts a task from what the room may be echoing.
+            self.end_exchange(out, None);
+            return;
+        }
         self.stop_recognizer(out);
-        if ptt && self.settings.confirm_push_to_talk {
+        if ptt && (self.settings.confirm_push_to_talk || answer_window) {
             out.push(show(request, true, true, endpointed));
             self.phase = Phase::Confirming {
                 text: request.to_owned(),
@@ -436,20 +548,31 @@ impl VoiceSession {
     }
 
     fn start_task(&mut self, out: &mut Out, text: &str, origin: TaskOrigin) {
+        let request = self.next_request;
+        self.next_request = self.next_request.saturating_add(1);
         out.push(VoiceEffect::StartTask {
             text: text.to_owned(),
             origin,
+            request,
         });
         self.stop_requested = false;
-        self.barge_in_failed = false;
-        self.phase = Phase::Starting { since_ms: self.now };
+        self.barge_in_retry_at = 0;
+        self.pending_stop = None;
+        self.phase = Phase::Starting {
+            since_ms: self.now,
+            request,
+        };
     }
 
     fn on_confirmed(&mut self, out: &mut Out, text: &str) {
         if !matches!(self.phase, Phase::Confirming { .. }) {
             return;
         }
-        let request = crate::parse::clean_request(text);
+        if text.chars().nth(MAX_TRANSCRIPT_CHARS).is_some() {
+            self.end_exchange(out, Some(TOO_LONG));
+            return;
+        }
+        let request = clean_request(text);
         if request.is_empty() {
             out.push(VoiceEffect::ClearTranscript);
             self.phase = Phase::Idle;
@@ -458,6 +581,8 @@ impl VoiceSession {
         } else if self.other_task {
             self.end_exchange(out, Some(BUSY));
         } else {
+            // The row's Start is used: it shows what runs, with no Start any more.
+            out.push(show(&request, true, false, false));
             // Confirmed by touch: the owner's own words.
             self.start_task(out, &request, TaskOrigin::Phone);
         }
@@ -478,7 +603,8 @@ impl VoiceSession {
                 match self.phase {
                     Phase::Listening(_) => self.end_exchange(out, Some(NOT_CAUGHT)),
                     Phase::TaskRunning { .. } | Phase::Starting { .. } => {
-                        self.barge_in_failed = true;
+                        // Barge-in comes back after the delay, as often as it fails.
+                        self.barge_in_retry_at = self.now.saturating_add(WAKE_RETRY_MS);
                     }
                     Phase::Idle | Phase::Confirming { .. } => {}
                 }
@@ -486,23 +612,36 @@ impl VoiceSession {
         }
     }
 
-    /// Stop words: whatever is open ends; a running task is asked to stop.
-    fn stop(&mut self, out: &mut Out) {
+    /// Stop words: whatever is open ends; a running task is asked to stop. `wake`: said
+    /// after the wake phrase.
+    fn stop(&mut self, out: &mut Out, wake: bool) {
         self.stop_speaking(out);
+        self.pending_stop = None;
         match self.phase {
             Phase::Listening(_) => self.end_exchange(out, None),
             Phase::Confirming { .. } => {
                 out.push(VoiceEffect::ClearTranscript);
                 self.phase = Phase::Idle;
             }
-            Phase::Starting { .. } | Phase::TaskRunning { .. } => {
+            Phase::Starting { .. } => {
+                // Kept for the voice task: its start is stopped at once when it arrives.
+                self.stop_requested = true;
+                if !self.other_task {
+                    out.push(VoiceEffect::StopTask);
+                } else if wake {
+                    // What runs is another task: only "Jarvis, stop" stops it (rule 8).
+                    out.push(VoiceEffect::StopTask);
+                    self.other_stop_requested = true;
+                }
+            }
+            Phase::TaskRunning { .. } => {
                 out.push(VoiceEffect::StopTask);
                 self.stop_requested = true;
             }
             Phase::Idle => {
                 if self.other_task {
                     out.push(VoiceEffect::StopTask);
-                    self.stop_requested = true;
+                    self.other_stop_requested = true;
                 }
             }
         }
@@ -545,7 +684,7 @@ impl VoiceSession {
         self.speaking = still;
         if !done.is_empty() {
             for u in done {
-                self.recent.push((u.words, now));
+                self.retire(u);
             }
             if self.speaking.is_empty() {
                 self.quiet_until = now.saturating_add(SPEAKING_TAIL_MS);
@@ -557,6 +696,17 @@ impl VoiceSession {
 
     fn on_tick(&mut self, out: &mut Out) {
         let now = self.now;
+        // The endpoint over a partial stop (barge-in, the wake word's stream while another
+        // task runs).
+        if let Some(p) = &self.pending_stop {
+            if now.saturating_sub(p.since_ms) >= ENDPOINT_SILENCE_MS {
+                let wake = p.wake;
+                self.pending_stop = None;
+                if self.stop_context() {
+                    self.stop(out, wake);
+                }
+            }
+        }
         match &self.phase {
             Phase::Listening(l) => {
                 let l = l.clone();
@@ -579,8 +729,16 @@ impl VoiceSession {
                     self.endpoint(out, l.last_partial.as_deref());
                 }
             }
-            Phase::Starting { since_ms } => {
+            Phase::Starting { since_ms, request } => {
                 if now.saturating_sub(*since_ms) >= START_TIMEOUT_MS {
+                    let request = *request;
+                    if self.stop_requested {
+                        // Its late start, if it comes, is stopped and says "Stopped.".
+                        self.stopped_requests.push(request);
+                        if self.stopped_requests.len() > MAX_REMEMBERED_STOPS {
+                            self.stopped_requests.remove(0);
+                        }
+                    }
                     self.phase = Phase::Idle;
                     self.stop_requested = false;
                     self.say(out, COULD_NOT, UtteranceKind::Status);
@@ -598,7 +756,7 @@ impl VoiceSession {
         };
         let heard = parse_utterance(text);
         if heard.is_stop() {
-            self.stop(out);
+            self.stop(out, heard.wake);
             return;
         }
         self.on_request_heard(out, &heard, true);
@@ -608,29 +766,65 @@ impl VoiceSession {
     // The task.
     // -----------------------------------------------------------------------------------
 
-    fn on_task(&mut self, out: &mut Out, event: TaskEvent) {
-        let ours = matches!(
-            self.phase,
-            Phase::Starting { .. } | Phase::TaskRunning { .. }
-        );
+    /// The request the voice task holds (Starting or TaskRunning).
+    fn current_request(&self) -> Option<u64> {
+        match self.phase {
+            Phase::Starting { request, .. } | Phase::TaskRunning { request, .. } => Some(request),
+            Phase::Idle | Phase::Listening(_) | Phase::Confirming { .. } => None,
+        }
+    }
+
+    /// `request` is one this session issued.
+    fn issued(&self, request: Option<u64>) -> bool {
+        request.is_some_and(|r| r >= 1 && r < self.next_request)
+    }
+
+    fn on_task(&mut self, out: &mut Out, request: Option<u64>, event: TaskEvent) {
+        let ours = request.is_some() && request == self.current_request();
+        let late = !ours && request.is_some() && self.late.as_ref().map(|l| l.request) == request;
+        // An event for an earlier request that is neither the voice task nor the late start
+        // being stopped (a start after it was refused, an end after it ended): stale.
+        let stale = !ours && !late && self.issued(request);
         match event {
-            TaskEvent::Started => match self.phase {
-                Phase::Starting { .. } => {
-                    self.phase = Phase::TaskRunning { question: false };
-                    if self.stop_requested {
-                        out.push(VoiceEffect::StopTask);
-                    } else {
-                        self.say(out, ON_IT, UtteranceKind::Status);
+            TaskEvent::Started => {
+                if ours {
+                    if let Phase::Starting { request, .. } = self.phase {
+                        self.phase = Phase::TaskRunning {
+                            question: false,
+                            request,
+                        };
+                        if self.stop_requested {
+                            out.push(VoiceEffect::StopTask);
+                        } else {
+                            self.say(out, ON_IT, UtteranceKind::Status);
+                        }
                     }
-                }
-                Phase::TaskRunning { .. } => {}
-                Phase::Idle | Phase::Listening(_) | Phase::Confirming { .. } => {
+                } else if let Some(r) = request.filter(|_| self.issued(request)) {
+                    // A late start of an earlier voice request (after its start timed out, or
+                    // reported again): stopped at once, never adopted as running.
+                    out.push(VoiceEffect::StopTask);
+                    let say_stopped = match self.stopped_requests.iter().position(|x| *x == r) {
+                        Some(i) => {
+                            self.stopped_requests.remove(i);
+                            true
+                        }
+                        None => false,
+                    };
+                    self.late = Some(Late {
+                        request: r,
+                        say_stopped,
+                    });
                     self.other_task = true;
-                    self.stop_requested = false;
+                    self.other_stop_requested = false;
+                } else {
+                    // Started elsewhere (no request id of ours): never the voice task, never
+                    // spoken for, never listened for.
+                    self.other_task = true;
+                    self.other_stop_requested = false;
                 }
-            },
+            }
             TaskEvent::StartRefused { busy } => {
-                if matches!(self.phase, Phase::Starting { .. }) {
+                if ours && matches!(self.phase, Phase::Starting { .. }) {
                     self.phase = Phase::Idle;
                     self.stop_requested = false;
                     self.say(
@@ -641,7 +835,10 @@ impl VoiceSession {
                 }
             }
             TaskEvent::WaitingForApproval => {
-                if let Phase::TaskRunning { question } = &mut self.phase {
+                if !ours {
+                    return;
+                }
+                if let Phase::TaskRunning { question, .. } = &mut self.phase {
                     if !*question {
                         *question = true;
                         if !self.stop_requested {
@@ -651,34 +848,34 @@ impl VoiceSession {
                 }
             }
             TaskEvent::ApprovalAnswered => {
-                if let Phase::TaskRunning { question } = &mut self.phase {
+                if !ours {
+                    return;
+                }
+                if let Phase::TaskRunning { question, .. } = &mut self.phase {
                     *question = false;
                 }
             }
-            TaskEvent::FinishedOk { answer } => {
+            TaskEvent::FinishedOk { .. } | TaskEvent::Failed | TaskEvent::Stopped => {
                 if ours {
                     self.task_ended(out);
-                    self.say_finished(out, answer.as_deref());
-                } else {
+                    match event {
+                        TaskEvent::FinishedOk { answer } => {
+                            self.say_finished(out, answer.as_deref());
+                        }
+                        TaskEvent::Stopped => self.say(out, STOPPED, UtteranceKind::Status),
+                        _ => self.say(out, COULD_NOT, UtteranceKind::Status),
+                    }
+                } else if late {
+                    let asked = self.late.take().is_some_and(|l| l.say_stopped)
+                        || self.other_stop_requested;
                     self.other_ended();
-                }
-            }
-            TaskEvent::Failed => {
-                if ours {
-                    self.task_ended(out);
-                    self.say(out, COULD_NOT, UtteranceKind::Status);
-                } else {
+                    if asked && event == TaskEvent::Stopped {
+                        self.say(out, STOPPED, UtteranceKind::Status);
+                    }
+                } else if !stale {
+                    let asked = self.other_stop_requested;
                     self.other_ended();
-                }
-            }
-            TaskEvent::Stopped => {
-                if ours {
-                    self.task_ended(out);
-                    self.say(out, STOPPED, UtteranceKind::Status);
-                } else {
-                    let asked = self.stop_requested;
-                    self.other_ended();
-                    if asked {
+                    if asked && event == TaskEvent::Stopped {
                         self.say(out, STOPPED, UtteranceKind::Status);
                     }
                 }
@@ -690,23 +887,27 @@ impl VoiceSession {
         self.stop_recognizer(out);
         self.phase = Phase::Idle;
         self.stop_requested = false;
-        self.barge_in_failed = false;
+        self.barge_in_retry_at = 0;
+        self.pending_stop = None;
         self.other_task = false;
+        self.late = None;
     }
 
     fn other_ended(&mut self) {
         self.other_task = false;
-        self.stop_requested = false;
+        self.other_stop_requested = false;
+        self.late = None;
+        self.pending_stop = None;
     }
 
-    /// "Done." and, when the setting and the lock allow it, the answer.
+    /// "Done." and, when the setting, the lock and the front allow it, the answer.
     fn say_finished(&mut self, out: &mut Out, answer: Option<&str>) {
         let answer = answer.map(clean_spoken).filter(|a| !a.is_empty());
         let Some(answer) = answer else {
             self.say(out, DONE, UtteranceKind::Status);
             return;
         };
-        if self.locked {
+        if self.locked || !self.foreground {
             self.say(out, DONE_ANSWER_ON_PHONE, UtteranceKind::Status);
             return;
         }
@@ -749,10 +950,21 @@ impl VoiceSession {
             return;
         };
         let u = self.speaking.remove(pos);
-        self.recent.push((u.words, self.now));
+        self.retire(u);
         if self.speaking.is_empty() {
             self.quiet_until = self.now.saturating_add(SPEAKING_TAIL_MS);
         }
+    }
+
+    /// A line has ended (finished, stopped or expired): into the echo memory; an answer opens
+    /// the window in which heard text can only stop.
+    fn retire(&mut self, u: InFlight) {
+        if u.kind == UtteranceKind::Answer {
+            self.answer_until = self
+                .answer_until
+                .max(self.now.saturating_add(ECHO_WINDOW_MS));
+        }
+        self.recent.push((u.words, self.now));
     }
 
     fn stop_speaking(&mut self, out: &mut Out) {
@@ -762,7 +974,7 @@ impl VoiceSession {
         out.push(VoiceEffect::StopSpeaking);
         let now = self.now;
         for u in std::mem::take(&mut self.speaking) {
-            self.recent.push((u.words, now));
+            self.retire(u);
         }
         self.quiet_until = now.saturating_add(SPEAKING_TAIL_MS);
     }
@@ -770,6 +982,21 @@ impl VoiceSession {
     /// Jarvis speaks, or just stopped.
     fn quiet(&self) -> bool {
         !self.speaking.is_empty() || self.now < self.quiet_until
+    }
+
+    /// An answer is being read, or ended less than [`ECHO_WINDOW_MS`] ago.
+    fn answer_window(&self) -> bool {
+        self.now < self.answer_until
+            || self
+                .speaking
+                .iter()
+                .any(|u| u.kind == UtteranceKind::Answer)
+    }
+
+    fn speaking_answer(&self) -> bool {
+        self.speaking
+            .iter()
+            .any(|u| u.kind == UtteranceKind::Answer)
     }
 
     /// The transcript is (part of) a line Jarvis is saying or just said.
@@ -791,11 +1018,7 @@ impl VoiceSession {
             return;
         }
         // Never an answer while locked, not even one that began before.
-        if self
-            .speaking
-            .iter()
-            .any(|u| u.kind == UtteranceKind::Answer)
-        {
+        if self.speaking_answer() {
             self.stop_speaking(out);
         }
         if matches!(self.phase, Phase::Listening(_)) {
@@ -808,6 +1031,10 @@ impl VoiceSession {
         if active {
             self.resume_blocked = false;
             return;
+        }
+        // An answer is read only while Jarvis is in front (fixed phrases may finish).
+        if self.speaking_answer() {
+            self.stop_speaking(out);
         }
         if matches!(self.phase, Phase::Listening(_)) {
             self.end_exchange(out, None);
@@ -841,13 +1068,17 @@ impl VoiceSession {
     fn on_settings(&mut self, out: &mut Out, settings: VoiceSettings) {
         self.settings = settings;
         self.resume_blocked = false;
-        if settings.speak_answers == SpeakAnswers::Never
-            && self
-                .speaking
-                .iter()
-                .any(|u| u.kind == UtteranceKind::Answer)
-        {
+        if settings.speak_answers == SpeakAnswers::Never && self.speaking_answer() {
             self.stop_speaking(out);
+        }
+        // Hands-free off: an open hands-free exchange is discarded (nothing starts at its
+        // endpoint). Push to talk is the owner's touch and goes on.
+        if !settings.wake_word {
+            if let Phase::Listening(l) = &self.phase {
+                if !l.ptt {
+                    self.end_exchange(out, None);
+                }
+            }
         }
     }
 
@@ -857,7 +1088,7 @@ impl VoiceSession {
     }
 
     /// While a task started elsewhere runs, the wake phrase alone does not open an exchange
-    /// on the wake word's stream (only "Jarvis, stop" in one utterance acts).
+    /// on the wake word's stream (only "Jarvis, stop" acts).
     fn other_task_blocks_listening(&self) -> bool {
         self.other_task
     }
@@ -880,11 +1111,23 @@ impl VoiceSession {
                     false
                 }
             };
+        // Barge-in listens for the voice task only: not while what runs is another task.
+        let task_phase = matches!(
+            self.phase,
+            Phase::Starting { .. } | Phase::TaskRunning { .. }
+        );
+        let barge_in_wanted = task_phase && self.can_listen() && !self.other_task;
         if self.mic == Mic::Wake && !wake_wanted {
             out.push(VoiceEffect::DisarmWakeWord);
             self.mic = Mic::Off;
         }
-        if self.mic == Mic::Recognizer && !self.can_listen() {
+        // The recogniser runs only for a request (Listening) or for barge-in.
+        let recognizer_wanted = match self.phase {
+            Phase::Listening(_) => self.can_listen(),
+            Phase::Starting { .. } | Phase::TaskRunning { .. } => barge_in_wanted,
+            Phase::Idle | Phase::Confirming { .. } => false,
+        };
+        if self.mic == Mic::Recognizer && !recognizer_wanted {
             out.push(VoiceEffect::StopRecognizer);
             self.mic = Mic::Off;
         }
@@ -892,12 +1135,7 @@ impl VoiceSession {
             if wake_wanted && self.phase == Phase::Idle {
                 out.push(VoiceEffect::ArmWakeWord);
                 self.mic = Mic::Wake;
-            } else if matches!(
-                self.phase,
-                Phase::Starting { .. } | Phase::TaskRunning { .. }
-            ) && self.can_listen()
-                && !self.barge_in_failed
-            {
+            } else if barge_in_wanted && self.now >= self.barge_in_retry_at {
                 // Barge-in while the voice-started task starts and runs: only the stop
                 // words act.
                 out.push(VoiceEffect::StartRecognizer);
