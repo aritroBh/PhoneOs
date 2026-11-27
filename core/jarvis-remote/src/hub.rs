@@ -41,8 +41,8 @@ use crate::codec::{encode_record, DeviceId, Kind, Record, RecordError, RecordRea
 use crate::crypto::{
     auth_key, check_entropy, confirm_check, confirm_commitment, connect_phone_mac,
     derive_device_id, derive_device_key, pair_key, pair_phone_mac, pairing_secret_from_entropy,
-    verify_connect_client_mac, verify_pair_client_mac, Channel, Ephemeral, PairingSecret, Side,
-    Transcript, CONFIRM_LEN, MAC_LEN, NONCE_LEN, PUBLIC_LEN,
+    pick_index, verify_connect_client_mac, verify_pair_client_mac, Channel, Ephemeral,
+    PairingSecret, Secret32, Side, Transcript, CONFIRM_LEN, MAC_LEN, NONCE_LEN, PUBLIC_LEN,
 };
 use crate::error::{HubError, MessageError, PersistError};
 use crate::message::{CatalogEntry, ClientMessage, DenyReason, ErrorCode, ServerMessage};
@@ -61,10 +61,24 @@ use crate::viewer::{
 /// The shell's identifier for one transport connection.
 pub type ConnId = u64;
 
-/// Most simultaneous connections (authenticated or not). When the table is full, a new
-/// connection takes the place of the oldest one still in its handshake; only a table full
-/// of authenticated connections refuses it (an authenticated connection is never evicted).
+/// Most simultaneous authenticated connections (all devices together). A table of this
+/// many refuses a new connection at once (`TooManyConnections`); one of them is never
+/// evicted by another device (a device may replace only its own, see
+/// [`MAX_CONNECTIONS_PER_DEVICE`]).
 pub const MAX_CONNECTIONS: usize = 8;
+/// Most connections still in their handshake, kept apart from [`MAX_CONNECTIONS`] (second
+/// break-it review F1: with one shared table of 8, a LAN host opening more than 8
+/// connections per round trip evicted the owner's handshake every time). When they are
+/// full, a new connection takes the place of one picked at random from shell entropy (so a
+/// flood cannot aim at the owner's); an authenticated connection is never evicted for one.
+pub const MAX_HANDSHAKES: usize = 32;
+/// Most authenticated connections of one confirmed device: room for a reconnect while the
+/// old connection has not timed out yet. A new connection of a device at its cap replaces
+/// that device's own oldest one (never another device's).
+pub const MAX_CONNECTIONS_PER_DEVICE: usize = 2;
+/// Most authenticated connections of a device waiting for the owner's confirmation (second
+/// break-it review F2: one paired with a glimpsed code held every slot with pings).
+pub const MAX_CONNECTIONS_PER_PENDING_DEVICE: usize = 1;
 /// A connection must finish its handshake this soon after opening, in milliseconds.
 pub const HANDSHAKE_TIMEOUT_MS: u64 = 10_000;
 /// An authenticated connection that sends nothing for this long is closed (clients ping).
@@ -140,7 +154,9 @@ pub enum CloseReason {
     HandshakeTimeout,
     /// Nothing received for [`IDLE_TIMEOUT_MS`].
     IdleTimeout,
-    /// [`MAX_CONNECTIONS`] already open.
+    /// [`MAX_CONNECTIONS`] already authenticated, or this handshake gave its place to a
+    /// newer one ([`MAX_HANDSHAKES`]), or a newer connection of the same device replaced
+    /// this one ([`MAX_CONNECTIONS_PER_DEVICE`]).
     TooManyConnections,
     /// The shell reused a connection id that is still open.
     DuplicateConnection,
@@ -154,7 +170,8 @@ pub enum CloseReason {
     BadEntropy,
     /// The peer closed the connection.
     PeerClosed,
-    /// An internal error (key schedule or counter exhaustion).
+    /// An internal error (key schedule or counter exhaustion), or the shell could not
+    /// write the store ([`RemoteHub::store_write_failed`]).
     Internal,
 }
 
@@ -651,7 +668,18 @@ pub struct RemoteHub {
     watch_allowed: BTreeSet<DeviceId>,
     /// The Live view stream's encoder (fed by [`RemoteHub::viewer_update`]).
     viewer: DeltaEncoder,
+    /// A store write failed and no write has been asked for since: the next call starts
+    /// with a `StoreChanged` (see [`RemoteHub::store_write_failed`]).
+    store_dirty: bool,
+    /// Connect proofs checked (known and unknown ids alike), for the unit tests.
+    #[cfg(test)]
+    proof_checks: u64,
 }
+
+/// The key a connect request for an unknown device id is checked against, so that it costs
+/// the phone what a forged request for a paired id costs (one HKDF and one HMAC): the time
+/// to refuse it does not tell which ids are paired. Never accepted whatever the MAC.
+const UNKNOWN_DEVICE_KEY: [u8; 32] = [0x5A; 32];
 
 impl RemoteHub {
     /// A hub with no paired devices.
@@ -711,6 +739,9 @@ impl RemoteHub {
             preauth: PreAuthAudit::default(),
             watch_allowed: watch,
             viewer: DeltaEncoder::new(),
+            store_dirty: false,
+            #[cfg(test)]
+            proof_checks: 0,
         }
     }
 
@@ -729,15 +760,40 @@ impl RemoteHub {
     /// request id and connection counter are leased again (a new `StoreChanged` ahead of
     /// their first use, whose write the shell must succeed in before it sends what
     /// follows). Ids handed out before stay below every lease written later.
-    pub fn store_write_failed(&mut self) {
+    ///
+    /// Second break-it review: the state the write should have saved (a removed device, a
+    /// permission turned off) must not be lost, and must not be acted on remotely while it
+    /// is not saved. So the store is now *dirty*: the next call into the hub (the shell's
+    /// tick at the latest, about a second later) starts its effects with a `StoreChanged`,
+    /// and so on until a write succeeds (the shell reports every failure here; one write
+    /// per call, no loop). And every connection closes now (returned as `Close` effects,
+    /// so the shell carries them out and the hub forgets them): no device stays connected
+    /// on a state the phone could not save, and none gets in before a write succeeds,
+    /// because the `StoreChanged` that the next connection's call starts with comes before
+    /// its hello and the shell sends nothing after a failed write. If the app is killed
+    /// before any write succeeds, the last stored state loads.
+    pub fn store_write_failed(&mut self) -> Vec<HubEffect> {
+        let mut fx = Vec::new();
         if let Some(p) = self.pending.as_mut() {
-            // What followed the failed write was not sent, and the shell closed every
-            // connection: no device holds this question now.
+            // What followed the failed write was not sent, and every connection closes:
+            // no device holds this question now.
             p.remote = false;
             p.notified.clear();
         }
         self.request_lease = self.next_request_id;
         self.nonce_lease = self.nonce_counter;
+        self.store_dirty = true;
+        let open: Vec<ConnId> = self.conns.keys().copied().collect();
+        for id in open {
+            self.close(id, CloseReason::Internal, &mut fx);
+        }
+        fx
+    }
+
+    /// Whether a store write failed and no write has been asked for since (see
+    /// [`RemoteHub::store_write_failed`]).
+    pub fn store_dirty(&self) -> bool {
+        self.store_dirty
     }
 
     /// The persisted state, keys included, for the Keychain (see [`DeviceStore`]), with
@@ -790,11 +846,23 @@ impl RemoteHub {
         let index = self
             .pending_devices
             .iter()
-            .position(|p| p.record.id == device_id)
-            .ok_or(HubError::UnknownDevice)?;
-        if self.devices.len() >= MAX_DEVICES {
-            return Err(HubError::TooManyDevices);
+            .position(|p| p.record.id == device_id);
+        let refusal = match index {
+            None => Some(HubError::UnknownDevice),
+            Some(_) if self.devices.len() >= MAX_DEVICES => Some(HubError::TooManyDevices),
+            Some(_) => None,
+        };
+        if let Some(e) = refusal {
+            // The effects of the expiry are dropped with the error: a write they asked for
+            // is asked for again by the next call.
+            if fx.contains(&HubEffect::StoreChanged) {
+                self.store_dirty = true;
+            }
+            return Err(e);
         }
+        let Some(index) = index else {
+            return Err(HubError::UnknownDevice);
+        };
         let pending = self.pending_devices.remove(index);
         let record = DeviceRecord {
             permissions: RemotePermissions::NEW_DEVICE,
@@ -1043,15 +1111,11 @@ impl RemoteHub {
             self.close(conn_id, CloseReason::DuplicateConnection, &mut fx);
             return fx;
         }
-        // Break-it review F2: handshakes that never finish must not starve the owner. A full
-        // table makes room by closing its oldest handshake; only authenticated connections
-        // hold their place.
-        let evict = if self.conns.len() >= MAX_CONNECTIONS {
-            self.oldest_handshake()
-        } else {
-            None
-        };
-        if self.conns.len() >= MAX_CONNECTIONS && evict.is_none() {
+        // Handshakes that never finish must not starve the owner (break-it reviews F2 and
+        // F1): they have their own places, and full ones make room by closing one picked at
+        // random (not the oldest: a flood faster than the owner's round trip would always
+        // close the owner's). Only a table of authenticated connections refuses.
+        if self.authenticated_count() >= MAX_CONNECTIONS {
             fx.push(HubEffect::Close {
                 conn_id,
                 reason: CloseReason::TooManyConnections,
@@ -1089,7 +1153,7 @@ impl RemoteHub {
             });
             return fx;
         }
-        if let Some(old) = evict {
+        if let Some(old) = self.random_handshake(entropy, now) {
             self.close(old, CloseReason::TooManyConnections, &mut fx);
         }
         // Lease the counter before using it, so a restart never reuses one.
@@ -1471,13 +1535,65 @@ impl RemoteHub {
         self.last_now_ms
     }
 
-    /// The connection still in its handshake that opened first (ties: lowest id).
-    fn oldest_handshake(&self) -> Option<ConnId> {
-        self.conns
+    /// When [`MAX_HANDSHAKES`] connections are in their handshake, one of them picked at
+    /// random from `entropy` (see [`crate::crypto::pick_index`]); `None` while there is room.
+    fn random_handshake(&self, entropy: &[u8], now: u64) -> Option<ConnId> {
+        let handshakes: Vec<ConnId> = self
+            .conns
             .iter()
             .filter(|(_, c)| matches!(c.phase, Phase::Handshake { .. }))
-            .min_by_key(|(id, c)| (c.opened_at_ms, **id))
             .map(|(id, _)| *id)
+            .collect();
+        if handshakes.len() < MAX_HANDSHAKES {
+            return None;
+        }
+        let i = pick_index(entropy, self.nonce_counter, now, handshakes.len());
+        handshakes.get(i).copied()
+    }
+
+    /// Connections that finished their handshake.
+    fn authenticated_count(&self) -> usize {
+        self.conns
+            .values()
+            .filter(|c| matches!(c.phase, Phase::Established { .. }))
+            .count()
+    }
+
+    /// Before `conn_id` becomes an authenticated connection of `device_id`: closes that
+    /// device's own oldest connections beyond its cap (a device may always replace its
+    /// own, never another's). Then `false` (and `conn_id` closed) when the table of
+    /// authenticated connections is still full.
+    fn make_room(
+        &mut self,
+        conn_id: ConnId,
+        device_id: DeviceId,
+        pending: bool,
+        fx: &mut Vec<HubEffect>,
+    ) -> bool {
+        let cap = if pending {
+            MAX_CONNECTIONS_PER_PENDING_DEVICE
+        } else {
+            MAX_CONNECTIONS_PER_DEVICE
+        };
+        let mut own: Vec<(u64, ConnId)> = self
+            .conns
+            .iter()
+            .filter(|(id, c)| {
+                **id != conn_id
+                    && matches!(c.phase, Phase::Established { device_id: d, .. } if d == device_id)
+            })
+            .map(|(id, c)| (c.opened_at_ms, *id))
+            .collect();
+        own.sort_unstable();
+        let excess = (own.len() + 1).saturating_sub(cap);
+        for (_, id) in own.into_iter().take(excess) {
+            self.close(id, CloseReason::TooManyConnections, fx);
+        }
+        if self.authenticated_count() >= MAX_CONNECTIONS {
+            self.close(conn_id, CloseReason::TooManyConnections, fx);
+            return false;
+        }
+        true
     }
 
     fn provisional_count(&self) -> usize {
@@ -1638,6 +1754,12 @@ impl RemoteHub {
     /// Applies the clock; returns the effective (highest seen) time.
     fn expire(&mut self, now_ms: u64, fx: &mut Vec<HubEffect>) -> u64 {
         let now = self.clock(now_ms);
+        if self.store_dirty {
+            // A write failed: ask for it again before anything else (see
+            // `store_write_failed`). The shell reports a new failure, which marks it again.
+            self.store_dirty = false;
+            fx.push(HubEffect::StoreChanged);
+        }
         self.flush_preauth(fx);
         if self.offer.as_ref().is_some_and(|o| now >= o.expires_at_ms) {
             self.offer = None;
@@ -1821,6 +1943,12 @@ impl RemoteHub {
             self.handshake_mac_failed(conn_id, None, now, fx);
             return;
         }
+        // A table of authenticated connections refuses even a right code (the offer stays
+        // open: the owner tries again once a connection is gone).
+        if self.authenticated_count() >= MAX_CONNECTIONS {
+            self.close(conn_id, CloseReason::TooManyConnections, fx);
+            return;
+        }
         // Authenticated: the offer is used up whatever happens next (so at most one
         // device can be paired, and so be pending, per offer).
         self.offer = None;
@@ -1890,12 +2018,14 @@ impl RemoteHub {
                 .map(|p| &p.record)
                 .find(|d| d.id == device_id)
         });
-        let Some(dev) = known else {
-            // Unknown ids are not counted against anyone.
-            self.close(conn_id, CloseReason::AuthFailed, fx);
-            return;
+        // Unknown ids are not counted against anyone, but cost the same work as a forged
+        // request for a paired id (the replay scan, one HKDF, one HMAC, against a fixed key
+        // that is never accepted): how fast a request is refused must not tell which ids
+        // are paired.
+        let (key, is_known) = match known {
+            Some(dev) => (dev.key.clone(), true),
+            None => (Secret32::from_bytes(UNKNOWN_DEVICE_KEY), false),
         };
-        let key = dev.key.clone();
         // Break-it review F1: the lockout never refuses a request that proves the key (a
         // network host that knows the id could re-arm it for ever). While locked, a request
         // is still checked (one HMAC, as for any request), and only a failure is refused
@@ -1904,11 +2034,11 @@ impl RemoteHub {
             .device_lockouts
             .get(&device_id)
             .is_some_and(|l| l.locked(now));
-        if self
+        let replayed = self
             .recent_connects
             .iter()
-            .any(|(d, n)| *d == device_id && *n == nc)
-        {
+            .any(|(d, n)| *d == device_id && *n == nc);
+        if is_known && replayed {
             self.close(conn_id, CloseReason::Replayed, fx);
             return;
         }
@@ -1922,18 +2052,21 @@ impl RemoteHub {
             ep: eph.public,
             er,
         };
-        let Ok(ak) = auth_key(&key) else {
-            self.close(conn_id, CloseReason::Internal, fx);
+        let proof = self.check_connect_proof(&key, &device_id, &t, &mac);
+        if !is_known {
+            // Never accepted, whatever the MAC.
+            drop(eph);
+            self.close(conn_id, CloseReason::AuthFailed, fx);
             return;
-        };
-        if verify_connect_client_mac(&ak, &device_id, &t, &mac).is_err() {
+        }
+        let Some(ak) = proof else {
             if locked {
                 self.close(conn_id, CloseReason::LockedOut, fx);
             } else {
                 self.handshake_mac_failed(conn_id, Some(device_id), now, fx);
             }
             return;
-        }
+        };
         self.device_lockouts.remove(&device_id);
         if self.recent_connects.len() >= RECENT_CONNECTS {
             self.recent_connects.pop_front();
@@ -1949,12 +2082,38 @@ impl RemoteHub {
             self.close(conn_id, CloseReason::AuthFailed, fx);
             return;
         };
+        // Second break-it review F2: a device holds at most its cap of connections (one
+        // while pending); a new one replaces its own oldest, never another device's.
+        let pending = self.is_pending(device_id);
+        if !self.make_room(conn_id, device_id, pending, fx) {
+            return;
+        }
         self.establish(conn_id, channel, device_id, None, now);
         fx.push(HubEffect::Send {
             conn_id,
             bytes: encode_record(Kind::ConnectAccept, &reply),
         });
         self.audit(Some(conn_id), Some(device_id), AuditEvent::Connected, fx);
+    }
+
+    /// The connect proof: the client's MAC under the device key's auth key. Returns that
+    /// auth key when the MAC is right. The same work for every request (one HKDF, one
+    /// HMAC), whether the id is paired or not.
+    fn check_connect_proof(
+        &mut self,
+        key: &Secret32,
+        device_id: &DeviceId,
+        t: &Transcript,
+        mac: &[u8],
+    ) -> Option<Secret32> {
+        #[cfg(test)]
+        {
+            self.proof_checks += 1;
+        }
+        let ak = auth_key(key).ok()?;
+        verify_connect_client_mac(&ak, device_id, t, mac)
+            .is_ok()
+            .then_some(ak)
     }
 
     fn establish(
@@ -2952,5 +3111,104 @@ mod tests {
         );
         hub.tick(42);
         assert_eq!(hub.clock_ms(), 42);
+    }
+
+    fn test_entropy(seed: u64) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        for b in &mut out {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *b = x.to_be_bytes()[4];
+        }
+        out
+    }
+
+    /// Runs one connect handshake with `creds` on connection `conn`; returns the hub's
+    /// effects for the client's request.
+    fn connect_once(
+        hub: &mut RemoteHub,
+        conn: ConnId,
+        creds: crate::client::ClientCredentials,
+    ) -> Vec<HubEffect> {
+        let fx = hub.connection_opened(conn, 1_000, &test_entropy(conn));
+        let hello: Vec<u8> = fx
+            .iter()
+            .filter_map(|e| match e {
+                HubEffect::Send { conn_id, bytes } if *conn_id == conn => Some(bytes.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let mut client =
+            crate::client::RemoteClient::connect(creds, &test_entropy(conn + 1_000)).unwrap();
+        let mut out = Vec::new();
+        for ev in client.receive(&hello).unwrap() {
+            if let crate::client::ClientEvent::Send { bytes } = ev {
+                out.extend(hub.receive(conn, &bytes, 1_000));
+            }
+        }
+        out
+    }
+
+    /// Second break-it review (timing): a connect request for an unknown device id runs
+    /// the same proof check (HKDF + HMAC) as a forged one for a paired id, and is refused
+    /// the same way, never accepted.
+    #[test]
+    fn an_unknown_device_id_costs_the_same_proof_check_as_a_forged_one() {
+        let id = DeviceId([1; 16]);
+        let store = DeviceStore {
+            devices: vec![DeviceRecord {
+                id,
+                name: "Mac".into(),
+                key: Secret32::from_bytes([9; 32]),
+                permissions: RemotePermissions::NEW_DEVICE,
+                paired_at_ms: 1,
+            }],
+            nonce_lease: 0,
+        };
+        let mut hub = RemoteHub::with_store("Phone", store).unwrap();
+        let unknown = crate::client::ClientCredentials {
+            device_id: DeviceId([3; 16]),
+            device_key: Secret32::from_bytes([9; 32]),
+        };
+        let fx = connect_once(&mut hub, 10, unknown);
+        assert_eq!(hub.proof_checks, 1, "no proof check for an unknown id");
+        assert!(fx.contains(&HubEffect::Close {
+            conn_id: 10,
+            reason: CloseReason::AuthFailed
+        }));
+        // Even a request whose MAC is right for the fixed key is refused.
+        let fixed = crate::client::ClientCredentials {
+            device_id: DeviceId([4; 16]),
+            device_key: Secret32::from_bytes(UNKNOWN_DEVICE_KEY),
+        };
+        let fx = connect_once(&mut hub, 11, fixed);
+        assert_eq!(hub.proof_checks, 2);
+        assert!(fx.contains(&HubEffect::Close {
+            conn_id: 11,
+            reason: CloseReason::AuthFailed
+        }));
+        assert!(!hub.is_authenticated(11));
+        // A forged request for the paired id: one check too.
+        let forged = crate::client::ClientCredentials {
+            device_id: id,
+            device_key: Secret32::from_bytes([7; 32]),
+        };
+        let fx = connect_once(&mut hub, 12, forged);
+        assert_eq!(hub.proof_checks, 3);
+        assert!(fx.contains(&HubEffect::Close {
+            conn_id: 12,
+            reason: CloseReason::AuthFailed
+        }));
+        // The right key gets in after one check.
+        let owner = crate::client::ClientCredentials {
+            device_id: id,
+            device_key: Secret32::from_bytes([9; 32]),
+        };
+        connect_once(&mut hub, 13, owner);
+        assert_eq!(hub.proof_checks, 4);
+        assert!(hub.is_authenticated(13));
     }
 }

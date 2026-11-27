@@ -78,8 +78,11 @@ public struct RemotePairingOffer: Sendable, Equatable, CustomStringConvertible, 
 ///   `SecretStore` before the next effect runs. Events the effects cause on the phone (a
 ///   session starting) are queued behind them, so frames always leave in the hub's order.
 ///   If the write fails, nothing after it goes out, every connection is closed, and the hub
-///   is told (`storeWriteFailed`): the question pending then stays the phone's own, and the
-///   next request id is leased (and stored) again before any device sees it.
+///   is told (`storeWriteFailed`, whose closes it hands back are carried out so it forgets
+///   the connections): the question pending then stays the phone's own, the next request
+///   id is leased (and stored) again before any device sees it, and every later hub call
+///   (the tick at the latest) asks for the write again until it succeeds. Meanwhile
+///   `changesUnsaved` is set: remote control is paused, no device connects.
 /// - **One entry for tasks.** Remote `startTask`/`runSkill`/`runWorkflow` start through
 ///   `TaskCenter` / `WorkflowRunner` exactly like the owner's requests; skills are checked
 ///   again with `SkillLibrary.context`.
@@ -128,6 +131,13 @@ public final class RemoteControlService {
     public private(set) var pairing: RemotePairingOffer?
     /// The last problem worth showing (refused entropy, a failed write, a rebuilt hub).
     public private(set) var lastError: String?
+    /// A change could not be saved (the Keychain write failed) and no write has succeeded
+    /// since: every connection was closed and remote control is paused (no device connects)
+    /// until the hub's state is saved; the write is tried again every tick. The Remote
+    /// control screen says so (`unsavedMessage`).
+    public private(set) var changesUnsaved = false
+    /// What the Remote control screen shows while `changesUnsaved`.
+    public static let unsavedMessage = "Changes could not be saved; remote control is paused until they are."
     /// Connections that finished their handshake, by connection id → device id.
     public private(set) var connected: [UInt64: String] = [:]
     /// Devices that watch the Live view now (on at least one connection).
@@ -323,6 +333,15 @@ public final class RemoteControlService {
         }
         for id in open.sorted() {
             if let effects = try? hub.connectionClosed(connId: id, nowMs: clock()) { carryOut(effects, closing: true) }
+        }
+        // A change not saved yet gets one last try before the hub is dropped.
+        if changesUnsaved {
+            changesUnsaved = false
+            if let json = try? hub.toJson(), (try? secrets.write(Self.secretKey, json)) != nil {
+                if lastError == Self.unsavedMessage { lastError = nil }
+            } else {
+                lastError = "Changes could not be saved before remote control was turned off; the state saved last will load."
+            }
         }
         consumer?.cancel()
         ticker?.cancel()
@@ -629,15 +648,13 @@ public final class RemoteControlService {
                 do {
                     guard let hub else { continue }
                     try secrets.write(Self.secretKey, try hub.toJson())
+                    if changesUnsaved {
+                        changesUnsaved = false
+                        if lastError == Self.unsavedMessage { lastError = nil }
+                    }
                 } catch {
                     persistFailed = true
-                    // The hub's leases may now be ahead of what is stored: it keeps the
-                    // pending question on the phone and leases again before the next id
-                    // goes out, so no request id from an unstored lease reaches a device
-                    // (and none repeats after a restart). The phone still asks locally.
-                    try? hub?.storeWriteFailed()
-                    lastError = "Remote control could not save its state, so every connection was closed."
-                    for id in open.sorted() { closeConnection(id) }
+                    storeWriteFailed()
                 }
             case .send(let id, let bytes):
                 // The completion reports the write to the hub (Live view backpressure).
@@ -684,6 +701,32 @@ public final class RemoteControlService {
                 record(entry)
             }
         }
+    }
+
+    /// A store write failed. The hub's leases may now be ahead of what is stored: it keeps
+    /// the pending question on the phone and leases again before the next id goes out, so
+    /// no request id from an unstored lease reaches a device (and none repeats after a
+    /// restart); the phone still asks locally. It closes every connection it had (carried
+    /// out here, so it forgets them: second break-it review), and asks for the write again
+    /// at its next call (the tick, every second) until one succeeds. Until then remote
+    /// control is paused (`changesUnsaved`): no device stays connected, and none gets in,
+    /// since the write a new connection's call starts with comes before its hello. If the
+    /// app is killed before any write succeeds, the state stored last loads.
+    private func storeWriteFailed() {
+        changesUnsaved = true
+        lastError = Self.unsavedMessage
+        let effects = (try? hub?.storeWriteFailed()) ?? []
+        for effect in effects {
+            switch effect {
+            case .close(let id, _): closeConnection(id)
+            case .audit(let entry): record(entry)
+            default: break
+            }
+        }
+        // What is left open the hub has already forgotten (it closed it in this same call
+        // list, a `close` not carried out yet): closed here. No other hub call here: its
+        // effects (the write the hub asks for again first) would be dropped.
+        for id in open.sorted() { closeConnection(id) }
     }
 
     private func closeConnection(_ id: UInt64) {

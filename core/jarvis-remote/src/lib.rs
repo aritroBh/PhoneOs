@@ -88,9 +88,12 @@
 //!   from rate-limit dropping while something runs.
 //! * `ListSkills` needs `start_tasks`; a device with every permission off learns from
 //!   `Welcome` only the protocol version and its own permissions.
-//! * Limits: [`MAX_DEVICES`] paired devices, [`MAX_CONNECTIONS`] connections (a full
-//!   table closes its oldest unfinished handshake to admit a new connection; authenticated
-//!   connections are never evicted),
+//! * Limits: [`MAX_DEVICES`] paired devices, [`MAX_CONNECTIONS`] authenticated
+//!   connections (a full table refuses a newcomer; one is never evicted for another
+//!   device's), [`MAX_CONNECTIONS_PER_DEVICE`] per confirmed device and
+//!   [`MAX_CONNECTIONS_PER_PENDING_DEVICE`] per pending one (a device's new connection
+//!   replaces its own oldest), [`MAX_HANDSHAKES`] unfinished handshakes apart from them
+//!   (full ones close one picked at random to admit a newcomer),
 //!   [`MAX_BUFFERED_BYTES`] buffered per connection, [`MAX_PLAINTEXT_LEN`] per message,
 //!   [`RATE_MAX_MESSAGES`] per [`RATE_WINDOW_MS`] per connection, a
 //!   [`HANDSHAKE_TIMEOUT_MS`] and an [`IDLE_TIMEOUT_MS`]. Every time check uses the
@@ -185,6 +188,10 @@
 //!   question).
 //! * The `Skills` reply drops entries from the end until it fits one frame.
 //! * A reused connection id (a shell bug) closes the old connection and refuses the new.
+//! * A failed store write ([`RemoteHub::store_write_failed`]) closes every connection and
+//!   leaves the store dirty: every later call asks for the write again first, until one
+//!   succeeds. A device name with no visible character is refused (one stored by an older
+//!   version loads as "Device" and six hex digits of its id).
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -219,7 +226,8 @@ pub use error::{ClientError, CodeError, EntropyError, HubError, MessageError, Pe
 pub use hub::{
     AuditEntry, AuditEvent, CloseReason, ConnId, HubEffect, LocalEvent, PendingDeviceInfo,
     RemoteHub, FAILURE_MEMORY_MS, HANDSHAKE_TIMEOUT_MS, IDLE_TIMEOUT_MS, LOCKOUT_BASE_MS,
-    LOCKOUT_MAX_MS, LOCKOUT_THRESHOLD, MAX_CATALOG_ENTRIES, MAX_CONNECTIONS, MAX_ID_CHARS,
+    LOCKOUT_MAX_MS, LOCKOUT_THRESHOLD, MAX_CATALOG_ENTRIES, MAX_CONNECTIONS,
+    MAX_CONNECTIONS_PER_DEVICE, MAX_CONNECTIONS_PER_PENDING_DEVICE, MAX_HANDSHAKES, MAX_ID_CHARS,
     MAX_SCREEN_TEXT_CHARS, MAX_SKILL_ARGS, MAX_SKILL_ARGS_TOTAL_CHARS, MAX_SKILL_ARG_KEY_CHARS,
     MAX_SKILL_ARG_VALUE_CHARS, MAX_SUMMARY_CHARS, MAX_TASK_TEXT_CHARS, NONCE_LEASE_BLOCK,
     PAIR_LOCKOUT_BUDGET_MS, PAIR_LOCKOUT_MAX_MS, PENDING_CONFIRM_TTL_MS, PREAUTH_AUDIT_WINDOW_MS,
@@ -231,7 +239,7 @@ pub use pairing::{
 };
 pub use permissions::{remotely_approvable, RemotePermissions, NEVER_REMOTE_APPROVE};
 pub use store::{
-    clean_name, DeviceInfo, DeviceRecord, DeviceStore, PendingRecord, StoredHub,
+    clean_name, placeholder_name, DeviceInfo, DeviceRecord, DeviceStore, PendingRecord, StoredHub,
     DEVICE_STORE_VERSION, MAX_DEVICES, MAX_DEVICE_NAME_BYTES, MAX_LEASE,
 };
 pub use viewer::{

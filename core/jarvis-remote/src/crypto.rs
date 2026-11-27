@@ -315,6 +315,30 @@ pub fn pairing_secret_from_entropy(entropy: &[u8]) -> Result<PairingSecret, Cryp
     Ok(secret)
 }
 
+/// A uniform-enough index below `n` (0 for `n == 0`) from shell entropy, under its own
+/// label (nothing derived for the connection's keys or nonce is revealed by it), with the
+/// connection counter and the clock mixed in like [`Ephemeral::phone`]. The hub uses it to
+/// pick which unfinished handshake a full table closes, so a flood cannot aim at the
+/// owner's.
+pub fn pick_index(entropy: &[u8], counter: u64, now_ms: u64, n: usize) -> usize {
+    let Ok(n64) = u64::try_from(n) else {
+        return 0;
+    };
+    if n64 == 0 {
+        return 0;
+    }
+    let (c, t) = (counter.to_be_bytes(), now_ms.to_be_bytes());
+    let mut out = [0u8; 8];
+    if Hkdf::<Sha256>::new(Some(ENTROPY_SALT), entropy)
+        .expand(&lp(&[b"phone-evict", &c, &t]), &mut out)
+        .is_err()
+    {
+        return 0;
+    }
+    // 64 random bits reduced modulo a small n: the bias is below 2^-58.
+    usize::try_from(u64::from_be_bytes(out) % n64).unwrap_or(0)
+}
+
 /// Length-prefixed concatenation: a u32 BE length before every part.
 fn lp(parts: &[&[u8]]) -> Vec<u8> {
     let mut out = Vec::new();

@@ -46,6 +46,46 @@ pub(crate) fn is_format(c: char) -> bool {
         .is_some_and(|(_, hi)| c <= *hi)
 }
 
+/// Every Default_Ignorable_Code_Point (Unicode 15.1, `DerivedCoreProperties.txt`), as
+/// inclusive ranges in code point order: characters a renderer shows as nothing when it
+/// cannot show them otherwise (fillers, variation selectors, the combining grapheme
+/// joiner, free variation selectors, the Khmer inherent vowels, and the Cf characters).
+pub(crate) const DEFAULT_IGNORABLE_RANGES: [(char, char); 17] = [
+    ('\u{00AD}', '\u{00AD}'),
+    ('\u{034F}', '\u{034F}'),
+    ('\u{061C}', '\u{061C}'),
+    ('\u{115F}', '\u{1160}'),
+    ('\u{17B4}', '\u{17B5}'),
+    ('\u{180B}', '\u{180F}'),
+    ('\u{200B}', '\u{200F}'),
+    ('\u{202A}', '\u{202E}'),
+    ('\u{2060}', '\u{206F}'),
+    ('\u{3164}', '\u{3164}'),
+    ('\u{FE00}', '\u{FE0F}'),
+    ('\u{FEFF}', '\u{FEFF}'),
+    ('\u{FFA0}', '\u{FFA0}'),
+    ('\u{FFF0}', '\u{FFF8}'),
+    ('\u{1BCA0}', '\u{1BCA3}'),
+    ('\u{1D173}', '\u{1D17A}'),
+    ('\u{E0000}', '\u{E0FFF}'),
+];
+
+/// Whether `c` draws nothing a person can see: whitespace, a control, a format character
+/// ([`is_format`]), a default-ignorable code point ([`DEFAULT_IGNORABLE_RANGES`]: Hangul
+/// fillers, variation selectors, the combining grapheme joiner, …) or U+2800 BRAILLE
+/// PATTERN BLANK (a symbol that is drawn empty). A device name needs at least one
+/// character that is not blank (second break-it review F6); blank ones inside a name
+/// with visible characters are kept (an emoji's variation selector, for one).
+pub(crate) fn is_blank(c: char) -> bool {
+    if c.is_whitespace() || c.is_control() || is_format(c) || c == '\u{2800}' {
+        return true;
+    }
+    let i = DEFAULT_IGNORABLE_RANGES.partition_point(|(lo, _)| *lo <= c);
+    i.checked_sub(1)
+        .and_then(|i| DEFAULT_IGNORABLE_RANGES.get(i))
+        .is_some_and(|(_, hi)| c <= *hi)
+}
+
 /// Removes control and invisible format characters and collapses every whitespace run
 /// (tab, NBSP, U+2028…) into one space, trimmed. With `keep_newlines`, `\n` survives.
 fn normalize(text: &str, keep_newlines: bool) -> String {
@@ -174,6 +214,54 @@ mod tests {
             '\u{FFFC}',
         ] {
             assert!(!is_format(c), "U+{:04X}", u32::from(c));
+        }
+    }
+
+    /// The blank test: every default-ignorable range, its neighbours, the braille blank,
+    /// and ordinary text.
+    #[test]
+    fn blank_characters_are_the_default_ignorables_and_the_braille_blank() {
+        let mut previous_end: Option<char> = None;
+        for (lo, hi) in DEFAULT_IGNORABLE_RANGES {
+            assert!(lo <= hi, "{lo:?}..{hi:?}");
+            if let Some(end) = previous_end {
+                assert!(u32::from(lo) > u32::from(end) + 1, "unsorted at {lo:?}");
+            }
+            previous_end = Some(hi);
+            for c in lo..=hi {
+                assert!(is_blank(c), "U+{:04X}", u32::from(c));
+            }
+        }
+        for c in [
+            '\u{2800}',
+            ' ',
+            '\u{3000}',
+            '\u{00A0}',
+            '\t',
+            '\u{1D173}',
+            '\u{0600}',
+        ] {
+            assert!(is_blank(c), "U+{:04X}", u32::from(c));
+        }
+        for c in [
+            'a',
+            'é',
+            '\u{0301}',
+            '\u{115E}',
+            '\u{1161}',
+            '\u{2801}',
+            '\u{3165}',
+            '\u{FE10}',
+            '\u{E1000}',
+            '\u{1F600}',
+        ] {
+            assert!(!is_blank(c), "U+{:04X}", u32::from(c));
+        }
+        // Every Cf character is blank too.
+        for (lo, hi) in FORMAT_RANGES {
+            for c in lo..=hi {
+                assert!(is_blank(c), "U+{:04X}", u32::from(c));
+            }
         }
     }
 

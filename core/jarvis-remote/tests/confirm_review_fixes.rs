@@ -14,8 +14,8 @@ use common::*;
 use jarvis_proto::RiskCategory;
 use jarvis_remote::{
     ClientCredentials, ClientMessage, CloseReason, DenyReason, HubEffect, LocalEvent, RemoteHub,
-    RemotePermissions, Secret32, ServerMessage, LOCKOUT_THRESHOLD, MAX_CONNECTIONS, MAX_LEASE,
-    PENDING_CONFIRM_TTL_MS, REQUEST_LEASE_BLOCK,
+    RemotePermissions, Secret32, ServerMessage, LOCKOUT_THRESHOLD, MAX_CONNECTIONS, MAX_HANDSHAKES,
+    MAX_LEASE, PENDING_CONFIRM_TTL_MS, REQUEST_LEASE_BLOCK,
 };
 
 const ALL: RemotePermissions = RemotePermissions {
@@ -85,29 +85,45 @@ fn a_locked_device_still_refuses_forgeries_without_counting_them_and_lets_its_ke
 // ---- F2 ------------------------------------------------------------------------------
 
 #[test]
-fn a_full_table_evicts_its_oldest_handshake_and_never_an_authenticated_connection() {
+fn a_full_table_evicts_a_handshake_and_never_an_authenticated_connection() {
     let mut rig = Rig::new();
     let mut links = Vec::new();
     for i in 0..MAX_CONNECTIONS - 2 {
         links.push(rig.pair(&format!("Device {i}")));
     }
-    // Two unfinished handshakes fill the table: 10 (older) and 11.
+    // Two unfinished handshakes: 10 (older) and 11.
     rig.hub.connection_opened(10, rig.now, &entropy(10));
     rig.now += 1;
     rig.hub.connection_opened(11, rig.now, &entropy(11));
     assert_eq!(rig.hub.connection_count(), MAX_CONNECTIONS);
-    // A new connection takes the oldest handshake's place.
+    // Second break-it review F1: handshakes have their own MAX_HANDSHAKES places, so a new
+    // connection is admitted beside them (this asserted that it took the oldest
+    // handshake's place in a shared table of MAX_CONNECTIONS).
     let fx = rig.hub.connection_opened(12, rig.now, &entropy(12));
-    assert_eq!(closed(&fx, 10), Some(CloseReason::TooManyConnections));
+    assert_eq!(closed(&fx, 10), None);
     assert_eq!(closed(&fx, 12), None);
     assert!(
         !sends(&fx, 12).is_empty(),
         "no hello for the new connection"
     );
-    assert_eq!(rig.hub.connection_count(), MAX_CONNECTIONS);
-    // A stream of strangers only ever replaces handshakes.
+    assert_eq!(rig.hub.connection_count(), MAX_CONNECTIONS + 1);
+    // A stream of strangers only ever replaces handshakes, once their places are full.
+    let mut replaced = 0;
     for c in 100..300u64 {
         let fx = rig.hub.connection_opened(c, rig.now, &entropy(c));
+        assert!(rig.hub.connection_count() <= MAX_CONNECTIONS - 2 + MAX_HANDSHAKES);
+        replaced += fx
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    HubEffect::Close {
+                        reason: CloseReason::TooManyConnections,
+                        ..
+                    }
+                )
+            })
+            .count();
         for (link, _) in &links {
             assert_eq!(
                 closed(&fx, link.conn),
@@ -116,10 +132,13 @@ fn a_full_table_evicts_its_oldest_handshake_and_never_an_authenticated_connectio
             );
         }
     }
+    // 3 handshakes were open, 200 more arrived: all but the first MAX_HANDSHAKES - 3 of
+    // them took a handshake's place.
+    assert_eq!(replaced, 200 - (MAX_HANDSHAKES - 3));
     for (link, _) in &links {
         assert!(rig.hub.is_authenticated(link.conn));
     }
-    // Both handshakes' places can go to the owner: a connect gets in.
+    // The owner's connect gets in.
     let creds = links[0].1.clone();
     let mut owner = rig.connect(&creds);
     let (_, msgs) = rig.request(&mut owner, ClientMessage::Ping);

@@ -84,7 +84,8 @@ struct SecureRandomSource: RandomSource {
 /// path that is not cellular); cellular is never used. Bytes are handed to the hub as they
 /// arrive (framing is the hub's job), within `RemoteTransportLimits`: a connection with too
 /// many received bytes the hub has not consumed, or too many sent bytes the network has not
-/// processed, is closed; one that is not ready within 10 s is cancelled. A listener that
+/// processed, is closed; one that is not ready within 10 s is cancelled; one peer address
+/// holds at most `maxConnectionsPerPeer` connections (`PeerConnectionLimiter`). A listener that
 /// fails is cancelled and rebuilt after `ListenerRestartPolicy`'s delay while the transport
 /// is on.
 final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
@@ -102,6 +103,8 @@ final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
     // Touched on `queue` only.
     private var listener: NWListener?
     private var connections: [UInt64: Entry] = [:]
+    /// Connections per peer address (`RemoteTransportLimits.maxConnectionsPerPeer`).
+    private var perPeer = PeerConnectionLimiter()
     private var nextID: UInt64 = 1
     private var continuation: AsyncStream<RemoteTransportEvent>.Continuation?
     private var restart = ListenerRestartPolicy()
@@ -161,6 +164,7 @@ final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
 
     func close(_ connection: UInt64) {
         queue.async {
+            self.perPeer.remove(connection)
             self.connections.removeValue(forKey: connection)?.connection.cancel()
         }
     }
@@ -206,6 +210,7 @@ final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
             self.listener = nil
             for entry in self.connections.values { entry.connection.cancel() }
             self.connections = [:]
+            self.perPeer.removeAll()
             self.continuation?.finish()
             self.continuation = nil
         }
@@ -274,6 +279,11 @@ final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
             return
         }
         let id = nextID
+        // One host holds at most a few places (second break-it review F1).
+        guard perPeer.admit(id, peer: Self.addressBytes(connection.endpoint)) else {
+            connection.cancel()
+            return
+        }
         nextID += 1
         connections[id] = Entry(connection: connection)
         connection.stateUpdateHandler = { [weak self] state in
@@ -331,6 +341,7 @@ final class NetworkRemoteTransport: RemoteTransport, @unchecked Sendable {
     /// Cancels and forgets connection `id`; the hub hears `.closed` if it heard `.opened`.
     private func drop(_ id: UInt64) {
         guard let entry = connections.removeValue(forKey: id) else { return }
+        perPeer.remove(id)
         entry.connection.cancel()
         if entry.opened { continuation?.yield(.closed(id)) }
     }

@@ -288,9 +288,9 @@ final class HubProbe: JarvisRemoteHubProtocol, @unchecked Sendable {
     func pairingFailedAttempts() throws -> UInt32 { try hub.pairingFailedAttempts() }
     /// Times the service reported a failed store write.
     let storeWriteFailures = Mutex(0)
-    func storeWriteFailed() throws {
+    func storeWriteFailed() throws -> [HubEffect] {
         storeWriteFailures.withLock { $0 += 1 }
-        try hub.storeWriteFailed()
+        return keep(try hub.storeWriteFailed())
     }
     func isWatching(connId: UInt64) throws -> Bool { try hub.isWatching(connId: connId) }
 }

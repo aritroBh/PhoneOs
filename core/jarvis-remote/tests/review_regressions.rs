@@ -336,9 +336,12 @@ fn f04_unauthenticated_refusals_are_merged_per_window() {
             _ => None,
         })
         .collect();
-    // 100 000 refusals, one logged in full and the rest counted. (The 8 handshake
-    // timeouts this tick causes open the next window.)
-    assert_eq!(summary, vec![100_000 - 1]);
+    // Every one of the 100 000 that found the handshake places full closed one (logged in
+    // full once, the rest counted); the first MAX_HANDSHAKES - 8 found room (second
+    // break-it review: handshakes have their own places). (The handshake timeouts this
+    // tick causes open the next window.)
+    let evictions = 100_000 - u32::try_from(MAX_HANDSHAKES - MAX_CONNECTIONS).unwrap();
+    assert_eq!(summary, vec![evictions - 1]);
 }
 
 // ---- F05: unsanitised remote text ---------------------------------------------------

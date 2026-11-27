@@ -18,7 +18,7 @@ use crate::codec::{from_hex, to_hex_secret, DeviceId};
 use crate::crypto::Secret32;
 use crate::error::PersistError;
 use crate::permissions::RemotePermissions;
-use crate::text::is_format;
+use crate::text::{is_blank, is_format};
 
 /// Most paired devices the phone keeps.
 pub const MAX_DEVICES: usize = 8;
@@ -267,7 +267,7 @@ impl DeviceStore {
                 .ok_or_else(|| PersistError::Invalid("invalid key".into()))?;
             let record = DeviceRecord {
                 id: d.id,
-                name: migrated_name(d.name),
+                name: migrated_name(d.name, &d.id),
                 key: Secret32::from_bytes(key_bytes),
                 permissions: d.permissions,
                 paired_at_ms: d.paired_at_ms,
@@ -343,9 +343,16 @@ impl DeviceStore {
 }
 
 /// Cleans a device name: control and format characters removed, whitespace collapsed,
-/// trimmed, cut to [`MAX_DEVICE_NAME_BYTES`] on a character boundary.
+/// trimmed, cut to [`MAX_DEVICE_NAME_BYTES`] on a character boundary. A name with no
+/// visible character (only blanks: whitespace, fillers, variation selectors, the braille
+/// blank, every default-ignorable code point) cleans to the empty name, which pairing and
+/// renaming refuse.
 pub fn clean_name(name: &str) -> String {
-    clean_name_with(name, is_format)
+    let out = clean_name_with(name, is_format);
+    if out.chars().all(is_blank) {
+        return String::new();
+    }
+    out
 }
 
 fn clean_name_with(name: &str, is_format: fn(char) -> bool) -> String {
@@ -383,15 +390,27 @@ fn legacy_is_format(c: char) -> bool {
 
 /// A stored name that was clean under the earlier, shorter list of format characters is
 /// cleaned with the full table instead of failing the store's validation (which would
-/// drop every pairing on the update). Any other name is returned as it is and validated.
-fn migrated_name(name: String) -> String {
-    if clean_name_with(&name, legacy_is_format) == name {
+/// drop every pairing on the update). One that cleans to nothing (it was only characters
+/// that draw nothing) becomes [`placeholder_name`]: the device keeps its key and
+/// permissions, and the other devices load (second break-it review F5). Any other name is
+/// returned as it is and validated.
+fn migrated_name(name: String, id: &DeviceId) -> String {
+    // An empty name was never written (it was always refused): it stays refused.
+    if !name.is_empty() && clean_name_with(&name, legacy_is_format) == name {
         let cleaned = clean_name(&name);
-        if !cleaned.is_empty() {
-            return cleaned;
+        if cleaned.is_empty() {
+            return placeholder_name(id);
         }
+        return cleaned;
     }
     name
+}
+
+/// The name a stored device whose name draws nothing loads with: "Device " and the first
+/// six hex digits of its id ("Device ab12cd"). The owner can rename it.
+pub fn placeholder_name(id: &DeviceId) -> String {
+    let hex = id.to_hex();
+    format!("Device {}", hex.get(..6).unwrap_or(&hex))
 }
 
 #[cfg(test)]
@@ -407,9 +426,14 @@ mod tests {
         let dirty = json.replace("Owner\\ud834\\udd73 Mac", "Owner\\u202e Mac");
         assert_ne!(dirty, json);
         assert!(DeviceStore::from_json(&dirty).is_err());
-        // A name of nothing but newly listed characters is refused, not emptied.
+        // A name of nothing but newly listed characters loads with a placeholder derived
+        // from the id (second break-it review F5; it was refused, and the whole store with
+        // it).
         let empty = json.replace("Owner\\ud834\\udd73 Mac", "\\ud834\\udd73");
-        assert!(DeviceStore::from_json(&empty).is_err());
+        assert_eq!(
+            DeviceStore::from_json(&empty).unwrap().devices[0].name,
+            "Device 001122"
+        );
     }
 
     #[test]

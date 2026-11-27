@@ -222,15 +222,18 @@ impl JarvisRemoteHub {
     }
 
     /// Writing `toJson()` after a `storeChanged` failed. Call it at once (the shell carries
-    /// out nothing after the failed write but closes, and closes every connection). The
-    /// question pending now (if any) stays the phone's own: no device is shown it or may
-    /// answer it; the next request id and connection counter are leased again first (a new
-    /// `storeChanged` before them), so no id from a lease that was not stored ever reaches
-    /// a device.
-    pub fn store_write_failed(&self) -> Result<(), JarvisError> {
+    /// out nothing after the failed write but closes) and carry out what it returns: a
+    /// `close` for every connection the hub had (it forgets them), with their audit
+    /// entries. The question pending now (if any) stays the phone's own: no device is shown
+    /// it or may answer it; the next request id and connection counter are leased again
+    /// first (a new `storeChanged` before them), so no id from a lease that was not stored
+    /// ever reaches a device. The store stays dirty: every later call (the shell's tick at
+    /// the latest) starts with a `storeChanged` until a write succeeds (report each failure
+    /// here again), so a removal or a permission turned off is written once the Keychain
+    /// works again, and no device connects before.
+    pub fn store_write_failed(&self) -> Result<Vec<HubEffect>, JarvisError> {
         self.with("store_write_failed", |h| {
-            h.store_write_failed();
-            Ok(())
+            Ok(effects(h.store_write_failed()))
         })
     }
 

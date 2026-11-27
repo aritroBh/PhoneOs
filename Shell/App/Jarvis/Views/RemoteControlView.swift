@@ -40,7 +40,10 @@ struct RemoteControlView: View {
                 }
                 .card()
 
-                if let message = error ?? model.remoteError {
+                if model.remoteUnsaved {
+                    InlineError(text: RemoteControlService.unsavedMessage, identifier: "remote.unsaved")
+                }
+                if let message = error ?? model.remoteError, message != RemoteControlService.unsavedMessage || !model.remoteUnsaved {
                     InlineError(text: message, identifier: "remote.error")
                 }
 

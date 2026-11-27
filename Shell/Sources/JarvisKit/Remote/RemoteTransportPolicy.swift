@@ -21,10 +21,60 @@ public enum RemoteTransportLimits {
     /// A connection that has not become ready this long after it arrived is cancelled.
     public static let connectionReadyTimeoutMs = 10_000
     /// Connections the transport holds at once, ready or not. The hub serves at most 8
-    /// (`MAX_CONNECTIONS` in `core/jarvis-remote/src/hub.rs`); the rest is room for ones
-    /// still connecting. Above this a new connection is cancelled at once, so a host that
-    /// opens connections in a loop cannot grow the table during the ready timeout.
-    public static let maxConnections = 24
+    /// authenticated ones (`MAX_CONNECTIONS` in `core/jarvis-remote/src/hub.rs`) and 32
+    /// handshakes apart from them (`MAX_HANDSHAKES`); the rest is room for ones still
+    /// connecting. Above this a new connection is cancelled at once, so a host that opens
+    /// connections in a loop cannot grow the table during the ready timeout.
+    public static let maxConnections = 48
+    /// Connections one peer address may hold in the transport at once, ready or not
+    /// (`PeerConnectionLimiter`): a device's two authenticated connections
+    /// (`MAX_CONNECTIONS_PER_DEVICE`) and two more on their way in. One host on the Wi-Fi
+    /// that opens connections in a loop holds no more than this of the transport's places,
+    /// and of the hub's handshakes (second break-it review F1).
+    public static let maxConnectionsPerPeer = 4
+}
+
+/// Counts the connections each peer address holds in the transport and refuses one over
+/// `maxPerPeer` (second break-it review F1: one host on the network must not hold more
+/// than a small share of the hub's handshakes). The transport calls `admit` when a
+/// connection arrives (before it is started) and `remove` when it goes, whatever the
+/// reason. Keyed by the full address (4 or 16 bytes); an address that is not an IP host
+/// (empty) is counted under one shared key. A host with many IPv6 addresses is several
+/// peers here: the hub's random eviction among its handshakes is the defence then. Not
+/// thread-safe: use it on the transport's queue.
+public struct PeerConnectionLimiter: Sendable, Equatable {
+    public let maxPerPeer: Int
+    private var peerOf: [UInt64: [UInt8]] = [:]
+    private var counts: [[UInt8]: Int] = [:]
+
+    public init(maxPerPeer: Int = RemoteTransportLimits.maxConnectionsPerPeer) {
+        self.maxPerPeer = max(1, maxPerPeer)
+    }
+
+    /// Records connection `id` from `peer`; `false` (nothing recorded) when that peer
+    /// already holds `maxPerPeer` connections or `id` is already recorded.
+    public mutating func admit(_ id: UInt64, peer: [UInt8]) -> Bool {
+        guard peerOf[id] == nil, counts[peer, default: 0] < maxPerPeer else { return false }
+        peerOf[id] = peer
+        counts[peer, default: 0] += 1
+        return true
+    }
+
+    /// Forgets connection `id` (unknown ids are ignored).
+    public mutating func remove(_ id: UInt64) {
+        guard let peer = peerOf.removeValue(forKey: id) else { return }
+        let left = (counts[peer] ?? 1) - 1
+        counts[peer] = left > 0 ? left : nil
+    }
+
+    /// Connections `peer` holds now.
+    public func count(peer: [UInt8]) -> Int { counts[peer] ?? 0 }
+
+    /// Every connection forgotten (the transport stopped).
+    public mutating func removeAll() {
+        peerOf = [:]
+        counts = [:]
+    }
 }
 
 /// A thread-safe count of bytes in flight against a limit: `add` when bytes arrive (or are

@@ -127,6 +127,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var remoteWrongCodes: UInt32 = 0
     @Published private(set) var remotePairing: RemotePairingOffer?
     @Published private(set) var remoteError: String?
+    /// A change could not be saved: remote control is paused until it is.
+    @Published private(set) var remoteUnsaved = false
     @Published private(set) var remoteAudit: [RemoteAuditRecord] = []
     @Published private(set) var remoteConnected: Set<String> = []
     /// Devices that watch the Live view now ("watching now" in the device row).
@@ -821,6 +823,7 @@ final class AppModel: ObservableObject {
         remoteWrongCodes = remote.pairingFailedAttempts
         remotePairing = remote.pairing
         remoteError = remote.lastError
+        remoteUnsaved = remote.changesUnsaved
         remoteAudit = remote.audit.entries
         remoteConnected = Set(remote.connected.values)
         remoteWatching = remote.watching

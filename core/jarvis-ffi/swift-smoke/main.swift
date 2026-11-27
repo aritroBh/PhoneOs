@@ -831,19 +831,20 @@ do {
 
     now += 10
     _ = try apply(try hub.connectionClosed(connId: 1, nowMs: now))
-    let client = try JarvisRemoteClient.connect(credentialsJson: credentials ?? "", entropy: entropy())
+    var client = try JarvisRemoteClient.connect(credentialsJson: credentials ?? "", entropy: entropy())
+    var liveConn: UInt64 = 2
     now += 10
     events = try pump(2, client, try apply(try hub.connectionOpened(connId: 2, nowMs: now, entropy: entropy())))
     check("reconnecting with stored credentials", try events.contains(.connected) && (try hub.isAuthenticated(connId: 2)))
 
     func command(_ m: ClientMessage) throws -> [ServerMessage] {
         now += 10
-        let fx = try hub.receive(connId: 2, bytes: try client.send(message: m), nowMs: now)
-        return messages(try pump(2, client, try apply(fx)))
+        let fx = try hub.receive(connId: liveConn, bytes: try client.send(message: m), nowMs: now)
+        return messages(try pump(liveConn, client, try apply(fx)))
     }
     func local(_ e: LocalEvent) throws -> [ServerMessage] {
         now += 10
-        return messages(try pump(2, client, try apply(try hub.localEvent(nowMs: now, event: e))))
+        return messages(try pump(liveConn, client, try apply(try hub.localEvent(nowMs: now, event: e))))
     }
     _ = try command(.subscribe)
     log = []
@@ -863,9 +864,28 @@ do {
     }
     check("payment can never be approved remotely",
           try neverRemoteApprove().contains(.payment) && !(try remotelyApprovable(category: .payment)))
-    // A store write that failed: the next question's id is leased again (storeChanged
-    // before anything is sent) before it reaches the device.
-    try hub.storeWriteFailed()
+    // A store write that failed: every connection closes (the hub forgets them), the next
+    // call asks for the write again first, and the next question's id is leased again
+    // (storeChanged before anything is sent) before it reaches the device.
+    let failed = try hub.storeWriteFailed()
+    let leftOpen = try hub.connectionCount()
+    check("a failed store write closes every connection and the hub forgets them",
+          failed.contains { if case .close(2, _) = $0 { return true } else { return false } } && leftOpen == 0,
+          "\(failed) \(leftOpen)")
+    log = []
+    now += 10
+    _ = try apply(try hub.tick(nowMs: now))
+    check("after a failed store write the next call asks for the write again", log.first == .storeChanged, "\(log)")
+    log = []
+    now += 10
+    _ = try apply(try hub.tick(nowMs: now))
+    check("once that write went through nothing more is asked for", !log.contains(.storeChanged), "\(log)")
+    client = try JarvisRemoteClient.connect(credentialsJson: credentials ?? "", entropy: entropy())
+    liveConn = 3
+    now += 10
+    events = try pump(3, client, try apply(try hub.connectionOpened(connId: 3, nowMs: now, entropy: entropy())))
+    check("the device connects again after the write", try events.contains(.connected) && (try hub.isAuthenticated(connId: 3)))
+    _ = try command(.subscribe)
     log = []
     let asked = try local(.confirmRequested(request: ConfirmRequest(
         category: .firstUse, summary: "First use", app: "Settings", phoneOnly: false, stage: .whole, verb: .other)))
@@ -880,7 +900,7 @@ do {
     log = []
     _ = try apply(try hub.revokeDevice(nowMs: now + 10, deviceId: devices.first?.id ?? ""))
     check("revoking closes the device's connection",
-          try log.contains(.close(connId: 2, reason: .revoked)) && (try hub.devices()).isEmpty, "\(log)")
+          try log.contains(.close(connId: 3, reason: .revoked)) && (try hub.devices()).isEmpty, "\(log)")
 } catch {
     check("remote checks", false, "\(error)")
 }
