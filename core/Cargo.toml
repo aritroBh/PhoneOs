@@ -1,0 +1,79 @@
+[workspace]
+resolver = "2"
+members = [
+    "jarvis-proto",
+    "jarvis-observe",
+    "jarvis-safety",
+    "jarvis-memory",
+    "jarvis-agent",
+    "jarvis-skills",
+    "jarvis-remote",
+    "jarvis-runner",
+    "jarvis-viewer",
+    "jarvis-voice",
+    "jarvis-sim",
+    "jarvis-ffi",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+# UniFFI bridge (jarvis-ffi only; its `cli` feature adds the bindgen binary).
+uniffi = "0.32.2"
+# Vetted RustCrypto primitives for jarvis-remote (pure Rust, no C, no OS RNG features).
+chacha20poly1305 = { version = "0.10.1", default-features = false, features = ["alloc"] }
+hkdf = "0.12.4"
+hmac = "0.12.1"
+sha2 = { version = "0.10.8", default-features = false }
+subtle = { version = "2.6.1", default-features = false }
+zeroize = { version = "1.8.1", default-features = false, features = ["alloc", "serde"] }
+# Ephemeral Diffie-Hellman for jarvis-remote's forward secrecy. `static_secrets` gives
+# `StaticSecret::from(bytes)`, so secrets come from shell entropy; no OS RNG feature.
+x25519-dalek = { version = "2.0.1", default-features = false, features = ["static_secrets", "zeroize"] }
+
+jarvis-proto = { path = "jarvis-proto" }
+jarvis-observe = { path = "jarvis-observe" }
+jarvis-safety = { path = "jarvis-safety" }
+jarvis-memory = { path = "jarvis-memory" }
+jarvis-agent = { path = "jarvis-agent" }
+jarvis-skills = { path = "jarvis-skills" }
+jarvis-remote = { path = "jarvis-remote" }
+jarvis-runner = { path = "jarvis-runner" }
+jarvis-viewer = { path = "jarvis-viewer" }
+jarvis-voice = { path = "jarvis-voice" }
+
+# Tuned for the iOS static library (jarvis-ffi). `panic = "unwind"` is load-bearing: the
+# FFI layer catches panics with `catch_unwind`, which `abort` would turn into a crash.
+[profile.release]
+panic = "unwind"
+lto = "fat"
+codegen-units = 1
+# "s" measured smaller than 3 (host, LTO staticlib: 1.03 MB vs 1.33 MB of code).
+opt-level = "s"
+# Not "symbols": that strips the UNIFFI_META_* symbols `uniffi-bindgen --library` reads
+# (verified: "No UniFFI metadata found"). Xcode strips the final app binary anyway.
+strip = "debuginfo"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+indexing_slicing = "warn"
+
+# X25519 in an unoptimised build costs ~10 ms per scalar multiplication, which dominates the
+# jarvis-remote test suite. Optimise just the curve arithmetic in dev/test builds.
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
+[profile.dev.package.x25519-dalek]
+opt-level = 3

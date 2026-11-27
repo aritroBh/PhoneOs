@@ -1,0 +1,24 @@
+[package]
+name = "jarvis-observe"
+description = "UI tree compaction, rendering and diffing for the Jarvis core."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+jarvis-proto.workspace = true
+jarvis-safety.workspace = true
+serde.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+jarvis-proto = { workspace = true, features = ["test-util"] }
+# Test-only: the tap-point sweep over the real iOS 26 fixtures (no cycle: jarvis-safety
+# does not depend on jarvis-observe).
+jarvis-safety = { workspace = true, features = ["reference"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

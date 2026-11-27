@@ -1,0 +1,66 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p4c-modals (`probe3-p4c-modals-14-popover-tree.txt`), verbatim below this line.
+Q: With the popover (compact adaptation .popover) up: is there an Alert/Sheet/dialog-like node, is the content behind still in the tree, is anything marking it covered, what role do destructive buttons have?
+capture 14 (popover): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 14: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 26, XCUITest snapshot 105 ms
+types without a core role: Other×18
+note: probe round 3 p4c-modals, capture 14: popover
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) "dismiss popup" id=PopoverDismissRegion {{0, 0}, {440, 956}}
+      Sheet {{149, 426}, {233, 161}}
+        Image {{12, 276}, {520, 461}}
+        Other(Other) {{149, 426}, {233, 161}}
+          Other(Other) {{149, 426}, {233, 161}}
+            Other(Other) {{149, 426}, {233, 161}}
+              Other(Other) {{149, 426}, {233, 161}}
+                Other(Other) {{149, 426}, {233, 161}}
+                  Other(Other) {{149, 426}, {233, 161}}
+                    Other(Other) {{149, 426}, {0, 0}} [hidden]
+                      Other(Other) {{149, 426}, {233, 161}}
+                        Other(Other) {{149, 426}, {233, 161}}
+                          Other(Other) {{149.0, 426}, {233.0, 161}}
+                            Other(Other) {{149.0, 426}, {233.0, 161}}
+          Other(Other) {{149, 426}, {233, 161}}
+            Other(Other) {{149, 426}, {233, 161}}
+              Other(Other) {{149, 426}, {233, 161}}
+                StaticText "Probe popover" {{202.3, 442}, {139.3, 26.3}}
+                StaticText "Probe popover body text" {{178, 492.3}, {188, 20.3}}
+                Button "Close Probe popover" id=probe3.modals.close {{180.3, 536.7}, {183.3, 34.3}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) label="dismiss popup" id=PopoverDismissRegion {{0, 0}, {440, 956}}
+      Popover(18) {{149, 426}, {233, 161}}
+        Image(43) {{12, 276}, {520, 461}}
+        Other(1) {{149, 426}, {233, 161}}
+          Other(1) {{149, 426}, {233, 161}}
+            Other(1) {{149, 426}, {233, 161}}
+              Other(1) {{149, 426}, {233, 161}}
+                Other(1) {{149, 426}, {233, 161}}
+                  Other(1) {{149, 426}, {233, 161}}
+                    Other(1) {{149, 426}, {0, 0}}
+                      Other(1) {{149, 426}, {233, 161}}
+                        Other(1) {{149, 426}, {233, 161}}
+                          Other(1) {{149.0, 426}, {233.0, 161}}
+                            Other(1) {{149.0, 426}, {233.0, 161}}
+          Other(1) {{149, 426}, {233, 161}}
+            Other(1) {{149, 426}, {233, 161}}
+              Other(1) {{149, 426}, {233, 161}}
+                StaticText(48) label="Probe popover" {{202.3, 442}, {139.3, 26.3}}
+                StaticText(48) label="Probe popover body text" {{178, 492.3}, {188, 20.3}}
+                Button(9) label="Close Probe popover" id=probe3.modals.close {{180.3, 536.7}, {183.3, 34.3}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}

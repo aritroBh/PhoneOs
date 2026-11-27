@@ -1,0 +1,147 @@
+{
+ "id": "news",
+ "bundle_id": "com.example.news",
+ "name": "News",
+ "start": "front",
+ "state": {
+  "open": "",
+  "headlines": [
+   "City council announces a review of its spending plans after months of complaints from residents about delays and rising costs in several neighbourhoods (story 1) - reported by the regional desk this morning, with more updates expected later today",
+   "Harbour ferry timetable to close two lanes until spring while engineers replace corroded cables and inspect the supports beneath the main span of the structure (story 2) - reported by the regional desk this morning, with more updates expected later today",
+   "Local football club signs a young striker from the academy after a strong season, with the coach praising his work rate and calm finishing in front of goal (story 3) - reported by the regional desk this morning, with more updates expected later today",
+   "Weather service warns of strong winds along the coast this weekend and asks drivers on exposed roads to slow down and allow extra time for their journeys (story 4) - reported by the regional desk this morning, with more updates expected later today",
+   "Regional rail operator publishes a new timetable with more evening services on weekdays and fewer trains on Sunday mornings while track work continues downtown (story 5) - reported by the regional desk this morning, with more updates expected later today",
+   "University researchers report early results from a long study of sleep and memory in older adults, cautioning that the findings still need to be repeated (story 6) - reported by the regional desk this morning, with more updates expected later today",
+   "Public library announces a review of its spending plans after months of complaints from residents about delays and rising costs in several neighbourhoods (story 7) - reported by the regional desk this morning, with more updates expected later today",
+   "Farmers market to close two lanes until spring while engineers replace corroded cables and inspect the supports beneath the main span of the structure (story 8) - reported by the regional desk this morning, with more updates expected later today",
+   "Hospital board signs a young striker from the academy after a strong season, with the coach praising his work rate and calm finishing in front of goal (story 9) - reported by the regional desk this morning, with more updates expected later today",
+   "Fire brigade warns of strong winds along the coast this weekend and asks drivers on exposed roads to slow down and allow extra time for their journeys (story 10) - reported by the regional desk this morning, with more updates expected later today",
+   "School district publishes a new timetable with more evening services on weekdays and fewer trains on Sunday mornings while track work continues downtown (story 11) - reported by the regional desk this morning, with more updates expected later today",
+   "Art museum report early results from a long study of sleep and memory in older adults, cautioning that the findings still need to be repeated (story 12) - reported by the regional desk this morning, with more updates expected later today",
+   "Water utility announces a review of its spending plans after months of complaints from residents about delays and rising costs in several neighbourhoods (story 13) - reported by the regional desk this morning, with more updates expected later today",
+   "Airport authority to close two lanes until spring while engineers replace corroded cables and inspect the supports beneath the main span of the structure (story 14) - reported by the regional desk this morning, with more updates expected later today",
+   "Tech startup signs a young striker from the academy after a strong season, with the coach praising his work rate and calm finishing in front of goal (story 15) - reported by the regional desk this morning, with more updates expected later today",
+   "Coastal guard warns of strong winds along the coast this weekend and asks drivers on exposed roads to slow down and allow extra time for their journeys (story 16) - reported by the regional desk this morning, with more updates expected later today",
+   "Bus network publishes a new timetable with more evening services on weekdays and fewer trains on Sunday mornings while track work continues downtown (story 17) - reported by the regional desk this morning, with more updates expected later today",
+   "Zoo keepers report early results from a long study of sleep and memory in older adults, cautioning that the findings still need to be repeated (story 18) - reported by the regional desk this morning, with more updates expected later today",
+   "Film festival announces a review of its spending plans after months of complaints from residents about delays and rising costs in several neighbourhoods (story 19) - reported by the regional desk this morning, with more updates expected later today",
+   "Tax office to close two lanes until spring while engineers replace corroded cables and inspect the supports beneath the main span of the structure (story 20) - reported by the regional desk this morning, with more updates expected later today",
+   "City council signs a young striker from the academy after a strong season, with the coach praising his work rate and calm finishing in front of goal (story 21) - reported by the regional desk this morning, with more updates expected later today",
+   "Harbour ferry timetable warns of strong winds along the coast this weekend and asks drivers on exposed roads to slow down and allow extra time for their journeys (story 22) - reported by the regional desk this morning, with more updates expected later today",
+   "Local football club publishes a new timetable with more evening services on weekdays and fewer trains on Sunday mornings while track work continues downtown (story 23) - reported by the regional desk this morning, with more updates expected later today",
+   "Weather service report early results from a long study of sleep and memory in older adults, cautioning that the findings still need to be repeated (story 24) - reported by the regional desk this morning, with more updates expected later today",
+   "Regional rail operator announces a review of its spending plans after months of complaints from residents about delays and rising costs in several neighbourhoods (story 25) - reported by the regional desk this morning, with more updates expected later today",
+   "University researchers to close two lanes until spring while engineers replace corroded cables and inspect the supports beneath the main span of the structure (story 26) - reported by the regional desk this morning, with more updates expected later today",
+   "Public library signs a young striker from the academy after a strong season, with the coach praising his work rate and calm finishing in front of goal (story 27) - reported by the regional desk this morning, with more updates expected later today",
+   "Farmers market warns of strong winds along the coast this weekend and asks drivers on exposed roads to slow down and allow extra time for their journeys (story 28) - reported by the regional desk this morning, with more updates expected later today",
+   "Hospital board publishes a new timetable with more evening services on weekdays and fewer trains on Sunday mornings while track work continues downtown (story 29) - reported by the regional desk this morning, with more updates expected later today",
+   "Fire brigade report early results from a long study of sleep and memory in older adults, cautioning that the findings still need to be repeated (story 30) - reported by the regional desk this morning, with more updates expected later today",
+   "School district announces a review of its spending plans after months of complaints from residents about delays and rising costs in several neighbourhoods (story 31) - reported by the regional desk this morning, with more updates expected later today",
+   "Art museum to close two lanes until spring while engineers replace corroded cables and inspect the supports beneath the main span of the structure (story 32) - reported by the regional desk this morning, with more updates expected later today",
+   "Water utility signs a young striker from the academy after a strong season, with the coach praising his work rate and calm finishing in front of goal (story 33) - reported by the regional desk this morning, with more updates expected later today",
+   "Airport authority warns of strong winds along the coast this weekend and asks drivers on exposed roads to slow down and allow extra time for their journeys (story 34) - reported by the regional desk this morning, with more updates expected later today",
+   "Tech startup publishes a new timetable with more evening services on weekdays and fewer trains on Sunday mornings while track work continues downtown (story 35) - reported by the regional desk this morning, with more updates expected later today",
+   "Coastal guard report early results from a long study of sleep and memory in older adults, cautioning that the findings still need to be repeated (story 36) - reported by the regional desk this morning, with more updates expected later today",
+   "Bus network announces a review of its spending plans after months of complaints from residents about delays and rising costs in several neighbourhoods (story 37) - reported by the regional desk this morning, with more updates expected later today",
+   "Zoo keepers to close two lanes until spring while engineers replace corroded cables and inspect the supports beneath the main span of the structure (story 38) - reported by the regional desk this morning, with more updates expected later today",
+   "Film festival signs a young striker from the academy after a strong season, with the coach praising his work rate and calm finishing in front of goal (story 39) - reported by the regional desk this morning, with more updates expected later today",
+   "Tax office warns of strong winds along the coast this weekend and asks drivers on exposed roads to slow down and allow extra time for their journeys (story 40) - reported by the regional desk this morning, with more updates expected later today",
+   "City council publishes a new timetable with more evening services on weekdays and fewer trains on Sunday mornings while track work continues downtown (story 41) - reported by the regional desk this morning, with more updates expected later today",
+   "Harbour bridge repairs will shut two lanes until spring while engineers fix the old cables (story 42) - reported by the regional desk this morning, with more updates expected later today",
+   "Local football club announces a review of its spending plans after months of complaints from residents about delays and rising costs in several neighbourhoods (story 43) - reported by the regional desk this morning, with more updates expected later today",
+   "Weather service to close two lanes until spring while engineers replace corroded cables and inspect the supports beneath the main span of the structure (story 44) - reported by the regional desk this morning, with more updates expected later today",
+   "Regional rail operator signs a young striker from the academy after a strong season, with the coach praising his work rate and calm finishing in front of goal (story 45) - reported by the regional desk this morning, with more updates expected later today",
+   "University researchers warns of strong winds along the coast this weekend and asks drivers on exposed roads to slow down and allow extra time for their journeys (story 46) - reported by the regional desk this morning, with more updates expected later today",
+   "Public library publishes a new timetable with more evening services on weekdays and fewer trains on Sunday mornings while track work continues downtown (story 47) - reported by the regional desk this morning, with more updates expected later today",
+   "Farmers market report early results from a long study of sleep and memory in older adults, cautioning that the findings still need to be repeated (story 48) - reported by the regional desk this morning, with more updates expected later today",
+   "Hospital board announces a review of its spending plans after months of complaints from residents about delays and rising costs in several neighbourhoods (story 49) - reported by the regional desk this morning, with more updates expected later today",
+   "Fire brigade to close two lanes until spring while engineers replace corroded cables and inspect the supports beneath the main span of the structure (story 50) - reported by the regional desk this morning, with more updates expected later today",
+   "School district signs a young striker from the academy after a strong season, with the coach praising his work rate and calm finishing in front of goal (story 51) - reported by the regional desk this morning, with more updates expected later today",
+   "Art museum warns of strong winds along the coast this weekend and asks drivers on exposed roads to slow down and allow extra time for their journeys (story 52) - reported by the regional desk this morning, with more updates expected later today",
+   "Water utility publishes a new timetable with more evening services on weekdays and fewer trains on Sunday mornings while track work continues downtown (story 53) - reported by the regional desk this morning, with more updates expected later today",
+   "Airport authority report early results from a long study of sleep and memory in older adults, cautioning that the findings still need to be repeated (story 54) - reported by the regional desk this morning, with more updates expected later today",
+   "Tech startup announces a review of its spending plans after months of complaints from residents about delays and rising costs in several neighbourhoods (story 55) - reported by the regional desk this morning, with more updates expected later today",
+   "Coastal guard to close two lanes until spring while engineers replace corroded cables and inspect the supports beneath the main span of the structure (story 56) - reported by the regional desk this morning, with more updates expected later today",
+   "Bus network signs a young striker from the academy after a strong season, with the coach praising his work rate and calm finishing in front of goal (story 57) - reported by the regional desk this morning, with more updates expected later today",
+   "Zoo keepers warns of strong winds along the coast this weekend and asks drivers on exposed roads to slow down and allow extra time for their journeys (story 58) - reported by the regional desk this morning, with more updates expected later today",
+   "Film festival publishes a new timetable with more evening services on weekdays and fewer trains on Sunday mornings while track work continues downtown (story 59) - reported by the regional desk this morning, with more updates expected later today",
+   "Tax office report early results from a long study of sleep and memory in older adults, cautioning that the findings still need to be repeated (story 60) - reported by the regional desk this morning, with more updates expected later today"
+  ]
+ },
+ "screens": {
+  "front": {
+   "title": "Today",
+   "elements": [
+    {
+     "role": "web_view",
+     "frame": [
+      0,
+      150,
+      393,
+      702
+     ],
+     "children": [
+      {
+       "role": "other",
+       "frame": [
+        0,
+        0,
+        393,
+        702
+       ],
+       "children": [
+        {
+         "role": "other",
+         "frame": [
+          0,
+          0,
+          393,
+          702
+         ],
+         "layout": "column",
+         "gap": 0,
+         "children": [
+          {
+           "role": "link",
+           "for_each": "headlines",
+           "item": "h",
+           "id": "story-{index}",
+           "h": 11.5,
+           "label": "{h}",
+           "on_tap": [
+            {
+             "do": "set",
+             "var": "open",
+             "value": "{h}"
+            },
+            {
+             "do": "goto",
+             "screen": "article"
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "article": {
+   "title": "Article",
+   "elements": [
+    {
+     "role": "static_text",
+     "label": "{open}",
+     "frame": [
+      16,
+      160,
+      361,
+      90
+     ]
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,361 @@
+//! Tokenising owner text the way `jarvis_memory::intent_key` does, keeping byte spans so
+//! slot values can be cut from the original text.
+//!
+//! The pipeline mirrors `intent_key` step by step: words are runs of alphanumerics (an
+//! apostrophe stays inside a word but vanishes from its normal form), normal forms are
+//! lowercased alphanumerics, spelling variants merge through
+//! [`jarvis_memory::EQUIVALENT_PHRASES`] (longest first), and filler phrases from
+//! [`jarvis_memory::FILLER_PHRASES`] are flagged (longest first). Joining the normal forms of
+//! the non-filler words gives exactly `intent_key(text)` (tested).
+//!
+//! Every step is linear in the text length (the tables are small and fixed).
+
+use jarvis_memory::{EQUIVALENT_PHRASES, FILLER_PHRASES};
+
+/// One word of a text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Word {
+    /// Normal form (lowercase alphanumerics, spelling variants unified).
+    pub norm: String,
+    /// Byte offset of the first character in the original text.
+    pub start: usize,
+    /// Byte offset just past the last character.
+    pub end: usize,
+    /// Part of a filler phrase ("please", "can you", "the").
+    pub filler: bool,
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '\'' || c == '\u{2019}'
+}
+
+fn raw_words(text: &str) -> Vec<Word> {
+    let mut out = Vec::new();
+    let mut current: Option<(usize, usize)> = None;
+    for (i, c) in text.char_indices() {
+        if is_word_char(c) {
+            let end = i + c.len_utf8();
+            current = Some(match current {
+                Some((s, _)) => (s, end),
+                None => (i, end),
+            });
+        } else if let Some((s, e)) = current.take() {
+            push_word(&mut out, text, s, e);
+        }
+    }
+    if let Some((s, e)) = current {
+        push_word(&mut out, text, s, e);
+    }
+    out
+}
+
+fn push_word(out: &mut Vec<Word>, text: &str, start: usize, end: usize) {
+    let Some(raw) = text.get(start..end) else {
+        return;
+    };
+    let norm: String = raw
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    if !norm.is_empty() {
+        out.push(Word {
+            norm,
+            start,
+            end,
+            filler: false,
+        });
+    }
+}
+
+/// Whether the phrase matches the words starting at `i`.
+fn phrase_at(words: &[Word], i: usize, phrase: &[&str]) -> bool {
+    words
+        .get(i..i + phrase.len())
+        .is_some_and(|w| w.iter().zip(phrase.iter()).all(|(a, b)| a.norm == *b))
+}
+
+fn merge_equivalents(words: Vec<Word>) -> Vec<Word> {
+    let mut out: Vec<Word> = Vec::with_capacity(words.len());
+    let mut i = 0usize;
+    while let Some(w) = words.get(i) {
+        let best = EQUIVALENT_PHRASES
+            .iter()
+            .filter(|(phrase, _)| !phrase.is_empty() && phrase_at(&words, i, phrase))
+            .max_by_key(|(phrase, _)| phrase.len());
+        match best {
+            Some((phrase, canon)) => {
+                let end = words
+                    .get(i + phrase.len() - 1)
+                    .map_or(w.end, |last| last.end);
+                out.push(Word {
+                    norm: (*canon).to_owned(),
+                    start: w.start,
+                    end,
+                    filler: false,
+                });
+                i += phrase.len();
+            }
+            None => {
+                out.push(w.clone());
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+fn mark_fillers(words: &mut [Word]) {
+    let mut i = 0usize;
+    while i < words.len() {
+        let matched = FILLER_PHRASES
+            .iter()
+            .filter(|phrase| !phrase.is_empty() && phrase_at(words, i, phrase))
+            .map(|phrase| phrase.len())
+            .max()
+            .unwrap_or(0);
+        if matched == 0 {
+            i += 1;
+        } else {
+            for w in words.iter_mut().skip(i).take(matched) {
+                w.filler = true;
+            }
+            i += matched;
+        }
+    }
+}
+
+/// The words of `text` with spans, normal forms and filler flags.
+pub(crate) fn words(text: &str) -> Vec<Word> {
+    let mut ws = merge_equivalents(raw_words(text));
+    mark_fillers(&mut ws);
+    ws
+}
+
+/// The normal forms of the non-filler words of `text` (what `intent_key` joins).
+#[cfg(test)]
+pub(crate) fn key_tokens(text: &str) -> Vec<String> {
+    words(text)
+        .into_iter()
+        .filter(|w| !w.filler)
+        .map(|w| w.norm)
+        .collect()
+}
+
+/// `text` cut to at most `max_chars` characters (on a character boundary).
+pub(crate) fn truncate_chars(text: &str, max_chars: usize) -> &str {
+    match text.char_indices().nth(max_chars) {
+        Some((i, _)) => text.get(..i).unwrap_or(text),
+        None => text,
+    }
+}
+
+/// Whether `text` is longer than `max_chars` characters, without counting past the limit.
+pub(crate) fn longer_than(text: &str, max_chars: usize) -> bool {
+    // A char is at most 4 bytes, so a short byte length settles it without iterating.
+    if text.len() <= max_chars {
+        return false;
+    }
+    text.chars().nth(max_chars).is_some()
+}
+
+/// Characters that render as nothing or reorder text: zero-width and joiner characters,
+/// bidi embeddings, overrides and isolates, the soft hyphen, word joiners and invisible
+/// operators, variation selectors, tag characters, Hangul fillers and the BOM. In owner-
+/// facing names, triggers and ids they let two different strings look identical. Review
+/// pass 35: every character of Unicode general category Cf (15.1) is among them (the
+/// prepended concatenation marks and the Egyptian format controls were missing); the
+/// table the test walks is `jarvis_remote::text::FORMAT_RANGES`, copied (no dependency).
+pub(crate) fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061C}'
+            | '\u{06DD}'
+            | '\u{070F}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08E2}'
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{17B4}'
+            | '\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{110BD}'
+            | '\u{110CD}'
+            | '\u{13430}'..='\u{1343F}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E007F}'
+            | '\u{E0100}'..='\u{E01EF}'
+    )
+}
+
+/// Whether `text` contains a control or invisible character.
+pub(crate) fn has_hidden(text: &str) -> bool {
+    text.chars().any(|c| c.is_control() || is_invisible(c))
+}
+
+/// An argument value cleaned for a session: control and invisible characters removed,
+/// whitespace runs collapsed to one space, trimmed. Content is otherwise kept as given.
+pub(crate) fn clean_arg(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars().filter(|c| !is_invisible(*c)) {
+        if c.is_whitespace() || c.is_control() {
+            if !out.is_empty() && !out.ends_with(' ') {
+                out.push(' ');
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out.trim_end().to_owned()
+}
+
+/// Words that negate a request, in normal form (`don't` is `dont`). A request containing
+/// one that its trigger does not contain never matches loosely.
+pub(crate) const NEGATORS: &[&str] = &[
+    "not", "no", "never", "dont", "doesnt", "didnt", "wont", "cant", "stop", "cancel", "without",
+];
+
+/// Pairs of words with opposite meaning, in normal form (`turn on`/`turn off` arrive as
+/// `enable`/`disable`). A loose match whose differing words include such a pair is refused.
+pub(crate) const OPPOSITES: &[(&str, &str)] = &[
+    ("on", "off"),
+    ("enable", "disable"),
+    ("open", "close"),
+    ("start", "stop"),
+    ("lock", "unlock"),
+    ("mute", "unmute"),
+    ("add", "remove"),
+    ("send", "delete"),
+    ("connect", "disconnect"),
+    ("increase", "decrease"),
+    ("up", "down"),
+    ("play", "pause"),
+    ("show", "hide"),
+    ("login", "logout"),
+    ("signin", "signout"),
+];
+
+/// Whether `a` and `b` are an [`OPPOSITES`] pair (either order).
+pub(crate) fn opposite(a: &str, b: &str) -> bool {
+    OPPOSITES
+        .iter()
+        .any(|(x, y)| (*x == a && *y == b) || (*x == b && *y == a))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jarvis_memory::intent_key;
+
+    /// Every character of Unicode general category Cf, version 15.1, as inclusive ranges (a
+    /// copy of `jarvis_remote::text::FORMAT_RANGES`, generated from the Unicode Character
+    /// Database).
+    const FORMAT_RANGES: [(char, char); 21] = [
+        ('\u{00AD}', '\u{00AD}'),
+        ('\u{0600}', '\u{0605}'),
+        ('\u{061C}', '\u{061C}'),
+        ('\u{06DD}', '\u{06DD}'),
+        ('\u{070F}', '\u{070F}'),
+        ('\u{0890}', '\u{0891}'),
+        ('\u{08E2}', '\u{08E2}'),
+        ('\u{180E}', '\u{180E}'),
+        ('\u{200B}', '\u{200F}'),
+        ('\u{202A}', '\u{202E}'),
+        ('\u{2060}', '\u{2064}'),
+        ('\u{2066}', '\u{206F}'),
+        ('\u{FEFF}', '\u{FEFF}'),
+        ('\u{FFF9}', '\u{FFFB}'),
+        ('\u{110BD}', '\u{110BD}'),
+        ('\u{110CD}', '\u{110CD}'),
+        ('\u{13430}', '\u{1343F}'),
+        ('\u{1BCA0}', '\u{1BCA3}'),
+        ('\u{1D173}', '\u{1D17A}'),
+        ('\u{E0001}', '\u{E0001}'),
+        ('\u{E0020}', '\u{E007F}'),
+    ];
+
+    /// Review pass 35: every Cf character is hidden in names, triggers and ids, and is
+    /// removed from an argument.
+    #[test]
+    fn every_format_character_is_invisible() {
+        let mut count = 0u32;
+        for (lo, hi) in FORMAT_RANGES {
+            for c in lo..=hi {
+                count += 1;
+                let text = format!("Wi{c}Fi");
+                assert!(is_invisible(c), "U+{:04X}", u32::from(c));
+                assert!(has_hidden(&text), "U+{:04X}", u32::from(c));
+                assert_eq!(clean_arg(&text), "WiFi", "U+{:04X}", u32::from(c));
+            }
+        }
+        assert_eq!(count, 170, "Unicode 15.1 has 170 Cf characters");
+    }
+
+    #[test]
+    fn key_tokens_join_to_the_intent_key() {
+        for t in [
+            "Turn off Wi-Fi",
+            "please text Mom I'm on my way",
+            "Can you switch on the e-mail sign in for me",
+            "  hey jarvis   open the  door!! ",
+            "Log in to Acme",
+            "",
+            "the a an",
+            "Ünïcödé wörds and 123 numbers",
+        ] {
+            assert_eq!(key_tokens(t).join(" "), intent_key(t), "{t:?}");
+        }
+    }
+
+    #[test]
+    fn spans_cut_the_original_words() {
+        let t = "Text Mom: I'm late";
+        let ws = words(t);
+        let cut: Vec<&str> = ws.iter().map(|w| &t[w.start..w.end]).collect();
+        assert_eq!(cut, vec!["Text", "Mom", "I'm", "late"]);
+        let ws = words("turn off the Wi-Fi");
+        assert_eq!(ws[0].norm, "disable");
+        assert!(ws[1].filler);
+        assert_eq!(ws[2].norm, "wifi");
+        assert_eq!(&"turn off the Wi-Fi"[ws[2].start..ws[2].end], "Wi-Fi");
+    }
+
+    #[test]
+    fn negators_and_opposites_are_in_normal_form() {
+        for w in NEGATORS
+            .iter()
+            .chain(OPPOSITES.iter().flat_map(|(a, b)| [a, b]))
+        {
+            assert_eq!(key_tokens(w), vec![(*w).to_owned()], "{w}");
+        }
+        assert_eq!(key_tokens("don't"), vec!["dont".to_owned()]);
+        assert!(opposite("disable", "enable") && !opposite("on", "on"));
+    }
+
+    #[test]
+    fn hidden_characters_are_found_and_args_cleaned() {
+        assert!(has_hidden("a\u{200B}b") && has_hidden("n\u{202E}evil") && has_hidden("a\nb"));
+        assert!(!has_hidden("Café menu"));
+        assert_eq!(clean_arg("  on\u{200B} my\n\tway  "), "on my way");
+    }
+
+    #[test]
+    fn length_helpers_count_characters() {
+        assert!(!longer_than("héllo", 5));
+        assert!(longer_than("héllo!", 5));
+        assert_eq!(truncate_chars("héllo", 2), "hé");
+        assert_eq!(truncate_chars("hi", 5), "hi");
+    }
+}

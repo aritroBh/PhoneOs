@@ -1,0 +1,19 @@
+[package]
+name = "jarvis-memory"
+description = "Learned flows, profile and task log for the Jarvis core."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+jarvis-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+jarvis-proto = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

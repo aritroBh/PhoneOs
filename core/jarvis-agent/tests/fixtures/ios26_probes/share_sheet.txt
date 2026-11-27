@@ -1,0 +1,100 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 135, fact
+# probe G_ShareSheet (`fact-g-share-sheet.01-tree.txt`), as the runner dumps it ("typed tree"):
+# the share sheet as presented (raw `Popover`, `ShareSheet.RemoteContainerView`, no AirDrop row).
+# note: fact probe fact-g-share-sheet, capture 01: share sheet as presented (Jarvis)
+# note: app state 4, device orientation 1
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 1: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) "dismiss popup" id=PopoverDismissRegion {{0, 0}, {440, 956}}
+      Sheet {{9, 565}, {422, 381.7}}
+        Image {{-141, 415}, {722, 681.7}}
+        Other(Other) {{9, 565}, {422, 381.7}}
+          Other(Other) {{9, 565}, {422, 381.7}}
+            Other(Other) {{9, 565}, {422, 381.7}}
+              Other(Other) {{9, 565}, {422, 381.7}}
+                Other(Other) {{9, 565}, {422, 381.7}}
+                  Other(Other) {{9, 565}, {422, 381.7}}
+                    Other(Other) {{9, 565}, {0, 0}} [hidden]
+                      Other(Other) {{9.0, 565}, {422, 381.7}}
+                        Other(Other) {{9.0, 565}, {422, 381.7}}
+                          Other(Other) {{9.0, 565}, {422, 381.7}}
+                            Other(Other) {{9.0, 565}, {422, 381.7}}
+          Other(Other) {{9, 565}, {422, 381.7}}
+            Other(Other) id=ActivityListView {{9, 565}, {422, 381.7}}
+              Other(Other) id=ShareSheet.RemoteContainerView {{9, 565}, {422, 381.7}}
+                Other(Other) {{9, 565}, {422, 381.7}}
+                  Other(Other) {{9, 565}, {422, 381.7}}
+                    Other(Other) {{0, 0}, {422, 381.7}}
+                      Other(Other) {{0, 0}, {422, 381.7}}
+                        Other(Other) {{0, 0}, {422, 381.7}}
+                          Other(Other) {{0, 0}, {422, 381.7}}
+                            Other(Other) {{0, 0}, {422, 381.7}}
+                              Other(Other) {{0, 0}, {422, 381.7}}
+                                NavigationBar id=UIActivityContentView {{0, 0}, {422, 107.3}}
+                                  Image "safari" id=safari {{27.3, 27.3}, {64, 64}}
+                                  Other(Other) "Jarvis QA form" id=LP.CaptionBar.TopCaption {{106.3, 40.3}, {288.3, 18}}
+                                  Other(Other) "127.0.0.1" id=LP.CaptionBar.BottomCaption {{106.3, 58.3}, {288.3, 20}}
+                                Other(Other) {{0, 0}, {422, 381.7}}
+                                  Other(Other) {{0, 0}, {422, 381.7}}
+                                    Other(Other) id=shareSheet.activity.contentView {{0, 0}, {422, 381.7}}
+                                      CollectionView id=activityCollectionView {{0, 0}, {422, 381.7}}
+                                        Other(Other) {{0, 0}, {422, 381.7}}
+                                          Other(Other) {{0, 0}, {422, 162.1}}
+                                        Other(Other) {{0, 0}, {422, 381.7}}
+                                        ScrollView {{24.3, 107.3}, {373.3, 129}}
+                                          Cell "Reminders" id=shareCell {{24.3, 107.3}, {82, 128.3}}
+                                            Other(Other) {{24.3, 107.3}, {82, 128.3}}
+                                              Other(Other) {{24.3, 205.3}, {82, 14.3}}
+                                                StaticText "Reminders" id=cellTitleLabel {{24.3, 205.3}, {82, 14.3}}
+                                                StaticText "Apple Inc" id=cellTitleLabel {{24.3, 205.3}, {32.7, 30.3}}
+                                                Other(Other) {{24.3, 205.3}, {82, 14.3}}
+                                              Image id=activityImageView {{28.3, 123.3}, {74, 74.0}}
+                                          Cell "More" id=shareCell {{121.7, 107.3}, {82.0, 128.3}}
+                                            Other(Other) {{121.7, 107.3}, {82.0, 128.3}}
+                                              Other(Other) {{121.7, 205.3}, {82.0, 14.3}}
+                                                StaticText "More" id=cellTitleLabel {{121.7, 205.3}, {82.0, 14.3}}
+                                                StaticText "Apple Inc" id=cellTitleLabel {{121.7, 205.3}, {32.7, 30.3}}
+                                                Other(Other) {{121.7, 205.3}, {82.0, 14.3}}
+                                              Image id=activityImageView {{125.7, 123.3}, {74.0, 74.0}}
+                                        ScrollView {{24.3, 237.3}, {373.3, 144.3}}
+                                          Cell "Copy" id=actionGroupCell {{24.3, 237.3}, {82, 144.3}}
+                                            Other(Other) {{24.3, 237.3}, {82, 144.3}}
+                                              Other(Other) {{24.3, 335.3}, {82, 14.3}}
+                                                StaticText "Copy" id=cellTitleLabel {{24.3, 335.3}, {82, 14.3}}
+                                                StaticText "Apple Inc" id=cellTitleLabel {{24.3, 335.3}, {32.7, 30.3}}
+                                                Other(Other) {{24.3, 335.3}, {82, 14.3}}
+                                              Other(Other) {{27.3, 253.3}, {76, 76}}
+                                              Image "copy" id=activityImageView {{49.3, 273}, {32, 36.7}}
+                                          Cell "Assign to Contact" id=actionGroupCell {{121.7, 237.3}, {82.0, 144.3}}
+                                            Other(Other) {{121.7, 237.3}, {82.0, 144.3}}
+                                              Other(Other) {{121.7, 335.3}, {82.0, 30.3}}
+                                                StaticText "Assign to Contact" id=cellTitleLabel {{121.7, 335.3}, {82.0, 30.3}}
+                                                StaticText "Apple Inc" id=cellTitleLabel {{121.7, 335.3}, {32.7, 30.3}}
+                                                Other(Other) {{121.7, 335.3}, {82.0, 30.3}}
+                                              Other(Other) {{124.7, 253.3}, {76.0, 76}}
+                                              Image "account" id=activityImageView {{146.7, 276}, {32, 30.7}}
+                                          Cell "Print" id=actionGroupCell {{219, 237.3}, {82, 144.3}}
+                                            Other(Other) {{219, 237.3}, {82, 144.3}}
+                                              Other(Other) {{219, 335.3}, {82, 14.3}}
+                                                StaticText "Print" id=cellTitleLabel {{219, 335.3}, {82, 14.3}}
+                                                StaticText "Apple Inc" id=cellTitleLabel {{219, 335.3}, {32.7, 30.3}}
+                                                Other(Other) {{219, 335.3}, {82, 14.3}}
+                                              Other(Other) {{222, 253.3}, {76, 76}}
+                                              Image "print" id=activityImageView {{244, 275.7}, {32, 32}}
+                                          Cell "Add to Reading List" id=actionGroupCell {{316.3, 237.3}, {82, 144.3}}
+                                            Other(Other) {{316.3, 237.3}, {82, 144.3}}
+                                              Other(Other) {{316.3, 335.3}, {82, 30.3}}
+                                                StaticText "Add to Reading List" id=cellTitleLabel {{316.3, 335.3}, {82, 30.3}}
+                                                StaticText "Apple Inc" id=cellTitleLabel {{316.3, 335.3}, {32.7, 30.3}}
+                                                Other(Other) {{316.3, 335.3}, {82, 30.3}}
+                                              Other(Other) {{319.3, 253.3}, {76, 76}}
+                                              Image "reading list" id=activityImageView {{341.3, 280.7}, {32, 21}}
+                                        Other(Other) id=collectionView.footerView {{27.3, 236.3}, {367.3, 1}}
+                                      Other(Other) {{27.3, 107.3}, {367.3, 1}}
+                                Other(Other) {{0, 0}, {422, 381.7}}
+                                  Other(Other) {{0, 0}, {422, 381.7}}

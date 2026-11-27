@@ -1,0 +1,114 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p4c-modals (`probe3-p4c-modals-02-action-sheet-tree.txt`), verbatim below this line.
+Q: With the confirmationDialog (action sheet) up: is there an Alert/Sheet/dialog-like node, is the content behind still in the tree, is anything marking it covered, what role do destructive buttons have?
+capture 02 (action-sheet): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 2: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 50, XCUITest snapshot 149 ms
+types without a core role: Other×38
+note: probe round 3 p4c-modals, capture 02: action-sheet
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) "dismiss popup" id=PopoverDismissRegion {{0, 0}, {440, 956}}
+      Sheet {{177, 132}, {253, 228.3}}
+        Image {{40, -18}, {540, 528.3}}
+        Other(Other) {{177, 132}, {253, 228.3}}
+          Other(Other) {{177, 132}, {253, 228.3}}
+            Other(Other) {{177, 132}, {253, 228.3}}
+              Other(Other) {{177, 132}, {253, 228.3}}
+                Other(Other) {{177, 132}, {253, 228.3}}
+                  Other(Other) {{177, 132}, {0, 0}} [hidden]
+                    Other(Other) {{177, 132}, {253, 228.3}}
+                      Other(Other) {{177, 132}, {253, 228.3}}
+                        Other(Other) {{177, 132}, {253, 228.3}}
+                          Other(Other) {{177, 132}, {253, 228.3}}
+        Other(Other) {{190, 132}, {240, 228.3}}
+          Sheet "Probe action sheet" {{190, 132}, {240, 228.3}}
+            Other(Other) {{190, 132}, {240, 228.3}}
+              Other(Other) {{190, 132}, {240, 228.3}}
+                Other(Other) {{190, 132}, {240, 228.3}}
+                Other(Other) {{190, 132}, {240, 228.3}}
+                  ScrollView {{190, 132}, {240, 92.3}}
+                    Other(Other) {{190, 132}, {240, 92.3}}
+                      StaticText "Probe action sheet" {{220, 154}, {180, 20.3}}
+                      StaticText "Probe action sheet message" {{220, 182}, {180, 38}}
+                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{397, 132}, {30, 62.3}}
+                      Other(Other) {{424, 93}, {3, 36}}
+                    Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{190, 191.3}, {210, 30}}
+                      Other(Other) {{151, 218.3}, {36, 3}}
+                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{397, 132}, {30, 62.3}}
+                      Other(Other) {{424, 93}, {3, 36}}
+                    Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{190, 191.3}, {210, 30}}
+                      Other(Other) {{151, 218.3}, {36, 3}}
+                  ScrollView {{190, 224.3}, {240, 136.0}}
+                    Other(Other) {{190, 224.3}, {240, 136.0}}
+                      Other(Other) {{206, 240.3}, {208, 104.0}}
+                        Button "Delete item" {{206, 240.3}, {208, 48.0}}
+                        Button "Keep item" {{206, 296.3}, {208, 48}}
+                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{397, 224.3}, {30, 108.3}}
+                      Other(Other) {{424, 314.3}, {3, 7}}
+                    Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{217.3, 327.3}, {185.0, 30}}
+                      Other(Other) {{280, 354.3}, {7, 3}}
+                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{397, 224.3}, {30, 108.3}}
+                      Other(Other) {{424, 314.3}, {3, 7}}
+                    Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{217.3, 327.3}, {185.0, 30}}
+                      Other(Other) {{280, 354.3}, {7, 3}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) label="dismiss popup" id=PopoverDismissRegion {{0, 0}, {440, 956}}
+      Popover(18) {{177, 132}, {253, 228.3}}
+        Image(43) {{40, -18}, {540, 528.3}}
+        Other(1) {{177, 132}, {253, 228.3}}
+          Other(1) {{177, 132}, {253, 228.3}}
+            Other(1) {{177, 132}, {253, 228.3}}
+              Other(1) {{177, 132}, {253, 228.3}}
+                Other(1) {{177, 132}, {253, 228.3}}
+                  Other(1) {{177, 132}, {0, 0}}
+                    Other(1) {{177, 132}, {253, 228.3}}
+                      Other(1) {{177, 132}, {253, 228.3}}
+                        Other(1) {{177, 132}, {253, 228.3}}
+                          Other(1) {{177, 132}, {253, 228.3}}
+        Other(1) {{190, 132}, {240, 228.3}}
+          Sheet(5) label="Probe action sheet" {{190, 132}, {240, 228.3}}
+            Other(1) {{190, 132}, {240, 228.3}}
+              Other(1) {{190, 132}, {240, 228.3}}
+                Other(1) {{190, 132}, {240, 228.3}}
+                Other(1) {{190, 132}, {240, 228.3}}
+                  ScrollView(46) {{190, 132}, {240, 92.3}}
+                    Other(1) {{190, 132}, {240, 92.3}}
+                      StaticText(48) label="Probe action sheet" {{220, 154}, {180, 20.3}}
+                      StaticText(48) label="Probe action sheet message" {{220, 182}, {180, 38}}
+                    Other(1) label="Vertical scroll bar, 1 page" value="0%" {{397, 132}, {30, 62.3}}
+                      Other(1) {{424, 93}, {3, 36}}
+                    Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{190, 191.3}, {210, 30}}
+                      Other(1) {{151, 218.3}, {36, 3}}
+                    Other(1) label="Vertical scroll bar, 1 page" value="0%" {{397, 132}, {30, 62.3}}
+                      Other(1) {{424, 93}, {3, 36}}
+                    Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{190, 191.3}, {210, 30}}
+                      Other(1) {{151, 218.3}, {36, 3}}
+                  ScrollView(46) {{190, 224.3}, {240, 136.0}}
+                    Other(1) {{190, 224.3}, {240, 136.0}}
+                      Other(1) {{206, 240.3}, {208, 104.0}}
+                        Button(9) label="Delete item" {{206, 240.3}, {208, 48.0}}
+                        Button(9) label="Keep item" {{206, 296.3}, {208, 48}}
+                    Other(1) label="Vertical scroll bar, 1 page" value="0%" {{397, 224.3}, {30, 108.3}}
+                      Other(1) {{424, 314.3}, {3, 7}}
+                    Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{217.3, 327.3}, {185.0, 30}}
+                      Other(1) {{280, 354.3}, {7, 3}}
+                    Other(1) label="Vertical scroll bar, 1 page" value="0%" {{397, 224.3}, {30, 108.3}}
+                      Other(1) {{424, 314.3}, {3, 7}}
+                    Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{217.3, 327.3}, {185.0, 30}}
+                      Other(1) {{280, 354.3}, {7, 3}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}

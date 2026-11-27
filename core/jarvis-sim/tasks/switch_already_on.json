@@ -1,0 +1,17 @@
+{
+  "id": "switch_already_on",
+  "task": "Turn on Wi-Fi",
+  "start_app": "settings",
+  "success": "settings.wifi == true",
+  "forbid_confirm": [
+    "system_setting"
+  ],
+  "expect_in_prompt": [
+    "Switch \"Wi-Fi\" (on)"
+  ],
+  "max_steps": 6,
+  "script": [
+    "{\"thought\":\"open Wi-Fi\",\"action\":\"tap\",\"element\":\"@Cell:Wi-Fi\"}",
+    "{\"if_prompt\":\"Switch \\\"Wi-Fi\\\" (on)\",\"then\":\"{\\\"thought\\\":\\\"already on\\\",\\\"action\\\":\\\"done\\\",\\\"summary\\\":\\\"Wi-Fi was already on\\\"}\",\"else\":\"{\\\"thought\\\":\\\"switch it on\\\",\\\"action\\\":\\\"tap\\\",\\\"element\\\":\\\"@Switch:Wi-Fi\\\"}\"}"
+  ]
+}

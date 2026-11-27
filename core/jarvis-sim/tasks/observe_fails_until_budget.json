@@ -1,0 +1,17 @@
+{
+  "id": "observe_fails_until_budget",
+  "task": "Turn off Wi-Fi",
+  "start_app": "settings",
+  "success": "settings.wifi == true",
+  "expect_status": "failed",
+  "expect_model_calls": 1,
+  "max_steps": 12,
+  "faults": {
+    "observe_fail": { "after": 2, "times": 100 }
+  },
+  "script": [
+    "{\"thought\":\"open Wi-Fi\",\"action\":\"tap\",\"element\":\"@Cell:Wi-Fi\"}",
+    "{\"thought\":\"switch it off\",\"action\":\"tap\",\"element\":\"@Switch:Wi-Fi\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Wi-Fi is off\"}"
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "messages",
+  "bundle_id": "com.apple.MobileSMS",
+  "name": "Messages",
+  "start": "list",
+  "url_prefixes": ["sms:", "imessage:"],
+  "state": {
+    "contacts": ["Mom", "Alex", "Dad"],
+    "current": "",
+    "draft": "",
+    "thread": {
+      "Mom": ["Are you coming for dinner?", "See you at six"],
+      "Alex": ["Lunch tomorrow?"],
+      "Dad": []
+    }
+  },
+  "screens": {
+    "list": {
+      "title": "Messages",
+      "elements": [
+        {
+          "id": "conversations", "role": "table", "frame": [0, 150, 393, 702], "layout": "column", "gap": 1,
+          "children": [
+            {
+              "kind": "row", "for_each": "contacts", "item": "c", "id": "chat-{c}", "h": 64,
+              "label": "{c}", "detail": "{thread[c].last}",
+              "on_tap": [{ "do": "set", "var": "current", "value": "{c}" }, { "do": "goto", "screen": "thread" }]
+            }
+          ]
+        }
+      ]
+    },
+    "thread": {
+      "title": "{current}",
+      "elements": [
+        {
+          "id": "transcript", "role": "collection_view", "frame": [0, 150, 393, 300], "layout": "column", "gap": 6,
+          "children": [
+            { "role": "cell", "for_each": "thread[current]", "item": "m", "h": 36, "children": [{ "role": "static_text", "label": "{m}", "frame": [16, 4, 361, 28] }] }
+          ]
+        },
+        {
+          "id": "composer", "role": "other", "frame": [0, 460, 393, 56],
+          "children": [
+            { "id": "messageBodyField", "role": "text_view", "label": "Message", "placeholder": "iMessage", "bind": "draft", "frame": [56, 8, 285, 40] },
+            {
+              "id": "sendButton", "role": "button", "label": "Send", "when": "draft != ''", "frame": [345, 10, 36, 36],
+              "on_tap": [
+                { "do": "append", "to": "thread.{current}", "value": "{draft}" },
+                { "do": "set", "var": "draft", "value": "" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

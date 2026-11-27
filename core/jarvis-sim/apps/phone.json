@@ -1,0 +1,34 @@
+{
+  "id": "dialer",
+  "bundle_id": "com.apple.mobilephone",
+  "name": "Phone",
+  "start": "favorites",
+  "url_prefixes": ["tel:", "telprompt:"],
+  "state": {
+    "favorites": ["Mom", "Alex"],
+    "calling": ""
+  },
+  "screens": {
+    "favorites": {
+      "title": "Favorites",
+      "elements": [
+        {
+          "id": "favorites-list", "role": "table", "frame": [0, 150, 393, 600], "layout": "column", "gap": 1,
+          "children": [
+            {
+              "kind": "row", "for_each": "favorites", "item": "f", "id": "fav-{f}", "h": 60,
+              "label": "{f}", "detail": "mobile",
+              "on_tap": [{ "do": "set", "var": "calling", "value": "{f}" }, { "do": "goto", "screen": "call" }]
+            }
+          ]
+        }
+      ]
+    },
+    "call": {
+      "elements": [
+        { "role": "static_text", "label": "Calling {calling}…", "frame": [16, 200, 361, 40] },
+        { "id": "end-call", "role": "button", "label": "End", "frame": [146, 700, 100, 60], "on_tap": [{ "do": "set", "var": "calling", "value": "" }, { "do": "goto", "screen": "favorites" }] }
+      ]
+    }
+  }
+}

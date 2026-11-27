@@ -1,0 +1,84 @@
+{
+  "id": "settings",
+  "bundle_id": "com.apple.Preferences",
+  "name": "Settings",
+  "start": "root",
+  "url_prefixes": ["prefs:", "App-Prefs:"],
+  "state": { "airplane": false, "wifi": true, "bluetooth": true, "dark": false },
+  "screens": {
+    "root": {
+      "title": "Settings",
+      "elements": [
+        {
+          "id": "settings-table", "role": "table", "frame": [0, 150, 393, 702], "layout": "column", "gap": 1,
+          "children": [
+            { "kind": "row", "id": "row-airplane", "label": "Airplane Mode", "switch": "airplane" },
+            { "kind": "row", "id": "row-wifi", "label": "Wi-Fi", "detail": "{wifi ? 'HomeNet' : 'Off'}", "on_tap": [{ "do": "goto", "screen": "wifi" }] },
+            { "kind": "row", "id": "row-bluetooth", "label": "Bluetooth", "detail": "{bluetooth ? 'On' : 'Off'}", "on_tap": [{ "do": "goto", "screen": "bluetooth" }] },
+            { "kind": "row", "id": "row-notifications", "label": "Notifications", "on_tap": [{ "do": "goto", "screen": "notifications" }] },
+            { "kind": "row", "id": "row-display", "label": "Display & Brightness", "on_tap": [{ "do": "goto", "screen": "display" }] },
+            { "kind": "row", "id": "row-general", "label": "General", "on_tap": [{ "do": "goto", "screen": "general" }] }
+          ]
+        }
+      ]
+    },
+    "wifi": {
+      "title": "Wi-Fi",
+      "elements": [
+        {
+          "role": "table", "frame": [0, 150, 393, 702], "layout": "column", "gap": 1,
+          "children": [
+            { "kind": "row", "id": "wifi-switch", "label": "Wi-Fi", "switch": "wifi" },
+            { "role": "static_text", "label": "Networks", "when": "wifi", "h": 36 },
+            { "kind": "row", "label": "HomeNet", "detail": "Connected", "when": "wifi" },
+            { "kind": "row", "label": "Cafe Guest", "when": "wifi" }
+          ]
+        }
+      ]
+    },
+    "bluetooth": {
+      "title": "Bluetooth",
+      "elements": [
+        {
+          "role": "table", "frame": [0, 150, 393, 702], "layout": "column", "gap": 1,
+          "children": [
+            { "kind": "row", "id": "bluetooth-switch", "label": "Bluetooth", "switch": "bluetooth" },
+            { "role": "static_text", "label": "My Devices", "when": "bluetooth", "h": 36 },
+            { "kind": "row", "label": "AirPods Pro", "detail": "Connected", "when": "bluetooth" }
+          ]
+        }
+      ]
+    },
+    "notifications": {
+      "title": "Notifications",
+      "elements": [
+        { "role": "static_text", "label": "Scheduled Summary is off.", "frame": [16, 160, 361, 30] }
+      ]
+    },
+    "display": {
+      "title": "Display & Brightness",
+      "elements": [
+        {
+          "role": "table", "frame": [0, 150, 393, 702], "layout": "column", "gap": 1,
+          "children": [
+            { "kind": "row", "id": "dark-mode-switch", "label": "Dark Mode", "switch": "dark" },
+            { "kind": "row", "label": "Auto-Lock", "detail": "30 seconds" },
+            { "kind": "row", "label": "Text Size" }
+          ]
+        }
+      ]
+    },
+    "general": {
+      "title": "General",
+      "elements": [
+        {
+          "role": "table", "frame": [0, 150, 393, 702], "layout": "column", "gap": 1,
+          "children": [
+            { "kind": "row", "label": "About", "detail": "iPhone 15" },
+            { "kind": "row", "label": "Software Update" }
+          ]
+        }
+      ]
+    }
+  }
+}

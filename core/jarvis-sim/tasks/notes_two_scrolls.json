@@ -1,0 +1,17 @@
+{
+  "id": "notes_two_scrolls",
+  "task": "Open the note called Conference talk",
+  "start_app": "notes",
+  "success": "notes.open == \"Conference talk\"",
+  "expect_confirm": [
+    "first_use"
+  ],
+  "expect_in_prompt": [
+    "\u2026 more below; scroll down"
+  ],
+  "max_steps": 10,
+  "script": [
+    "{\"if_prompt\":\"Cell \\\"Conference talk\\\"\",\"then\":\"{\\\"thought\\\":\\\"there it is\\\",\\\"action\\\":\\\"tap\\\",\\\"element\\\":\\\"@Cell:Conference talk\\\"}\",\"else\":\"{\\\"thought\\\":\\\"keep looking\\\",\\\"action\\\":\\\"scroll\\\",\\\"direction\\\":\\\"down\\\"}\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Opened the note\"}"
+  ]
+}

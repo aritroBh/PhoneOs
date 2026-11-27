@@ -1,0 +1,77 @@
+[package]
+name = "jarvis-ffi"
+description = "UniFFI surface exposing the Jarvis core to the Swift shell."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# One name everywhere: `libjarvis_core_ffi.{a,so,dylib}`, the UniFFI namespace is set in
+# `src/lib.rs` (`jarvis_core`) and the Swift module names in `uniffi.toml`.
+name = "jarvis_core_ffi"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+# The documented UniFFI pattern: a bindgen binary inside the crate, so the generator
+# version always matches the scaffolding version.
+#   cargo run -p jarvis-ffi --bin uniffi-bindgen generate --library <lib> --language swift --out-dir <dir>
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["cli"]
+
+[[bin]]
+# UniFFI's Swift-only generator; `scripts/build-xcframework.sh` uses it for the
+# XCFramework-style module map (`--xcframework --modulemap`).
+name = "uniffi-bindgen-swift"
+path = "uniffi-bindgen-swift.rs"
+required-features = ["cli"]
+
+[features]
+# `cli` (on by default, so the documented `cargo run --bin uniffi-bindgen` works) pulls the
+# bindings generator (clap, cargo_metadata, askama, ...) into the dependency graph. Builds
+# of the library for iOS use `--no-default-features` so none of that is compiled into the
+# static library (measured: 88 MB `.a` with it, see the report in the PR).
+default = ["cli"]
+cli = ["uniffi/cli"]
+# Test-only: exports `debug_panic_*` hooks that panic on purpose, so the Swift smoke test
+# (and anyone else) can prove panics are contained. Never enable in a shipped build.
+panic-hooks = []
+
+[dependencies]
+jarvis-proto.workspace = true
+jarvis-observe.workspace = true
+jarvis-agent.workspace = true
+jarvis-memory.workspace = true
+jarvis-skills.workspace = true
+jarvis-remote.workspace = true
+jarvis-runner.workspace = true
+jarvis-safety.workspace = true
+jarvis-viewer.workspace = true
+jarvis-voice.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uniffi.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+jarvis-proto = { workspace = true, features = ["test-util"] }
+jarvis-observe.workspace = true
+
+# Own table rather than `workspace = true`, so this crate (the only one with generated FFI
+# glue) can loosen a lint for the UniFFI macro expansions without touching the workspace.
+# Today it needs nothing loosened: the scaffolding that `uniffi::setup_scaffolding!` and the
+# derive/export macros expand to is `unsafe` (`extern "C"`, `#[no_mangle]`, raw pointers),
+# but rustc does not report `unsafe_code` (nor clippy its unwrap/panic/indexing lints) for
+# code spanned by an external proc macro. Verified with UniFFI 0.32.2: `forbid` builds and
+# `cargo clippy -p jarvis-ffi --all-targets -- -D warnings` passes. If a future UniFFI
+# trips a lint, relax exactly that lint here (`unsafe_code = "deny"` plus
+# `#[allow(unsafe_code)]` on the macro call sites), never workspace-wide.
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+indexing_slicing = "warn"

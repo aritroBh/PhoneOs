@@ -1,0 +1,33 @@
+{
+  "id": "lock_during_confirm",
+  "task": "Text Mom that I'm running late",
+  "start_app": "messages",
+  "success": "messages.thread[\"Mom\"].last == \"running late\"",
+  "expect_confirm": [
+    "first_use",
+    "send_message"
+  ],
+  "expect_confirm_count": 3,
+  "expect_model_calls": 4,
+  "max_steps": 12,
+  "faults": {
+    "locks": [
+      { "at_effect": 13, "unlock_after_ms": 90000 }
+    ]
+  },
+  "script": [
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Cell:Mom\"}",
+    "{\"thought\":\"type\",\"action\":\"type\",\"element\":\"@TextView:Message\",\"text\":\"running late\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Send\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Sent\"}"
+  ],
+  "runner_text": {
+    "expect_confirm": ["first_use", "unverified", "send_message"],
+    "expect_confirm_count": 5,
+    "faults": {
+      "locks": [
+        { "at_effect": 15, "unlock_after_ms": 90000 }
+      ]
+    }
+  }
+}

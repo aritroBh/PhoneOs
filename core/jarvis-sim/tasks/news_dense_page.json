@@ -1,0 +1,23 @@
+{
+  "id": "news_dense_page",
+  "task": "Open the story about the harbour bridge repairs",
+  "start_app": "news",
+  "success": "has(news.open, \"Harbour bridge repairs\")",
+  "expect_confirm": [
+    "first_use"
+  ],
+  "expect_in_prompt": [
+    "Link \"Harbour bridge repairs",
+    "\u2026\""
+  ],
+  "max_steps": 6,
+  "script": [
+    "{\"thought\":\"open it\",\"action\":\"tap\",\"element\":\"@Link:Harbour bridge repairs\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Opened the story\"}"
+  ],
+  "forbid_confirm": [
+    "delete",
+    "purchase",
+    "payment"
+  ]
+}

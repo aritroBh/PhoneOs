@@ -1,0 +1,294 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p2-pickers (`probe3-p2-pickers-05-contact-picker-tree.txt`), verbatim below this line.
+Q: With the CNContactPickerViewController up over the Playground: is the host's content still in the host's snapshot, is the sheet's content there, and are its frames screen coordinates?
+capture 05 (contact-picker): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 5: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 140, XCUITest snapshot 358 ms
+types without a core role: Other×90
+note: probe round 3 p2-pickers, capture 05: contact-picker
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{-440, -956}, {1320, 2868}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 72}, {440, 884}}
+                          Image {{-150, -78}, {740, 1184}}
+                          Other(Other) {{0, 72}, {440, 884}}
+                            Other(Other) {{0, 72}, {440, 884}}
+                              Other(Other) {{0, 72}, {440, 884}}
+                                Other(Other) {{0, 72}, {440, 884}}
+                                  Other(Other) {{0, 72}, {440, 884}}
+                                    NavigationBar id=Contacts {{0, 92}, {440, 54}}
+                                      Button "Back" id=BackButton {{20, 92}, {44, 44}}
+                                      Button "Cancel" {{380, 96}, {36, 36}}
+                                    Other(Other) {{0, 72}, {440, 884}}
+                                      Other(Other) {{0, 72}, {440, 884}}
+                                        Other(Other) id=ContactsListView {{0, 72}, {440, 884}}
+                                          CollectionView {{0, 72}, {440, 884}}
+                                            Other(Other) {{-2, -1622}, {462, 1853.3}}
+                                            Other(Other) {{0, 72}, {440, 884}}
+                                            Other(Other) {{0, 72}, {440, 884}}
+                                            Cell {{2, 146}, {418, 85.3}}
+                                              Other(Other) {{2, 146}, {418, 85.3}}
+                                                Other(Other) {{2, 146}, {418, 85.3}}
+                                              Other(Other) {{2, 146}, {418, 85.3}}
+                                                Other(Other) {{29, 146}, {364, 85.3}}
+                                                  Other(Other) {{41, 158}, {340, 61.3}}
+                                                    Image {{41, 158}, {38, 38}}
+                                                    Other(Other) {{90, 158}, {291, 61.3}}
+                                                      StaticText "Private Access to Contacts" {{90, 158}, {291, 20.3}}
+                                                      StaticText "Your contacts are shown here, but “Jarvis” can only access the contacts you select." {{90, 183.3}, {291, 36}}
+                                                  Button "Close" {{357.3, 154}, {23.7, 22}}
+                                            Other(Other) "Section index" {{425, 146}, {15, 724}}
+                                            Other(Other) {{-2, 231.3}, {462, 98}}
+                                            Cell "a" {{0, 231.3}, {440, 38}}
+                                              Other(Other) {{0, 231.3}, {440, 38}}
+                                              Other(Other) {{0, 231.3}, {440, 38}}
+                                                StaticText "A" {{22, 241.3}, {10, 18}}
+                                            Cell "John Appleseed" {{2, 269.3}, {418, 60}}
+                                              Other(Other) {{2, 269.3}, {418, 60}}
+                                                Other(Other) {{2, 269.3}, {418, 60}}
+                                              Other(Other) {{22, 269.3}, {40, 60}}
+                                                Button "Contact photo for John Appleseed" {{22, 279.3}, {40, 40}}
+                                                  Image {{22, 279.3}, {40, 40}}
+                                              Other(Other) {{62, 269.3}, {358, 60}}
+                                                StaticText "John Appleseed" {{72, 289.3}, {126.7, 20.3}}
+                                            Other(Other) {{18, 269.3}, {402, 1}}
+                                            Other(Other) {{-2, 329.3}, {462, 98}}
+                                            Cell "b" {{0, 329.3}, {440, 38}}
+                                              Other(Other) {{0, 329.3}, {440, 38}}
+                                              Other(Other) {{0, 329.3}, {440, 38}}
+                                                StaticText "B" {{22, 339.3}, {9.7, 18}}
+                                            Cell "Kate Bell" {{2, 367.3}, {418, 60}}
+                                              Other(Other) {{2, 367.3}, {418, 60}}
+                                                Other(Other) {{2, 367.3}, {418, 60}}
+                                              Other(Other) {{22, 367.3}, {40, 60}}
+                                                Button "Contact photo for Kate Bell" {{22, 377.3}, {40, 40}}
+                                                  Image {{22, 377.3}, {40, 40}}
+                                              Other(Other) {{62, 367.3}, {358, 60}}
+                                                StaticText "Kate Bell" {{72, 387.3}, {68.3, 20.3}}
+                                            Other(Other) {{18, 367.3}, {402, 1}}
+                                            Other(Other) {{-2, 427.3}, {462, 158.0}}
+                                            Cell "h" {{0, 427.3}, {440, 38}}
+                                              Other(Other) {{0, 427.3}, {440, 38}}
+                                              Other(Other) {{0, 427.3}, {440, 38}}
+                                                StaticText "H" {{22, 437.3}, {11, 18}}
+                                            Cell "Anna Haro" {{2, 465.3}, {418, 60.0}}
+                                              Other(Other) {{2, 465.3}, {418, 60.0}}
+                                                Other(Other) {{2, 465.3}, {418, 60.0}}
+                                              Other(Other) {{22, 465.3}, {40, 60.0}}
+                                                Button "Contact photo for Anna Haro" {{22, 475.3}, {40, 40.0}}
+                                                  Image {{22, 475.3}, {40, 40.0}}
+                                              Other(Other) {{62, 465.3}, {358, 60.0}}
+                                                StaticText "Anna Haro" {{72, 485.3}, {81.7, 20.3}}
+                                            Other(Other) {{18, 465.3}, {402, 1}}
+                                            Cell "Daniel Higgins Jr." {{2, 525.3}, {418, 60}}
+                                              Other(Other) {{2, 525.3}, {418, 60}}
+                                                Other(Other) {{2, 525.3}, {418, 60}}
+                                              Other(Other) {{22, 525.3}, {40, 60}}
+                                                Button "Contact photo for Daniel Higgins Jr." {{22, 535.3}, {40, 40}}
+                                                  Image {{22, 535.3}, {40, 40}}
+                                              Other(Other) {{62, 525.3}, {358, 60}}
+                                                StaticText "Daniel Higgins Jr." {{72, 545.3}, {135, 20.3}}
+                                            Other(Other) {{72, 524.3}, {348, 1}}
+                                            Other(Other) {{-2, 585.3}, {462, 98}}
+                                            Cell "t" {{0, 585.3}, {440, 38}}
+                                              Other(Other) {{0, 585.3}, {440, 38}}
+                                              Other(Other) {{0, 585.3}, {440, 38}}
+                                                StaticText "T" {{22, 595.3}, {9.3, 18}}
+                                            Cell "David Taylor" {{2, 623.3}, {418, 60}}
+                                              Other(Other) {{2, 623.3}, {418, 60}}
+                                                Other(Other) {{2, 623.3}, {418, 60}}
+                                              Other(Other) {{22, 623.3}, {40, 60}}
+                                                Button "Contact photo for David Taylor" {{22, 633.3}, {40, 40}}
+                                                  Image {{22, 633.3}, {40, 40}}
+                                              Other(Other) {{62, 623.3}, {358, 60}}
+                                                StaticText "David Taylor" {{72, 643.3}, {96, 20.3}}
+                                            Other(Other) {{18, 623.3}, {402, 1}}
+                                            Other(Other) {{-2, 683.3}, {462, 1866}}
+                                            Cell "z" {{0, 683.3}, {440, 38}}
+                                              Other(Other) {{0, 683.3}, {440, 38}}
+                                              Other(Other) {{0, 683.3}, {440, 38}}
+                                                StaticText "Z" {{22, 693.3}, {10, 18}}
+                                            Cell "Hank M. Zakroff" {{2, 721.3}, {418, 60}}
+                                              Other(Other) {{2, 721.3}, {418, 60}}
+                                                Other(Other) {{2, 721.3}, {418, 60}}
+                                              Other(Other) {{22, 721.3}, {40, 60}}
+                                                Button "Contact photo for Hank M. Zakroff" {{22, 731.3}, {40, 40}}
+                                                  Image {{22, 731.3}, {40, 40}}
+                                              Other(Other) {{62, 721.3}, {358, 60}}
+                                                StaticText "Hank M. Zakroff" {{72, 741.3}, {126, 20.3}}
+                                            Other(Other) {{18, 721.3}, {402, 1}}
+                                            Cell {{0, 781.3}, {440, 30}}
+                                              Other(Other) {{0, 781.3}, {440, 30}}
+                                              Other(Other) {{0, 781.3}, {440, 30}}
+                                                StaticText {{8, 796.3}, {424, 0}} [hidden]
+                                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{56, 837}, {328, 30}}
+                                              Other(Other) {{59, 864}, {322, 3}}
+                                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{56, 837}, {328, 30}}
+                                              Other(Other) {{59, 864}, {322, 3}}
+                                    Other(Other) {{0, 72}, {440, 884}}
+                                      Other(Other) {{0, 72}, {440, 884}}
+                                        Other(Other) {{0, 870}, {440, 86}}
+                                          Other(Other) {{28, 880}, {384, 48}}
+                                            Other(Other) {{28, 880}, {384, 48}}
+                                              Other(Other) {{28, 880}, {0, 0}} [hidden]
+                                                Other(Other) {{28.0, 880}, {384, 48}}
+                                                  Other(Other) {{28.0, 880}, {384, 48}}
+                                                    Other(Other) {{33.0, 885}, {374, 38}}
+                                                      SearchField "Search" placeholder="Search" {{33.0, 885}, {374, 38}}
+                                                        Image "Search" id=magnifyingglass {{46, 894}, {20.7, 19.3}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{-440, -956}, {1320, 2868}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 72}, {440, 884}}
+                          Image(43) {{-150, -78}, {740, 1184}}
+                          Other(1) {{0, 72}, {440, 884}}
+                            Other(1) {{0, 72}, {440, 884}}
+                              Other(1) {{0, 72}, {440, 884}}
+                                Other(1) {{0, 72}, {440, 884}}
+                                  Other(1) {{0, 72}, {440, 884}}
+                                    NavigationBar(21) id=Contacts {{0, 92}, {440, 54}}
+                                      Button(9) label="Back" id=BackButton {{20, 92}, {44, 44}}
+                                      Button(9) label="Cancel" {{380, 96}, {36, 36}}
+                                    Other(1) {{0, 72}, {440, 884}}
+                                      Other(1) {{0, 72}, {440, 884}}
+                                        Other(1) id=ContactsListView {{0, 72}, {440, 884}}
+                                          CollectionView(32) {{0, 72}, {440, 884}}
+                                            Other(1) {{-2, -1622}, {462, 1853.3}}
+                                            Other(1) {{0, 72}, {440, 884}}
+                                            Other(1) {{0, 72}, {440, 884}}
+                                            Cell(75) {{2, 146}, {418, 85.3}}
+                                              Other(1) {{2, 146}, {418, 85.3}}
+                                                Other(1) {{2, 146}, {418, 85.3}}
+                                              Other(1) {{2, 146}, {418, 85.3}}
+                                                Other(1) {{29, 146}, {364, 85.3}}
+                                                  Other(1) {{41, 158}, {340, 61.3}}
+                                                    Image(43) {{41, 158}, {38, 38}}
+                                                    Other(1) {{90, 158}, {291, 61.3}}
+                                                      StaticText(48) label="Private Access to Contacts" {{90, 158}, {291, 20.3}}
+                                                      StaticText(48) label="Your contacts are shown here, but “Jarvis” can only access the contacts you select." {{90, 183.3}, {291, 36}}
+                                                  Button(9) label="Close" {{357.3, 154}, {23.7, 22}}
+                                            Other(1) label="Section index" {{425, 146}, {15, 724}}
+                                            Other(1) {{-2, 231.3}, {462, 98}}
+                                            Cell(75) label="a" {{0, 231.3}, {440, 38}}
+                                              Other(1) {{0, 231.3}, {440, 38}}
+                                              Other(1) {{0, 231.3}, {440, 38}}
+                                                StaticText(48) label="A" {{22, 241.3}, {10, 18}}
+                                            Cell(75) label="John Appleseed" {{2, 269.3}, {418, 60}}
+                                              Other(1) {{2, 269.3}, {418, 60}}
+                                                Other(1) {{2, 269.3}, {418, 60}}
+                                              Other(1) {{22, 269.3}, {40, 60}}
+                                                Button(9) label="Contact photo for John Appleseed" {{22, 279.3}, {40, 40}}
+                                                  Image(43) {{22, 279.3}, {40, 40}}
+                                              Other(1) {{62, 269.3}, {358, 60}}
+                                                StaticText(48) label="John Appleseed" {{72, 289.3}, {126.7, 20.3}}
+                                            Other(1) {{18, 269.3}, {402, 1}}
+                                            Other(1) {{-2, 329.3}, {462, 98}}
+                                            Cell(75) label="b" {{0, 329.3}, {440, 38}}
+                                              Other(1) {{0, 329.3}, {440, 38}}
+                                              Other(1) {{0, 329.3}, {440, 38}}
+                                                StaticText(48) label="B" {{22, 339.3}, {9.7, 18}}
+                                            Cell(75) label="Kate Bell" {{2, 367.3}, {418, 60}}
+                                              Other(1) {{2, 367.3}, {418, 60}}
+                                                Other(1) {{2, 367.3}, {418, 60}}
+                                              Other(1) {{22, 367.3}, {40, 60}}
+                                                Button(9) label="Contact photo for Kate Bell" {{22, 377.3}, {40, 40}}
+                                                  Image(43) {{22, 377.3}, {40, 40}}
+                                              Other(1) {{62, 367.3}, {358, 60}}
+                                                StaticText(48) label="Kate Bell" {{72, 387.3}, {68.3, 20.3}}
+                                            Other(1) {{18, 367.3}, {402, 1}}
+                                            Other(1) {{-2, 427.3}, {462, 158.0}}
+                                            Cell(75) label="h" {{0, 427.3}, {440, 38}}
+                                              Other(1) {{0, 427.3}, {440, 38}}
+                                              Other(1) {{0, 427.3}, {440, 38}}
+                                                StaticText(48) label="H" {{22, 437.3}, {11, 18}}
+                                            Cell(75) label="Anna Haro" {{2, 465.3}, {418, 60.0}}
+                                              Other(1) {{2, 465.3}, {418, 60.0}}
+                                                Other(1) {{2, 465.3}, {418, 60.0}}
+                                              Other(1) {{22, 465.3}, {40, 60.0}}
+                                                Button(9) label="Contact photo for Anna Haro" {{22, 475.3}, {40, 40.0}}
+                                                  Image(43) {{22, 475.3}, {40, 40.0}}
+                                              Other(1) {{62, 465.3}, {358, 60.0}}
+                                                StaticText(48) label="Anna Haro" {{72, 485.3}, {81.7, 20.3}}
+                                            Other(1) {{18, 465.3}, {402, 1}}
+                                            Cell(75) label="Daniel Higgins Jr." {{2, 525.3}, {418, 60}}
+                                              Other(1) {{2, 525.3}, {418, 60}}
+                                                Other(1) {{2, 525.3}, {418, 60}}
+                                              Other(1) {{22, 525.3}, {40, 60}}
+                                                Button(9) label="Contact photo for Daniel Higgins Jr." {{22, 535.3}, {40, 40}}
+                                                  Image(43) {{22, 535.3}, {40, 40}}
+                                              Other(1) {{62, 525.3}, {358, 60}}
+                                                StaticText(48) label="Daniel Higgins Jr." {{72, 545.3}, {135, 20.3}}
+                                            Other(1) {{72, 524.3}, {348, 1}}
+                                            Other(1) {{-2, 585.3}, {462, 98}}
+                                            Cell(75) label="t" {{0, 585.3}, {440, 38}}
+                                              Other(1) {{0, 585.3}, {440, 38}}
+                                              Other(1) {{0, 585.3}, {440, 38}}
+                                                StaticText(48) label="T" {{22, 595.3}, {9.3, 18}}
+                                            Cell(75) label="David Taylor" {{2, 623.3}, {418, 60}}
+                                              Other(1) {{2, 623.3}, {418, 60}}
+                                                Other(1) {{2, 623.3}, {418, 60}}
+                                              Other(1) {{22, 623.3}, {40, 60}}
+                                                Button(9) label="Contact photo for David Taylor" {{22, 633.3}, {40, 40}}
+                                                  Image(43) {{22, 633.3}, {40, 40}}
+                                              Other(1) {{62, 623.3}, {358, 60}}
+                                                StaticText(48) label="David Taylor" {{72, 643.3}, {96, 20.3}}
+                                            Other(1) {{18, 623.3}, {402, 1}}
+                                            Other(1) {{-2, 683.3}, {462, 1866}}
+                                            Cell(75) label="z" {{0, 683.3}, {440, 38}}
+                                              Other(1) {{0, 683.3}, {440, 38}}
+                                              Other(1) {{0, 683.3}, {440, 38}}
+                                                StaticText(48) label="Z" {{22, 693.3}, {10, 18}}
+                                            Cell(75) label="Hank M. Zakroff" {{2, 721.3}, {418, 60}}
+                                              Other(1) {{2, 721.3}, {418, 60}}
+                                                Other(1) {{2, 721.3}, {418, 60}}
+                                              Other(1) {{22, 721.3}, {40, 60}}
+                                                Button(9) label="Contact photo for Hank M. Zakroff" {{22, 731.3}, {40, 40}}
+                                                  Image(43) {{22, 731.3}, {40, 40}}
+                                              Other(1) {{62, 721.3}, {358, 60}}
+                                                StaticText(48) label="Hank M. Zakroff" {{72, 741.3}, {126, 20.3}}
+                                            Other(1) {{18, 721.3}, {402, 1}}
+                                            Cell(75) {{0, 781.3}, {440, 30}}
+                                              Other(1) {{0, 781.3}, {440, 30}}
+                                              Other(1) {{0, 781.3}, {440, 30}}
+                                                StaticText(48) {{8, 796.3}, {424, 0}}
+                                            Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{56, 837}, {328, 30}}
+                                              Other(1) {{59, 864}, {322, 3}}
+                                            Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{56, 837}, {328, 30}}
+                                              Other(1) {{59, 864}, {322, 3}}
+                                    Other(1) {{0, 72}, {440, 884}}
+                                      Other(1) {{0, 72}, {440, 884}}
+                                        Other(1) {{0, 870}, {440, 86}}
+                                          Other(1) {{28, 880}, {384, 48}}
+                                            Other(1) {{28, 880}, {384, 48}}
+                                              Other(1) {{28, 880}, {0, 0}}
+                                                Other(1) {{28.0, 880}, {384, 48}}
+                                                  Other(1) {{28.0, 880}, {384, 48}}
+                                                    Other(1) {{33.0, 885}, {374, 38}}
+                                                      SearchField(45) label="Search" placeholder="Search" {{33.0, 885}, {374, 38}}
+                                                        Image(43) label="Search" id=magnifyingglass {{46, 894}, {20.7, 19.3}}

@@ -1,0 +1,66 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p4c-modals (`probe3-p4c-modals-10-half-sheet-tree.txt`), verbatim below this line.
+Q: With the half sheet (.medium detent) up: is there an Alert/Sheet/dialog-like node, is the content behind still in the tree, is anything marking it covered, what role do destructive buttons have?
+capture 10 (half-sheet): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 10: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 26, XCUITest snapshot 162 ms
+types without a core role: Other×20
+note: probe round 3 p4c-modals, capture 10: half-sheet
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) "dismiss popup" id=PopoverDismissRegion {{-440, -956}, {1320, 2868}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) "dismiss popup" id=PopoverDismissRegion {{-440, -956}, {1320, 2868}}
+      Other(Other) {{8, 451.1}, {424, 496.9}}
+        Other(Other) {{8, 451.1}, {424, 496.9}}
+          Other(Other) {{8, 451.1}, {424, 496.9}}
+            Other(Other) {{8, 451.1}, {424, 496.9}}
+              Other(Other) {{8, 451.1}, {424, 496.9}}
+                StaticText "Probe half sheet" {{145.5, 621.0}, {149.0, 25.4}}
+                StaticText "Probe half sheet body text" {{123.5, 669.5}, {193.0, 19.6}}
+                Button "Close Probe half sheet" id=probe3.modals.close {{125.9, 712.2}, {188.6, 33.1}}
+        Other(Other) {{8, 451.1}, {424, 496.9}}
+          Other(Other) {{8, 451.1}, {424, 496.9}}
+            Other(Other) {{8, 451.1}, {424, 496.9}}
+              Other(Other) {{8, 451.1}, {424, 496.9}}
+                Other(Other) {{8, 451.1}, {424, 496.9}}
+                  Other(Other) {{8, 451.1}, {424, 496.9}}
+              Other(Other) {{8, 451.1}, {424, 496.9}}
+                Other(Other) {{8, 451.1}, {424, 496.9}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) label="dismiss popup" id=PopoverDismissRegion {{-440, -956}, {1320, 2868}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) label="dismiss popup" id=PopoverDismissRegion {{-440, -956}, {1320, 2868}}
+      Other(1) {{8, 451.1}, {424, 496.9}}
+        Other(1) {{8, 451.1}, {424, 496.9}}
+          Other(1) {{8, 451.1}, {424, 496.9}}
+            Other(1) {{8, 451.1}, {424, 496.9}}
+              Other(1) {{8, 451.1}, {424, 496.9}}
+                StaticText(48) label="Probe half sheet" {{145.5, 621.0}, {149.0, 25.4}}
+                StaticText(48) label="Probe half sheet body text" {{123.5, 669.5}, {193.0, 19.6}}
+                Button(9) label="Close Probe half sheet" id=probe3.modals.close {{125.9, 712.2}, {188.6, 33.1}}
+        Other(1) {{8, 451.1}, {424, 496.9}}
+          Other(1) {{8, 451.1}, {424, 496.9}}
+            Other(1) {{8, 451.1}, {424, 496.9}}
+              Other(1) {{8, 451.1}, {424, 496.9}}
+                Other(1) {{8, 451.1}, {424, 496.9}}
+                  Other(1) {{8, 451.1}, {424, 496.9}}
+              Other(1) {{8, 451.1}, {424, 496.9}}
+                Other(1) {{8, 451.1}, {424, 496.9}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}

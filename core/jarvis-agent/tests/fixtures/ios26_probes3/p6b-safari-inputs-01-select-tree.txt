@@ -1,0 +1,84 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p6b-safari (`probe3-p6b-safari-inputs-01-select-tree.txt`), verbatim below this line.
+Q: After tapping Probe select: what opens (menu, popover, picker, sheet), in whose tree, with what roles?
+capture 01 (select): the raw tree of com.apple.mobilesafari by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 1: com.apple.mobilesafari
+screen 440x956 pt, keyboard hidden
+nodes 35, XCUITest snapshot 187 ms
+types without a core role: Other×24
+note: probe round 3 p6b-safari-inputs, capture 01: select
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Safari" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{8, 435}, {250, 146}}
+          Other(Other) {{8, 435}, {250, 146}}
+            Other(Other) {{8, 435}, {250, 146}}
+              Other(Other) {{8, 435}, {250, 146}}
+              CollectionView {{8, 435}, {250, 956}}
+                Cell {{8, 445}, {250, 42}}
+                  Button "Alpha" {{8, 445}, {250, 42}}
+                Cell {{8, 487}, {250, 42}}
+                  Button "Beta" {{8, 487}, {250, 42}} [selected]
+                    Image "selected" id=checkmark {{29, 502}, {13.3, 12.3}}
+                Cell {{8, 529}, {250, 42}}
+                  Button "Gamma" {{8, 529}, {250, 42}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{225, 465}, {30, 86}}
+                  Other(Other) {{252, 468}, {3, 80}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{70, 518}, {188, 30}}
+                  Other(Other) {{73, 545}, {182, 3}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{225, 465}, {30, 86}}
+                  Other(Other) {{252, 468}, {3, 80}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{70, 518}, {188, 30}}
+                  Other(Other) {{73, 545}, {182, 3}}
+            Other(Other) {{8, 435}, {250, 146}}
+              Other(Other) {{8, 435}, {250, 146}}
+                Other(Other) {{8, 435}, {250, 146}}
+                  Other(Other) {{8, 435}, {250, 146}}
+                    Other(Other) {{8, 435}, {250, 146}}
+                      Other(Other) {{8, 435}, {250, 44}}
+                  Other(Other) {{8, 435}, {250, 146}}
+                    Other(Other) {{8, 435}, {250, 44}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Safari" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{8, 435}, {250, 146}}
+          Other(1) {{8, 435}, {250, 146}}
+            Other(1) {{8, 435}, {250, 146}}
+              Other(1) {{8, 435}, {250, 146}}
+              CollectionView(32) {{8, 435}, {250, 956}}
+                Cell(75) {{8, 445}, {250, 42}}
+                  Button(9) label="Alpha" {{8, 445}, {250, 42}}
+                Cell(75) {{8, 487}, {250, 42}}
+                  Button(9) label="Beta" {{8, 487}, {250, 42}} [selected]
+                    Image(43) label="selected" id=checkmark {{29, 502}, {13.3, 12.3}}
+                Cell(75) {{8, 529}, {250, 42}}
+                  Button(9) label="Gamma" {{8, 529}, {250, 42}}
+                Other(1) label="Vertical scroll bar, 1 page" value="0%" {{225, 465}, {30, 86}}
+                  Other(1) {{252, 468}, {3, 80}}
+                Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{70, 518}, {188, 30}}
+                  Other(1) {{73, 545}, {182, 3}}
+                Other(1) label="Vertical scroll bar, 1 page" value="0%" {{225, 465}, {30, 86}}
+                  Other(1) {{252, 468}, {3, 80}}
+                Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{70, 518}, {188, 30}}
+                  Other(1) {{73, 545}, {182, 3}}
+            Other(1) {{8, 435}, {250, 146}}
+              Other(1) {{8, 435}, {250, 146}}
+                Other(1) {{8, 435}, {250, 146}}
+                  Other(1) {{8, 435}, {250, 146}}
+                    Other(1) {{8, 435}, {250, 146}}
+                      Other(1) {{8, 435}, {250, 44}}
+                  Other(1) {{8, 435}, {250, 146}}
+                    Other(1) {{8, 435}, {250, 44}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}

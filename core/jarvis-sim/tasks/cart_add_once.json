@@ -1,0 +1,18 @@
+{
+  "id": "cart_add_once",
+  "task": "Add one Desk Lamp to my cart",
+  "start_app": "shop",
+  "success": "shop.cart.len == 1 && shop.ordered == false",
+  "expect_confirm": [
+    "first_use"
+  ],
+  "expect_in_prompt": [
+    "-> ok; changed: Button \"Cart (0)\" -> \"Cart (1)\""
+  ],
+  "max_steps": 10,
+  "script": [
+    "{\"thought\":\"open the lamp\",\"action\":\"tap\",\"element\":\"@Cell:Desk Lamp\"}",
+    "{\"thought\":\"add it\",\"action\":\"tap\",\"element\":\"@Button:Add to Cart\"}",
+    "{\"if_prompt\":\"-> ok; changed: Button \\\"Cart (0)\\\" -> \\\"Cart (1)\\\"\",\"then\":\"{\\\"thought\\\":\\\"it is in the cart\\\",\\\"action\\\":\\\"done\\\",\\\"summary\\\":\\\"Added one lamp\\\"}\",\"else\":\"{\\\"thought\\\":\\\"add it\\\",\\\"action\\\":\\\"tap\\\",\\\"element\\\":\\\"@Button:Add to Cart\\\"}\"}"
+  ]
+}

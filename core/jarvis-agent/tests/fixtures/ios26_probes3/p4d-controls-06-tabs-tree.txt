@@ -1,0 +1,98 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p4d-controls (`probe3-p4d-controls-06-tabs-tree.txt`), verbatim below this line.
+Q: A TabView with three tabs: what are the tab items (role, selected flag) and their container's role?
+capture 06 (tabs): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 6: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 42, XCUITest snapshot 232 ms
+types without a core role: Other×31
+note: probe round 3 p4d-controls, capture 06: tabs
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{145.7, 430.2}, {148.7, 74.8}}
+                      StaticText "Probe tab content 1" {{145.7, 430.2}, {148.7, 20.3}}
+                      Button "Close tabs" id=probe3.tabs.close {{167.7, 470.7}, {104.7, 34.3}}
+            Other(Other) {{0, 873}, {440, 83}}
+              Other(Other) {{0, 0}, {440, 956}}
+                TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                  Other(Other) {{78, 873}, {285, 62}}
+                    Other(Other) {{78, 873}, {97.7, 54}}
+                    Other(Other) {{78, 873}, {285, 62}}
+                      Button "Probe tab 1" id=1.circle {{82, 877}, {97.7, 54}} [selected]
+                        Image "1.circle.fill" id=1.circle.fill {{117, 883.3}, {27.3, 27.3}}
+                      Button "Probe tab 2" id=2.circle {{171.7, 877}, {97.7, 54}}
+                        Image "2.circle.fill" id=2.circle.fill {{206.7, 883.3}, {27.3, 27.3}}
+                      Button "Probe tab 3" id=3.circle {{261.3, 877}, {97.7, 54}}
+                        Image "3.circle.fill" id=3.circle.fill {{296.3, 883.3}, {27.3, 27.3}}
+                    Other(Other) {{82, 877}, {97.7, 54}}
+                      Other(Other) {{82, 877}, {97.7, 54}}
+                        Other(Other) {{82, 877}, {97.7, 54}}
+                        Other(Other) {{82, 877}, {97.7, 54}}
+                          Other(Other) {{82, 877}, {97.7, 54}}
+                            Other(Other) {{82, 877}, {97.7, 54}}
+                              Other(Other) {{82, 877}, {97.7, 54}}
+                            Other(Other) {{82, 877}, {97.7, 54}}
+                          Other(Other) {{82, 877}, {97.7, 54}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{145.7, 430.2}, {148.7, 74.8}}
+                      StaticText(48) label="Probe tab content 1" {{145.7, 430.2}, {148.7, 20.3}}
+                      Button(9) label="Close tabs" id=probe3.tabs.close {{167.7, 470.7}, {104.7, 34.3}}
+            Other(1) {{0, 873}, {440, 83}}
+              Other(1) {{0, 0}, {440, 956}}
+                TabBar(22) label="Tab Bar" {{0, 873}, {440, 83}}
+                  Other(1) {{78, 873}, {285, 62}}
+                    Other(1) {{78, 873}, {97.7, 54}}
+                    Other(1) {{78, 873}, {285, 62}}
+                      Button(9) label="Probe tab 1" id=1.circle {{82, 877}, {97.7, 54}} [selected]
+                        Image(43) label="1.circle.fill" id=1.circle.fill {{117, 883.3}, {27.3, 27.3}}
+                      Button(9) label="Probe tab 2" id=2.circle {{171.7, 877}, {97.7, 54}}
+                        Image(43) label="2.circle.fill" id=2.circle.fill {{206.7, 883.3}, {27.3, 27.3}}
+                      Button(9) label="Probe tab 3" id=3.circle {{261.3, 877}, {97.7, 54}}
+                        Image(43) label="3.circle.fill" id=3.circle.fill {{296.3, 883.3}, {27.3, 27.3}}
+                    Other(1) {{82, 877}, {97.7, 54}}
+                      Other(1) {{82, 877}, {97.7, 54}}
+                        Other(1) {{82, 877}, {97.7, 54}}
+                        Other(1) {{82, 877}, {97.7, 54}}
+                          Other(1) {{82, 877}, {97.7, 54}}
+                            Other(1) {{82, 877}, {97.7, 54}}
+                              Other(1) {{82, 877}, {97.7, 54}}
+                            Other(1) {{82, 877}, {97.7, 54}}
+                          Other(1) {{82, 877}, {97.7, 54}}
+              Other(1) {{0, 873}, {440, 83}}
+                Other(1) {{0, 873}, {440, 83}}
+                  Other(1) {{0, 873}, {440, 83}}
+                    Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}
+                    Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}

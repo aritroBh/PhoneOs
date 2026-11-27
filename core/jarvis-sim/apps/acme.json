@@ -1,0 +1,41 @@
+{
+  "id": "acme",
+  "bundle_id": "com.example.acme",
+  "name": "Acme",
+  "start": "login",
+  "state": { "email": "", "password": "", "signed_in": false, "attempts": 0 },
+  "screens": {
+    "login": {
+      "elements": [
+        { "role": "static_text", "label": "Welcome back", "frame": [24, 120, 345, 40] },
+        { "id": "login.email", "role": "text_field", "label": "Email", "placeholder": "you@example.com", "bind": "email", "frame": [24, 220, 345, 44] },
+        { "id": "login.password", "role": "secure_text_field", "label": "Password", "placeholder": "Password", "bind": "password", "secure": true, "frame": [24, 280, 345, 44] },
+        {
+          "id": "login.submit", "role": "button", "label": "Sign in", "frame": [24, 344, 345, 50],
+          "enabled": "email != '' && password != ''",
+          "on_tap": [
+            {
+              "do": "if", "cond": "password == 'hunter2'",
+              "then": [{ "do": "set", "var": "signed_in", "value": true }, { "do": "goto", "screen": "welcome", "reset": true }],
+              "else": [{ "do": "add", "var": "attempts", "by": 1 }, { "do": "set", "var": "password", "value": "" }, { "do": "alert", "id": "wrong_password" }]
+            }
+          ]
+        },
+        { "id": "login.forgot", "role": "link", "label": "Forgot password?", "frame": [130, 410, 133, 20], "on_tap": [{ "do": "alert", "id": "reset_sent" }] }
+      ]
+    },
+    "welcome": {
+      "elements": [
+        { "role": "static_text", "label": "Welcome, {email}", "frame": [24, 160, 345, 40] },
+        {
+          "id": "logout", "role": "button", "label": "Sign out", "frame": [24, 240, 345, 50],
+          "on_tap": [{ "do": "set", "var": "signed_in", "value": false }, { "do": "set", "var": "password", "value": "" }, { "do": "goto", "screen": "login", "reset": true }]
+        }
+      ]
+    }
+  },
+  "alerts": {
+    "wrong_password": { "title": "Incorrect password", "message": "The password you entered is incorrect. Try again.", "buttons": [{ "label": "OK" }] },
+    "reset_sent": { "title": "Check your email", "message": "If an account exists we sent reset instructions.", "buttons": [{ "label": "OK" }] }
+  }
+}

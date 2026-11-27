@@ -1,0 +1,26 @@
+{
+  "id": "dropped_chars_corrected",
+  "task": "Text Mom that I'm running late",
+  "start_app": "messages",
+  "success": "messages.thread[\"Mom\"].last == \"running late\"",
+  "expect_confirm": [
+    "first_use",
+    "send_message"
+  ],
+  "expect_confirm_count": 2,
+  "expect_model_calls": 4,
+  "max_steps": 12,
+  "faults": {
+    "drop_chars": { "every": 3, "times": 1 }
+  },
+  "script": [
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Cell:Mom\"}",
+    "{\"thought\":\"type\",\"action\":\"type\",\"element\":\"@TextView:Message\",\"text\":\"running late\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Send\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Sent\"}"
+  ],
+  "runner_text": {
+    "expect_confirm": ["first_use", "unverified", "send_message"],
+    "expect_confirm_count": 4
+  }
+}

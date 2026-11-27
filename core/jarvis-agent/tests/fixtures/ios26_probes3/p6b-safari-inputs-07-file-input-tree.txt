@@ -1,0 +1,82 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p6b-safari (`probe3-p6b-safari-inputs-07-file-input-tree.txt`), verbatim below this line.
+Q: After tapping Probe file: what opens (menu, popover, picker, sheet), in whose tree, with what roles?
+capture 07 (file-input): the raw tree of com.apple.mobilesafari by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 7: com.apple.mobilesafari
+screen 440x956 pt, keyboard hidden
+nodes 34, XCUITest snapshot 125 ms
+types without a core role: Other×24
+note: probe round 3 p6b-safari-inputs, capture 07: file-input
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Safari" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{71, 395}, {250, 104}}
+          Other(Other) {{71, 395}, {250, 104}}
+            Other(Other) {{71, 395}, {250, 104}}
+              Other(Other) {{71, 395}, {250, 104}}
+              CollectionView {{71, 395}, {250, 956}}
+                Cell {{71, 405}, {250, 42}}
+                  Button "Photo Library" {{71, 405}, {250, 42}}
+                    Image "photo.on.rectangle" id=photo.on.rectangle {{98.7, 416.7}, {24.7, 19}}
+                Cell {{71, 447}, {250, 42}}
+                  Button "Choose File" {{71, 447}, {250, 42}}
+                    Image "move" id=folder {{99.7, 459.7}, {23, 17.3}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{288, 425}, {30, 44}}
+                  Other(Other) {{315, 428}, {3, 38}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{133, 436}, {188, 30}}
+                  Other(Other) {{136, 463}, {182, 3}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{288, 425}, {30, 44}}
+                  Other(Other) {{315, 428}, {3, 38}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{133, 436}, {188, 30}}
+                  Other(Other) {{136, 463}, {182, 3}}
+            Other(Other) {{71, 395}, {250, 104}}
+              Other(Other) {{71, 395}, {250, 104}}
+                Other(Other) {{71, 395}, {250, 104}}
+                  Other(Other) {{71, 395}, {250, 104}}
+                    Other(Other) {{71, 395}, {250, 104}}
+                      Other(Other) {{71, 395}, {250, 44}}
+                  Other(Other) {{71, 395}, {250, 104}}
+                    Other(Other) {{71, 395}, {250, 44}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Safari" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{71, 395}, {250, 104}}
+          Other(1) {{71, 395}, {250, 104}}
+            Other(1) {{71, 395}, {250, 104}}
+              Other(1) {{71, 395}, {250, 104}}
+              CollectionView(32) {{71, 395}, {250, 956}}
+                Cell(75) {{71, 405}, {250, 42}}
+                  Button(9) label="Photo Library" {{71, 405}, {250, 42}}
+                    Image(43) label="photo.on.rectangle" id=photo.on.rectangle {{98.7, 416.7}, {24.7, 19}}
+                Cell(75) {{71, 447}, {250, 42}}
+                  Button(9) label="Choose File" {{71, 447}, {250, 42}}
+                    Image(43) label="move" id=folder {{99.7, 459.7}, {23, 17.3}}
+                Other(1) label="Vertical scroll bar, 1 page" value="0%" {{288, 425}, {30, 44}}
+                  Other(1) {{315, 428}, {3, 38}}
+                Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{133, 436}, {188, 30}}
+                  Other(1) {{136, 463}, {182, 3}}
+                Other(1) label="Vertical scroll bar, 1 page" value="0%" {{288, 425}, {30, 44}}
+                  Other(1) {{315, 428}, {3, 38}}
+                Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{133, 436}, {188, 30}}
+                  Other(1) {{136, 463}, {182, 3}}
+            Other(1) {{71, 395}, {250, 104}}
+              Other(1) {{71, 395}, {250, 104}}
+                Other(1) {{71, 395}, {250, 104}}
+                  Other(1) {{71, 395}, {250, 104}}
+                    Other(1) {{71, 395}, {250, 104}}
+                      Other(1) {{71, 395}, {250, 44}}
+                  Other(1) {{71, 395}, {250, 104}}
+                    Other(1) {{71, 395}, {250, 44}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}

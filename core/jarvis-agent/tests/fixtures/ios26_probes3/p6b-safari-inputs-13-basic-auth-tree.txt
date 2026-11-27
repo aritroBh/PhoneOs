@@ -1,0 +1,158 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p6b-safari (`probe3-p6b-safari-inputs-13-basic-auth-tree.txt`), verbatim below this line.
+Q: An HTTP Basic auth challenge in Safari: is the sign-in prompt in Safari's tree, as what role, with what fields and buttons?
+capture 13 (basic-auth): the raw tree of com.apple.mobilesafari by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 13: com.apple.mobilesafari
+screen 440x956 pt, keyboard hidden
+nodes 72, XCUITest snapshot 105 ms
+types without a core role: Other×51
+note: probe round 3 p6b-safari-inputs, capture 13: basic-auth
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Safari" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) id=SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=F10E5F3E-DA8E-426D-8A90-6C271C5315DF&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=true {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 0}, {440, 49}}
+                            Other(Other) {{0, 0}, {440, 49}}
+                            Other(Other) {{0, 0}, {440, 49}}
+                          Other(Other) {{0, 0}, {440, 62}}
+                          ScrollView {{0, 0}, {440, 956}}
+                            Other(Other) id=TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=7DC72B97-C2F1-47A6-BF14-0A7B5FBBCF29&IsPrivate=false&IsPageLoaded=false&WebViewProcessID=58234 {{0, 0}, {440, 956}}
+                              WebView id=WebView {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  Other(Other) {{0, 62}, {440, 796}}
+                                  Other(Other) id=SFDialogView {{20, 353.3}, {400, 213.7}}
+                                    StaticText id=SFDialogViewMessageText {{20, 353.3}, {400, 84}}
+                                      TextView value="Sign in to 127.0.0.1\nYour password will be sent unencrypted." {{20, 353.3}, {400, 84}}
+                                        TextView "Sign in to 127.0.0.1" {{40, 369.3}, {145.2, 22}}
+                                        TextView "Your password will be sent unencrypted." {{40, 399.3}, {307.1, 22}}
+                                        Other(Other) "Vertical scroll bar, 1 page" value="0%" {{387, 353.3}, {30, 84}}
+                                          Other(Other) {{414, 356.3}, {3, 78}}
+                                        Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{20, 404.3}, {400, 30}}
+                                          Other(Other) {{23, 431.3}, {394, 3}}
+                                    TextField placeholder="User Name" {{40, 437.3}, {360, 36}}
+                                    SecureTextField placeholder="Password" {{40, 473}, {360, 35}} [secure]
+                                    Button "Cancel" {{273, 524}, {53, 33}}
+                                      StaticText "Cancel" {{273, 530}, {53, 21}}
+                                    Button "Sign In" {{346, 524}, {54, 33}}
+                                      StaticText "Sign In" {{346, 530}, {54, 21}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(Other) {{65, 950}, {310, 3}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(Other) {{65, 950}, {310, 3}}
+                      Other(Other) id=CapsuleViewController {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 858}, {440, 98}}
+                          Other(Other) {{0, 858}, {440, 98}}
+                            Other(Other) {{0, 858}, {440, 98}}
+                              Other(Other) {{0, 858}, {440, 98}}
+                                Other(Other) {{0, 858}, {440, 98}}
+                                  Other(Other) {{0, 858}, {440, 98}}
+                                    Other(Other) {{0, 858}, {440, 98}}
+                                Other(Other) {{0, 858}, {440, 98}}
+                                  Other(Other) {{0, 858}, {440, 98}}
+                          Other(Other) {{34, 874}, {48, 48}}
+                            Other(Other) {{34, 874}, {48, 48}}
+                              Button "Back" id=BackButton {{34, 874}, {48, 48}} [disabled]
+                          Other(Other) {{90, 874}, {260, 48}}
+                            Other(Other) {{90, 874}, {260, 48}}
+                              Other(Other) {{90, 874}, {260, 48}}
+                                Other(Other) id=CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false {{90, 874}, {260, 48}} [selected]
+                                  Button "Page Menu" id=PageFormatMenuButton {{94, 878}, {40, 40}}
+                                    StaticText {{94, 878}, {0, 0}} [hidden]
+                                  TextField "Address" value="Sign in to website" id=TabBarItemTitle {{151.3, 888}, {137.7, 20.3}}
+                                  Button "Close" id=StopButton {{319.3, 888}, {17.7, 20.3}}
+                          Other(Other) {{358, 874}, {48, 48}}
+                            Other(Other) {{358, 874}, {48, 48}}
+                              Button "More" id=MoreMenuButton {{358, 874}, {48, 48}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Safari" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) id=SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=F10E5F3E-DA8E-426D-8A90-6C271C5315DF&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=true {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 0}, {440, 956}}
+                          Other(1) {{0, 0}, {440, 49}}
+                            Other(1) {{0, 0}, {440, 49}}
+                            Other(1) {{0, 0}, {440, 49}}
+                          Other(1) {{0, 0}, {440, 62}}
+                          ScrollView(46) {{0, 0}, {440, 956}}
+                            Other(1) id=TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=7DC72B97-C2F1-47A6-BF14-0A7B5FBBCF29&IsPrivate=false&IsPageLoaded=false&WebViewProcessID=58234 {{0, 0}, {440, 956}}
+                              WebView(58) id=WebView {{0, 0}, {440, 956}}
+                                Other(1) {{0, 0}, {440, 956}}
+                                  Other(1) {{0, 62}, {440, 796}}
+                                  Other(1) id=SFDialogView {{20, 353.3}, {400, 213.7}}
+                                    StaticText(48) id=SFDialogViewMessageText {{20, 353.3}, {400, 84}}
+                                      TextView(52) value="Sign in to 127.0.0.1\nYour password will be sent unencrypted." {{20, 353.3}, {400, 84}}
+                                        TextView(52) label="Sign in to 127.0.0.1" {{40, 369.3}, {145.2, 22}}
+                                        TextView(52) label="Your password will be sent unencrypted." {{40, 399.3}, {307.1, 22}}
+                                        Other(1) label="Vertical scroll bar, 1 page" value="0%" {{387, 353.3}, {30, 84}}
+                                          Other(1) {{414, 356.3}, {3, 78}}
+                                        Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{20, 404.3}, {400, 30}}
+                                          Other(1) {{23, 431.3}, {394, 3}}
+                                    TextField(49) placeholder="User Name" {{40, 437.3}, {360, 36}}
+                                    SecureTextField(50) placeholder="Password" {{40, 473}, {360, 35}}
+                                    Button(9) label="Cancel" {{273, 524}, {53, 33}}
+                                      StaticText(48) label="Cancel" {{273, 530}, {53, 21}}
+                                    Button(9) label="Sign In" {{346, 524}, {54, 33}}
+                                      StaticText(48) label="Sign In" {{346, 530}, {54, 21}}
+                            Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(1) {{65, 950}, {310, 3}}
+                            Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                              Other(1) {{65, 950}, {310, 3}}
+                      Other(1) id=CapsuleViewController {{0, 0}, {440, 956}}
+                        Other(1) {{0, 858}, {440, 98}}
+                          Other(1) {{0, 858}, {440, 98}}
+                            Other(1) {{0, 858}, {440, 98}}
+                              Other(1) {{0, 858}, {440, 98}}
+                                Other(1) {{0, 858}, {440, 98}}
+                                  Other(1) {{0, 858}, {440, 98}}
+                                    Other(1) {{0, 858}, {440, 98}}
+                                Other(1) {{0, 858}, {440, 98}}
+                                  Other(1) {{0, 858}, {440, 98}}
+                          Other(1) {{34, 874}, {48, 48}}
+                            Other(1) {{34, 874}, {48, 48}}
+                              Button(9) label="Back" id=BackButton {{34, 874}, {48, 48}} [disabled]
+                          Other(1) {{90, 874}, {260, 48}}
+                            Other(1) {{90, 874}, {260, 48}}
+                              Other(1) {{90, 874}, {260, 48}}
+                                Other(1) id=CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false {{90, 874}, {260, 48}} [selected]
+                                  Button(9) label="Page Menu" id=PageFormatMenuButton {{94, 878}, {40, 40}}
+                                    StaticText(48) {{94, 878}, {0, 0}}
+                                  TextField(49) label="Address" value="Sign in to website" id=TabBarItemTitle {{151.3, 888}, {137.7, 20.3}}
+                                  Button(9) label="Close" id=StopButton {{319.3, 888}, {17.7, 20.3}}
+                          Other(1) {{358, 874}, {48, 48}}
+                            Other(1) {{358, 874}, {48, 48}}
+                              Button(9) label="More" id=MoreMenuButton {{358, 874}, {48, 48}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}

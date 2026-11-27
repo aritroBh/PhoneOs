@@ -1,0 +1,125 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 134, fact
+# probe H_ControlRoles (`fact-h-controls.01-tree.txt`), as the runner dumps it ("typed tree"):
+# a picker, a date picker (wheels), a slider, a switch and a stepper.
+# note: fact probe fact-h-controls, capture 01: controls screen, top
+# note: app state 4, device orientation 1
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 1: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Controls {{0, 62}, {440, 106}}
+                            Button "Fact probes" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText "Controls" {{20, 119.7}, {135.7, 40.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  CollectionView {{0, 0}, {440, 956}}
+                                    Other(Other) {{-20, -1744.0}, {480, 4525.7}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Cell {{20, 168}, {400, 246}}
+                                      Other(Other) {{20, 168}, {400, 246}}
+                                        Other(Other) {{20, 168}, {400, 246}}
+                                      Other(Other) {{20, 168}, {400, 246}}
+                                        Other(Other) {{20, 168}, {400, 246}}
+                                          Other(Other) {{20, 168}, {400, 246}}
+                                            Other(Picker) "Probe choice" id=probe.controls.picker {{40, 183}, {360, 216}}
+                                              Picker value="Two" {{40, 183}, {360, 216}}
+                                                Other(Other) {{0, 0}, {0, 0}} [hidden]
+                                                Other(Other) {{0, 0}, {0, 0}} [hidden]
+                                                Other(Other) {{0, 0}, {0, 0}} [hidden]
+                                    Cell {{20, 414}, {400, 270.7}}
+                                      Other(Other) {{20, 414}, {400, 270.7}}
+                                        Other(Other) {{20, 414}, {400, 270.7}}
+                                      Other(Other) {{20, 414}, {400, 270.7}}
+                                        Other(Other) {{20, 414}, {400, 270.7}}
+                                          Other(Other) {{20, 414}, {400, 270.7}}
+                                            StaticText "Probe date" {{40, 429.2}, {83.3, 20.3}}
+                                            Other(DatePicker) id=probe.controls.date {{40, 453.3}, {320, 216.0}}
+                                              Other(Picker) {{40, 453.3}, {320, 216}}
+                                                Picker value="January" {{67, 415.8}, {133, 291}} [selected]
+                                                Picker value="15" {{205, 415.8}, {49, 291}} [selected]
+                                                Picker value="2027" {{259, 415.8}, {75, 291}} [selected]
+                                    Other(Other) {{40, 413}, {360, 1}}
+                                    Cell {{20, 684.7}, {400, 61}}
+                                      Other(Other) {{20, 684.7}, {400, 61}}
+                                        Other(Other) {{20, 684.7}, {400, 61}}
+                                      Other(Other) {{20, 684.7}, {400, 61}}
+                                        Other(Other) {{20, 684.7}, {400, 61}}
+                                          Other(Other) {{20, 684.7}, {400, 61}}
+                                            Slider "Probe level" value="40%" id=probe.controls.slider {{40, 699.7}, {360, 31}}
+                                    Other(Other) {{40, 683.7}, {360, 1}}
+                                    Cell {{20, 745.7}, {400, 52}}
+                                      Other(Other) {{20, 745.7}, {400, 52}}
+                                        Other(Other) {{20, 745.7}, {400, 52}}
+                                      Other(Other) {{20, 745.7}, {400, 52}}
+                                        Other(Other) {{20, 745.7}, {400, 52}}
+                                          Other(Other) {{20, 745.7}, {400, 52}}
+                                            Switch "Probe switch" value="0" id=probe.controls.toggle {{20, 745.7}, {400, 52}}
+                                              StaticText "Probe switch" {{40, 761.5}, {98.7, 20.3}}
+                                              Switch value="0" {{339, 757.7}, {63, 28}}
+                                    Other(Other) {{40, 744.7}, {360, 1}}
+                                    Cell {{20, 797.7}, {400, 52}}
+                                      Other(Other) {{20, 797.7}, {400, 52}}
+                                        Other(Other) {{20, 797.7}, {400, 52}}
+                                      Other(Other) {{20, 797.7}, {400, 52}}
+                                        Other(Other) {{20, 797.7}, {400, 52}}
+                                          Other(Other) {{20, 797.7}, {400, 52}}
+                                            StaticText "Probe count 3" {{40, 813.5}, {107.7, 20.3}}
+                                            Button "Probe count 3" value="3" id=probe.controls.stepper {{40, 807.7}, {360, 32}}
+                                              Button "Probe count 3, Decrement" value="3" id=probe.controls.stepper-Decrement {{306, 807.7}, {47, 32}}
+                                              Button "Probe count 3, Increment" value="3" id=probe.controls.stepper-Increment {{353, 807.7}, {47, 32}}
+                                    Other(Other) {{40, 796.7}, {360, 1}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 824}, {3, 46}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 824}, {3, 46}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Skills" {{175.2, 877}, {89.7, 54}}
+                          Image "sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button "Apps" {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Control" {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}

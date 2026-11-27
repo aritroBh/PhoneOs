@@ -1,0 +1,51 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 135, fact
+# probe B_InAppBrowserSheets (`fact-b-browser-sheets.06-tree.txt`), as the runner dumps it ("typed tree"):
+# SpringBoard with the web sign-in consent alert (not in the front app's snapshot): for the follow-up.
+# note: fact probe fact-b-browser-sheets, capture 06: web sign-in consent alert expected (SpringBoard)
+# note: app state 4, device orientation 1
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 6: com.apple.springboard
+screen 440x956 pt, keyboard hidden
+
+Application " " {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Alert "“Jarvis” Wants to Use “127.0.0.1” to Sign In" {{60, 395}, {320, 194}}
+        Other(Other) {{60, 395}, {320, 194}}
+          Other(Other) {{60, 395}, {320, 194}}
+            Other(Other) {{60, 395}, {320, 194}}
+            Other(Other) {{60, 395}, {320, 194}}
+              ScrollView {{60, 395}, {320, 114}}
+                Other(Other) {{60, 395}, {320, 114}}
+                  StaticText "“Jarvis” Wants to Use “127.0.0.1” to Sign In" {{90, 417}, {260, 42.3}}
+                  StaticText "This allows the app and website to share information about you." {{90, 466.7}, {260, 38}}
+                Other(Other) {{60, 507}, {320, 2}}
+                Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{347, 395}, {30, 114}}
+                  Other(Other) {{374, 356}, {3, 36}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 476}, {320, 30}}
+                  Other(Other) {{21, 503}, {36, 3}}
+                Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{347, 395}, {30, 114}}
+                  Other(Other) {{374, 356}, {3, 36}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 476}, {320, 30}}
+                  Other(Other) {{21, 503}, {36, 3}}
+              ScrollView {{60, 509}, {320, 80}}
+                Other(Other) {{60, 509}, {320, 80}}
+                  Other(Other) {{76, 525}, {288, 48}}
+                    Button "Cancel" {{76, 525}, {140, 48}}
+                    Button "Continue" {{224, 525}, {140, 48}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{347, 509}, {30, 80}}
+                  Other(Other) {{374, 599}, {3, 7}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 556}, {320, 30}}
+                  Other(Other) {{150, 583}, {7, 3}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{347, 509}, {30, 80}}
+                  Other(Other) {{374, 599}, {3, 7}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 556}, {320, 30}}
+                  Other(Other) {{150, 583}, {7, 3}}
+        Other(Other) {{60, 395}, {320, 194}}
+          Other(Other) {{60, 395}, {320, 194}}
+            Other(Other) {{60, 395}, {320, 194}}
+              Other(Other) {{60, 395}, {320, 194}}
+                Other(Other) {{60, 395}, {320, 194}}
+                  Other(Other) {{60, 395}, {440, 956}}
+              Other(Other) {{60, 395}, {320, 194}}
+                Other(Other) {{60, 395}, {440, 956}}

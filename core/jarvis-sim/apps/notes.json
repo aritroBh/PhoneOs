@@ -1,0 +1,64 @@
+{
+  "id": "notes",
+  "bundle_id": "com.apple.mobilenotes",
+  "name": "Notes",
+  "start": "list",
+  "state": {
+    "items": [
+      "Groceries", "Gym plan", "Book list", "Trip ideas", "Recipe: pasta", "Meeting notes",
+      "Birthday gifts", "Car service", "Movie night", "Packing list", "Budget 2026", "Garden",
+      "Reading goals", "Dentist", "Old receipts", "Passport renewal", "Project Atlas", "Ideas",
+      "Podcast list", "Workout log", "Paint colors", "Moving checklist", "Language practice",
+      "Taxes", "Warranty info", "Conference talk", "Weekend plans", "Wine list"
+    ],
+    "open": "",
+    "open_index": -1,
+    "last_deleted": ""
+  },
+  "screens": {
+    "list": {
+      "title": "Notes",
+      "elements": [
+        {
+          "id": "notes-list", "role": "table", "scroll": true, "frame": [0, 150, 393, 702], "gap": 1,
+          "children": [
+            {
+              "kind": "row", "for_each": "items", "item": "t", "id": "note-{index}", "h": 56, "label": "{t}",
+              "on_tap": [
+                { "do": "set", "var": "open", "value": "{t}" },
+                { "do": "set", "var": "open_index", "value": "{index}" },
+                { "do": "goto", "screen": "note" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "note": {
+      "title": "{open}",
+      "nav_buttons": [
+        { "id": "trash", "role": "button", "label": "Delete", "frame": [305, 4, 80, 40], "on_tap": [{ "do": "alert", "id": "delete_note" }] }
+      ],
+      "elements": [
+        { "role": "text_view", "label": "Note body", "value": "{open}: nothing else written here.", "frame": [16, 160, 361, 120] }
+      ]
+    }
+  },
+  "alerts": {
+    "delete_note": {
+      "title": "Delete Note?",
+      "message": "\"{open}\" will be deleted. This cannot be undone.",
+      "buttons": [
+        { "label": "Cancel" },
+        {
+          "label": "Delete",
+          "then": [
+            { "do": "remove", "from": "items", "index": "{open_index}" },
+            { "do": "set", "var": "last_deleted", "value": "{open}" },
+            { "do": "back" }
+          ]
+        }
+      ]
+    }
+  }
+}

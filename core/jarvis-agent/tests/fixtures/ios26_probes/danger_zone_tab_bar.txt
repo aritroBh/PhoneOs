@@ -1,0 +1,85 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 137,
+# PlaygroundAgentTests (`playground-delete-declined.02-tree.txt`), as the runner dumps it ("typed tree"):
+# Jarvis Playground's "Danger zone" with its tab bar: `TabBar > … > Button "Playground" id=hand.tap [selected]` (a tab is a `Button`).
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 2: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Danger zone {{0, 62}, {440, 106}}
+                            Button "Playground" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText "Danger zone" {{20, 119.7}, {199, 40.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  CollectionView {{0, 0}, {440, 956}}
+                                    Other(Other) {{-20, -1744}, {480, 3948}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Cell {{20, 168}, {400, 52}}
+                                      Other(Other) {{20, 168}, {400, 52}}
+                                        Other(Other) {{20, 168}, {400, 52}}
+                                      Other(Other) {{20, 168}, {400, 52}}
+                                        Other(Other) {{20, 168}, {400, 52}}
+                                          Other(Other) {{20, 168}, {400, 52}}
+                                            StaticText "Account active" id=danger.status {{20, 168}, {400, 52}}
+                                    Cell {{20, 220}, {400, 52}}
+                                      Other(Other) {{20, 220}, {400, 52}}
+                                        Other(Other) {{20, 220}, {400, 52}}
+                                      Other(Other) {{20, 220}, {400, 52}}
+                                        Other(Other) {{20, 220}, {400, 52}}
+                                          Other(Other) {{20, 220}, {400, 52}}
+                                            Button "Delete account" id=danger.delete {{20, 220}, {400, 52}}
+                                    Other(Other) {{40, 219}, {360, 1}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 824}, {3, 46}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 824}, {3, 46}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image "sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button "Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}

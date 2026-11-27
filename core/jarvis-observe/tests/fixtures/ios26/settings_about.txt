@@ -1,0 +1,148 @@
+# Real XCUITest tree from an iPhone 17 Pro Max simulator (iOS 26.5) run, as the
+# runner dumps it ("typed tree"). Settings > General > About.
+observation 4: com.apple.Preferences
+screen 440x956 pt, keyboard hidden
+
+Application "Settings" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    NavigationBar id=About {{0, 62}, {440, 54}}
+                      Button "General" id=BackButton {{20, 62}, {44, 44}}
+                      StaticText "About" {{195.7, 73.7}, {48.3, 20.7}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 116}, {440, 806}}
+                              Table {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 116}, {440, 17.7}}
+                                Cell "Name, iPhone" id=NAME_CELL_ID {{20, 133.7}, {400, 53}}
+                                  Other(Other) {{20, 133.7}, {400, 53}}
+                                    Other(Other) {{20, 133.7}, {400, 53}}
+                                      Button "Name, iPhone" id=NAME_CELL_ID {{40, 150}, {360, 20.3}}
+                                        StaticText "Name" {{40, 150.0}, {45, 20.3}}
+                                        StaticText "iPhone" {{347.7, 150.0}, {52.3, 20.3}}
+                                  Other(Other) {{20, 133.7}, {400, 53}}
+                                    Other(Other) {{20, 133.7}, {400, 53}}
+                                  Other(Other) {{40, 185.7}, {360, 1}}
+                                Cell "iOS Version, 26.5" id=SW_VERSION_SPECIFIER {{20, 186.7}, {400, 53}}
+                                  Other(Other) {{20, 186.7}, {369.7, 53}}
+                                    Other(Other) {{20, 186.7}, {369.7, 53}}
+                                      Button "iOS Version, 26.5" id=SW_VERSION_SPECIFIER {{40, 203}, {341.7, 20.3}}
+                                        StaticText "iOS Version" {{40, 203.0}, {88, 20.3}}
+                                        StaticText "26.5" {{347.7, 203.0}, {34, 20.3}}
+                                  Other(Other) {{20, 186.7}, {400, 53}}
+                                    Other(Other) {{20, 186.7}, {400, 53}}
+                                  Other(Other) {{40, 238.7}, {360, 1}}
+                                  Button "chevron" {{389.7, 206.0}, {10.3, 14}} [disabled]
+                                Cell "Model Name, iPhone 17 Pro Max" id=ProductModelName {{20, 239.7}, {400, 53}}
+                                  Other(Other) {{20, 239.7}, {400, 53}}
+                                    Other(Other) {{20, 239.7}, {400, 53}}
+                                      Button "Model Name, iPhone 17 Pro Max" id=ProductModelName {{40, 256}, {360, 20.3}}
+                                        StaticText "Model Name" {{40, 256.0}, {96.3, 20.3}}
+                                        StaticText "iPhone 17 Pro Max" {{260.3, 256.0}, {139.7, 20.3}}
+                                  Other(Other) {{20, 239.7}, {400, 53}}
+                                    Other(Other) {{20, 239.7}, {400, 53}}
+                                  Other(Other) {{40, 291.7}, {360, 1}}
+                                Cell "Model Number, A3257LL/A" id=ProductModel {{20, 292.7}, {400, 53}}
+                                  Other(Other) {{20, 292.7}, {400, 53}}
+                                    Other(Other) {{20, 292.7}, {400, 53}}
+                                      Button "Model Number, A3257LL/A" id=ProductModel {{40, 309}, {360, 20.3}}
+                                        StaticText "Model Number" {{40, 309.0}, {113, 20.3}}
+                                        StaticText "A3257LL/A" {{315.7, 309.0}, {84.3, 20.3}}
+                                  Other(Other) {{20, 292.7}, {400, 53}}
+                                    Other(Other) {{20, 292.7}, {400, 53}}
+                                  Other(Other) {{40, 344.7}, {360, 1}}
+                                Cell "Serial Number, ZJLGNW7555" id=SerialNumber {{20, 345.7}, {400, 53}}
+                                  Other(Other) {{20, 345.7}, {400, 53}}
+                                    Other(Other) {{20, 345.7}, {400, 53}}
+                                      Button "Serial Number, ZJLGNW7555" id=SerialNumber {{40, 362}, {360, 20.3}}
+                                        StaticText "Serial Number" {{40, 362.0}, {108.3, 20.3}}
+                                        StaticText "ZJLGNW7555" {{291.7, 362.0}, {108.3, 20.3}}
+                                  Other(Other) {{20, 345.7}, {400, 53}}
+                                    Other(Other) {{20, 345.7}, {400, 53}}
+                                  Other(Other) {{20, 397.7}, {400, 1}}
+                                Other(Other) {{0, 398.7}, {440, 17.3}}
+                                Other(Other) {{0, 416}, {440, 17.7}}
+                                Cell "Songs, 0" id=SONGS {{20, 433.7}, {400, 53}}
+                                  Other(Other) {{20, 433.7}, {400, 53}}
+                                    Other(Other) {{20, 433.7}, {400, 53}}
+                                      Button "Songs, 0" id=SONGS {{40, 450}, {360, 20.3}}
+                                        StaticText "Songs" {{40, 450.0}, {48, 20.3}}
+                                        StaticText "0" {{389.7, 450.0}, {10.3, 20.3}}
+                                  Other(Other) {{20, 433.7}, {400, 53}}
+                                    Other(Other) {{20, 433.7}, {400, 53}}
+                                  Other(Other) {{40, 485.7}, {360, 1}}
+                                Cell "Videos, 0" id=VIDEOS {{20, 486.7}, {400, 53}}
+                                  Other(Other) {{20, 486.7}, {400, 53}}
+                                    Other(Other) {{20, 486.7}, {400, 53}}
+                                      Button "Videos, 0" id=VIDEOS {{40, 503}, {360, 20.3}}
+                                        StaticText "Videos" {{40, 503.0}, {52.3, 20.3}}
+                                        StaticText "0" {{389.7, 503.0}, {10.3, 20.3}}
+                                  Other(Other) {{20, 486.7}, {400, 53}}
+                                    Other(Other) {{20, 486.7}, {400, 53}}
+                                  Other(Other) {{40, 538.7}, {360, 1}}
+                                Cell "Photos, 6" id=PHOTOS {{20, 539.7}, {400, 53}}
+                                  Other(Other) {{20, 539.7}, {400, 53}}
+                                    Other(Other) {{20, 539.7}, {400, 53}}
+                                      Button "Photos, 6" id=PHOTOS {{40, 556}, {360, 20.3}}
+                                        StaticText "Photos" {{40, 556.0}, {53.3, 20.3}}
+                                        StaticText "6" {{389.3, 556.0}, {10.7, 20.3}}
+                                  Other(Other) {{20, 539.7}, {400, 53}}
+                                    Other(Other) {{20, 539.7}, {400, 53}}
+                                  Other(Other) {{40, 591.7}, {360, 1}}
+                                Cell "Applications, 2" id=APPLICATIONS {{20, 592.7}, {400, 53}}
+                                  Other(Other) {{20, 592.7}, {400, 53}}
+                                    Other(Other) {{20, 592.7}, {400, 53}}
+                                      Button "Applications, 2" id=APPLICATIONS {{40, 609}, {360, 20.3}}
+                                        StaticText "Applications" {{40, 609.0}, {93.7, 20.3}}
+                                        StaticText "2" {{390, 609.0}, {10, 20.3}}
+                                  Other(Other) {{20, 592.7}, {400, 53}}
+                                    Other(Other) {{20, 592.7}, {400, 53}}
+                                  Other(Other) {{40, 644.7}, {360, 1}}
+                                Cell "Capacity, 343.07 GB" id=User Data Capacity {{20, 645.7}, {400, 53}}
+                                  Other(Other) {{20, 645.7}, {400, 53}}
+                                    Other(Other) {{20, 645.7}, {400, 53}}
+                                      Button "Capacity, 343.07 GB" id=User Data Capacity {{40, 662}, {360, 20.3}}
+                                        StaticText "Capacity" {{40, 662.0}, {67, 20.3}}
+                                        StaticText "343.07 GB" {{319, 662.0}, {81, 20.3}}
+                                  Other(Other) {{20, 645.7}, {400, 53}}
+                                    Other(Other) {{20, 645.7}, {400, 53}}
+                                  Other(Other) {{40, 697.7}, {360, 1}}
+                                Cell "Available, 97.08 GB" id=User Data Available {{20, 698.7}, {400, 53}}
+                                  Other(Other) {{20, 698.7}, {400, 53}}
+                                    Other(Other) {{20, 698.7}, {400, 53}}
+                                      Button "Available, 97.08 GB" id=User Data Available {{40, 715}, {360, 20.3}}
+                                        StaticText "Available" {{40, 715.0}, {67.3, 20.3}}
+                                        StaticText "97.08 GB" {{330.3, 715.0}, {69.7, 20.3}}
+                                  Other(Other) {{20, 698.7}, {400, 53}}
+                                    Other(Other) {{20, 698.7}, {400, 53}}
+                                  Other(Other) {{20, 750.7}, {400, 1}}
+                                Other(Other) {{0, 751.7}, {440, 17.3}}
+                                Other(Other) {{0, 769}, {440, 17.7}}
+                                Other(Other) {{0, 786.7}, {440, 17.3}}
+                                Other(Other) {{0, 804}, {440, 17.7}}
+                                Cell "Certificate Trust Settings" id=CERT_TRUST_SETTINGS {{20, 821.7}, {400, 53}}
+                                  Other(Other) {{20, 821.7}, {369.7, 53}}
+                                    Other(Other) {{20, 821.7}, {369.7, 53}}
+                                      StaticText "Certificate Trust Settings" {{40, 838.0}, {189.7, 20.3}}
+                                  Other(Other) {{20, 821.7}, {400, 53}}
+                                    Other(Other) {{20, 821.7}, {400, 53}}
+                                  Other(Other) {{20, 873.7}, {400, 1}}
+                                  Button "chevron" {{389.7, 841.0}, {10.3, 14}} [disabled]
+                                Other(Other) {{0, 874.7}, {440, 17.3}}
+                                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{407, 116}, {30, 778}}
+                                  Other(Other) {{434, 129}, {3, 762}}
+                                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923}, {316, 30}}
+                                  Other(Other) {{65, 950}, {310, 3}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}

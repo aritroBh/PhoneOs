@@ -1,0 +1,21 @@
+[package]
+name = "jarvis-viewer"
+description = "The Live view's pure logic: timeline reducer, privacy rules, wire format, cursor path, replay and scene."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+jarvis-observe.workspace = true
+jarvis-proto.workspace = true
+jarvis-safety.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+jarvis-proto = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

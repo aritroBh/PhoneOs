@@ -1,0 +1,274 @@
+# Real XCUITest tree from an iPhone 17 Pro Max simulator (iOS 26.5) run, as the
+# runner dumps it ("typed tree"). Jarvis Playground long list scrolled under the bars.
+observation 3: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Long list {{0, 62}, {440, 54}}
+                            Button "Playground" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText "Long list" {{186.3, 73.7}, {67.3, 20.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  CollectionView {{0, 0}, {440, 956}}
+                                    Other(Other) {{-20, -2200.3}, {480, 8004}}
+                                    Cell {{20, -28.3}, {400, 52}}
+                                      Other(Other) {{20, -28.3}, {400, 52}}
+                                        Other(Other) {{20, -28.3}, {400, 52}}
+                                      Other(Other) {{20, -28.3}, {400, 52}}
+                                        Other(Other) {{20, -28.3}, {400, 52}}
+                                          Other(Other) {{20, -28.3}, {400, 52}}
+                                            Button "Item 6" id=list.item.6 {{20, -28.3}, {400, 52}}
+                                              StaticText "Item 6" {{40, -12.5}, {48.3, 20.3}}
+                                              Image id=chevron.forward {{390.7, -8.3}, {7, 12}}
+                                    Other(Other) {{0, -0.0}, {440, 956}}
+                                    Other(Other) {{0, -0.0}, {440, 956}}
+                                      Other(Other) {{0, 0}, {440, 170.8}}
+                                        Image id=AdditionalDimmingOverlay {{-120, -166}, {680, 332}}
+                                        Other(Other) {{0, 0}, {440, 106}}
+                                        Other(Other) {{0, 0}, {440, 170.8}}
+                                          Other(Other) {{0, 0}, {440, 170.8}}
+                                        Other(Other) {{0, 0}, {440, 170.8}}
+                                          Other(Other) {{0, 0}, {440, 170.8}}
+                                        Other(Other) {{0, 0}, {440, 170.8}}
+                                          Other(Other) {{0, 0}, {440, 170.8}}
+                                          Other(Other) {{0, 0}, {440, 170.8}}
+                                      Other(Other) {{0, 808.2}, {440, 147.8}}
+                                        Image id=AdditionalDimmingOverlay {{-120, 813}, {680, 286}}
+                                        Other(Other) {{0, 808.2}, {440, 147.8}}
+                                          Other(Other) {{0, 808.2}, {440, 147.8}}
+                                        Other(Other) {{0, 808.2}, {440, 147.8}}
+                                          Other(Other) {{0, 808.2}, {440, 147.8}}
+                                          Other(Other) {{0, 808.2}, {440, 147.8}}
+                                    Cell {{20, 23.7}, {400, 52}}
+                                      Other(Other) {{20, 23.7}, {400, 52}}
+                                        Other(Other) {{20, 23.7}, {400, 52}}
+                                      Other(Other) {{20, 23.7}, {400, 52}}
+                                        Other(Other) {{20, 23.7}, {400, 52}}
+                                          Other(Other) {{20, 23.7}, {400, 52}}
+                                            Button "Item 7" id=list.item.7 {{20, 23.7}, {400, 52}}
+                                              StaticText "Item 7" {{40, 39.5}, {47, 20.3}}
+                                              Image id=chevron.forward {{390.7, 43.7}, {7, 12}}
+                                    Other(Other) {{40, 22.7}, {360, 1}}
+                                    Cell {{20, 75.7}, {400, 52}}
+                                      Other(Other) {{20, 75.7}, {400, 52}}
+                                        Other(Other) {{20, 75.7}, {400, 52}}
+                                      Other(Other) {{20, 75.7}, {400, 52}}
+                                        Other(Other) {{20, 75.7}, {400, 52}}
+                                          Other(Other) {{20, 75.7}, {400, 52}}
+                                            Button "Item 8" id=list.item.8 {{20, 75.7}, {400, 52}}
+                                              StaticText "Item 8" {{40, 91.5}, {48.3, 20.3}}
+                                              Image id=chevron.forward {{390.7, 95.7}, {7, 12}}
+                                    Other(Other) {{40, 74.7}, {360, 1}}
+                                    Cell {{20, 127.7}, {400, 52}}
+                                      Other(Other) {{20, 127.7}, {400, 52}}
+                                        Other(Other) {{20, 127.7}, {400, 52}}
+                                      Other(Other) {{20, 127.7}, {400, 52}}
+                                        Other(Other) {{20, 127.7}, {400, 52}}
+                                          Other(Other) {{20, 127.7}, {400, 52}}
+                                            Button "Item 9" id=list.item.9 {{20, 127.7}, {400, 52}}
+                                              StaticText "Item 9" {{40, 143.5}, {48.3, 20.3}}
+                                              Image id=chevron.forward {{390.7, 147.7}, {7, 12}}
+                                    Other(Other) {{40, 126.7}, {360, 1}}
+                                    Cell {{20, 179.7}, {400, 52}}
+                                      Other(Other) {{20, 179.7}, {400, 52}}
+                                        Other(Other) {{20, 179.7}, {400, 52}}
+                                      Other(Other) {{20, 179.7}, {400, 52}}
+                                        Other(Other) {{20, 179.7}, {400, 52}}
+                                          Other(Other) {{20, 179.7}, {400, 52}}
+                                            Button "Item 10" id=list.item.10 {{20, 179.7}, {400, 52}}
+                                              StaticText "Item 10" {{40, 195.5}, {55.7, 20.3}}
+                                              Image id=chevron.forward {{390.7, 199.7}, {7, 12}}
+                                    Other(Other) {{40, 178.7}, {360, 1}}
+                                    Cell {{20, 231.7}, {400, 52}}
+                                      Other(Other) {{20, 231.7}, {400, 52}}
+                                        Other(Other) {{20, 231.7}, {400, 52}}
+                                      Other(Other) {{20, 231.7}, {400, 52}}
+                                        Other(Other) {{20, 231.7}, {400, 52}}
+                                          Other(Other) {{20, 231.7}, {400, 52}}
+                                            Button "Item 11" id=list.item.11 {{20, 231.7}, {400, 52}}
+                                              StaticText "Item 11" {{40, 247.5}, {52.7, 20.3}}
+                                              Image id=chevron.forward {{390.7, 251.7}, {7, 12}}
+                                    Other(Other) {{40, 230.7}, {360, 1}}
+                                    Cell {{20, 283.7}, {400, 52}}
+                                      Other(Other) {{20, 283.7}, {400, 52}}
+                                        Other(Other) {{20, 283.7}, {400, 52}}
+                                      Other(Other) {{20, 283.7}, {400, 52}}
+                                        Other(Other) {{20, 283.7}, {400, 52}}
+                                          Other(Other) {{20, 283.7}, {400, 52}}
+                                            Button "Item 12" id=list.item.12 {{20, 283.7}, {400, 52}}
+                                              StaticText "Item 12" {{40, 299.5}, {55.3, 20.3}}
+                                              Image id=chevron.forward {{390.7, 303.7}, {7, 12}}
+                                    Other(Other) {{40, 282.7}, {360, 1}}
+                                    Cell {{20, 335.7}, {400, 52}}
+                                      Other(Other) {{20, 335.7}, {400, 52}}
+                                        Other(Other) {{20, 335.7}, {400, 52}}
+                                      Other(Other) {{20, 335.7}, {400, 52}}
+                                        Other(Other) {{20, 335.7}, {400, 52}}
+                                          Other(Other) {{20, 335.7}, {400, 52}}
+                                            Button "Item 13" id=list.item.13 {{20, 335.7}, {400, 52}}
+                                              StaticText "Item 13" {{40, 351.5}, {55.7, 20.3}}
+                                              Image id=chevron.forward {{390.7, 355.7}, {7, 12}}
+                                    Other(Other) {{40, 334.7}, {360, 1}}
+                                    Cell {{20, 387.7}, {400, 52}}
+                                      Other(Other) {{20, 387.7}, {400, 52}}
+                                        Other(Other) {{20, 387.7}, {400, 52}}
+                                      Other(Other) {{20, 387.7}, {400, 52}}
+                                        Other(Other) {{20, 387.7}, {400, 52}}
+                                          Other(Other) {{20, 387.7}, {400, 52}}
+                                            Button "Item 14" id=list.item.14 {{20, 387.7}, {400, 52}}
+                                              StaticText "Item 14" {{40, 403.5}, {56, 20.3}}
+                                              Image id=chevron.forward {{390.7, 407.7}, {7, 12}}
+                                    Other(Other) {{40, 386.7}, {360, 1}}
+                                    Cell {{20, 439.7}, {400, 52}}
+                                      Other(Other) {{20, 439.7}, {400, 52}}
+                                        Other(Other) {{20, 439.7}, {400, 52}}
+                                      Other(Other) {{20, 439.7}, {400, 52}}
+                                        Other(Other) {{20, 439.7}, {400, 52}}
+                                          Other(Other) {{20, 439.7}, {400, 52}}
+                                            Button "Item 15" id=list.item.15 {{20, 439.7}, {400, 52}}
+                                              StaticText "Item 15" {{40, 455.5}, {55.3, 20.3}}
+                                              Image id=chevron.forward {{390.7, 459.7}, {7, 12}}
+                                    Other(Other) {{40, 438.7}, {360, 1}}
+                                    Cell {{20, 491.7}, {400, 52.0}}
+                                      Other(Other) {{20, 491.7}, {400, 52.0}}
+                                        Other(Other) {{20, 491.7}, {400, 52.0}}
+                                      Other(Other) {{20, 491.7}, {400, 52.0}}
+                                        Other(Other) {{20, 491.7}, {400, 52.0}}
+                                          Other(Other) {{20, 491.7}, {400, 52.0}}
+                                            Button "Item 16" id=list.item.16 {{20, 491.7}, {400, 52.0}}
+                                              StaticText "Item 16" {{40, 507.5}, {55.7, 20.3}}
+                                              Image id=chevron.forward {{390.7, 511.7}, {7, 12.0}}
+                                    Other(Other) {{40, 490.7}, {360, 1}}
+                                    Cell {{20, 543.7}, {400, 52}}
+                                      Other(Other) {{20, 543.7}, {400, 52}}
+                                        Other(Other) {{20, 543.7}, {400, 52}}
+                                      Other(Other) {{20, 543.7}, {400, 52}}
+                                        Other(Other) {{20, 543.7}, {400, 52}}
+                                          Other(Other) {{20, 543.7}, {400, 52}}
+                                            Button "Item 17" id=list.item.17 {{20, 543.7}, {400, 52}}
+                                              StaticText "Item 17" {{40, 559.5}, {54.7, 20.3}}
+                                              Image id=chevron.forward {{390.7, 563.7}, {7, 12}}
+                                    Other(Other) {{40, 542.7}, {360, 1}}
+                                    Cell {{20, 595.7}, {400, 52}}
+                                      Other(Other) {{20, 595.7}, {400, 52}}
+                                        Other(Other) {{20, 595.7}, {400, 52}}
+                                      Other(Other) {{20, 595.7}, {400, 52}}
+                                        Other(Other) {{20, 595.7}, {400, 52}}
+                                          Other(Other) {{20, 595.7}, {400, 52}}
+                                            Button "Item 18" id=list.item.18 {{20, 595.7}, {400, 52}}
+                                              StaticText "Item 18" {{40, 611.5}, {55.7, 20.3}}
+                                              Image id=chevron.forward {{390.7, 615.7}, {7, 12}}
+                                    Other(Other) {{40, 594.7}, {360, 1}}
+                                    Cell {{20, 647.7}, {400, 52}}
+                                      Other(Other) {{20, 647.7}, {400, 52}}
+                                        Other(Other) {{20, 647.7}, {400, 52}}
+                                      Other(Other) {{20, 647.7}, {400, 52}}
+                                        Other(Other) {{20, 647.7}, {400, 52}}
+                                          Other(Other) {{20, 647.7}, {400, 52}}
+                                            Button "Item 19" id=list.item.19 {{20, 647.7}, {400, 52}}
+                                              StaticText "Item 19" {{40, 663.5}, {55.7, 20.3}}
+                                              Image id=chevron.forward {{390.7, 667.7}, {7, 12}}
+                                    Other(Other) {{40, 646.7}, {360, 1}}
+                                    Cell {{20, 699.7}, {400, 52}}
+                                      Other(Other) {{20, 699.7}, {400, 52}}
+                                        Other(Other) {{20, 699.7}, {400, 52}}
+                                      Other(Other) {{20, 699.7}, {400, 52}}
+                                        Other(Other) {{20, 699.7}, {400, 52}}
+                                          Other(Other) {{20, 699.7}, {400, 52}}
+                                            Button "Item 20" id=list.item.20 {{20, 699.7}, {400, 52}}
+                                              StaticText "Item 20" {{40, 715.5}, {58, 20.3}}
+                                              Image id=chevron.forward {{390.7, 719.7}, {7, 12}}
+                                    Other(Other) {{40, 698.7}, {360, 1}}
+                                    Cell {{20, 751.7}, {400, 52}}
+                                      Other(Other) {{20, 751.7}, {400, 52}}
+                                        Other(Other) {{20, 751.7}, {400, 52}}
+                                      Other(Other) {{20, 751.7}, {400, 52}}
+                                        Other(Other) {{20, 751.7}, {400, 52}}
+                                          Other(Other) {{20, 751.7}, {400, 52}}
+                                            Button "Item 21" id=list.item.21 {{20, 751.7}, {400, 52}}
+                                              StaticText "Item 21" {{40, 767.5}, {55.3, 20.3}}
+                                              Image id=chevron.forward {{390.7, 771.7}, {7, 12}}
+                                    Other(Other) {{40, 750.7}, {360, 1}}
+                                    Cell {{20, 803.7}, {400, 52}}
+                                      Other(Other) {{20, 803.7}, {400, 52}}
+                                        Other(Other) {{20, 803.7}, {400, 52}}
+                                      Other(Other) {{20, 803.7}, {400, 52}}
+                                        Other(Other) {{20, 803.7}, {400, 52}}
+                                          Other(Other) {{20, 803.7}, {400, 52}}
+                                            Button "Item 22" id=list.item.22 {{20, 803.7}, {400, 52}}
+                                              StaticText "Item 22" {{40, 819.5}, {57.7, 20.3}}
+                                              Image id=chevron.forward {{390.7, 823.7}, {7, 12}}
+                                    Other(Other) {{40, 802.7}, {360, 1}}
+                                    Cell {{20, 855.7}, {400, 52}}
+                                      Other(Other) {{20, 855.7}, {400, 52}}
+                                        Other(Other) {{20, 855.7}, {400, 52}}
+                                      Other(Other) {{20, 855.7}, {400, 52}}
+                                        Other(Other) {{20, 855.7}, {400, 52}}
+                                          Other(Other) {{20, 855.7}, {400, 52}}
+                                            Button "Item 23" id=list.item.23 {{20, 855.7}, {400, 52}}
+                                              StaticText "Item 23" {{40, 871.5}, {58, 20.3}}
+                                              Image id=chevron.forward {{390.7, 875.7}, {7, 12}}
+                                    Other(Other) {{40, 854.7}, {360, 1}}
+                                    Cell {{20, 907.7}, {400, 52}}
+                                      Other(Other) {{20, 907.7}, {400, 52}}
+                                        Other(Other) {{20, 907.7}, {400, 52}}
+                                      Other(Other) {{20, 907.7}, {400, 52}}
+                                        Other(Other) {{20, 907.7}, {400, 52}}
+                                          Other(Other) {{20, 907.7}, {400, 52}}
+                                            Button "Item 24" id=list.item.24 {{20, 907.7}, {400, 52}}
+                                              StaticText "Item 24" {{40, 923.5}, {58, 20.3}}
+                                              Image id=chevron.forward {{390.7, 927.7}, {7, 12}}
+                                    Other(Other) {{40, 906.7}, {360, 1}}
+                                    Other(Other) "Vertical scroll bar, 6 pages" value="12%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 188.3}, {3, 164}}
+                                    Other(Other) "Vertical scroll bar, 6 pages" value="12%" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 188.3}, {3, 164}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Activity" id=clock {{175.2, 877}, {89.7, 54}}
+                          Image "clock" id=clock.fill {{206.2, 883.3}, {27.3, 27.3}}
+                        Button "Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Rules" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}

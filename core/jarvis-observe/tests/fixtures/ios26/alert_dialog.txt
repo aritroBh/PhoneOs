@@ -1,0 +1,46 @@
+# Real XCUITest tree from an iPhone 17 Pro Max simulator (iOS 26.5) run, as the
+# runner dumps it ("typed tree"). Jarvis Playground alert on top of the screen.
+observation 3: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Alert "Storage almost full" {{60, 416}, {320, 152}}
+        Other(Other) {{60, 416}, {320, 152}}
+          Other(Other) {{60, 416}, {320, 152}}
+            Other(Other) {{60, 416}, {320, 152}}
+            Other(Other) {{60, 416}, {320, 152}}
+              ScrollView {{60, 416}, {320, 72}}
+                Other(Other) {{60, 416}, {320, 72}}
+                  StaticText "Storage almost full" {{90, 438}, {260, 20.3}}
+                  StaticText "Free up space to keep syncing." {{90, 465.7}, {260, 18}}
+                Other(Other) {{60, 486}, {320, 2}}
+                Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{347, 416}, {30, 72}}
+                  Other(Other) {{374, 377}, {3, 36}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 455}, {320, 30}}
+                  Other(Other) {{21, 482}, {36, 3}}
+                Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{347, 416}, {30, 72}}
+                  Other(Other) {{374, 377}, {3, 36}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 455}, {320, 30}}
+                  Other(Other) {{21, 482}, {36, 3}}
+              ScrollView {{60, 488}, {320, 80}}
+                Other(Other) {{60, 488}, {320, 80}}
+                  Other(Other) {{76, 504}, {288, 48}}
+                    Button "Dismiss" {{76, 504}, {288, 48}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{347, 488}, {30, 80}}
+                  Other(Other) {{374, 578}, {3, 7}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 535}, {320, 30}}
+                  Other(Other) {{150, 562}, {7, 3}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{347, 488}, {30, 80}}
+                  Other(Other) {{374, 578}, {3, 7}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 535}, {320, 30}}
+                  Other(Other) {{150, 562}, {7, 3}}
+        Other(Other) {{60, 416}, {320, 152}}
+          Other(Other) {{60, 416}, {320, 152}}
+            Other(Other) {{60, 416}, {320, 152}}
+              Other(Other) {{60, 416}, {320, 152}}
+                Other(Other) {{60, 416}, {320, 152}}
+                  Other(Other) {{60, 416}, {440, 956}}
+              Other(Other) {{60, 416}, {320, 152}}
+                Other(Other) {{60, 416}, {440, 956}}

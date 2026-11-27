@@ -1,0 +1,30 @@
+{
+  "id": "lock_during_replay",
+  "task": "Turn off Wi-Fi",
+  "start_app": "settings",
+  "success": "settings.wifi == false",
+  "learn_first": true,
+  "expect_confirm": [
+    "system_setting"
+  ],
+  "forbid_confirm": [
+    "first_use"
+  ],
+  "expect_confirm_count": 2,
+  "expect_model_calls": 0,
+  "max_steps": 12,
+  "faults": {
+    "locks": [
+      { "before_act": 1, "unlock_after_ms": 60000 }
+    ]
+  },
+  "script": [
+    "{\"thought\":\"open Wi-Fi\",\"action\":\"tap\",\"element\":\"@Cell:Wi-Fi\"}",
+    "{\"thought\":\"switch it off\",\"action\":\"tap\",\"element\":\"@Switch:Wi-Fi\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Wi-Fi is off\"}"
+  ],
+  "runner_text": {
+    "expect_confirm": ["unverified", "system_setting"],
+    "expect_confirm_count": 3
+  }
+}

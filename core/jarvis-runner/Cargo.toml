@@ -1,0 +1,19 @@
+[package]
+name = "jarvis-runner"
+description = "Jarvis's own runner protocol: an authenticated, sans-IO loopback channel between the app and its XCUITest runner."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+jarvis-proto.workspace = true
+thiserror.workspace = true
+chacha20poly1305.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

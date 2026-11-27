@@ -1,0 +1,18 @@
+{
+  "id": "notes_delete",
+  "task": "Delete the note called Old receipts",
+  "start_app": "notes",
+  "success": "notes.last_deleted == \"Old receipts\" && notes.items.len == 27",
+  "expect_confirm": [
+    "first_use",
+    "delete"
+  ],
+  "max_steps": 16,
+  "script": [
+    "{\"thought\":\"scroll to find it\",\"action\":\"scroll\",\"direction\":\"down\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Cell:Old receipts\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Delete\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Delete\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Deleted the note\"}"
+  ]
+}

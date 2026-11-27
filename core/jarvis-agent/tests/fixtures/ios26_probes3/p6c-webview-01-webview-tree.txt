@@ -1,0 +1,234 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p6c-webview (`probe3-p6c-webview-01-webview-tree.txt`), verbatim below this line.
+Q: The probe page in a WKWebView under the host's own chrome: is there a WebView node; can host chrome and page content be told apart; is the cross-origin iframe there?
+capture 01 (webview): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 1: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 110, XCUITest snapshot 148 ms
+types without a core role: Other×67
+note: probe round 3 p6c-webview, capture 01: webview
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Web view {{0, 62}, {440, 106}}
+                            Button "Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText "Web view" {{20, 119.7}, {151.7, 40.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  StaticText "Host chrome" id=probe3.web.chrome {{16, 168}, {102.3, 20.3}}
+                                  Button "Host button 0" id=probe3.web.hostbutton {{319, 168}, {105, 20.3}}
+                                  WebView {{0, 196.3}, {440, 676.7}}
+                                    WebView {{0, 196.3}, {440, 676.7}}
+                                      WebView {{0, 196.3}, {440, 676.7}}
+                                        Other(Other) {{0, 0}, {440, 677}}
+                                          Other(Other) {{0, 0}, {440, 677}}
+                                            Other(Other) {{0, 196}, {440, 677}}
+                                              Other(Other) "Probe3 web" {{0, 196}, {440, 678}}
+                                                Other(Other) "Web probe" value="1" {{10, 206}, {420, 28}}
+                                                  StaticText "Web probe" value="Web probe" {{10, 206}, {111, 28}}
+                                                Other(Other) {{10, 238}, {420, 36}}
+                                                  Button "Probe tap target" {{10, 241}, {152, 30}}
+                                                  StaticText "taps:0" value="taps:0" {{166, 245}, {46, 21}}
+                                                Other(Other) {{10, 278}, {420, 38}}
+                                                  TextField "Probe mirror" placeholder="Probe mirror" {{10, 281}, {216, 32}}
+                                                  StaticText "typed:" value="typed:" {{229, 286}, {47, 22}}
+                                                Other(Other) {{10, 319}, {420, 22}}
+                                                  Link "Probe plain link" {{10, 319}, {111, 22}}
+                                                    StaticText "Probe plain link" value="Probe plain link" {{10, 319}, {111, 22}}
+                                                  StaticText "and" value=" and " {{120, 319}, {36, 22}}
+                                                  Link "Probe external link" {{155, 319}, {135, 22}}
+                                                    StaticText "Probe external link" value="Probe external link" {{155, 319}, {135, 22}}
+                                                Other(Other) "Probe frame" {{10, 344}, {302, 114}}
+                                                  Other(Other) {{11, 345}, {300, 111}}
+                                                    Other(Other) "Probe frame" {{11, 345}, {300, 120}}
+                                                      Other(Other) {{17, 360}, {288, 20}}
+                                                        StaticText "Probe frame text" value="Probe frame text" {{17, 360}, {115, 20}}
+                                                      Button "Probe frame button" {{17, 395}, {126, 21}}
+                                                      TextField "Probe frame field" placeholder="Probe frame field" {{147, 395}, {154, 21}}
+                                                      Other(Other) {{17, 430}, {288, 20}}
+                                                        StaticText "frame idle" value="frame idle" {{17, 430}, {69, 20}}
+                                                Other(Other) {{10, 465}, {420, 72}}
+                                                  Button "Probe alert" {{10, 468}, {114, 31}}
+                                                  Button "Probe confirm" {{127, 468}, {138, 31}}
+                                                  Button "Probe prompt" {{268, 468}, {135, 31}}
+                                                  Button "Probe dialog" {{10, 503}, {125, 31}}
+                                                Other(Other) {{10, 540}, {420, 22}}
+                                                  StaticText "result:none" value="result:none" {{10, 540}, {82, 22}}
+                                                Other(Other) {{10, 565}, {420, 39}}
+                                                  Other(Other) "Probe select" value="Beta" {{10, 569}, {91, 31}}
+                                                  Other(Other) "Probe date" value="Nov 25, 2026" {{105, 568}, {121, 33}}
+                                                Other(Other) {{10, 607}, {420, 30}}
+                                                  Button "Probe file" value="no file selected" {{10, 610}, {372, 24}}
+                                                Other(Other) "form" {{10, 640}, {420, 38}}
+                                                  TextField "Probe name" placeholder="Probe name" {{10, 643}, {216, 32}}
+                                                  Button "Probe submit" {{229, 644}, {131, 31}}
+                                      Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{407, 196.3}, {30, 676.7}}
+                                        Other(Other) {{434, 199.3}, {3, 670.3}}
+                                      Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{0, 840}, {440, 30}}
+                                        Other(Other) {{3, 867}, {434, 3}}
+                                      Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{407, 196.3}, {30, 676.7}}
+                                        Other(Other) {{434, 199.3}, {3, 670.3}}
+                                      Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{0, 840}, {440, 30}}
+                                        Other(Other) {{3, 867}, {434, 3}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image "sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button "Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 0}, {440, 956}}
+                          NavigationBar(21) id=Web view {{0, 62}, {440, 106}}
+                            Button(9) label="Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText(48) label="Web view" {{20, 119.7}, {151.7, 40.7}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+                              Other(1) {{0, 0}, {440, 956}}
+                                Other(1) {{0, 0}, {440, 956}}
+                                  StaticText(48) label="Host chrome" id=probe3.web.chrome {{16, 168}, {102.3, 20.3}}
+                                  Button(9) label="Host button 0" id=probe3.web.hostbutton {{319, 168}, {105, 20.3}}
+                                  WebView(58) {{0, 196.3}, {440, 676.7}}
+                                    WebView(58) {{0, 196.3}, {440, 676.7}}
+                                      WebView(58) {{0, 196.3}, {440, 676.7}}
+                                        Other(1) {{0, 0}, {440, 677}}
+                                          Other(1) {{0, 0}, {440, 677}}
+                                            Other(1) value="" {{0, 196}, {440, 677}}
+                                              Other(1) label="Probe3 web" value="" {{0, 196}, {440, 678}}
+                                                Other(1) label="Web probe" value="1" {{10, 206}, {420, 28}}
+                                                  StaticText(48) label="Web probe" value="Web probe" {{10, 206}, {111, 28}}
+                                                Other(1) value="" {{10, 238}, {420, 36}}
+                                                  Button(9) label="Probe tap target" value="" {{10, 241}, {152, 30}}
+                                                  StaticText(48) label="taps:0" value="taps:0" {{166, 245}, {46, 21}}
+                                                Other(1) value="" {{10, 278}, {420, 38}}
+                                                  TextField(49) label="Probe mirror" value="Probe mirror" placeholder="Probe mirror" {{10, 281}, {216, 32}}
+                                                  StaticText(48) label="typed:" value="typed:" {{229, 286}, {47, 22}}
+                                                Other(1) value="" {{10, 319}, {420, 22}}
+                                                  Link(42) label="Probe plain link" value="" {{10, 319}, {111, 22}}
+                                                    StaticText(48) label="Probe plain link" value="Probe plain link" {{10, 319}, {111, 22}}
+                                                  StaticText(48) label="and" value=" and " {{120, 319}, {36, 22}}
+                                                  Link(42) label="Probe external link" value="" {{155, 319}, {135, 22}}
+                                                    StaticText(48) label="Probe external link" value="Probe external link" {{155, 319}, {135, 22}}
+                                                Other(1) label="Probe frame" value="" {{10, 344}, {302, 114}}
+                                                  Other(1) value="" {{11, 345}, {300, 111}}
+                                                    Other(1) label="Probe frame" value="" {{11, 345}, {300, 120}}
+                                                      Other(1) value="" {{17, 360}, {288, 20}}
+                                                        StaticText(48) label="Probe frame text" value="Probe frame text" {{17, 360}, {115, 20}}
+                                                      Button(9) label="Probe frame button" value="" {{17, 395}, {126, 21}}
+                                                      TextField(49) label="Probe frame field" value="Probe frame field" placeholder="Probe frame field" {{147, 395}, {154, 21}}
+                                                      Other(1) value="" {{17, 430}, {288, 20}}
+                                                        StaticText(48) label="frame idle" value="frame idle" {{17, 430}, {69, 20}}
+                                                Other(1) value="" {{10, 465}, {420, 72}}
+                                                  Button(9) label="Probe alert" value="" {{10, 468}, {114, 31}}
+                                                  Button(9) label="Probe confirm" value="" {{127, 468}, {138, 31}}
+                                                  Button(9) label="Probe prompt" value="" {{268, 468}, {135, 31}}
+                                                  Button(9) label="Probe dialog" value="" {{10, 503}, {125, 31}}
+                                                Other(1) value="" {{10, 540}, {420, 22}}
+                                                  StaticText(48) label="result:none" value="result:none" {{10, 540}, {82, 22}}
+                                                Other(1) value="" {{10, 565}, {420, 39}}
+                                                  Other(1) label="Probe select" value="Beta" {{10, 569}, {91, 31}}
+                                                  Other(1) label="Probe date" value="Nov 25, 2026" {{105, 568}, {121, 33}}
+                                                Other(1) value="" {{10, 607}, {420, 30}}
+                                                  Button(9) label="Probe file" value="no file selected" {{10, 610}, {372, 24}}
+                                                Other(1) label="form" value="" {{10, 640}, {420, 38}}
+                                                  TextField(49) label="Probe name" value="Probe name" placeholder="Probe name" {{10, 643}, {216, 32}}
+                                                  Button(9) label="Probe submit" value="" {{229, 644}, {131, 31}}
+                                      Other(1) label="Vertical scroll bar, 2 pages" value="0%" {{407, 196.3}, {30, 676.7}}
+                                        Other(1) {{434, 199.3}, {3, 670.3}}
+                                      Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{0, 840}, {440, 30}}
+                                        Other(1) {{3, 867}, {434, 3}}
+                                      Other(1) label="Vertical scroll bar, 2 pages" value="0%" {{407, 196.3}, {30, 676.7}}
+                                        Other(1) {{434, 199.3}, {3, 670.3}}
+                                      Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{0, 840}, {440, 30}}
+                                        Other(1) {{3, 867}, {434, 3}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 873}, {440, 83}}
+                Other(1) {{0, 0}, {440, 956}}
+                  TabBar(22) label="Tab Bar" {{0, 873}, {440, 83}}
+                    Other(1) {{21, 873}, {398, 62}}
+                      Other(1) {{21, 873}, {89.7, 54}}
+                      Other(1) {{21, 873}, {398, 62}}
+                        Button(9) label="Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image(43) label="hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button(9) label="Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image(43) label="message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button(9) label="Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image(43) label="sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button(9) label="Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image(43) label="grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button(9) label="Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image(43) label="edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(1) {{25, 877}, {89.7, 54}}
+                        Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                                Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                Other(1) {{0, 873}, {440, 83}}
+                  Other(1) {{0, 873}, {440, 83}}
+                    Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}
+                          Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}

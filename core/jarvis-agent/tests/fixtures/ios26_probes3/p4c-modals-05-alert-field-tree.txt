@@ -1,0 +1,276 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p4c-modals (`probe3-p4c-modals-05-alert-field-tree.txt`), verbatim below this line.
+Q: With the alert with a text field up: is there an Alert/Sheet/dialog-like node, is the content behind still in the tree, is anything marking it covered, what role do destructive buttons have?
+capture 05 (alert-field): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 5: dev.jarvis.app
+screen 440x956 pt, keyboard visible
+nodes 131, XCUITest snapshot 236 ms
+types without a core role: Other×72
+note: probe round 3 p4c-modals, capture 05: alert-field
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Alert "Probe alert with field" {{60, 228.3}, {320, 216.3}}
+        Other(Other) {{60, 228.3}, {320, 216}}
+          Other(Other) {{60, 228.3}, {320, 216}}
+            Other(Other) {{60, 228.3}, {320, 216}}
+            Other(Other) {{60, 228.3}, {320, 216}}
+              ScrollView {{60, 228.3}, {320, 136}}
+                Other(Other) {{60, 228.3}, {320, 136.3}}
+                  StaticText "Probe alert with field" {{90, 250.3}, {260, 20.3}}
+                  StaticText "Probe alert message" {{90, 278}, {260, 18}}
+                  Other(Other) {{60, 312.3}, {320, 52}}
+                    Other(Other) {{60, 312.3}, {320, 52}}
+                      CollectionView {{60, 312.3}, {320, 52}}
+                        Cell {{60, 312.3}, {320, 48}}
+                          Other(Other) {{60, 312.3}, {320, 48}}
+                            Other(Other) {{75, 312.3}, {290, 48}}
+                              Other(Other) {{75, 312.3}, {290, 48}}
+                                Other(Other) {{75, 312.3}, {290, 48}}
+                                  Other(Other) {{75, 312.3}, {290, 48}}
+                                  TextField placeholder="Probe alert field" {{90, 319.3}, {260, 35}} [focused]
+                        Other(Other) "Vertical scroll bar, 1 page" value="0%" {{347, 312.3}, {30, 52}}
+                          Other(Other) {{374, 273.3}, {3, 36}}
+                        Other(Other) "Horizontal scroll bar, 2 pages" value="50%" {{60, 335.3}, {320, 26}}
+                          Other(Other) {{21, 358.3}, {36, 3}}
+                        Other(Other) "Vertical scroll bar, 1 page" value="0%" {{347, 312.3}, {30, 52}}
+                          Other(Other) {{374, 273.3}, {3, 36}}
+                        Other(Other) "Horizontal scroll bar, 2 pages" value="50%" {{60, 335.3}, {320, 26}}
+                          Other(Other) {{21, 358.3}, {36, 3}}
+                Other(Other) {{60, 362.3}, {320, 2}}
+                Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{347, 228.3}, {30, 136}}
+                  Other(Other) {{374, 189.3}, {3, 36}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 331.3}, {320, 30}}
+                  Other(Other) {{21, 358.3}, {36, 3}}
+                Other(Other) "Vertical scroll bar, 2 pages" value="0%" {{347, 228.3}, {30, 136}}
+                  Other(Other) {{374, 189.3}, {3, 36}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 331.3}, {320, 30}}
+                  Other(Other) {{21, 358.3}, {36, 3}}
+              ScrollView {{60, 364.3}, {320, 80}}
+                Other(Other) {{60, 364.3}, {320, 80}}
+                  Other(Other) {{76, 380.3}, {288, 48}}
+                    Button "Cancel" {{76, 380.3}, {140, 48}}
+                    Button "Delete" {{224, 380.3}, {140, 48}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{347, 364.3}, {30, 80}}
+                  Other(Other) {{374, 454.3}, {3, 7}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 411.3}, {320, 30}}
+                  Other(Other) {{150, 438.3}, {7, 3}}
+                Other(Other) "Vertical scroll bar, 1 page" value="0%" {{347, 364.3}, {30, 80}}
+                  Other(Other) {{374, 454.3}, {3, 7}}
+                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{60, 411.3}, {320, 30}}
+                  Other(Other) {{150, 438.3}, {7, 3}}
+        Other(Other) {{60, 228.3}, {320, 216.3}}
+          Other(Other) {{60, 228.3}, {320, 216.3}}
+            Other(Other) {{60, 228.3}, {320, 216.3}}
+              Other(Other) {{60, 228.3}, {320, 216.3}}
+                Other(Other) {{60, 228.3}, {320, 216.3}}
+                  Other(Other) {{60, 228.3}, {440, 956}}
+              Other(Other) {{60, 228.3}, {320, 216.3}}
+                Other(Other) {{60, 228.3}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 611}, {440, 345}}
+        Other(Other) id=inputView {{0, 611}, {440, 345}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 611}, {440, 345}}
+        Other(Other) id=SystemInputAssistantView {{0, 611}, {440, 44}}
+          Other(Other) {{0, 611}, {440, 44}}
+            Other(Other) id=CenterPageView {{0, 611}, {440, 44}}
+              Other(Other) {{0, 11}, {440, 1244}}
+                ScrollView {{0, 611}, {440, 44}}
+              Other(Other) {{0, 611}, {440, 44}}
+                Other(Other) "Typing Predictions" {{0, 611}, {440, 44}}
+                  Other(Other) {{0, 611}, {440, 44}}
+                    Other(Other) {{0, 611}, {440, 44}}
+                      Other(Other) "I" {{0, 611}, {146.7, 44}}
+                      Other(Other) "The" {{146.7, 611}, {146.7, 44}}
+                      Other(Other) "I'm" {{293.3, 611}, {146.7, 44}}
+        Other(Other) {{0, 611}, {440, 345}}
+          Other(Other) {{0, 611}, {440, 345}}
+            Other(Other) {{0, 611}, {440, 345}}
+        Other(Other) {{0, 655}, {440, 243}}
+          Keyboard {{0, 655}, {440, 243}}
+            Other(Other) {{0, 655}, {440, 243}}
+              Other(Other) id=UIKeyboardLayoutStar Preview {{0, 655}, {440, 243}}
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "Q" {{4.7, 662}, {43, 56}}
+                Key "W" {{47.7, 662}, {43.3, 56}}
+                Key "E" {{91.0, 662}, {43.3, 56}}
+                Key "R" {{134.3, 662}, {43.3, 56}}
+                Key "T" {{177.7, 662}, {43.3, 56}}
+                Key "Y" {{221, 662}, {43.3, 56}}
+                Key "U" {{264.3, 662}, {43.3, 56}}
+                Key "I" {{307.7, 662}, {43.3, 56}}
+                Key "O" {{351, 662}, {43.3, 56}}
+                Key "P" {{394.3, 662}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "A" {{26.0, 718}, {43.3, 56}}
+                Key "S" {{69.3, 718}, {43.3, 56}}
+                Key "D" {{112.7, 718}, {43.3, 56}}
+                Key "F" {{156, 718}, {43.3, 56}}
+                Key "G" {{199.3, 718}, {43.3, 56}}
+                Key "H" {{242.7, 718}, {43.3, 56}}
+                Key "J" {{286, 718}, {43.3, 56}}
+                Key "K" {{329.3, 718}, {43.3, 56}}
+                Key "L" {{372.7, 718}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Button "shift" id=shift {{4.7, 774}, {56, 56}} [selected]
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "Z" {{69.3, 774}, {43.3, 56}}
+                Key "X" {{112.7, 774}, {43.3, 56}}
+                Key "C" {{156, 774}, {43.3, 56}}
+                Key "V" {{199.3, 774}, {43.3, 56}}
+                Key "B" {{242.7, 774}, {43.3, 56}}
+                Key "N" {{286, 774}, {43.3, 56}}
+                Key "M" {{329.3, 774}, {43.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Key "delete" id=delete {{381.3, 774}, {56.3, 56}}
+                Key "numbers" id=more {{4.7, 830}, {108, 56}}
+                Key " " id=space {{112.7, 830}, {216.7, 56}}
+                Button "return" id=Return {{329.3, 830}, {108.3, 56}}
+        Other(Other) {{0, 655}, {440, 301}}
+          Button "Emoji" {{2.5, 887.7}, {80.1, 68.7}}
+            StaticText {{2.5, 887.7}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText {{357.4, 887.4}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText {{357.4, 887.4}, {0, 0}} [hidden]
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Alert(7) label="Probe alert with field" {{60, 228.3}, {320, 216.3}}
+        Other(1) {{60, 228.3}, {320, 216}}
+          Other(1) {{60, 228.3}, {320, 216}}
+            Other(1) {{60, 228.3}, {320, 216}}
+            Other(1) {{60, 228.3}, {320, 216}}
+              ScrollView(46) {{60, 228.3}, {320, 136}}
+                Other(1) {{60, 228.3}, {320, 136.3}}
+                  StaticText(48) label="Probe alert with field" {{90, 250.3}, {260, 20.3}}
+                  StaticText(48) label="Probe alert message" {{90, 278}, {260, 18}}
+                  Other(1) {{60, 312.3}, {320, 52}}
+                    Other(1) {{60, 312.3}, {320, 52}}
+                      CollectionView(32) {{60, 312.3}, {320, 52}}
+                        Cell(75) {{60, 312.3}, {320, 48}}
+                          Other(1) {{60, 312.3}, {320, 48}}
+                            Other(1) {{75, 312.3}, {290, 48}}
+                              Other(1) {{75, 312.3}, {290, 48}}
+                                Other(1) {{75, 312.3}, {290, 48}}
+                                  Other(1) {{75, 312.3}, {290, 48}}
+                                  TextField(49) placeholder="Probe alert field" {{90, 319.3}, {260, 35}} [focus]
+                        Other(1) label="Vertical scroll bar, 1 page" value="0%" {{347, 312.3}, {30, 52}}
+                          Other(1) {{374, 273.3}, {3, 36}}
+                        Other(1) label="Horizontal scroll bar, 2 pages" value="50%" {{60, 335.3}, {320, 26}}
+                          Other(1) {{21, 358.3}, {36, 3}}
+                        Other(1) label="Vertical scroll bar, 1 page" value="0%" {{347, 312.3}, {30, 52}}
+                          Other(1) {{374, 273.3}, {3, 36}}
+                        Other(1) label="Horizontal scroll bar, 2 pages" value="50%" {{60, 335.3}, {320, 26}}
+                          Other(1) {{21, 358.3}, {36, 3}}
+                Other(1) {{60, 362.3}, {320, 2}}
+                Other(1) label="Vertical scroll bar, 2 pages" value="0%" {{347, 228.3}, {30, 136}}
+                  Other(1) {{374, 189.3}, {3, 36}}
+                Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{60, 331.3}, {320, 30}}
+                  Other(1) {{21, 358.3}, {36, 3}}
+                Other(1) label="Vertical scroll bar, 2 pages" value="0%" {{347, 228.3}, {30, 136}}
+                  Other(1) {{374, 189.3}, {3, 36}}
+                Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{60, 331.3}, {320, 30}}
+                  Other(1) {{21, 358.3}, {36, 3}}
+              ScrollView(46) {{60, 364.3}, {320, 80}}
+                Other(1) {{60, 364.3}, {320, 80}}
+                  Other(1) {{76, 380.3}, {288, 48}}
+                    Button(9) label="Cancel" {{76, 380.3}, {140, 48}}
+                    Button(9) label="Delete" {{224, 380.3}, {140, 48}}
+                Other(1) label="Vertical scroll bar, 1 page" value="0%" {{347, 364.3}, {30, 80}}
+                  Other(1) {{374, 454.3}, {3, 7}}
+                Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{60, 411.3}, {320, 30}}
+                  Other(1) {{150, 438.3}, {7, 3}}
+                Other(1) label="Vertical scroll bar, 1 page" value="0%" {{347, 364.3}, {30, 80}}
+                  Other(1) {{374, 454.3}, {3, 7}}
+                Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{60, 411.3}, {320, 30}}
+                  Other(1) {{150, 438.3}, {7, 3}}
+        Other(1) {{60, 228.3}, {320, 216.3}}
+          Other(1) {{60, 228.3}, {320, 216.3}}
+            Other(1) {{60, 228.3}, {320, 216.3}}
+              Other(1) {{60, 228.3}, {320, 216.3}}
+                Other(1) {{60, 228.3}, {320, 216.3}}
+                  Other(1) {{60, 228.3}, {440, 956}}
+              Other(1) {{60, 228.3}, {320, 216.3}}
+                Other(1) {{60, 228.3}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 611}, {440, 345}}
+        Other(1) id=inputView {{0, 611}, {440, 345}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 611}, {440, 345}}
+        Other(1) id=SystemInputAssistantView {{0, 611}, {440, 44}}
+          Other(1) {{0, 611}, {440, 44}}
+            Other(1) id=CenterPageView {{0, 611}, {440, 44}}
+              Other(1) {{0, 11}, {440, 1244}}
+                ScrollView(46) {{0, 611}, {440, 44}}
+              Other(1) {{0, 611}, {440, 44}}
+                Other(1) label="Typing Predictions" {{0, 611}, {440, 44}}
+                  Other(1) {{0, 611}, {440, 44}}
+                    Other(1) {{0, 611}, {440, 44}}
+                      Other(1) label="I" {{0, 611}, {146.7, 44}}
+                      Other(1) label="The" {{146.7, 611}, {146.7, 44}}
+                      Other(1) label="I'm" {{293.3, 611}, {146.7, 44}}
+        Other(1) {{0, 611}, {440, 345}}
+          Other(1) {{0, 611}, {440, 345}}
+            Other(1) {{0, 611}, {440, 345}}
+        Other(1) {{0, 655}, {440, 243}}
+          Keyboard(19) {{0, 655}, {440, 243}}
+            Other(1) {{0, 655}, {440, 243}}
+              Other(1) id=UIKeyboardLayoutStar Preview {{0, 655}, {440, 243}}
+                Key(20) label="Padding-Left" {{0, 655}, {0, 0}}
+                Key(20) label="Q" {{4.7, 662}, {43, 56}}
+                Key(20) label="W" {{47.7, 662}, {43.3, 56}}
+                Key(20) label="E" {{91.0, 662}, {43.3, 56}}
+                Key(20) label="R" {{134.3, 662}, {43.3, 56}}
+                Key(20) label="T" {{177.7, 662}, {43.3, 56}}
+                Key(20) label="Y" {{221, 662}, {43.3, 56}}
+                Key(20) label="U" {{264.3, 662}, {43.3, 56}}
+                Key(20) label="I" {{307.7, 662}, {43.3, 56}}
+                Key(20) label="O" {{351, 662}, {43.3, 56}}
+                Key(20) label="P" {{394.3, 662}, {43.3, 56}}
+                Key(20) label="Padding-Right" {{0, 655}, {0, 0}}
+                Key(20) label="Padding-Left" {{0, 655}, {0, 0}}
+                Key(20) label="A" {{26.0, 718}, {43.3, 56}}
+                Key(20) label="S" {{69.3, 718}, {43.3, 56}}
+                Key(20) label="D" {{112.7, 718}, {43.3, 56}}
+                Key(20) label="F" {{156, 718}, {43.3, 56}}
+                Key(20) label="G" {{199.3, 718}, {43.3, 56}}
+                Key(20) label="H" {{242.7, 718}, {43.3, 56}}
+                Key(20) label="J" {{286, 718}, {43.3, 56}}
+                Key(20) label="K" {{329.3, 718}, {43.3, 56}}
+                Key(20) label="L" {{372.7, 718}, {43.3, 56}}
+                Key(20) label="Padding-Right" {{0, 655}, {0, 0}}
+                Button(9) label="shift" id=shift {{4.7, 774}, {56, 56}} [selected]
+                Key(20) label="Padding-Left" {{0, 655}, {0, 0}}
+                Key(20) label="Z" {{69.3, 774}, {43.3, 56}}
+                Key(20) label="X" {{112.7, 774}, {43.3, 56}}
+                Key(20) label="C" {{156, 774}, {43.3, 56}}
+                Key(20) label="V" {{199.3, 774}, {43.3, 56}}
+                Key(20) label="B" {{242.7, 774}, {43.3, 56}}
+                Key(20) label="N" {{286, 774}, {43.3, 56}}
+                Key(20) label="M" {{329.3, 774}, {43.3, 56}}
+                Key(20) label="Padding-Right" {{0, 655}, {0, 0}}
+                Key(20) label="delete" id=delete {{381.3, 774}, {56.3, 56}}
+                Key(20) label="numbers" id=more {{4.7, 830}, {108, 56}}
+                Key(20) label=" " id=space {{112.7, 830}, {216.7, 56}}
+                Button(9) label="return" id=Return {{329.3, 830}, {108.3, 56}}
+        Other(1) {{0, 655}, {440, 301}}
+          Button(9) label="Emoji" {{2.5, 887.7}, {80.1, 68.7}}
+            StaticText(48) {{2.5, 887.7}, {0, 0}}
+          Button(9) label="Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText(48) {{357.4, 887.4}, {0, 0}}
+          Button(9) label="Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText(48) {{357.4, 887.4}, {0, 0}}

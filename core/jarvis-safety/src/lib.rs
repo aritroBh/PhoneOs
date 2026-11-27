@@ -1,0 +1,209 @@
+//! Safety layer for the Jarvis core: app deny list and trust levels, first-use targets, risk
+//! classification, confirmation gates (Guarded / StepByStep / Trusted), budgets,
+//! screen-text sanitising, redaction and action validation.
+//!
+//! Screen content is untrusted data. Everything here is pure, deterministic and panic-free.
+//! The agent calls [`evaluate`] for every proposed action, [`sanitize_screen_text`] and
+//! [`redact`] on every piece of screen text that enters a prompt or log, and keeps a
+//! [`Budget`] per task.
+//!
+//! # What this layer does and does not protect against
+//!
+//! Two kinds of control live here. **Structural controls** do not depend on reading labels:
+//! the per-app deny list and trust levels ([`app_level`]), first-use approval of every new
+//! app ([`first_use_app`], enforced by the agent), `StepByStep` mode, which confirms every
+//! action that [`changes_state`], categories that are never executed
+//! (`Policy::deny_categories`), URL scheme checks (tool arguments included) and budgets.
+//! A **keyword net** reads English labels and nearby text through phrase tables plus a few
+//! app-specific rules to catch common blunders — tapping Pay, Send, Delete or Call, typing
+//! a password — and treats what it cannot read (other scripts, common non-English words
+//! and accented letters on controls, unlabeled or symbol-named buttons, tools without a
+//! spec) as `Unverified`, which asks by default. Untrusted screen text is kept from posing
+//! as prompt structure or leaking obvious secrets into prompts and logs.
+//!
+//! It does **not** understand what a control really does. In `Guarded` mode, inside an
+//! app the owner has approved, an English-labelled control with no risky word or context
+//! (a "Next" that actually pays) runs without asking; only `StepByStep` closes that gap,
+//! at the cost of a prompt per step. The foreign-word table is small, so many non-English
+//! labels still read as harmless. `OpenUrl` and tools that declare no app are not
+//! first-use gated, because their target app is unknown. Sanitising breaks known delimiter
+//! and chat-template forms but cannot stop a model from *following* injected prose;
+//! redaction is pattern-based and will miss secrets in unusual formats.
+//!
+//! The real boundary is the operating system: Face ID / passcode prompts, the Apple Pay
+//! sheet, iOS's own call and profile-install confirmations, and the deny list keeping the
+//! agent out of Passwords, Wallet and banking apps. Nothing here replaces them.
+
+#![forbid(unsafe_code)]
+#![deny(missing_docs)]
+
+mod actuation;
+mod app;
+mod approval;
+mod budget;
+mod classify;
+mod compat;
+mod confine;
+mod evaluate;
+mod flow;
+mod gate;
+pub mod gestures;
+mod hit;
+mod norm;
+mod phrases;
+mod redact;
+mod sanitize;
+mod sets;
+mod shape;
+mod text;
+mod validate;
+
+pub use actuation::touches_screen;
+pub use app::{
+    app_level, check_app, check_app_name, denied_app_names, is_launcher, is_spotlight,
+    is_springboard, is_unidentified_app, label_names_denied_app, matching_rule, mode_level,
+    search_names_denied_app, widget_names_denied_app, Verdict,
+};
+pub use approval::{approval_context, ApprovalContext};
+pub use budget::{Budget, BudgetVerdict};
+pub use classify::classify;
+/// Review pass 39: whether `action` presses or types into something whose drawing the tables
+/// cannot read for an attack-shaped reason (an intruder inside a Latin word, a mixed-script
+/// look-alike word, a drawn format character, past the length or soft-boundary bound): the
+/// gate asks it on the phone only at every trust level and refuses it while the owner denies
+/// any category; the session never lets an earlier approval cover it.
+pub fn cannot_be_read(action: &jarvis_proto::Action, screen: &jarvis_proto::CompactScreen) -> bool {
+    classify::cannot_be_read(action, screen)
+}
+pub use confine::check_confinement;
+pub use evaluate::{
+    classify_from, egress_owned, evaluate, evaluate_confined, evaluate_egress, evaluate_flowing,
+    evaluate_from, evaluate_owned, evaluate_sheeted, evaluate_with, first_use_app,
+    first_use_request, flow_note, flow_note_fit, flow_note_into, flow_note_kinds, flow_request,
+    handoff_note, heading_like_name, in_alert, not_owner_note, owner_gave_url, paste_note,
+    presumed_submit, presumed_submit_owned, question_noted, question_with, recipient_field_name,
+    return_question, return_question_noted, return_summary, sensitive_note,
+    strong_recipient_field_name, summarize, summary_for, summary_with, verb_of, Decision,
+    ScreenSource, ScreenTree, TypedText, FLOW_NAMES_BUDGET, INCOMPLETE_SCREEN_WARNING,
+    QUESTION_HEADINGS, QUESTION_KEYWORDS, QUESTION_MARKERS, RECIPIENT_FIELD_HEADS,
+    RECIPIENT_FIELD_NEGATIVES, RECIPIENT_FIELD_QUALIFIERS, RECIPIENT_FIELD_STRONG_HEADS,
+    RECIPIENT_FIELD_WEAK_HEADS, UNVERIFIED_SCREEN_WARNING,
+};
+pub use evaluate::{
+    incomplete, planned_drag, planned_path, round3_question_notes, source_rule,
+    EMERGENCY_CALL_NOTE, ROW_ACTIONS_NOTE, ROW_SWIPE_NOTE,
+};
+pub use flow::{
+    copy_control, edit_menu_shape, edit_menu_view, few_actionable, flow_checked, grid_cell,
+    handoff_control, home_menu_row, home_screen_mode, home_view, insert_control, inside_text_input,
+    is_browser, notification_banner, observed_context, observed_places, remote_container,
+    share_sheet_control, spotlight_app_icon, thin_tree, unplaced_target, url_destination,
+    Confinement, EditMenuShape, FlowContext, HomeScreenMode, InputKind, ScreenPlaces, BROWSERS,
+    COVERS_ALL, COVERS_ALL_PREFIX, EDIT_MENU_OS_LABELS, HOME_SCREEN_READ, LOCAL_MENU_ITEMS,
+    MIN_ACTIONABLE, SCREEN_PICTURE, SHARE_SHEET_IDS, SPOTLIGHT, SYSTEM_ALERT, SYSTEM_BROWSER,
+    UNIDENTIFIED_APP, UNREADABLE_SCREEN_PREFIX, UNREADABLE_SCREEN_SUFFIX,
+};
+pub use flow::{picker_node, PickerKind, SYSTEM_PICKER_IDS};
+pub use gate::{
+    changes_incomplete_screen, changes_state, gate, gate_in, gate_on, gate_owned, Gate,
+    NEVER_REMOTE_APPROVE, TRUSTED_ALLOWED,
+};
+pub use hit::{
+    control_at, point_is_clear, system_bar, takes_taps, tap_spot, tap_spot_under, Bar, Covered,
+    CoveredBy, Edge, OccluderRule, PointError, GRID as TAP_GRID, OCCLUDER_RULE,
+    PAGE_MIN_BAR_HEIGHTS, PAGE_MIN_WIDTH, SYSTEM_BAR_BOTTOM_REGION, SYSTEM_BAR_MAX_BOTTOM_HEIGHT,
+    SYSTEM_BAR_MAX_TOP_HEIGHT, SYSTEM_BAR_MIN_CAP, SYSTEM_BAR_MIN_WIDTH, SYSTEM_BAR_TOP_REGION,
+};
+/// The implementations faster code replaced, kept so differential tests in other crates can
+/// hold the new code to them. Tests only (feature `reference`).
+#[cfg(feature = "reference")]
+#[doc(hidden)]
+pub mod reference {
+    pub use crate::hit::reference::tap_spot_under;
+
+    /// Review pass 35/36: a tap's category by the target's own words, then by their
+    /// look-alike character sets (empty when the sets give nothing): the old
+    /// classification is the first.
+    pub fn tap_reading_risks(
+        action: &jarvis_proto::Action,
+        screen: &jarvis_proto::CompactScreen,
+    ) -> Vec<jarvis_proto::RiskCategory> {
+        crate::classify::reading_risks(action, screen)
+    }
+
+    /// Review pass 36: `text`'s category through the action phrases by its look-alike
+    /// character sets alone (what the sets add to [`crate::label_risk`]).
+    pub fn lookalike_label_risk(text: &str) -> jarvis_proto::RiskCategory {
+        crate::classify::lookalike_label_risk(text)
+    }
+
+    /// Review pass 37: `text` through the one normalisation both readings share.
+    pub fn normalized(text: &str) -> String {
+        crate::norm::normalized(text)
+    }
+
+    /// Review pass 38: whether `text` holds a character not known inside a word that reads
+    /// as Latin (`crate::norm::has_intruder`).
+    pub fn has_intruder(text: &str) -> bool {
+        crate::norm::has_intruder(text)
+    }
+
+    /// Review pass 39: `text` with every multi-letter compatibility form written as its
+    /// letters (`㏒` log), as both readings take it before the normalisation.
+    pub fn expanded(text: &str) -> String {
+        crate::norm::expanded(text).into_owned()
+    }
+
+    /// Review pass 39: whether `action` presses or types into something whose drawing the
+    /// tables cannot read (`crate::classify::cannot_be_read`: asked on the phone only at
+    /// every trust level, refused while any category is denied).
+    pub fn cannot_be_read(
+        action: &jarvis_proto::Action,
+        screen: &jarvis_proto::CompactScreen,
+    ) -> bool {
+        crate::classify::cannot_be_read(action, screen)
+    }
+
+    /// Review pass 37 (F8): the soft boundaries of `text`'s look-alike units.
+    pub fn soft_boundaries(text: &str) -> usize {
+        crate::sets::with_units(text, crate::sets::soft_boundaries)
+    }
+
+    /// Review pass 37 (F8): the most soft boundaries a label may hold for the sets to walk.
+    pub const MAX_SOFT_BOUNDARIES: usize = crate::sets::MAX_SOFT_BOUNDARIES;
+
+    /// Review pass 39: the normalisation steps taken on this thread so far (one per
+    /// character a reading normalises, one per multi-letter lookup).
+    pub fn norm_steps() -> u64 {
+        crate::norm::norm_steps()
+    }
+
+    /// Review pass 37 (F8): the look-alike trie steps walked on this thread so far.
+    pub fn walk_steps() -> u64 {
+        crate::sets::walk_steps()
+    }
+}
+pub use phrases::{
+    identifier_symbol_risk, label_risk, max_risk, AppRule, Phrase, RuleTarget, ACTION_PHRASES,
+    APP_PHRASES, APP_RULES, APP_STORE_BUNDLE_ID, COMPOSE_FIELD_PHRASES, CONTEXT_PHRASES,
+    CREDENTIAL_FIELD_PHRASES, HIDDEN_FIELD_PHRASES, NAVIGATION_PHRASES, PRICE_VERB_PHRASES,
+    SETTINGS_ACTION_PHRASES, SETTINGS_BUNDLE_ID, SETTINGS_CONTEXT_PHRASES, SF_SYMBOLS,
+    SHARE_SAFE_PHRASES,
+};
+pub use redact::{
+    contains_secret, credential_like_field, redact, redact_element, redact_screen, ACCOUNT_MASK,
+    CARD_MASK, CODE_MASK, KEY_MASK, SECRET_MASK,
+};
+pub use sanitize::{
+    sanitize_screen_text, sanitize_screen_text_with_limit, MAX_SCREEN_TEXT_CHARS, SCREEN_BLOCK_END,
+    SCREEN_BLOCK_START,
+};
+/// The character classes behind matching, for other crates that match words the same way
+/// (`jarvis-voice`: the wake phrase, the stop words and the spoken-text cleaner use this
+/// crate's notion of an invisible character rather than a copy).
+pub use text::{fold_char, is_combining, is_invisible};
+pub use text::{label_is_foreign, label_is_unreadable, FOREIGN_UI_WORDS};
+pub use validate::{
+    url_scheme, validate_action, wait_level, ActionError, ALLOWED_URL_SCHEMES, MAX_LONG_PRESS_MS,
+    MAX_TYPE_CHARS, MAX_URL_LEN, MAX_WAIT_MS, WAIT_LEVELS_MS,
+};

@@ -1,0 +1,568 @@
+//! Prompt text for a compact screen, degraded gracefully to fit a token budget.
+
+use jarvis_proto::{CompactScreen, CoverKind, Element, Role};
+
+/// Label caps (in characters) tried in order when the full text is over budget.
+const LABEL_CAPS: [usize; 4] = [48, 32, 20, 12];
+
+/// Estimated tokens of `text`: ceil(UTF-8 bytes / 4).
+pub fn estimate_tokens(text: &str) -> u32 {
+    tokens_of_len(text.len())
+}
+
+/// [`estimate_tokens`] of a text of `len` UTF-8 bytes.
+fn tokens_of_len(len: usize) -> u32 {
+    u32::try_from(len.div_ceil(4)).unwrap_or(u32::MAX)
+}
+
+/// The role as the rendered screen names it (`Button`, `Cell`, ...).
+pub fn role_name(role: &Role) -> &str {
+    match role {
+        Role::Button => "Button",
+        Role::Link => "Link",
+        Role::TextField => "TextField",
+        Role::SecureTextField => "SecureTextField",
+        Role::TextView => "TextView",
+        Role::SearchField => "SearchField",
+        Role::StaticText => "StaticText",
+        Role::Image => "Image",
+        Role::Cell => "Cell",
+        Role::Switch => "Switch",
+        Role::Slider => "Slider",
+        Role::Picker => "Picker",
+        Role::Tab => "Tab",
+        Role::NavigationBar => "NavigationBar",
+        Role::TabBar => "TabBar",
+        Role::Toolbar => "Toolbar",
+        Role::Alert => "Alert",
+        Role::Sheet => "Sheet",
+        Role::Keyboard => "Keyboard",
+        Role::Key => "Key",
+        Role::ScrollView => "ScrollView",
+        Role::Table => "Table",
+        Role::CollectionView => "CollectionView",
+        Role::WebView => "WebView",
+        Role::Window => "Window",
+        Role::Application => "Application",
+        // Probe run 134: an edit menu's item keeps its own name (it is pressed like a button).
+        r if r.is_menu_item() => "MenuItem",
+        Role::Other(_) => "Other",
+    }
+}
+
+/// Escapes `"`, `\` and control characters so a label stays on one line inside quotes.
+fn escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Cuts `s` to at most `cap` characters, ending in `…` when cut.
+fn truncate(s: &str, cap: Option<usize>) -> String {
+    match cap {
+        Some(cap) if s.chars().count() > cap => {
+            let mut t: String = s.chars().take(cap.saturating_sub(1)).collect();
+            t.push('…');
+            t
+        }
+        _ => s.to_owned(),
+    }
+}
+
+/// `on`/`off` for a switch whose value is one of the forms iOS and SwiftUI report
+/// (`1`/`0`, `true`/`false`, `on`/`off`); `None` for anything else, which is shown raw.
+/// Only the rendering changes: `Element::value` keeps the raw value for verification.
+pub fn switch_state(e: &Element) -> Option<&'static str> {
+    if e.role != Role::Switch {
+        return None;
+    }
+    match e
+        .value
+        .as_deref()
+        .map(str::trim)?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "1" | "true" | "on" => Some("on"),
+        "0" | "false" | "off" => Some("off"),
+        _ => None,
+    }
+}
+
+/// The marker after a covered control's line: a tap on it would be refused (see
+/// `jarvis_observe::compact`'s `cues.covered`). Fixed text; the cover is named by its role
+/// only, never by its label.
+pub fn cover_marker(by: CoverKind) -> &'static str {
+    match by {
+        CoverKind::NavigationBar => " (under the navigation bar: scroll)",
+        CoverKind::TabBar => " (under the tab bar: scroll)",
+        CoverKind::Toolbar => " (under the toolbar: scroll)",
+        CoverKind::Keyboard => " (under the keyboard)",
+        CoverKind::Other => " (covered)",
+    }
+}
+
+/// Probe run 134: the marker after the line of an element whose position on screen is not
+/// known (`cues.unplaced`: inside another process's remote container, the share sheet's).
+/// A tap, long press, typing, clear or drag naming it is refused
+/// (`jarvis_safety::unplaced_target`, the same cue). Fixed text.
+pub const UNPLACED_MARKER: &str = " (position not known: cannot be tapped)";
+
+/// `e`'s line, with the cover marker when the screen's cues say a tap on it is refused, or
+/// the position marker when its position is not known.
+fn line_of(screen: &CompactScreen, e: &Element, cap: Option<usize>) -> String {
+    let mut line = element_line(e, cap);
+    if screen.cues.is_unplaced(e.index) {
+        line.push_str(UNPLACED_MARKER);
+    } else if let Some(by) = screen.cues.cover_of(e.index) {
+        line.push_str(cover_marker(by));
+    }
+    line
+}
+
+fn element_line(e: &Element, cap: Option<usize>) -> String {
+    let mut line = format!("[{}] {}", e.index, role_name(&e.role));
+    if !e.label.is_empty() {
+        line.push_str(&format!(" \"{}\"", escape(&truncate(&e.label, cap))));
+    }
+    let switch = switch_state(e);
+    match (&e.value, &e.placeholder) {
+        _ if switch.is_some() => {}
+        (Some(v), _) => line.push_str(&format!(" value=\"{}\"", escape(&truncate(v, cap)))),
+        (None, Some(p)) if e.role.is_text_input() && *p != e.label => {
+            line.push_str(&format!(" placeholder=\"{}\"", escape(&truncate(p, cap))));
+        }
+        _ => {}
+    }
+    let mut flags: Vec<&str> = Vec::new();
+    if let Some(state) = switch {
+        flags.push(state);
+    }
+    if e.focused {
+        flags.push("focused");
+    }
+    if e.selected {
+        flags.push("selected");
+    }
+    if !e.enabled {
+        flags.push("disabled");
+    }
+    if !flags.is_empty() {
+        line.push_str(&format!(" ({})", flags.join(", ")));
+    }
+    line
+}
+
+fn header(screen: &CompactScreen) -> String {
+    let mut out = match &screen.app_name {
+        Some(name) if !name.is_empty() => format!("App: {name} ({})", screen.app_bundle_id),
+        _ => format!("App: {}", screen.app_bundle_id),
+    };
+    if screen.keyboard_visible {
+        out.push_str("\nKeyboard: visible");
+        // The Return key's label only when it says more than "return" (a "send" key sends).
+        if let Some(key) = screen
+            .cues
+            .return_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|k| !k.is_empty() && !k.eq_ignore_ascii_case("return"))
+        {
+            out.push_str(&format!(" (Return key: \"{}\")", escape(key)));
+        }
+    }
+    if let Some((page, count)) = screen.cues.page {
+        out.push_str(&format!("\nPage {page} of {count}"));
+        out.push_str(match (page > 1, page < count) {
+            (_, true) => " (swipe left for the next page)",
+            (true, false) => " (swipe right for the previous page)",
+            (false, false) => "",
+        });
+    }
+    if screen.cues.more_above {
+        out.push_str(&format!("\n{MORE_ABOVE}"));
+    }
+    out
+}
+
+/// Cue line when a list continues above the visible part.
+pub const MORE_ABOVE: &str = "… more above; scroll up";
+/// Cue line when a list continues below the visible part.
+pub const MORE_BELOW: &str = "… more below; scroll down";
+
+/// The footer lines of a rendering that omits `omitted` static texts and cuts `cut` shown
+/// elements from the bottom.
+fn footer(screen: &CompactScreen, omitted: usize, cut: usize) -> String {
+    let mut out = String::new();
+    if omitted > 0 {
+        out.push_str(&format!("\n… {omitted} static texts omitted"));
+    }
+    if cut > 0 {
+        out.push_str(&format!("\n… {cut} more elements below; scroll down"));
+    } else if screen.cues.more_below {
+        out.push('\n');
+        out.push_str(MORE_BELOW);
+    }
+    out
+}
+
+/// One rendering: the header, each of `lines` on a line of its own, then `footer`.
+fn assemble<'s>(header: &str, lines: impl Iterator<Item = &'s str>, footer: &str) -> String {
+    let mut out = header.to_owned();
+    for line in lines {
+        out.push('\n');
+        out.push_str(line);
+    }
+    out.push_str(footer);
+    out
+}
+
+/// The header, every element's line at `cap` and `footer`, or `None` as soon as the text
+/// is over budget (`fits` of its length is false).
+fn text_within(
+    screen: &CompactScreen,
+    header: &str,
+    cap: Option<usize>,
+    footer: &str,
+    fits: impl Fn(usize) -> bool,
+) -> Option<String> {
+    let mut out = header.to_owned();
+    for e in &screen.elements {
+        out.push('\n');
+        out.push_str(&line_of(screen, e, cap));
+        if !fits(out.len() + footer.len()) {
+            return None;
+        }
+    }
+    if !fits(out.len() + footer.len()) {
+        return None;
+    }
+    out.push_str(footer);
+    Some(out)
+}
+
+/// Smallest `n` in `0..=max` with `fits(n)`, assuming `fits` is monotone; `None` if even `max` fails.
+fn smallest_fitting(max: usize, fits: impl Fn(usize) -> bool) -> Option<usize> {
+    if !fits(max) {
+        return None;
+    }
+    let (mut lo, mut hi) = (0, max);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if fits(mid) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    Some(lo)
+}
+
+/// Positions of static texts, farthest from any interactive element first (ties: lowest on screen first).
+fn static_text_omission_order(screen: &CompactScreen) -> Vec<usize> {
+    let mut anchors: Vec<f64> = screen
+        .elements
+        .iter()
+        .filter(|e| e.role.is_interactive())
+        .map(|e| e.frame.center().y)
+        .collect();
+    anchors.sort_by(f64::total_cmp);
+    let distance = |y: f64| -> f64 {
+        let at = anchors.partition_point(|a| *a < y);
+        let below = anchors.get(at).map(|a| (a - y).abs());
+        let above = at
+            .checked_sub(1)
+            .and_then(|i| anchors.get(i))
+            .map(|a| (y - a).abs());
+        match (above, below) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(d), None) | (None, Some(d)) => d,
+            (None, None) => f64::INFINITY,
+        }
+    };
+    let mut texts: Vec<(usize, f64)> = screen
+        .elements
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.role == Role::StaticText)
+        .map(|(i, e)| (i, distance(e.frame.center().y)))
+        .collect();
+    texts.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.0.cmp(&a.0)));
+    texts.into_iter().map(|(i, _)| i).collect()
+}
+
+/// Renders the screen as prompt text within `budget_tokens` (see [`estimate_tokens`]).
+///
+/// First line `App: Name (bundle.id)`, then `Keyboard: visible` when up (with
+/// `(Return key: "send")` when the Return key reads anything but "return"), then one line per
+/// element, e.g. `[4] TextField "Email" value="a@b.c" (focused)`. Over budget, it degrades in
+/// order: truncate long labels and values; omit static texts far from interactive elements
+/// (`… N static texts omitted`); drop elements from the bottom
+/// (`… N more elements below; scroll down`). Element indices are never
+/// renumbered. If even the header and footer exceed the budget, those alone are returned.
+///
+/// Switches show `(on)`/`(off)` instead of their raw `0`/`1` value ([`switch_state`]). The
+/// screen's [`jarvis_proto::ScreenCues`] add one line each: `Page 1 of 2 (swipe left for
+/// the next page)` and `… more above; scroll up` after the header, `… more below; scroll
+/// down` at the end (the budget-cut line says the same when elements were dropped).
+pub fn render(screen: &CompactScreen, budget_tokens: u32) -> String {
+    // Each candidate rendering is the header, element lines and footer lines; its size is
+    // the sum of their lengths. Candidates are measured, and only the one returned is built.
+    let fits = |len: usize| tokens_of_len(len) <= budget_tokens;
+    let head = header(screen);
+    let texts = screen
+        .elements
+        .iter()
+        .filter(|e| e.role == Role::StaticText)
+        .count();
+    let remaining = screen.elements.len() - texts;
+    if !fits(head.len()) {
+        // Every candidate starts with the header, so none fits, and the search ends where
+        // it always does then: every static text omitted, every other element cut.
+        return assemble(&head, std::iter::empty(), &footer(screen, texts, remaining));
+    }
+
+    // The full text, then label caps, as long as everything fits.
+    let plain = footer(screen, 0, 0);
+    let fixed = head.len() + plain.len();
+    let (last_cap, caps) = LABEL_CAPS
+        .split_last()
+        .map_or((None, &[][..]), |(l, c)| (Some(*l), c));
+    for cap in std::iter::once(None).chain(caps.iter().copied().map(Some)) {
+        if let Some(text) = text_within(screen, &head, cap, &plain, fits) {
+            return text;
+        }
+    }
+    let lines: Vec<String> = screen
+        .elements
+        .iter()
+        .map(|e| line_of(screen, e, last_cap))
+        .collect();
+    let line_len = |i: usize| lines.get(i).map_or(0, |l| l.len() + 1);
+    let all: usize = (0..lines.len()).map(line_len).sum();
+    if fits(fixed + all) {
+        return assemble(&head, lines.iter().map(String::as_str), &plain);
+    }
+
+    // Omit static texts, farthest from a control first: the fewest that fit.
+    let order = static_text_omission_order(screen);
+    // Bytes of the lines left once the first k texts of `order` are omitted, by k.
+    let mut left_after = Vec::with_capacity(order.len() + 1);
+    let mut left = all;
+    left_after.push(left);
+    for &i in &order {
+        left -= line_len(i);
+        left_after.push(left);
+    }
+    let omitted_fits = |k: usize| {
+        let lines = left_after.get(k).copied().unwrap_or(0);
+        fits(head.len() + lines + footer(screen, k, 0).len())
+    };
+    let mut omitted = vec![false; screen.elements.len()];
+    let omit = |omitted: &mut Vec<bool>, k: usize| {
+        for &i in order.get(..k).unwrap_or(&order) {
+            if let Some(slot) = omitted.get_mut(i) {
+                *slot = true;
+            }
+        }
+    };
+    if let Some(k) = smallest_fitting(order.len(), omitted_fits) {
+        omit(&mut omitted, k);
+        let shown = lines
+            .iter()
+            .zip(&omitted)
+            .filter(|(_, o)| !**o)
+            .map(|(l, _)| l.as_str());
+        return assemble(&head, shown, &footer(screen, k, 0));
+    }
+
+    // Every static text omitted: cut the fewest elements from the bottom that fit.
+    omit(&mut omitted, order.len());
+    // Bytes of the first j shown lines, by j.
+    let mut shown_upto = vec![0usize];
+    let mut sum = 0usize;
+    for (i, o) in omitted.iter().enumerate() {
+        if !o {
+            sum += line_len(i);
+            shown_upto.push(sum);
+        }
+    }
+    let shown = shown_upto.len() - 1;
+    let kept = |cut: usize| shown.saturating_sub(cut);
+    let cut_fits = |cut: usize| {
+        let lines = shown_upto.get(kept(cut)).copied().unwrap_or(0);
+        fits(head.len() + lines + footer(screen, order.len(), shown - kept(cut)).len())
+    };
+    let cut = smallest_fitting(remaining, cut_fits).unwrap_or(remaining);
+    let lines_shown = lines
+        .iter()
+        .zip(&omitted)
+        .filter(|(_, o)| !**o)
+        .map(|(l, _)| l.as_str())
+        .take(kept(cut));
+    assemble(
+        &head,
+        lines_shown,
+        &footer(screen, order.len(), shown - kept(cut)),
+    )
+}
+
+/// The rendering as it was before candidates were measured instead of built: the
+/// reference the differential test below holds [`render`] to.
+#[cfg(test)]
+mod reference {
+    use super::*;
+
+    /// How much of the screen to show.
+    struct Plan<'a> {
+        /// Label/value character cap.
+        cap: Option<usize>,
+        /// Static texts to omit, in omission order (positions in `elements`).
+        omitted_texts: &'a [usize],
+        /// Number of bottom elements to cut after omitting texts.
+        cut: usize,
+    }
+
+    fn build(screen: &CompactScreen, plan: &Plan<'_>) -> String {
+        let mut omitted = vec![false; screen.elements.len()];
+        for &i in plan.omitted_texts {
+            if let Some(slot) = omitted.get_mut(i) {
+                *slot = true;
+            }
+        }
+        let shown: Vec<&Element> = screen
+            .elements
+            .iter()
+            .zip(&omitted)
+            .filter(|(_, o)| !**o)
+            .map(|(e, _)| e)
+            .collect();
+        let keep = shown.len().saturating_sub(plan.cut);
+        let mut out = header(screen);
+        for e in shown.iter().take(keep) {
+            out.push('\n');
+            out.push_str(&line_of(screen, e, plan.cap));
+        }
+        if !plan.omitted_texts.is_empty() {
+            out.push_str(&format!(
+                "\n… {} static texts omitted",
+                plan.omitted_texts.len()
+            ));
+        }
+        let cut = shown.len() - keep;
+        if cut > 0 {
+            out.push_str(&format!("\n… {cut} more elements below; scroll down"));
+        } else if screen.cues.more_below {
+            out.push('\n');
+            out.push_str(MORE_BELOW);
+        }
+        out
+    }
+
+    pub(super) fn render(screen: &CompactScreen, budget_tokens: u32) -> String {
+        let fits = |s: &str| estimate_tokens(s) <= budget_tokens;
+        let none: [usize; 0] = [];
+
+        let full = build(
+            screen,
+            &Plan {
+                cap: None,
+                omitted_texts: &none,
+                cut: 0,
+            },
+        );
+        if fits(&full) {
+            return full;
+        }
+        for cap in LABEL_CAPS {
+            let s = build(
+                screen,
+                &Plan {
+                    cap: Some(cap),
+                    omitted_texts: &none,
+                    cut: 0,
+                },
+            );
+            if fits(&s) {
+                return s;
+            }
+        }
+
+        let cap = LABEL_CAPS.last().copied();
+        let order = static_text_omission_order(screen);
+        let with_omitted = |k: usize, cut: usize| {
+            build(
+                screen,
+                &Plan {
+                    cap,
+                    omitted_texts: order.get(..k).unwrap_or(&order),
+                    cut,
+                },
+            )
+        };
+        if let Some(k) = smallest_fitting(order.len(), |k| fits(&with_omitted(k, 0))) {
+            return with_omitted(k, 0);
+        }
+        let remaining = screen.elements.len() - order.len();
+        let cut = smallest_fitting(remaining, |c| fits(&with_omitted(order.len(), c)))
+            .unwrap_or(remaining);
+        with_omitted(order.len(), cut)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jarvis_proto::fixtures::random::{random_compact_screen, Rng};
+
+    /// Differential test: [`render`] gives exactly the reference's text on thousands of
+    /// random screens, at every budget from 0 past the full text's size on small screens
+    /// and at random budgets (with 0, 1, 2, 3 and the full size) on larger ones.
+    /// `RENDER_SCREENS=<n>` and `RENDER_BUDGETS=<n>` (the largest full size whose every
+    /// budget is tried, and the number of random ones) change the defaults of 1,000 and 40
+    /// (about 25 s in a debug build); 3,000 and 400 were run once (about 5 minutes).
+    #[test]
+    fn render_matches_the_reference_at_every_budget() {
+        let var = |name: &str, default: u64| {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default)
+        };
+        let screens = var("RENDER_SCREENS", 1_000);
+        let every = u32::try_from(var("RENDER_BUDGETS", 40)).unwrap_or(u32::MAX);
+        let mut compared = 0u64;
+        for seed in 0..screens {
+            let screen = random_compact_screen(seed);
+            let full = estimate_tokens(&reference::render(&screen, u32::MAX));
+            let mut budgets: Vec<u32> = if full <= every {
+                (0..=full + 2).collect()
+            } else {
+                let mut r = Rng::new(seed);
+                (0..every)
+                    .map(|_| u32::try_from(r.below(u64::from(full) + 3)).unwrap_or(0))
+                    .collect()
+            };
+            budgets.extend([0, 1, 2, 3, full.saturating_sub(1), full, u32::MAX]);
+            for b in budgets {
+                assert_eq!(
+                    render(&screen, b),
+                    reference::render(&screen, b),
+                    "seed {seed}, budget {b}"
+                );
+                compared += 1;
+            }
+        }
+        assert!(compared > screens * 10, "{compared}");
+    }
+}

@@ -1,0 +1,676 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 146, probe round 3 p15-springboard (`probe3-p15-springboard-03-today-tree.txt`), verbatim below this line.
+Q: SpringBoard showing the Today view: which identifiers would recognise it; what is on screen?
+capture 03 (today): the raw tree of com.apple.springboard by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 3: com.apple.springboard
+screen 440x956 pt, keyboard hidden
+nodes 331, XCUITest snapshot 2477 ms
+types without a core role: Other×232, PageIndicator×1, StatusBar×1
+note: probe round 3 p15-springboard, capture 03: today
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application " " {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{-30, -65}, {500.0, 1086.4}}
+      Other(Other) {{-30, -65}, {500.0, 1086.4}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 100}}
+      Other(Other) id=Home screen icons {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                ScrollView id=left-of-home-scroll-view {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 1526.7}}
+                    Other(Other) {{0, 0}, {440, 1526.7}}
+                      Other(Other) {{0, 0}, {440, 1526.7}}
+                        Other(Other) {{0, 0}, {440, 1526.7}}
+                          Other(Other) {{0, 0}, {440, 1526.7}}
+                            Other(Other) {{0, 0}, {440, 1526.7}}
+                              Other(Other) {{0, 0}, {440, 1526.7}}
+                                Other(Other) {{0, 0}, {440, 1526.7}}
+                            Other(Other) {{0, 0}, {440, 1526.7}}
+                              Other(Other) {{0, 0}, {440, 1526.7}}
+                            Other(Other) {{0, 0}, {440, 1526.7}}
+                              Other(Other) {{0, 0}, {440, 1526.7}}
+                      Button "Calendar" value="Widget" id=Calendar {{29, 92.0}, {180.7, 203.3}}
+                        Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                          Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                            Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                              Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                                ScrollView {{31, 94.0}, {176.7, 176.7}}
+                                  Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                                    Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                                      Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                                        Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                                          Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                                            Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                                              Other(Other) {{0, 0}, {176.7, 176.7}}
+                                                Other(Other) "Calendar" {{0, 0}, {176.7, 176.7}}
+                                                  Other(Other) {{0, 0}, {176.7, 176.7}}
+                                                    Other(Other) {{0, 0}, {176.7, 176.7}}
+                                                      Other(Other) {{0, 0}, {176.7, 176.7}}
+                                                        Other(Other) {{0, 0}, {0, 0}} [hidden]
+                                                        Other(Other) {{19.3, 19.3}, {127.3, 106}}
+                                                          Other(Other) "THURSDAY, NOVEMBER 26" id=iconic-date-header-view {{19.3, 19.3}, {71.7, 53.3}}
+                                                            StaticText "THURSDAY" {{19.3, 19.3}, {71.7, 15.7}}
+                                                            StaticText "26" {{19.3, 32.0}, {41, 40.7}}
+                                                          StaticText "No Events Today" {{19.3, 105.0}, {127.3, 20.3}}
+                                                  Other(Other) "Calendar" {{0, 0}, {176.7, 176.7}}
+                                        Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                                          Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                                            Other(Other) {{31, 94.0}, {176.7, 176.7}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{31, 237.7}, {176.7, 30}}
+                                    Other(Other) {{34, 264.7}, {167.7, 3}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{31, 237.7}, {176.7, 30}}
+                                    Other(Other) {{34, 264.7}, {167.7, 3}}
+                      Button "Batteries" value="Widget" id=Batteries {{230, 92.0}, {180.7, 203.3}}
+                        Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                          Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                            Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                              Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                ScrollView {{232, 94.0}, {176.7, 176.7}}
+                                  Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                    Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                    Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                      Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                        Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                          Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                            Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                        Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                          Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                            Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                              Other(Other) {{0, 0}, {176.7, 176.7}}
+                                                Other(Other) "Batteries" {{0, 0}, {176.7, 176.7}}
+                                                  Other(Other) {{0, 0}, {176.7, 176.7}}
+                                                    Other(Other) {{0, 0}, {176.7, 176.7}}
+                                                      Other(Other) {{0, 0}, {176.7, 176.7}}
+                                                        Other(Other) {{-0.0, -0.0}, {176.7, 176.7}}
+                                                          Other(Other) "iPhone 17 Pro Max, 100% Charged" {{0, 0}, {176.7, 176.7}}
+                                                            Other(Other) "iPhone 17 Pro Max, 100% Charged" {{12, 12}, {71, 71}}
+                                                              Other(Other) id=battery-widget-background-ring {{12, 12}, {71, 71}}
+                                                              Other(Other) id=battery-widget-colored-charge-ring {{12, 12}, {71, 71}}
+                                                              Other(Other) {{75.4, 44.5}, {7.6, 16.1}}
+                                                              Other(Other) {{75.4, 34.4}, {7.6, 16.1}}
+                                                              Image {{47.3, 47.3}, {0, 0}} [hidden]
+                                                            Image "batterywidget.bolt" {{47.5, 15.2}, {0, 0}} [hidden]
+                                                            Image "batterywidget.bolt.mask" {{47.5, 15.2}, {0, 0}} [hidden]
+                                                            Other(Other) ", 0% Charged" id=battery-widget-background-ring {{94, 12.2}, {70.7, 70.7}}
+                                                            Image "batterywidget.bolt" {{126.5, 50.2}, {0, 0}} [hidden]
+                                                            Image "batterywidget.bolt.mask" {{126.5, 50.2}, {0, 0}} [hidden]
+                                                            StaticText "100%" {{12, 116.3}, {115, 48.3}}
+                                                            Other(Other) ", 0% Charged" id=battery-widget-background-ring {{12.2, 94}, {70.7, 70.7}}
+                                                            Image "batterywidget.bolt" {{50.2, 126.5}, {0, 0}} [hidden]
+                                                            Image "batterywidget.bolt.mask" {{50.2, 126.5}, {0, 0}} [hidden]
+                                                            Other(Other) ", 0% Charged" id=battery-widget-background-ring {{94, 94}, {70.7, 70.7}}
+                                                            Image "batterywidget.bolt" {{126.5, 126.5}, {0, 0}} [hidden]
+                                                            Image "batterywidget.bolt.mask" {{126.5, 126.5}, {0, 0}} [hidden]
+                                                  Other(Other) "Batteries" {{0, 0}, {176.7, 176.7}}
+                                        Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                          Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                            Other(Other) {{232, 94.0}, {176.7, 176.7}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{232, 237.7}, {176.7, 30}}
+                                    Other(Other) {{235, 264.7}, {167.7, 3}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{232, 237.7}, {176.7, 30}}
+                                    Other(Other) {{235, 264.7}, {167.7, 3}}
+                      Button "News" value="Widget" id=News {{29, 293.0}, {382, 638}}
+                        Other(Other) {{31, 295.0}, {378, 611.3}}
+                          Other(Other) {{31, 295.0}, {378, 611.3}}
+                            Other(Other) {{31, 295.0}, {378, 611.3}}
+                              Other(Other) {{31, 295.0}, {378, 611.3}}
+                                ScrollView {{31, 295.0}, {378, 611.3}}
+                                  Other(Other) {{31, 295.0}, {378, 611.3}}
+                                    Other(Other) {{31, 295.0}, {378, 611.3}}
+                                      Other(Other) {{31, 295.0}, {378, 611.3}}
+                                        Other(Other) {{31, 295.0}, {378, 611.3}}
+                                          Other(Other) {{31, 295.0}, {378, 611.3}}
+                                            Other(Other) {{31, 295.0}, {378, 611.3}}
+                                              Other(Other) {{0, 0}, {378, 611.3}}
+                                                Other(Other) "News" {{0, 0}, {378, 611.3}}
+                                                  Other(Other) {{0, 0}, {378, 611.3}}
+                                                    Other(Other) {{0, 0}, {378, 611.3}}
+                                                      Other(Other) {{0, 0}, {378, 611.3}}
+                                                        Other(Other) {{0, -19.3}, {378, 650}}
+                                                          Button {{0, -19.3}, {378, 650}}
+                                                        Other(Other) {{19.3, 0}, {339.3, 601.3}}
+                                                          Button "Top Stories" {{19.3, 0}, {339.3, 34}}
+                                                            StaticText "Top Stories" {{19.3, 14.7}, {87.7, 19.3}}
+                                                          Button "A “silent war” grips Iran as its economy strains under U.S. blockade, The Wall Street Journal" {{19.3, 34.0}, {339.3, 80}}
+                                                            Image "The Wall Street Journal, A “silent war” grips Iran as its economy strains under U.S. blockade" {{19.3, 40.0}, {97.3, 8.3}}
+                                                            StaticText "The Wall Street Journal, A “silent war” grips Iran as its economy strains under U.S. blockade" {{19.3, 53.0}, {256, 33.7}}
+                                                            Image "The Wall Street Journal, A “silent war” grips Iran as its economy strains under U.S. blockade" {{273.7, 40.0}, {102, 68}}
+                                                          Button "Trending" {{19.3, 124.0}, {339.3, 34}}
+                                                          Button "Aaron Rodgers not returning to Steelers, says Mike McCarthy falls asleep in meetings and is 'unwell', Fox News" {{19.3, 158.0}, {339.3, 79.7}}
+                                                            Image "Fox News, Aaron Rodgers not returning to Steelers, says Mike McCarthy falls asleep in meetings and is 'unwell'" {{19.3, 164.0}, {46.3, 8.7}}
+                                                            StaticText "Fox News, Aaron Rodgers not returning to Steelers, says Mike McCarthy falls asleep in meetings and is 'unwell'" {{19.3, 177.0}, {262.3, 49}}
+                                                            Image "Fox News, Aaron Rodgers not returning to Steelers, says Mike McCarthy falls asleep in meetings and is 'unwell'" {{264.3, 164.0}, {120.7, 67.7}}
+                                                          Button "Hayden Panettiere’s Daughter Kaya, 11, Is Set to Inherit Her Entire Estate—Here’s How Much It’s Worth, InStyle" {{19.3, 237.7}, {339.3, 80}}
+                                                            Image "InStyle, Hayden Panettiere’s Daughter Kaya, 11, Is Set to Inherit Her Entire Estate—Here’s How Much It’s Worth" {{19.3, 243.7}, {45.7, 10}}
+                                                            StaticText "InStyle, Hayden Panettiere’s Daughter Kaya, 11, Is Set to Inherit Her Entire Estate—Here’s How Much It’s Worth" {{19.3, 256.7}, {263.3, 49}}
+                                                            Image "InStyle, Hayden Panettiere’s Daughter Kaya, 11, Is Set to Inherit Her Entire Estate—Here’s How Much It’s Worth" {{279.3, 243.7}, {90.7, 68}}
+                                                          Button "How Did Any Child Survive the 1970s?, The Atlantic" {{19.3, 317.7}, {339.3, 80}}
+                                                            Image "The Atlantic, How Did Any Child Survive the 1970s?" {{19.3, 323.7}, {70.7, 11}}
+                                                            StaticText "The Atlantic, How Did Any Child Survive the 1970s?" {{19.3, 336.7}, {240.7, 18}}
+                                                            Image "The Atlantic, How Did Any Child Survive the 1970s?" {{264.3, 323.7}, {120.7, 68}}
+                                                          Button "58 Dumb, Dumb Dummies Who Made Me Question The Intelligence Of The Human Species, BuzzFeed" {{19.3, 397.7}, {339.3, 79.7}}
+                                                            Image "BuzzFeed, 58 Dumb, Dumb Dummies Who Made Me Question The Intelligence Of The Human Species" {{19.3, 403.7}, {60, 10}}
+                                                            StaticText "BuzzFeed, 58 Dumb, Dumb Dummies Who Made Me Question The Intelligence Of The Human Species" {{19.3, 416.7}, {263.3, 49}}
+                                                            Image "BuzzFeed, 58 Dumb, Dumb Dummies Who Made Me Question The Intelligence Of The Human Species" {{273.7, 403.7}, {102, 67.7}}
+                                                          Button "Featured" {{19.3, 487.3}, {339.3, 34}}
+                                                            StaticText "Featured" {{19.3, 502.0}, {69.7, 19.3}}
+                                                          Button "Five ways to catch a liar, according to science, BBC Science Focus Magazine" {{19.3, 521.3}, {339.3, 80}}
+                                                            Image "BBC Science Focus Magazine, Five ways to catch a liar, according to science" {{19.3, 527.3}, {194.7, 10}}
+                                                            StaticText "BBC Science Focus Magazine, Five ways to catch a liar, according to science" {{19.3, 540.3}, {226.3, 33.7}}
+                                                            Image "BBC Science Focus Magazine, Five ways to catch a liar, according to science" {{290.7, 527.3}, {68, 68}}
+                                                  Other(Other) "News" {{0, 0}, {378, 611.3}}
+                                        Other(Other) {{31, 295.0}, {378, 611.3}}
+                                          Other(Other) {{31, 295.0}, {378, 611.3}}
+                                            Other(Other) {{31, 295.0}, {378, 611.3}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{31, 873.3}, {378, 30}}
+                                    Other(Other) {{34, 900.3}, {369, 3}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{31, 873.3}, {378, 30}}
+                                    Other(Other) {{34, 900.3}, {369, 3}}
+                      Button "Maps" value="Widget" id=Maps {{29, 929}, {382, 203.3}}
+                        Other(Other) {{31, 931}, {378, 176.7}}
+                          Other(Other) {{31, 931}, {378, 176.7}}
+                            Other(Other) {{31, 931}, {378, 176.7}}
+                              Other(Other) {{31, 931}, {378, 176.7}}
+                                ScrollView {{31, 931}, {378, 176.7}}
+                                  Other(Other) {{31, 931}, {378, 176.7}}
+                                    Other(Other) {{31, 931}, {378, 176.7}}
+                                      Other(Other) {{31, 931}, {378, 176.7}}
+                                        Other(Other) {{31, 931}, {378, 176.7}}
+                                          Other(Other) {{31, 931}, {378, 176.7}}
+                                            Other(Other) {{31, 931}, {378, 176.7}}
+                                              Other(Other) {{0, 0}, {378, 176.7}}
+                                                Other(Other) "Maps" {{0, 0}, {378, 176.7}}
+                                                  Other(Other) {{0, 0}, {378, 176.7}}
+                                                    Other(Other) {{0, 0}, {378, 176.7}}
+                                                      Other(Other) {{0, 0}, {378, 176.7}}
+                                                        Other(Other) {{0, -0.0}, {378, 176.7}}
+                                                          Image "Map" id=NearbyWidgetMapImage {{0, 0}, {378, 176.7}}
+                                                          Image "Search" id=NearbyButton {{24, 102.7}, {50, 50}}
+                                                          Button "Search" {{24, 102.7}, {50, 50}}
+                                                          Other(Other) id=PlaceholderNearbyIcon {{89, 102.7}, {50, 50}}
+                                                  Other(Other) "Maps" {{0, 0}, {378, 176.7}}
+                                        Other(Other) {{31, 931}, {378, 176.7}}
+                                          Other(Other) {{31, 931}, {378, 176.7}}
+                                            Other(Other) {{31, 931}, {378, 176.7}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{31, 1040.7}, {378, 30}} [hidden]
+                                    Other(Other) {{34, 1067.7}, {369, 3}} [hidden]
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{31, 1040.7}, {378, 30}} [hidden]
+                                    Other(Other) {{34, 1067.7}, {369, 3}} [hidden]
+                Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{1320, 0}, {440, 956}} [hidden]
+            Button {{0, 0}, {0, 0}} [hidden]
+              Button "Maps" id=Maps {{0, 0}, {0, 0}} [hidden]
+              Button "Calendar" id=Calendar {{0, 0}, {0, 0}} [hidden]
+              Button "Calendar" value="Thursday, November 26" id=Calendar {{0, 0}, {0, 0}} [hidden]
+              Button "Photos" id=Photos {{0, 0}, {0, 0}} [hidden]
+              Button "Reminders" id=Reminders {{0, 0}, {0, 0}} [hidden]
+              Button "News" id=News {{0, 0}, {0, 0}} [hidden]
+              Button "Maps" id=Maps {{0, 0}, {0, 0}} [hidden]
+              Button "Health" id=Health {{0, 0}, {0, 0}} [hidden]
+              Button "Wallet" id=Wallet {{0, 0}, {0, 0}} [hidden]
+              Button "Settings" id=Settings {{0, 0}, {0, 0}} [hidden]
+            Button {{0, 0}, {0, 0}} [hidden]
+              Button "Fitness" id=Fitness {{0, 0}, {0, 0}} [hidden]
+              Button "Watch" id=Watch {{0, 0}, {0, 0}} [hidden]
+              Button "Contacts" id=Contacts {{0, 0}, {0, 0}} [hidden]
+              Button "Files" id=Files {{0, 0}, {0, 0}} [hidden]
+              Button "Preview" id=Preview {{0, 0}, {0, 0}} [hidden]
+              Button "Utilities folder" id=Utilities {{0, 0}, {0, 0}} [hidden]
+                Button "Shortcuts" id=Shortcuts {{0, 0}, {0, 0}} [hidden]
+                Button "Passwords" id=Passwords {{0, 0}, {0, 0}} [hidden]
+              Button "JarvisUITests-Runner" id=JarvisUITests-Runner {{0, 0}, {0, 0}} [hidden]
+              Button "Jarvis" id=Jarvis {{0, 0}, {0, 0}} [hidden]
+            Other(Other) "Search" value="Page 0 of 2" id=spotlight-pill {{621, 763.7}, {78, 30}} [hidden]
+              Other(PageIndicator) value="Page 0 of 2" id=Page control {{621, 763.7}, {78, 35}} [hidden]
+              Other(Other) id=spotlight-pill {{621, 763.7}, {78, 30}} [hidden]
+                Other(Other) {{621, 763.7}, {78, 30}} [hidden]
+                  Image "Search" id=magnifyingglass {{632.7, 773}, {11.3, 10.7}} [hidden]
+                  StaticText "Search" {{647, 771.3}, {40.3, 14.3}} [hidden]
+            Other(Other) {{440, 821.7}, {440, 134.3}} [hidden]
+              Other(Other) {{457, 821.7}, {406, 117.3}} [hidden]
+                Other(Other) "Dock" {{440, 821.7}, {440, 117.3}} [hidden]
+                  Other(Other) {{440, 821.7}, {440, 117.3}} [hidden]
+                  Button "Safari" id=Safari {{576, 844.3}, {72, 72}} [hidden]
+                    Other(Other) {{578, 846.3}, {68, 68}} [hidden]
+                      Other(Other) {{578, 846.3}, {68, 68}} [hidden]
+                        Other(Other) {{578, 846.3}, {68, 68}} [hidden]
+                          Other(Other) {{578, 846.3}, {68, 68}} [hidden]
+                  Button "Messages" id=Messages {{672, 844.3}, {72, 72}} [hidden]
+                    Other(Other) {{674, 846.3}, {68, 68}} [hidden]
+                      Other(Other) {{674, 846.3}, {68, 68}} [hidden]
+                        Other(Other) {{674, 846.3}, {68, 68}} [hidden]
+                          Other(Other) {{674, 846.3}, {68, 68}} [hidden]
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{158.3, 15.0}, {123.3, 34.7}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{158, 14.7}, {124, 35.3}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) id=jindo-container-view:1 {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{147.3, 10}, {145.3, 52}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+                Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+        Other(Other) {{237, 28}, {9, 9}}
+  Window {{0, 0}, {1320, 2868}}
+    Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+  Window {{0, 0}, {1320, 2868}}
+    Other(Other) {{0, 0}, {1320, 2868}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(StatusBar) {{0, 0}, {440, 54}}
+      Other(Other) {{0, 0}, {440, 54}}
+        Other(Other) {{0, 0}, {440, 54}}
+          StaticText "10:04 AM" {{59.3, 22}, {48.3, 21.7}}
+          Other(Other) "Cellular" value="No signal" {{312.3, 25.3}, {21.7, 13.7}}
+          Other(Other) value="SSID, 3 of 3 Wi-Fi bars" id=3 of 3 Wi-Fi bars {{341.3, 25}, {19.7, 14}}
+          Other(Other) "100% battery power" value="Not charging" {{368.3, 25.0}, {31.3, 14.3}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label=" " {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{-30, -65}, {500.0, 1086.4}}
+      Other(1) {{-30, -65}, {500.0, 1086.4}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 100}}
+      Other(1) id=Home screen icons {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                ScrollView(46) id=left-of-home-scroll-view {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 1526.7}}
+                    Other(1) {{0, 0}, {440, 1526.7}}
+                      Other(1) {{0, 0}, {440, 1526.7}}
+                        Other(1) {{0, 0}, {440, 1526.7}}
+                          Other(1) {{0, 0}, {440, 1526.7}}
+                            Other(1) {{0, 0}, {440, 1526.7}}
+                              Other(1) {{0, 0}, {440, 1526.7}}
+                                Other(1) {{0, 0}, {440, 1526.7}}
+                            Other(1) {{0, 0}, {440, 1526.7}}
+                              Other(1) {{0, 0}, {440, 1526.7}}
+                            Other(1) {{0, 0}, {440, 1526.7}}
+                              Other(1) {{0, 0}, {440, 1526.7}}
+                      Icon(44) label="Calendar" value="Widget" id=Calendar {{29, 92.0}, {180.7, 203.3}}
+                        Other(1) {{31, 94.0}, {176.7, 176.7}}
+                          Other(1) {{31, 94.0}, {176.7, 176.7}}
+                            Other(1) {{31, 94.0}, {176.7, 176.7}}
+                              Other(1) {{31, 94.0}, {176.7, 176.7}}
+                                ScrollView(46) {{31, 94.0}, {176.7, 176.7}}
+                                  Other(1) {{31, 94.0}, {176.7, 176.7}}
+                                    Other(1) {{31, 94.0}, {176.7, 176.7}}
+                                      Other(1) {{31, 94.0}, {176.7, 176.7}}
+                                        Other(1) {{31, 94.0}, {176.7, 176.7}}
+                                          Other(1) {{31, 94.0}, {176.7, 176.7}}
+                                            Other(1) {{31, 94.0}, {176.7, 176.7}}
+                                              Other(1) {{0, 0}, {176.7, 176.7}}
+                                                Other(1) label="Calendar" {{0, 0}, {176.7, 176.7}}
+                                                  Other(1) {{0, 0}, {176.7, 176.7}}
+                                                    Other(1) {{0, 0}, {176.7, 176.7}}
+                                                      Other(1) {{0, 0}, {176.7, 176.7}}
+                                                        Other(1) {{0, 0}, {0, 0}}
+                                                        Other(1) {{19.3, 19.3}, {127.3, 106}}
+                                                          Other(1) label="THURSDAY, NOVEMBER 26" id=iconic-date-header-view {{19.3, 19.3}, {71.7, 53.3}}
+                                                            StaticText(48) label="THURSDAY" {{19.3, 19.3}, {71.7, 15.7}}
+                                                            StaticText(48) label="26" {{19.3, 32.0}, {41, 40.7}}
+                                                          StaticText(48) label="No Events Today" {{19.3, 105.0}, {127.3, 20.3}}
+                                                  Other(1) label="Calendar" {{0, 0}, {176.7, 176.7}}
+                                        Other(1) {{31, 94.0}, {176.7, 176.7}}
+                                          Other(1) {{31, 94.0}, {176.7, 176.7}}
+                                            Other(1) {{31, 94.0}, {176.7, 176.7}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{31, 237.7}, {176.7, 30}}
+                                    Other(1) {{34, 264.7}, {167.7, 3}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{31, 237.7}, {176.7, 30}}
+                                    Other(1) {{34, 264.7}, {167.7, 3}}
+                      Icon(44) label="Batteries" value="Widget" id=Batteries {{230, 92.0}, {180.7, 203.3}}
+                        Other(1) {{232, 94.0}, {176.7, 176.7}}
+                          Other(1) {{232, 94.0}, {176.7, 176.7}}
+                            Other(1) {{232, 94.0}, {176.7, 176.7}}
+                              Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                ScrollView(46) {{232, 94.0}, {176.7, 176.7}}
+                                  Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                    Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                    Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                      Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                        Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                          Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                            Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                        Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                          Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                            Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                              Other(1) {{0, 0}, {176.7, 176.7}}
+                                                Other(1) label="Batteries" {{0, 0}, {176.7, 176.7}}
+                                                  Other(1) {{0, 0}, {176.7, 176.7}}
+                                                    Other(1) {{0, 0}, {176.7, 176.7}}
+                                                      Other(1) {{0, 0}, {176.7, 176.7}}
+                                                        Other(1) {{-0.0, -0.0}, {176.7, 176.7}}
+                                                          Other(1) label="iPhone 17 Pro Max, 100% Charged" {{0, 0}, {176.7, 176.7}}
+                                                            Other(1) label="iPhone 17 Pro Max, 100% Charged" {{12, 12}, {71, 71}}
+                                                              Other(1) id=battery-widget-background-ring {{12, 12}, {71, 71}}
+                                                              Other(1) id=battery-widget-colored-charge-ring {{12, 12}, {71, 71}}
+                                                              Other(1) {{75.4, 44.5}, {7.6, 16.1}}
+                                                              Other(1) {{75.4, 34.4}, {7.6, 16.1}}
+                                                              Image(43) {{47.3, 47.3}, {0, 0}}
+                                                            Image(43) label="batterywidget.bolt" {{47.5, 15.2}, {0, 0}}
+                                                            Image(43) label="batterywidget.bolt.mask" {{47.5, 15.2}, {0, 0}}
+                                                            Other(1) label=", 0% Charged" id=battery-widget-background-ring {{94, 12.2}, {70.7, 70.7}}
+                                                            Image(43) label="batterywidget.bolt" {{126.5, 50.2}, {0, 0}}
+                                                            Image(43) label="batterywidget.bolt.mask" {{126.5, 50.2}, {0, 0}}
+                                                            StaticText(48) label="100%" {{12, 116.3}, {115, 48.3}}
+                                                            Other(1) label=", 0% Charged" id=battery-widget-background-ring {{12.2, 94}, {70.7, 70.7}}
+                                                            Image(43) label="batterywidget.bolt" {{50.2, 126.5}, {0, 0}}
+                                                            Image(43) label="batterywidget.bolt.mask" {{50.2, 126.5}, {0, 0}}
+                                                            Other(1) label=", 0% Charged" id=battery-widget-background-ring {{94, 94}, {70.7, 70.7}}
+                                                            Image(43) label="batterywidget.bolt" {{126.5, 126.5}, {0, 0}}
+                                                            Image(43) label="batterywidget.bolt.mask" {{126.5, 126.5}, {0, 0}}
+                                                  Other(1) label="Batteries" {{0, 0}, {176.7, 176.7}}
+                                        Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                          Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                            Other(1) {{232, 94.0}, {176.7, 176.7}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{232, 237.7}, {176.7, 30}}
+                                    Other(1) {{235, 264.7}, {167.7, 3}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{232, 237.7}, {176.7, 30}}
+                                    Other(1) {{235, 264.7}, {167.7, 3}}
+                      Icon(44) label="News" value="Widget" id=News {{29, 293.0}, {382, 638}}
+                        Other(1) {{31, 295.0}, {378, 611.3}}
+                          Other(1) {{31, 295.0}, {378, 611.3}}
+                            Other(1) {{31, 295.0}, {378, 611.3}}
+                              Other(1) {{31, 295.0}, {378, 611.3}}
+                                ScrollView(46) {{31, 295.0}, {378, 611.3}}
+                                  Other(1) {{31, 295.0}, {378, 611.3}}
+                                    Other(1) {{31, 295.0}, {378, 611.3}}
+                                      Other(1) {{31, 295.0}, {378, 611.3}}
+                                        Other(1) {{31, 295.0}, {378, 611.3}}
+                                          Other(1) {{31, 295.0}, {378, 611.3}}
+                                            Other(1) {{31, 295.0}, {378, 611.3}}
+                                              Other(1) {{0, 0}, {378, 611.3}}
+                                                Other(1) label="News" {{0, 0}, {378, 611.3}}
+                                                  Other(1) {{0, 0}, {378, 611.3}}
+                                                    Other(1) {{0, 0}, {378, 611.3}}
+                                                      Other(1) {{0, 0}, {378, 611.3}}
+                                                        Other(1) {{0, -19.3}, {378, 650}}
+                                                          Button(9) {{0, -19.3}, {378, 650}}
+                                                        Other(1) {{19.3, 0}, {339.3, 601.3}}
+                                                          Button(9) label="Top Stories" {{19.3, 0}, {339.3, 34}}
+                                                            StaticText(48) label="Top Stories" {{19.3, 14.7}, {87.7, 19.3}}
+                                                          Button(9) label="A “silent war” grips Iran as its economy strains under U.S. blockade, The Wall Street Journal" {{19.3, 34.0}, {339.3, 80}}
+                                                            Image(43) label="The Wall Street Journal, A “silent war” grips Iran as its economy strains under U.S. blockade" {{19.3, 40.0}, {97.3, 8.3}}
+                                                            StaticText(48) label="The Wall Street Journal, A “silent war” grips Iran as its economy strains under U.S. blockade" {{19.3, 53.0}, {256, 33.7}}
+                                                            Image(43) label="The Wall Street Journal, A “silent war” grips Iran as its economy strains under U.S. blockade" {{273.7, 40.0}, {102, 68}}
+                                                          Button(9) label="Trending" {{19.3, 124.0}, {339.3, 34}}
+                                                          Button(9) label="Aaron Rodgers not returning to Steelers, says Mike McCarthy falls asleep in meetings and is 'unwell', Fox News" {{19.3, 158.0}, {339.3, 79.7}}
+                                                            Image(43) label="Fox News, Aaron Rodgers not returning to Steelers, says Mike McCarthy falls asleep in meetings and is 'unwell'" {{19.3, 164.0}, {46.3, 8.7}}
+                                                            StaticText(48) label="Fox News, Aaron Rodgers not returning to Steelers, says Mike McCarthy falls asleep in meetings and is 'unwell'" {{19.3, 177.0}, {262.3, 49}}
+                                                            Image(43) label="Fox News, Aaron Rodgers not returning to Steelers, says Mike McCarthy falls asleep in meetings and is 'unwell'" {{264.3, 164.0}, {120.7, 67.7}}
+                                                          Button(9) label="Hayden Panettiere’s Daughter Kaya, 11, Is Set to Inherit Her Entire Estate—Here’s How Much It’s Worth, InStyle" {{19.3, 237.7}, {339.3, 80}}
+                                                            Image(43) label="InStyle, Hayden Panettiere’s Daughter Kaya, 11, Is Set to Inherit Her Entire Estate—Here’s How Much It’s Worth" {{19.3, 243.7}, {45.7, 10}}
+                                                            StaticText(48) label="InStyle, Hayden Panettiere’s Daughter Kaya, 11, Is Set to Inherit Her Entire Estate—Here’s How Much It’s Worth" {{19.3, 256.7}, {263.3, 49}}
+                                                            Image(43) label="InStyle, Hayden Panettiere’s Daughter Kaya, 11, Is Set to Inherit Her Entire Estate—Here’s How Much It’s Worth" {{279.3, 243.7}, {90.7, 68}}
+                                                          Button(9) label="How Did Any Child Survive the 1970s?, The Atlantic" {{19.3, 317.7}, {339.3, 80}}
+                                                            Image(43) label="The Atlantic, How Did Any Child Survive the 1970s?" {{19.3, 323.7}, {70.7, 11}}
+                                                            StaticText(48) label="The Atlantic, How Did Any Child Survive the 1970s?" {{19.3, 336.7}, {240.7, 18}}
+                                                            Image(43) label="The Atlantic, How Did Any Child Survive the 1970s?" {{264.3, 323.7}, {120.7, 68}}
+                                                          Button(9) label="58 Dumb, Dumb Dummies Who Made Me Question The Intelligence Of The Human Species, BuzzFeed" {{19.3, 397.7}, {339.3, 79.7}}
+                                                            Image(43) label="BuzzFeed, 58 Dumb, Dumb Dummies Who Made Me Question The Intelligence Of The Human Species" {{19.3, 403.7}, {60, 10}}
+                                                            StaticText(48) label="BuzzFeed, 58 Dumb, Dumb Dummies Who Made Me Question The Intelligence Of The Human Species" {{19.3, 416.7}, {263.3, 49}}
+                                                            Image(43) label="BuzzFeed, 58 Dumb, Dumb Dummies Who Made Me Question The Intelligence Of The Human Species" {{273.7, 403.7}, {102, 67.7}}
+                                                          Button(9) label="Featured" {{19.3, 487.3}, {339.3, 34}}
+                                                            StaticText(48) label="Featured" {{19.3, 502.0}, {69.7, 19.3}}
+                                                          Button(9) label="Five ways to catch a liar, according to science, BBC Science Focus Magazine" {{19.3, 521.3}, {339.3, 80}}
+                                                            Image(43) label="BBC Science Focus Magazine, Five ways to catch a liar, according to science" {{19.3, 527.3}, {194.7, 10}}
+                                                            StaticText(48) label="BBC Science Focus Magazine, Five ways to catch a liar, according to science" {{19.3, 540.3}, {226.3, 33.7}}
+                                                            Image(43) label="BBC Science Focus Magazine, Five ways to catch a liar, according to science" {{290.7, 527.3}, {68, 68}}
+                                                  Other(1) label="News" {{0, 0}, {378, 611.3}}
+                                        Other(1) {{31, 295.0}, {378, 611.3}}
+                                          Other(1) {{31, 295.0}, {378, 611.3}}
+                                            Other(1) {{31, 295.0}, {378, 611.3}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{31, 873.3}, {378, 30}}
+                                    Other(1) {{34, 900.3}, {369, 3}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{31, 873.3}, {378, 30}}
+                                    Other(1) {{34, 900.3}, {369, 3}}
+                      Icon(44) label="Maps" value="Widget" id=Maps {{29, 929}, {382, 203.3}}
+                        Other(1) {{31, 931}, {378, 176.7}}
+                          Other(1) {{31, 931}, {378, 176.7}}
+                            Other(1) {{31, 931}, {378, 176.7}}
+                              Other(1) {{31, 931}, {378, 176.7}}
+                                ScrollView(46) {{31, 931}, {378, 176.7}}
+                                  Other(1) {{31, 931}, {378, 176.7}}
+                                    Other(1) {{31, 931}, {378, 176.7}}
+                                      Other(1) {{31, 931}, {378, 176.7}}
+                                        Other(1) {{31, 931}, {378, 176.7}}
+                                          Other(1) {{31, 931}, {378, 176.7}}
+                                            Other(1) {{31, 931}, {378, 176.7}}
+                                              Other(1) {{0, 0}, {378, 176.7}}
+                                                Other(1) label="Maps" {{0, 0}, {378, 176.7}}
+                                                  Other(1) {{0, 0}, {378, 176.7}}
+                                                    Other(1) {{0, 0}, {378, 176.7}}
+                                                      Other(1) {{0, 0}, {378, 176.7}}
+                                                        Other(1) {{0, -0.0}, {378, 176.7}}
+                                                          Image(43) label="Map" id=NearbyWidgetMapImage {{0, 0}, {378, 176.7}}
+                                                          Image(43) label="Search" id=NearbyButton {{24, 102.7}, {50, 50}}
+                                                          Button(9) label="Search" {{24, 102.7}, {50, 50}}
+                                                          Other(1) id=PlaceholderNearbyIcon {{89, 102.7}, {50, 50}}
+                                                  Other(1) label="Maps" {{0, 0}, {378, 176.7}}
+                                        Other(1) {{31, 931}, {378, 176.7}}
+                                          Other(1) {{31, 931}, {378, 176.7}}
+                                            Other(1) {{31, 931}, {378, 176.7}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{31, 1040.7}, {378, 30}}
+                                    Other(1) {{34, 1067.7}, {369, 3}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{31, 1040.7}, {378, 30}}
+                                    Other(1) {{34, 1067.7}, {369, 3}}
+                Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{1320, 0}, {440, 956}}
+            Icon(44) {{0, 0}, {0, 0}}
+              Icon(44) label="Maps" id=Maps {{0, 0}, {0, 0}}
+              Icon(44) label="Calendar" id=Calendar {{0, 0}, {0, 0}}
+              Icon(44) label="Calendar" value="Thursday, November 26" id=Calendar {{0, 0}, {0, 0}}
+              Icon(44) label="Photos" id=Photos {{0, 0}, {0, 0}}
+              Icon(44) label="Reminders" id=Reminders {{0, 0}, {0, 0}}
+              Icon(44) label="News" id=News {{0, 0}, {0, 0}}
+              Icon(44) label="Maps" id=Maps {{0, 0}, {0, 0}}
+              Icon(44) label="Health" id=Health {{0, 0}, {0, 0}}
+              Icon(44) label="Wallet" id=Wallet {{0, 0}, {0, 0}}
+              Icon(44) label="Settings" id=Settings {{0, 0}, {0, 0}}
+            Icon(44) {{0, 0}, {0, 0}}
+              Icon(44) label="Fitness" id=Fitness {{0, 0}, {0, 0}}
+              Icon(44) label="Watch" id=Watch {{0, 0}, {0, 0}}
+              Icon(44) label="Contacts" id=Contacts {{0, 0}, {0, 0}}
+              Icon(44) label="Files" id=Files {{0, 0}, {0, 0}}
+              Icon(44) label="Preview" id=Preview {{0, 0}, {0, 0}}
+              Icon(44) label="Utilities folder" id=Utilities {{0, 0}, {0, 0}}
+                Icon(44) label="Shortcuts" id=Shortcuts {{0, 0}, {0, 0}}
+                Icon(44) label="Passwords" id=Passwords {{0, 0}, {0, 0}}
+              Icon(44) label="JarvisUITests-Runner" id=JarvisUITests-Runner {{0, 0}, {0, 0}}
+              Icon(44) label="Jarvis" id=Jarvis {{0, 0}, {0, 0}}
+            Other(1) label="Search" value="Page 0 of 2" id=spotlight-pill {{621, 763.7}, {78, 30}}
+              PageIndicator(34) value="Page 0 of 2" id=Page control {{621, 763.7}, {78, 35}}
+              Other(1) id=spotlight-pill {{621, 763.7}, {78, 30}}
+                Other(1) {{621, 763.7}, {78, 30}}
+                  Image(43) label="Search" id=magnifyingglass {{632.7, 773}, {11.3, 10.7}}
+                  StaticText(48) label="Search" {{647, 771.3}, {40.3, 14.3}}
+            Other(1) {{440, 821.7}, {440, 134.3}}
+              Other(1) {{457, 821.7}, {406, 117.3}}
+                Other(1) label="Dock" {{440, 821.7}, {440, 117.3}}
+                  Other(1) {{440, 821.7}, {440, 117.3}}
+                  Icon(44) label="Safari" value="" id=Safari {{576, 844.3}, {72, 72}}
+                    Other(1) {{578, 846.3}, {68, 68}}
+                      Other(1) {{578, 846.3}, {68, 68}}
+                        Other(1) {{578, 846.3}, {68, 68}}
+                          Other(1) {{578, 846.3}, {68, 68}}
+                  Icon(44) label="Messages" value="" id=Messages {{672, 844.3}, {72, 72}}
+                    Other(1) {{674, 846.3}, {68, 68}}
+                      Other(1) {{674, 846.3}, {68, 68}}
+                        Other(1) {{674, 846.3}, {68, 68}}
+                          Other(1) {{674, 846.3}, {68, 68}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{158.3, 15.0}, {123.3, 34.7}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{158, 14.7}, {124, 35.3}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) id=jindo-container-view:1 {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{147.3, 10}, {145.3, 52}}
+            Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+                Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+        Other(1) {{237, 28}, {9, 9}}
+  Window(4) {{0, 0}, {1320, 2868}}
+    Other(1) {{0, 0}, {1320, 2868}}
+      Other(1) {{0, 0}, {1320, 2868}}
+        Other(1) {{0, 0}, {1320, 2868}}
+          Other(1) {{0, 0}, {1320, 2868}}
+            Other(1) {{0, 0}, {1320, 2868}}
+            Other(1) {{0, 0}, {1320, 2868}}
+            Other(1) {{0, 0}, {1320, 2868}}
+            Other(1) {{0, 0}, {1320, 2868}}
+            Other(1) {{0, 0}, {1320, 2868}}
+            Other(1) {{0, 0}, {1320, 2868}}
+            Other(1) {{0, 0}, {1320, 2868}}
+      Other(1) {{0, 0}, {1320, 2868}}
+        Other(1) {{0, 0}, {1320, 2868}}
+          Other(1) {{0, 0}, {1320, 2868}}
+            Other(1) {{0, 0}, {1320, 2868}}
+            Other(1) {{0, 0}, {1320, 2868}}
+      Other(1) {{0, 0}, {1320, 2868}}
+        Other(1) {{0, 0}, {1320, 2868}}
+          Other(1) {{0, 0}, {1320, 2868}}
+            Other(1) {{0, 0}, {1320, 2868}}
+            Other(1) {{0, 0}, {1320, 2868}}
+  Window(4) {{0, 0}, {1320, 2868}}
+    Other(1) {{0, 0}, {1320, 2868}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    StatusBar(25) {{0, 0}, {440, 54}}
+      Other(1) {{0, 0}, {440, 54}}
+        Other(1) {{0, 0}, {440, 54}}
+          StaticText(48) label="10:04 AM" {{59.3, 22}, {48.3, 21.7}}
+          Other(1) label="Cellular" value="No signal" {{312.3, 25.3}, {21.7, 13.7}}
+          Other(1) value="SSID, 3 of 3 Wi-Fi bars" id=3 of 3 Wi-Fi bars {{341.3, 25}, {19.7, 14}}
+          Other(1) label="100% battery power" value="Not charging" {{368.3, 25.0}, {31.3, 14.3}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}

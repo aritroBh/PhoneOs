@@ -1,0 +1,462 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p5c-contacts (`probe3-p5c-contacts-01-no-delete-tree.txt`), verbatim below this line.
+Q: Why is the Delete Contact button not reachable?
+capture 01 (no-delete): the raw tree of com.apple.MobileAddressBook by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 1: com.apple.MobileAddressBook
+screen 440x956 pt, keyboard hidden
+nodes 224, XCUITest snapshot 3650 ms
+types without a core role: Other×84
+note: probe round 3 p5c-contacts, capture 01: no-delete
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Contacts" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                NavigationBar id=CNContactView {{0, 62}, {440, 54}}
+                  Button "close" {{24, 66}, {36, 36}}
+                  Button "Done" {{380, 66}, {36, 36}} [disabled]
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 116}}
+                              Table {{0, 0}, {440, 956.0}}
+                                Button "Add photo" {{132.7, -1494.3}, {175.0, 175}} [hidden]
+                                Button "Add Photo" {{156.7, -1307.3}, {127.0, 48}} [hidden]
+                                  StaticText "Add Photo" {{180.7, -1293}, {79.0, 19.3}} [hidden]
+                                Image "Poster" {{0, -1610.3}, {10, 24}} [hidden]
+                                Other(Other) {{0, -1248.3}, {440, 0.3}} [hidden]
+                                Button "Remove photo" id=RemoveAvatarPosterButton {{254, -1497.3}, {44, 44}} [hidden]
+                                Other(Other) {{0, -1089.0}, {440, 12}} [hidden]
+                                Cell {{20, -1236}, {400, 53}} [hidden]
+                                  TextField "First name" value="John" placeholder="First name" id=First name {{40, -1220.3}, {360, 22}} [hidden]
+                                  Other(Other) {{40, -1184}, {380, 1}} [hidden]
+                                Cell {{20, -1183}, {400, 53}} [hidden]
+                                  TextField "Last name" value="Appleseed" placeholder="Last name" id=Last name {{40, -1167.3}, {360, 22}} [hidden]
+                                  Other(Other) {{40, -1131}, {380, 1}} [hidden]
+                                Cell {{20, -1130}, {400, 53}} [hidden]
+                                  Other(Other) {{20, -1078}, {400, 1}} [hidden]
+                                  TextField "Company" placeholder="Company" id=Company {{40, -1114.3}, {360, 22}} [hidden]
+                                Other(Other) {{0, -919.7}, {440, 16}} [hidden]
+                                Cell "mobile" {{20, -1061.0}, {400, 53}} [hidden]
+                                  Button "Remove mobile" {{39.2, -1048.7}, {25.7, 25.7}} [hidden]
+                                    Image "remove" id=minus.circle.fill {{39.2, -1047.7}, {25.7, 25.7}} [hidden]
+                                  Button "mobile" {{80, -1061.0}, {76, 53}} [hidden]
+                                    StaticText "mobile" {{94, -1061.0}, {46, 53}} [hidden]
+                                  Other(Other) {{80, -1009.0}, {340, 1}} [hidden]
+                                  Image "Forward" id=chevron.forward {{145.3, -1041.7}, {10.7, 14.3}} [hidden]
+                                  Other(Other) {{164, -1061.0}, {0.7, 53}} [hidden]
+                                  TextField value="(888) 555-5512" placeholder="Phone" id=mobile {{180.7, -1045.3}, {219.3, 22}} [hidden]
+                                Cell "home" {{20, -1008.0}, {400, 53}} [hidden]
+                                  Button "Remove home" {{39.2, -995.7}, {25.7, 25.7}} [hidden]
+                                    Image "remove" id=minus.circle.fill {{39.2, -994.7}, {25.7, 25.7}} [hidden]
+                                  Button "home" {{80, -1008.0}, {76, 53}} [hidden]
+                                    StaticText "home" {{101.3, -1008.0}, {38.7, 53}} [hidden]
+                                  Other(Other) {{80, -956.0}, {340, 1}} [hidden]
+                                  Image "Forward" id=chevron.forward {{145.3, -988.7}, {10.7, 14.3}} [hidden]
+                                  Other(Other) {{164, -1008.0}, {0.7, 53}} [hidden]
+                                  TextField value="(888) 555-1212" placeholder="Phone" id=home {{180.7, -992.3}, {219.3, 22}} [hidden]
+                                Cell "add phone" {{20, -955.0}, {400, 51.3}} [hidden]
+                                  Button "Insert" {{0, -1610.3}, {25.7, 25.7}} [hidden]
+                                    Image "add" id=plus.circle.fill {{0, -1610.3}, {25.7, 25.7}} [hidden]
+                                  Other(Other) {{0, -1610.3}, {400, 1}} [hidden]
+                                  StaticText "add phone" {{0, -1610.3}, {320, 21.3}} [hidden]
+                                Other(Other) {{0, -799.3}, {440, 16}} [hidden]
+                                Cell "work" {{20, -887.7}, {400, 53}} [hidden]
+                                  Button "Remove work" {{39.2, -875.3}, {25.7, 25.7}} [hidden]
+                                    Image "remove" id=minus.circle.fill {{39.2, -874.3}, {25.7, 25.7}} [hidden]
+                                  Button "work" {{80, -887.7}, {76, 53}} [hidden]
+                                    StaticText "work" {{106.7, -887.7}, {33.3, 53}} [hidden]
+                                  Other(Other) {{80, -835.7}, {340, 1}} [hidden]
+                                  Image "Forward" id=chevron.forward {{145.3, -868.3}, {10.7, 14.3}} [hidden]
+                                  Other(Other) {{164, -887.7}, {0.7, 53}} [hidden]
+                                  TextField value="John-Appleseed@mac.com" placeholder="Email" id=work {{180.7, -872.0}, {219.3, 22}} [hidden]
+                                Cell "add email" {{20, -834.7}, {400, 51.3}} [hidden]
+                                  Button "Insert" {{0, -1610.3}, {25.7, 25.7}} [hidden]
+                                    Image "add" id=plus.circle.fill {{0, -1610.3}, {25.7, 25.7}} [hidden]
+                                  Other(Other) {{0, -1610.3}, {400, 1}} [hidden]
+                                  StaticText "add email" {{0, -1610.3}, {320, 21.3}} [hidden]
+                                Other(Other) {{0, -732.0}, {440, 16}} [hidden]
+                                Cell "add pronouns" {{20, -767.3}, {400, 51.3}} [hidden]
+                                  Other(Other) {{20, -717.0}, {400, 1}} [hidden]
+                                  Button "Insert add pronouns" {{39.2, -755.7}, {25.7, 25.7}} [hidden]
+                                    Image "add" id=plus.circle.fill {{39.2, -754.7}, {25.7, 25.7}} [hidden]
+                                  StaticText "add pronouns" {{80, -752.3}, {320, 21.3}} [hidden]
+                                Other(Other) {{0, -664.7}, {440, 16}} [hidden]
+                                Cell "Ringtone" value="Default" {{20, -700.0}, {400, 51.3}} [hidden]
+                                  Other(Other) {{20, -649.7}, {400, 1}} [hidden]
+                                  StaticText "Ringtone" {{40, -684.0}, {61.3, 19.7}} [hidden]
+                                  StaticText "Default" {{117.3, -684.3}, {55.0, 20.3}} [hidden]
+                                  Image "Forward" id=chevron.forward {{389.3, -681.3}, {10.7, 14.3}} [hidden]
+                                Other(Other) {{0, -597.3}, {440, 16}} [hidden]
+                                Cell "Text Tone" value="Default" {{20, -632.7}, {400, 51.3}} [hidden]
+                                  Other(Other) {{20, -582.3}, {400, 1}} [hidden]
+                                  StaticText "Text Tone" {{40, -616.7}, {66, 19.7}} [hidden]
+                                  StaticText "Default" {{122, -617.0}, {55, 20.3}} [hidden]
+                                  Image "Forward" id=chevron.forward {{389.3, -614.0}, {10.7, 14.3}} [hidden]
+                                Other(Other) {{0, -530.0}, {440, 16}} [hidden]
+                                Cell "add url" {{20, -565.3}, {400, 51.3}} [hidden]
+                                  Other(Other) {{20, -515.0}, {400, 1}} [hidden]
+                                  Button "Insert add url" {{39.2, -553.7}, {25.7, 25.7}} [hidden]
+                                    Image "add" id=plus.circle.fill {{39.2, -552.7}, {25.7, 25.7}} [hidden]
+                                  StaticText "add url" {{80, -550.3}, {320, 21.3}} [hidden]
+                                Other(Other) {{0, -20.7}, {440, 16}} [hidden]
+                                Cell {{20, -498.0}, {400, 221}} [hidden]
+                                  TextField "Street" placeholder="Street" {{180.7, -446.0}, {211.3, 28}} [hidden]
+                                  TextField "City" value="Atlanta" placeholder="City" {{180.7, -402.0}, {211.3, 28}} [hidden]
+                                  TextField "State" value="GA" placeholder="State" {{180.7, -355.0}, {101.7, 22}} [hidden]
+                                  TextField "ZIP" value="30303" placeholder="ZIP" {{290.3, -355.0}, {101.7, 22}} [hidden]
+                                  TextField "Country or Region" value="USA" placeholder="Country or Region" {{180.7, -314.0}, {200.7, 28}} [hidden]
+                                  Button "Remove" {{39.2, -401.7}, {25.7, 25.7}} [hidden]
+                                    Image "remove" id=minus.circle.fill {{39.2, -400.7}, {25.7, 25.7}} [hidden]
+                                  Button "work" {{80, -498.0}, {76, 221}} [hidden]
+                                    StaticText "work" {{106.7, -498.0}, {33.3, 221}} [hidden]
+                                  Other(Other) {{80, -278.0}, {340, 1}} [hidden]
+                                  TextField "Street" value="3494 Kuhl Avenue" placeholder="Street" {{180.7, -490.0}, {211.3, 28}} [hidden]
+                                  Image "Forward" id=chevron.forward {{145.3, -394.7}, {10.7, 14.3}} [hidden]
+                                  Other(Other) {{164, -498.0}, {0.7, 221}} [hidden]
+                                Cell {{20, -277.0}, {400, 221}} [hidden]
+                                  TextField "Street" placeholder="Street" {{180.7, -225.0}, {211.3, 28}} [hidden]
+                                  TextField "City" value="Atlanta" placeholder="City" {{180.7, -181.0}, {211.3, 28}} [hidden]
+                                  TextField "State" value="GA" placeholder="State" {{180.7, -134.0}, {101.7, 22}} [hidden]
+                                  TextField "ZIP" value="30303" placeholder="ZIP" {{290.3, -134.0}, {101.7, 22}} [hidden]
+                                  TextField "Country or Region" value="USA" placeholder="Country or Region" {{180.7, -93.0}, {200.7, 28}} [hidden]
+                                  Button "Remove" {{39.2, -180.7}, {25.7, 25.7}} [hidden]
+                                    Image "remove" id=minus.circle.fill {{39.2, -179.7}, {25.7, 25.7}} [hidden]
+                                  Button "home" {{80, -277.0}, {76, 221}} [hidden]
+                                    StaticText "home" {{101.3, -277.0}, {38.7, 221}} [hidden]
+                                  Other(Other) {{80, -57.0}, {340, 1}} [hidden]
+                                  TextField "Street" value="1234 Laurel Street" placeholder="Street" {{180.7, -269.0}, {211.3, 28}} [hidden]
+                                  Image "Forward" id=chevron.forward {{145.3, -173.7}, {10.7, 14.3}} [hidden]
+                                  Other(Other) {{164, -277.0}, {0.7, 221}} [hidden]
+                                Cell "add address" {{20, -56.0}, {400, 51.3}} [hidden]
+                                  Other(Other) {{20, -5.7}, {400, 1}} [hidden]
+                                  Button "Insert" {{39.2, -44.3}, {25.7, 25.7}} [hidden]
+                                    Image "add" id=plus.circle.fill {{39.2, -43.3}, {25.7, 25.7}} [hidden]
+                                  StaticText "add address" {{80, -41.0}, {320, 21.3}} [hidden]
+                                Other(Other) {{0, 0}, {440, 16}}
+                                Cell "birthday" {{20, 11.3}, {400, 53}}
+                                  Button "Remove birthday" {{39.2, 23.7}, {25.7, 25.7}}
+                                    Image "remove" id=minus.circle.fill {{39.2, 24.7}, {25.7, 25.7}}
+                                  Button "birthday" {{80, 11.3}, {76, 53}}
+                                    StaticText "birthday" {{83.3, 11.3}, {56.7, 53}}
+                                  Other(Other) {{80, 63.3}, {340, 1}}
+                                  Image "Forward" id=chevron.forward {{145.3, 30.7}, {10.7, 14.3}}
+                                  Other(Other) {{164, 11.3}, {0.7, 53}}
+                                  TextField value="June 22, 1980" id=birthday {{180.7, 27.0}, {219.3, 22}}
+                                Cell "add birthday" {{20, 64.3}, {400, 51.3}}
+                                  Other(Other) {{20, 114.7}, {400, 1}}
+                                  Button "Insert add birthday" {{39.2, 76.0}, {25.7, 25.7}}
+                                    Image "add" id=plus.circle.fill {{39.2, 77.0}, {25.7, 25.7}}
+                                  StaticText "add birthday" {{80, 79.3}, {320, 21.3}}
+                                Other(Other) {{0, 115.7}, {440, 16}}
+                                Cell "add date" {{20, 131.7}, {400, 51.3}}
+                                  Other(Other) {{20, 182.0}, {400, 1}}
+                                  Button "Insert add date" {{39.2, 143.3}, {25.7, 25.7}}
+                                    Image "add" id=plus.circle.fill {{39.2, 144.3}, {25.7, 25.7}}
+                                  StaticText "add date" {{80, 146.7}, {320, 21.3}}
+                                Other(Other) {{0, 183.0}, {440, 16}}
+                                Cell "add related name" {{20, 199.0}, {400, 51.3}}
+                                  Other(Other) {{20, 249.3}, {400, 1}}
+                                  Button "Insert add related name" {{39.2, 210.7}, {25.7, 25.7}}
+                                    Image "add" id=plus.circle.fill {{39.2, 211.7}, {25.7, 25.7}}
+                                  StaticText "add related name" {{80, 214.0}, {320, 21.3}}
+                                Other(Other) {{0, 250.3}, {440, 16}}
+                                Cell "add social profile" {{20, 266.3}, {400, 51.3}}
+                                  Other(Other) {{20, 316.7}, {400, 1}}
+                                  Button "Insert add social profile" {{39.2, 278.0}, {25.7, 25.7}}
+                                    Image "add" id=plus.circle.fill {{39.2, 279.0}, {25.7, 25.7}}
+                                  StaticText "add social profile" {{80, 281.3}, {320, 21.3}}
+                                Other(Other) {{0, 317.7}, {440, 16}}
+                                Cell "add instant message" {{20, 333.7}, {400, 51.3}}
+                                  Other(Other) {{20, 384.0}, {400, 1}}
+                                  Button "Insert add instant message" {{39.2, 345.3}, {25.7, 25.7}}
+                                    Image "add" id=plus.circle.fill {{39.2, 346.3}, {25.7, 25.7}}
+                                  StaticText "add instant message" {{80, 348.7}, {320, 21.3}}
+                                Other(Other) {{0, 385.0}, {440, 16}}
+                                Cell "Notes" value="College roommate" {{20, 401.0}, {400, 106.3}}
+                                  Other(Other) {{20, 506.3}, {400, 1}}
+                                  StaticText "Notes" {{40, 416.0}, {360, 20.3}}
+                                  TextView "Notes" value="College roommate" {{40, 440.3}, {360, 22}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0%" {{367, 440.3}, {30, 22}}
+                                      Other(Other) {{394, 401.3}, {3, 36}}
+                                    Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{40, 448.3}, {360, 11}}
+                                      Other(Other) {{1, 456.3}, {36, 3}}
+                                Other(Other) {{0, 507.3}, {440, 16}}
+                                Cell "add verification code" {{20, 523.3}, {400, 51.3}}
+                                  Other(Other) {{20, 573.7}, {400, 1}}
+                                  Button "Insert add verification code" {{39.2, 535.0}, {25.7, 25.7}}
+                                    Image "add" id=plus.circle.fill {{39.2, 536.0}, {25.7, 25.7}}
+                                  StaticText "add verification code" {{80, 538.3}, {320, 21.3}}
+                                Other(Other) {{0, 574.7}, {440, 16}}
+                                Cell "add field" {{20, 590.7}, {400, 51.3}}
+                                  Other(Other) {{20, 641.0}, {400, 1}}
+                                  StaticText "add field" {{40, 605.7}, {360, 21.3}}
+                                Other(Other) id=Linked Contacts {{0, 642.0}, {440, 59}}
+                                  StaticText "Linked Contacts" {{0, 642.0}, {440, 59}}
+                                Cell "link contacts…" {{20, 701.0}, {400, 51.3}}
+                                  Other(Other) {{20, 751.3}, {400, 1}}
+                                  Button "Insert link contacts…" {{39.2, 712.7}, {25.7, 25.7}}
+                                    Image "add" id=plus.circle.fill {{39.2, 713.7}, {25.7, 25.7}}
+                                  StaticText "link contacts…" {{80, 716.0}, {320, 21.3}}
+                                Other(Other) {{0, 752.3}, {440, 16}}
+                                Cell "add to list" {{20, 768.3}, {400, 51.3}}
+                                  Other(Other) {{20, 818.7}, {400, 1}}
+                                  Button "Insert add to list" {{39.2, 780.0}, {25.7, 25.7}}
+                                    Image "add" id=plus.circle.fill {{39.2, 781.0}, {25.7, 25.7}}
+                                  StaticText "add to list" {{80, 783.3}, {320, 21.3}}
+                                Other(Other) {{0, 819.7}, {440, 16}}
+                                Cell "Delete Contact" {{20, 835.7}, {400, 51.3}}
+                                  Other(Other) {{20, 886.0}, {400, 1}}
+                                  StaticText "Delete Contact" {{40, 850.7}, {360, 21.3}}
+                                Other(Other) {{0, 887.0}, {440, 35}}
+                                Other(Other) "Vertical scroll bar, 3 pages" value="100%" {{407, 116}, {30, 778.0}}
+                                  Other(Other) {{434, 603.3}, {3, 287.7}}
+                                Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 923.0}, {316, 30}}
+                                  Other(Other) {{65, 950.0}, {310, 3}}
+                                Other(Other) "Linked Contacts" {{20, 642.0}, {400, 59}}
+                                StaticText "Add Photo" {{180.7, -1293}, {79.0, 19.3}} [hidden]
+                              Toolbar "Toolbar" id=Toolbar {{5, 82}, {425, 48}}
+                                Other(Other) {{5, 82}, {425, 48}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Contacts" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                NavigationBar(21) id=CNContactView {{0, 62}, {440, 54}}
+                  Button(9) label="close" {{24, 66}, {36, 36}}
+                  Button(9) label="Done" {{380, 66}, {36, 36}} [disabled]
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 0}, {440, 956}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+                              Other(1) {{0, 0}, {440, 116}}
+                              Table(26) {{0, 0}, {440, 956.0}}
+                                Button(9) label="Add photo" {{132.7, -1494.3}, {175.0, 175}}
+                                Button(9) label="Add Photo" {{156.7, -1307.3}, {127.0, 48}}
+                                  StaticText(48) label="Add Photo" {{180.7, -1293}, {79.0, 19.3}}
+                                Image(43) label="Poster" {{0, -1610.3}, {10, 24}}
+                                Other(1) {{0, -1248.3}, {440, 0.3}}
+                                Button(9) label="Remove photo" id=RemoveAvatarPosterButton {{254, -1497.3}, {44, 44}}
+                                Other(1) {{0, -1089.0}, {440, 12}}
+                                Cell(75) value="" {{20, -1236}, {400, 53}}
+                                  TextField(49) label="First name" value="John" placeholder="First name" id=First name {{40, -1220.3}, {360, 22}}
+                                  Other(1) {{40, -1184}, {380, 1}}
+                                Cell(75) value="" {{20, -1183}, {400, 53}}
+                                  TextField(49) label="Last name" value="Appleseed" placeholder="Last name" id=Last name {{40, -1167.3}, {360, 22}}
+                                  Other(1) {{40, -1131}, {380, 1}}
+                                Cell(75) value="" {{20, -1130}, {400, 53}}
+                                  Other(1) {{20, -1078}, {400, 1}}
+                                  TextField(49) label="Company" placeholder="Company" id=Company {{40, -1114.3}, {360, 22}}
+                                Other(1) {{0, -919.7}, {440, 16}}
+                                Cell(75) label="mobile" value="" {{20, -1061.0}, {400, 53}}
+                                  Button(9) label="Remove mobile" {{39.2, -1048.7}, {25.7, 25.7}}
+                                    Image(43) label="remove" id=minus.circle.fill {{39.2, -1047.7}, {25.7, 25.7}}
+                                  Button(9) label="mobile" {{80, -1061.0}, {76, 53}}
+                                    StaticText(48) label="mobile" {{94, -1061.0}, {46, 53}}
+                                  Other(1) {{80, -1009.0}, {340, 1}}
+                                  Image(43) label="Forward" id=chevron.forward {{145.3, -1041.7}, {10.7, 14.3}}
+                                  Other(1) {{164, -1061.0}, {0.7, 53}}
+                                  TextField(49) value="(888) 555-5512" placeholder="Phone" id=mobile {{180.7, -1045.3}, {219.3, 22}}
+                                Cell(75) label="home" value="" {{20, -1008.0}, {400, 53}}
+                                  Button(9) label="Remove home" {{39.2, -995.7}, {25.7, 25.7}}
+                                    Image(43) label="remove" id=minus.circle.fill {{39.2, -994.7}, {25.7, 25.7}}
+                                  Button(9) label="home" {{80, -1008.0}, {76, 53}}
+                                    StaticText(48) label="home" {{101.3, -1008.0}, {38.7, 53}}
+                                  Other(1) {{80, -956.0}, {340, 1}}
+                                  Image(43) label="Forward" id=chevron.forward {{145.3, -988.7}, {10.7, 14.3}}
+                                  Other(1) {{164, -1008.0}, {0.7, 53}}
+                                  TextField(49) value="(888) 555-1212" placeholder="Phone" id=home {{180.7, -992.3}, {219.3, 22}}
+                                Cell(75) label="add phone" value="" {{20, -955.0}, {400, 51.3}}
+                                  Button(9) label="Insert" {{0, -1610.3}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{0, -1610.3}, {25.7, 25.7}}
+                                  Other(1) {{0, -1610.3}, {400, 1}}
+                                  StaticText(48) label="add phone" {{0, -1610.3}, {320, 21.3}}
+                                Other(1) {{0, -799.3}, {440, 16}}
+                                Cell(75) label="work" value="" {{20, -887.7}, {400, 53}}
+                                  Button(9) label="Remove work" {{39.2, -875.3}, {25.7, 25.7}}
+                                    Image(43) label="remove" id=minus.circle.fill {{39.2, -874.3}, {25.7, 25.7}}
+                                  Button(9) label="work" {{80, -887.7}, {76, 53}}
+                                    StaticText(48) label="work" {{106.7, -887.7}, {33.3, 53}}
+                                  Other(1) {{80, -835.7}, {340, 1}}
+                                  Image(43) label="Forward" id=chevron.forward {{145.3, -868.3}, {10.7, 14.3}}
+                                  Other(1) {{164, -887.7}, {0.7, 53}}
+                                  TextField(49) value="John-Appleseed@mac.com" placeholder="Email" id=work {{180.7, -872.0}, {219.3, 22}}
+                                Cell(75) label="add email" value="" {{20, -834.7}, {400, 51.3}}
+                                  Button(9) label="Insert" {{0, -1610.3}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{0, -1610.3}, {25.7, 25.7}}
+                                  Other(1) {{0, -1610.3}, {400, 1}}
+                                  StaticText(48) label="add email" {{0, -1610.3}, {320, 21.3}}
+                                Other(1) {{0, -732.0}, {440, 16}}
+                                Cell(75) label="add pronouns" value="" {{20, -767.3}, {400, 51.3}}
+                                  Other(1) {{20, -717.0}, {400, 1}}
+                                  Button(9) label="Insert add pronouns" {{39.2, -755.7}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{39.2, -754.7}, {25.7, 25.7}}
+                                  StaticText(48) label="add pronouns" {{80, -752.3}, {320, 21.3}}
+                                Other(1) {{0, -664.7}, {440, 16}}
+                                Cell(75) label="Ringtone" value="Default" {{20, -700.0}, {400, 51.3}}
+                                  Other(1) {{20, -649.7}, {400, 1}}
+                                  StaticText(48) label="Ringtone" {{40, -684.0}, {61.3, 19.7}}
+                                  StaticText(48) label="Default" {{117.3, -684.3}, {55.0, 20.3}}
+                                  Image(43) label="Forward" id=chevron.forward {{389.3, -681.3}, {10.7, 14.3}}
+                                Other(1) {{0, -597.3}, {440, 16}}
+                                Cell(75) label="Text Tone" value="Default" {{20, -632.7}, {400, 51.3}}
+                                  Other(1) {{20, -582.3}, {400, 1}}
+                                  StaticText(48) label="Text Tone" {{40, -616.7}, {66, 19.7}}
+                                  StaticText(48) label="Default" {{122, -617.0}, {55, 20.3}}
+                                  Image(43) label="Forward" id=chevron.forward {{389.3, -614.0}, {10.7, 14.3}}
+                                Other(1) {{0, -530.0}, {440, 16}}
+                                Cell(75) label="add url" value="" {{20, -565.3}, {400, 51.3}}
+                                  Other(1) {{20, -515.0}, {400, 1}}
+                                  Button(9) label="Insert add url" {{39.2, -553.7}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{39.2, -552.7}, {25.7, 25.7}}
+                                  StaticText(48) label="add url" {{80, -550.3}, {320, 21.3}}
+                                Other(1) {{0, -20.7}, {440, 16}}
+                                Cell(75) value="" {{20, -498.0}, {400, 221}}
+                                  TextField(49) label="Street" placeholder="Street" {{180.7, -446.0}, {211.3, 28}}
+                                  TextField(49) label="City" value="Atlanta" placeholder="City" {{180.7, -402.0}, {211.3, 28}}
+                                  TextField(49) label="State" value="GA" placeholder="State" {{180.7, -355.0}, {101.7, 22}}
+                                  TextField(49) label="ZIP" value="30303" placeholder="ZIP" {{290.3, -355.0}, {101.7, 22}}
+                                  TextField(49) label="Country or Region" value="USA" placeholder="Country or Region" {{180.7, -314.0}, {200.7, 28}}
+                                  Button(9) label="Remove" {{39.2, -401.7}, {25.7, 25.7}}
+                                    Image(43) label="remove" id=minus.circle.fill {{39.2, -400.7}, {25.7, 25.7}}
+                                  Button(9) label="work" {{80, -498.0}, {76, 221}}
+                                    StaticText(48) label="work" {{106.7, -498.0}, {33.3, 221}}
+                                  Other(1) {{80, -278.0}, {340, 1}}
+                                  TextField(49) label="Street" value="3494 Kuhl Avenue" placeholder="Street" {{180.7, -490.0}, {211.3, 28}}
+                                  Image(43) label="Forward" id=chevron.forward {{145.3, -394.7}, {10.7, 14.3}}
+                                  Other(1) {{164, -498.0}, {0.7, 221}}
+                                Cell(75) value="" {{20, -277.0}, {400, 221}}
+                                  TextField(49) label="Street" placeholder="Street" {{180.7, -225.0}, {211.3, 28}}
+                                  TextField(49) label="City" value="Atlanta" placeholder="City" {{180.7, -181.0}, {211.3, 28}}
+                                  TextField(49) label="State" value="GA" placeholder="State" {{180.7, -134.0}, {101.7, 22}}
+                                  TextField(49) label="ZIP" value="30303" placeholder="ZIP" {{290.3, -134.0}, {101.7, 22}}
+                                  TextField(49) label="Country or Region" value="USA" placeholder="Country or Region" {{180.7, -93.0}, {200.7, 28}}
+                                  Button(9) label="Remove" {{39.2, -180.7}, {25.7, 25.7}}
+                                    Image(43) label="remove" id=minus.circle.fill {{39.2, -179.7}, {25.7, 25.7}}
+                                  Button(9) label="home" {{80, -277.0}, {76, 221}}
+                                    StaticText(48) label="home" {{101.3, -277.0}, {38.7, 221}}
+                                  Other(1) {{80, -57.0}, {340, 1}}
+                                  TextField(49) label="Street" value="1234 Laurel Street" placeholder="Street" {{180.7, -269.0}, {211.3, 28}}
+                                  Image(43) label="Forward" id=chevron.forward {{145.3, -173.7}, {10.7, 14.3}}
+                                  Other(1) {{164, -277.0}, {0.7, 221}}
+                                Cell(75) label="add address" value="" {{20, -56.0}, {400, 51.3}}
+                                  Other(1) {{20, -5.7}, {400, 1}}
+                                  Button(9) label="Insert" {{39.2, -44.3}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{39.2, -43.3}, {25.7, 25.7}}
+                                  StaticText(48) label="add address" {{80, -41.0}, {320, 21.3}}
+                                Other(1) {{0, 0}, {440, 16}}
+                                Cell(75) label="birthday" value="" {{20, 11.3}, {400, 53}}
+                                  Button(9) label="Remove birthday" {{39.2, 23.7}, {25.7, 25.7}}
+                                    Image(43) label="remove" id=minus.circle.fill {{39.2, 24.7}, {25.7, 25.7}}
+                                  Button(9) label="birthday" {{80, 11.3}, {76, 53}}
+                                    StaticText(48) label="birthday" {{83.3, 11.3}, {56.7, 53}}
+                                  Other(1) {{80, 63.3}, {340, 1}}
+                                  Image(43) label="Forward" id=chevron.forward {{145.3, 30.7}, {10.7, 14.3}}
+                                  Other(1) {{164, 11.3}, {0.7, 53}}
+                                  TextField(49) value="June 22, 1980" id=birthday {{180.7, 27.0}, {219.3, 22}}
+                                Cell(75) label="add birthday" value="" {{20, 64.3}, {400, 51.3}}
+                                  Other(1) {{20, 114.7}, {400, 1}}
+                                  Button(9) label="Insert add birthday" {{39.2, 76.0}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{39.2, 77.0}, {25.7, 25.7}}
+                                  StaticText(48) label="add birthday" {{80, 79.3}, {320, 21.3}}
+                                Other(1) {{0, 115.7}, {440, 16}}
+                                Cell(75) label="add date" value="" {{20, 131.7}, {400, 51.3}}
+                                  Other(1) {{20, 182.0}, {400, 1}}
+                                  Button(9) label="Insert add date" {{39.2, 143.3}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{39.2, 144.3}, {25.7, 25.7}}
+                                  StaticText(48) label="add date" {{80, 146.7}, {320, 21.3}}
+                                Other(1) {{0, 183.0}, {440, 16}}
+                                Cell(75) label="add related name" value="" {{20, 199.0}, {400, 51.3}}
+                                  Other(1) {{20, 249.3}, {400, 1}}
+                                  Button(9) label="Insert add related name" {{39.2, 210.7}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{39.2, 211.7}, {25.7, 25.7}}
+                                  StaticText(48) label="add related name" {{80, 214.0}, {320, 21.3}}
+                                Other(1) {{0, 250.3}, {440, 16}}
+                                Cell(75) label="add social profile" value="" {{20, 266.3}, {400, 51.3}}
+                                  Other(1) {{20, 316.7}, {400, 1}}
+                                  Button(9) label="Insert add social profile" {{39.2, 278.0}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{39.2, 279.0}, {25.7, 25.7}}
+                                  StaticText(48) label="add social profile" {{80, 281.3}, {320, 21.3}}
+                                Other(1) {{0, 317.7}, {440, 16}}
+                                Cell(75) label="add instant message" value="" {{20, 333.7}, {400, 51.3}}
+                                  Other(1) {{20, 384.0}, {400, 1}}
+                                  Button(9) label="Insert add instant message" {{39.2, 345.3}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{39.2, 346.3}, {25.7, 25.7}}
+                                  StaticText(48) label="add instant message" {{80, 348.7}, {320, 21.3}}
+                                Other(1) {{0, 385.0}, {440, 16}}
+                                Cell(75) label="Notes" value="College roommate" {{20, 401.0}, {400, 106.3}}
+                                  Other(1) {{20, 506.3}, {400, 1}}
+                                  StaticText(48) label="Notes" {{40, 416.0}, {360, 20.3}}
+                                  TextView(52) label="Notes" value="College roommate" {{40, 440.3}, {360, 22}}
+                                    Other(1) label="Vertical scroll bar, 1 page" value="0%" {{367, 440.3}, {30, 22}}
+                                      Other(1) {{394, 401.3}, {3, 36}}
+                                    Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{40, 448.3}, {360, 11}}
+                                      Other(1) {{1, 456.3}, {36, 3}}
+                                Other(1) {{0, 507.3}, {440, 16}}
+                                Cell(75) label="add verification code" value="" {{20, 523.3}, {400, 51.3}}
+                                  Other(1) {{20, 573.7}, {400, 1}}
+                                  Button(9) label="Insert add verification code" {{39.2, 535.0}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{39.2, 536.0}, {25.7, 25.7}}
+                                  StaticText(48) label="add verification code" {{80, 538.3}, {320, 21.3}}
+                                Other(1) {{0, 574.7}, {440, 16}}
+                                Cell(75) label="add field" value="" {{20, 590.7}, {400, 51.3}}
+                                  Other(1) {{20, 641.0}, {400, 1}}
+                                  StaticText(48) label="add field" {{40, 605.7}, {360, 21.3}}
+                                Other(1) id=Linked Contacts {{0, 642.0}, {440, 59}}
+                                  StaticText(48) label="Linked Contacts" {{0, 642.0}, {440, 59}}
+                                Cell(75) label="link contacts…" value="" {{20, 701.0}, {400, 51.3}}
+                                  Other(1) {{20, 751.3}, {400, 1}}
+                                  Button(9) label="Insert link contacts…" {{39.2, 712.7}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{39.2, 713.7}, {25.7, 25.7}}
+                                  StaticText(48) label="link contacts…" {{80, 716.0}, {320, 21.3}}
+                                Other(1) {{0, 752.3}, {440, 16}}
+                                Cell(75) label="add to list" value="" {{20, 768.3}, {400, 51.3}}
+                                  Other(1) {{20, 818.7}, {400, 1}}
+                                  Button(9) label="Insert add to list" {{39.2, 780.0}, {25.7, 25.7}}
+                                    Image(43) label="add" id=plus.circle.fill {{39.2, 781.0}, {25.7, 25.7}}
+                                  StaticText(48) label="add to list" {{80, 783.3}, {320, 21.3}}
+                                Other(1) {{0, 819.7}, {440, 16}}
+                                Cell(75) label="Delete Contact" value="" {{20, 835.7}, {400, 51.3}}
+                                  Other(1) {{20, 886.0}, {400, 1}}
+                                  StaticText(48) label="Delete Contact" {{40, 850.7}, {360, 21.3}}
+                                Other(1) {{0, 887.0}, {440, 35}}
+                                Other(1) label="Vertical scroll bar, 3 pages" value="100%" {{407, 116}, {30, 778.0}}
+                                  Other(1) {{434, 603.3}, {3, 287.7}}
+                                Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 923.0}, {316, 30}}
+                                  Other(1) {{65, 950.0}, {310, 3}}
+                                Other(1) label="Linked Contacts" {{20, 642.0}, {400, 59}}
+                                StaticText(48) label="Add Photo" {{180.7, -1293}, {79.0, 19.3}}
+                              Toolbar(24) label="Toolbar" id=Toolbar {{5, 82}, {425, 48}}
+                                Other(1) {{5, 82}, {425, 48}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}

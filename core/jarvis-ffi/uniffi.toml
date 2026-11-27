@@ -1,0 +1,7 @@
+# UniFFI bindings configuration (read by `uniffi-bindgen generate --library`).
+[bindings.swift]
+# The Swift module the generated `.swift` file is compiled into (and the xcframework name).
+module_name = "JarvisCore"
+# The Clang module wrapping the C header; the generated Swift does `import JarvisCoreFFI`.
+ffi_module_name = "JarvisCoreFFI"
+ffi_module_filename = "JarvisCoreFFI"

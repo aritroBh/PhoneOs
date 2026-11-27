@@ -1,0 +1,362 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p4d-controls (`probe3-p4d-controls-10-compact-date-open-tree.txt`), verbatim below this line.
+Q: A compact DatePicker opened: what container holds the calendar (Popover, Sheet, Other), and is the form behind still in the tree?
+capture 10 (compact-date-open): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 10: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 174, XCUITest snapshot 427 ms
+types without a core role: DatePicker×1, Other×102
+note: probe round 3 p4d-controls, capture 10: compact-date-open
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{83, 238.7}, {320, 332}}
+            Other(Other) {{83, 238.7}, {320, 332}}
+              Other(DatePicker) {{83, 238.7}, {320, 332}}
+                Other(Other) {{83, 238.7}, {320, 332}}
+                  Other(Other) {{83, 238.7}, {320, 332}}
+                    Other(Other) {{83, 238.7}, {320, 332}}
+                      Button "Month" value="January 2027" {{83, 254.7}, {320, 37.7}}
+                        Button "Previous Month" id=DatePicker.PreviousMonth {{314.3, 254.7}, {43.3, 37.7}}
+                        Button "Next Month" id=DatePicker.NextMonth {{357.7, 254.7}, {43.3, 37.7}}
+                        Button "Show year picker" value="January 2027" id=DatePicker.Show {{99, 254.7}, {131.7, 37.7}}
+                          StaticText "January 2027" {{103, 258.7}, {109.3, 29.7}}
+                      Other(Other) {{83, 308.3}, {320, 15.7}}
+                      CollectionView {{83, 324.0}, {320, 230.7}}
+                        Button "Friday, January 1" {{306.7, 325.0}, {42.7, 38}}
+                          Other(Other) {{306.7, 325.0}, {42.7, 38}}
+                            Other(Other) {{306.7, 325.0}, {42.7, 38}}
+                              Other(Other) {{309, 325.0}, {38, 38}}
+                              StaticText "1" {{323.5, 332.0}, {9, 24}}
+                        Button "Saturday, January 2" {{349.3, 325.0}, {42.7, 38}}
+                          Other(Other) {{349.3, 325.0}, {42.7, 38}}
+                            Other(Other) {{349.3, 325.0}, {42.7, 38}}
+                              Other(Other) {{351.7, 325.0}, {38, 38}}
+                              StaticText "2" {{364.8, 332.0}, {11.7, 24}}
+                        Button "Sunday, January 3" {{93.3, 363.0}, {42.7, 38}}
+                          Other(Other) {{93.3, 363.0}, {42.7, 38}}
+                            Other(Other) {{93.3, 363.0}, {42.7, 38}}
+                              Other(Other) {{95.7, 363.0}, {38, 38}}
+                              StaticText "3" {{108.7, 370.0}, {12, 24}}
+                        Button "Monday, January 4" {{136.0, 363.0}, {42.7, 38}}
+                          Other(Other) {{136.0, 363.0}, {42.7, 38}}
+                            Other(Other) {{136.0, 363.0}, {42.7, 38}}
+                              Other(Other) {{138.3, 363.0}, {38, 38}}
+                              StaticText "4" {{151.2, 370.0}, {12.3, 24}}
+                        Button "Tuesday, January 5" {{178.7, 363.0}, {42.7, 38}}
+                          Other(Other) {{178.7, 363.0}, {42.7, 38}}
+                            Other(Other) {{178.7, 363.0}, {42.7, 38}}
+                              Other(Other) {{181, 363.0}, {38, 38}}
+                              StaticText "5" {{194, 370.0}, {12, 24}}
+                        Button "Wednesday, January 6" {{221.3, 363.0}, {42.7, 38}}
+                          Other(Other) {{221.3, 363.0}, {42.7, 38}}
+                            Other(Other) {{221.3, 363.0}, {42.7, 38}}
+                              Other(Other) {{223.7, 363.0}, {38, 38}}
+                              StaticText "6" {{236.5, 370.0}, {12.3, 24}}
+                        Button "Thursday, January 7" {{264, 363.0}, {42.7, 38}}
+                          Other(Other) {{264, 363.0}, {42.7, 38}}
+                            Other(Other) {{264, 363.0}, {42.7, 38}}
+                              Other(Other) {{266.3, 363.0}, {38, 38}}
+                              StaticText "7" {{279.8, 370.0}, {11, 24}}
+                        Button "Friday, January 8" {{306.7, 363.0}, {42.7, 38}}
+                          Other(Other) {{306.7, 363.0}, {42.7, 38}}
+                            Other(Other) {{306.7, 363.0}, {42.7, 38}}
+                              Other(Other) {{309, 363.0}, {38, 38}}
+                              StaticText "8" {{321.8, 370.0}, {12.3, 24}}
+                        Button "Saturday, January 9" {{349.3, 363.0}, {42.7, 38}}
+                          Other(Other) {{349.3, 363.0}, {42.7, 38}}
+                            Other(Other) {{349.3, 363.0}, {42.7, 38}}
+                              Other(Other) {{351.7, 363.0}, {38, 38}}
+                              StaticText "9" {{364.5, 370.0}, {12.3, 24}}
+                        Button "Sunday, January 10" {{93.3, 401.0}, {42.7, 38}}
+                          Other(Other) {{93.3, 401.0}, {42.7, 38}}
+                            Other(Other) {{93.3, 401.0}, {42.7, 38}}
+                              Other(Other) {{95.7, 401.0}, {38, 38}}
+                              StaticText "10" {{104.2, 408.0}, {21, 24}}
+                        Button "Monday, January 11" {{136.0, 401.0}, {42.7, 38}}
+                          Other(Other) {{136.0, 401.0}, {42.7, 38}}
+                            Other(Other) {{136.0, 401.0}, {42.7, 38}}
+                              Other(Other) {{138.3, 401.0}, {38, 38}}
+                              StaticText "11" {{148.5, 408.0}, {17.7, 24}}
+                        Button "Tuesday, January 12" {{178.7, 401.0}, {42.7, 38}}
+                          Other(Other) {{178.7, 401.0}, {42.7, 38}}
+                            Other(Other) {{178.7, 401.0}, {42.7, 38}}
+                              Other(Other) {{181, 401.0}, {38, 38}}
+                              StaticText "12" {{189.8, 408.0}, {20.3, 24}}
+                        Button "Wednesday, January 13" {{221.3, 401.0}, {42.7, 38}}
+                          Other(Other) {{221.3, 401.0}, {42.7, 38}}
+                            Other(Other) {{221.3, 401.0}, {42.7, 38}}
+                              Other(Other) {{223.7, 401.0}, {38, 38}}
+                              StaticText "13" {{232.3, 408.0}, {20.7, 24}}
+                        Button "Thursday, January 14" {{264, 401.0}, {42.7, 38}}
+                          Other(Other) {{264, 401.0}, {42.7, 38}}
+                            Other(Other) {{264, 401.0}, {42.7, 38}}
+                              Other(Other) {{266.3, 401.0}, {38, 38}}
+                              StaticText "14" {{274.8, 408.0}, {21, 24}}
+                        Button "Friday, January 15" {{306.7, 401.0}, {42.7, 38}} [selected]
+                          Other(Other) {{306.7, 401.0}, {42.7, 38}}
+                            Other(Other) {{306.7, 401.0}, {42.7, 38}}
+                              Other(Other) {{309, 401.0}, {38, 38}}
+                              StaticText "15" {{317.2, 408.0}, {21.7, 24}}
+                        Button "Saturday, January 16" {{349.3, 401.0}, {42.7, 38}}
+                          Other(Other) {{349.3, 401.0}, {42.7, 38}}
+                            Other(Other) {{349.3, 401.0}, {42.7, 38}}
+                              Other(Other) {{351.7, 401.0}, {38, 38}}
+                              StaticText "16" {{360.2, 408.0}, {21, 24}}
+                        Button "Sunday, January 17" {{93.3, 439.0}, {42.7, 38}}
+                          Other(Other) {{93.3, 439.0}, {42.7, 38}}
+                            Other(Other) {{93.3, 439.0}, {42.7, 38}}
+                              Other(Other) {{95.7, 439.0}, {38, 38}}
+                              StaticText "17" {{104.8, 446.0}, {19.7, 24}}
+                        Button "Monday, January 18" {{136.0, 439.0}, {42.7, 38}}
+                          Other(Other) {{136.0, 439.0}, {42.7, 38}}
+                            Other(Other) {{136.0, 439.0}, {42.7, 38}}
+                              Other(Other) {{138.3, 439.0}, {38, 38}}
+                              StaticText "18" {{146.8, 446.0}, {21, 24}}
+                        Button "Tuesday, January 19" {{178.7, 439.0}, {42.7, 38}}
+                          Other(Other) {{178.7, 439.0}, {42.7, 38}}
+                            Other(Other) {{178.7, 439.0}, {42.7, 38}}
+                              Other(Other) {{181, 439.0}, {38, 38}}
+                              StaticText "19" {{189.5, 446.0}, {21, 24}}
+                        Button "Wednesday, January 20" {{221.3, 439.0}, {42.7, 38}}
+                          Other(Other) {{221.3, 439.0}, {42.7, 38}}
+                            Other(Other) {{221.3, 439.0}, {42.7, 38}}
+                              Other(Other) {{223.7, 439.0}, {38, 38}}
+                              StaticText "20" {{230.8, 446.0}, {23.7, 24}}
+                        Button "Thursday, January 21" {{264, 439.0}, {42.7, 38}}
+                          Other(Other) {{264, 439.0}, {42.7, 38}}
+                            Other(Other) {{264, 439.0}, {42.7, 38}}
+                              Other(Other) {{266.3, 439.0}, {38, 38}}
+                              StaticText "21" {{275.2, 446.0}, {20.3, 24}}
+                        Button "Friday, January 22" {{306.7, 439.0}, {42.7, 38}}
+                          Other(Other) {{306.7, 439.0}, {42.7, 38}}
+                            Other(Other) {{306.7, 439.0}, {42.7, 38}}
+                              Other(Other) {{309, 439.0}, {38, 38}}
+                              StaticText "22" {{316.5, 446.0}, {23, 24}}
+                        Button "Saturday, January 23" {{349.3, 439.0}, {42.7, 38}}
+                          Other(Other) {{349.3, 439.0}, {42.7, 38}}
+                            Other(Other) {{349.3, 439.0}, {42.7, 38}}
+                              Other(Other) {{351.7, 439.0}, {38, 38}}
+                              StaticText "23" {{358.8, 446.0}, {23.7, 24}}
+                        Button "Sunday, January 24" {{93.3, 477.0}, {42.7, 38.0}}
+                          Other(Other) {{93.3, 477.0}, {42.7, 38.0}}
+                            Other(Other) {{93.3, 477.0}, {42.7, 38.0}}
+                              Other(Other) {{95.7, 477.0}, {38, 38.0}}
+                              StaticText "24" {{102.8, 484.0}, {23.7, 24}}
+                        Button "Monday, January 25" {{136.0, 477.0}, {42.7, 38.0}}
+                          Other(Other) {{136.0, 477.0}, {42.7, 38.0}}
+                            Other(Other) {{136.0, 477.0}, {42.7, 38.0}}
+                              Other(Other) {{138.3, 477.0}, {38, 38.0}}
+                              StaticText "25" {{145.7, 484.0}, {23.3, 24}}
+                        Button "Tuesday, January 26" {{178.7, 477.0}, {42.7, 38.0}}
+                          Other(Other) {{178.7, 477.0}, {42.7, 38.0}}
+                            Other(Other) {{178.7, 477.0}, {42.7, 38.0}}
+                              Other(Other) {{181, 477.0}, {38, 38.0}}
+                              StaticText "26" {{188.2, 484.0}, {23.7, 24}}
+                        Button "Wednesday, January 27" {{221.3, 477.0}, {42.7, 38.0}}
+                          Other(Other) {{221.3, 477.0}, {42.7, 38.0}}
+                            Other(Other) {{221.3, 477.0}, {42.7, 38.0}}
+                              Other(Other) {{223.7, 477.0}, {38, 38.0}}
+                              StaticText "27" {{231.5, 484.0}, {22.3, 24}}
+                        Button "Thursday, January 28" {{264, 477.0}, {42.7, 38.0}}
+                          Other(Other) {{264, 477.0}, {42.7, 38.0}}
+                            Other(Other) {{264, 477.0}, {42.7, 38.0}}
+                              Other(Other) {{266.3, 477.0}, {38, 38.0}}
+                              StaticText "28" {{273.5, 484.0}, {23.7, 24}}
+                        Button "Friday, January 29" {{306.7, 477.0}, {42.7, 38.0}}
+                          Other(Other) {{306.7, 477.0}, {42.7, 38.0}}
+                            Other(Other) {{306.7, 477.0}, {42.7, 38.0}}
+                              Other(Other) {{309, 477.0}, {38, 38.0}}
+                              StaticText "29" {{316.2, 484.0}, {23.7, 24}}
+                        Button "Saturday, January 30" {{349.3, 477.0}, {42.7, 38.0}}
+                          Other(Other) {{349.3, 477.0}, {42.7, 38.0}}
+                            Other(Other) {{349.3, 477.0}, {42.7, 38.0}}
+                              Other(Other) {{351.7, 477.0}, {38, 38.0}}
+                              StaticText "30" {{358.7, 484.0}, {24, 24}}
+                        Button "Sunday, January 31" {{93.3, 515}, {42.7, 38}}
+                          Other(Other) {{93.3, 515}, {42.7, 38}}
+                            Other(Other) {{93.3, 515}, {42.7, 38}}
+                              Other(Other) {{95.7, 515}, {38, 38}}
+                              StaticText "31" {{104.3, 522}, {20.7, 24}}
+        Button "dismiss popup" id=PopoverDismissRegion {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{83, 238.7}, {320, 332}}
+            Other(1) {{83, 238.7}, {320, 332}}
+              DatePicker(51) {{83, 238.7}, {320, 332}}
+                Other(1) {{83, 238.7}, {320, 332}}
+                  Other(1) {{83, 238.7}, {320, 332}}
+                    Other(1) {{83, 238.7}, {320, 332}}
+                      Button(9) label="Month" value="January 2027" {{83, 254.7}, {320, 37.7}}
+                        Button(9) label="Previous Month" id=DatePicker.PreviousMonth {{314.3, 254.7}, {43.3, 37.7}}
+                        Button(9) label="Next Month" id=DatePicker.NextMonth {{357.7, 254.7}, {43.3, 37.7}}
+                        Button(9) label="Show year picker" value="January 2027" id=DatePicker.Show {{99, 254.7}, {131.7, 37.7}}
+                          StaticText(48) label="January 2027" {{103, 258.7}, {109.3, 29.7}}
+                      Other(1) {{83, 308.3}, {320, 15.7}}
+                      CollectionView(32) {{83, 324.0}, {320, 230.7}}
+                        Button(9) label="Friday, January 1" {{306.7, 325.0}, {42.7, 38}}
+                          Other(1) {{306.7, 325.0}, {42.7, 38}}
+                            Other(1) {{306.7, 325.0}, {42.7, 38}}
+                              Other(1) {{309, 325.0}, {38, 38}}
+                              StaticText(48) label="1" {{323.5, 332.0}, {9, 24}}
+                        Button(9) label="Saturday, January 2" {{349.3, 325.0}, {42.7, 38}}
+                          Other(1) {{349.3, 325.0}, {42.7, 38}}
+                            Other(1) {{349.3, 325.0}, {42.7, 38}}
+                              Other(1) {{351.7, 325.0}, {38, 38}}
+                              StaticText(48) label="2" {{364.8, 332.0}, {11.7, 24}}
+                        Button(9) label="Sunday, January 3" {{93.3, 363.0}, {42.7, 38}}
+                          Other(1) {{93.3, 363.0}, {42.7, 38}}
+                            Other(1) {{93.3, 363.0}, {42.7, 38}}
+                              Other(1) {{95.7, 363.0}, {38, 38}}
+                              StaticText(48) label="3" {{108.7, 370.0}, {12, 24}}
+                        Button(9) label="Monday, January 4" {{136.0, 363.0}, {42.7, 38}}
+                          Other(1) {{136.0, 363.0}, {42.7, 38}}
+                            Other(1) {{136.0, 363.0}, {42.7, 38}}
+                              Other(1) {{138.3, 363.0}, {38, 38}}
+                              StaticText(48) label="4" {{151.2, 370.0}, {12.3, 24}}
+                        Button(9) label="Tuesday, January 5" {{178.7, 363.0}, {42.7, 38}}
+                          Other(1) {{178.7, 363.0}, {42.7, 38}}
+                            Other(1) {{178.7, 363.0}, {42.7, 38}}
+                              Other(1) {{181, 363.0}, {38, 38}}
+                              StaticText(48) label="5" {{194, 370.0}, {12, 24}}
+                        Button(9) label="Wednesday, January 6" {{221.3, 363.0}, {42.7, 38}}
+                          Other(1) {{221.3, 363.0}, {42.7, 38}}
+                            Other(1) {{221.3, 363.0}, {42.7, 38}}
+                              Other(1) {{223.7, 363.0}, {38, 38}}
+                              StaticText(48) label="6" {{236.5, 370.0}, {12.3, 24}}
+                        Button(9) label="Thursday, January 7" {{264, 363.0}, {42.7, 38}}
+                          Other(1) {{264, 363.0}, {42.7, 38}}
+                            Other(1) {{264, 363.0}, {42.7, 38}}
+                              Other(1) {{266.3, 363.0}, {38, 38}}
+                              StaticText(48) label="7" {{279.8, 370.0}, {11, 24}}
+                        Button(9) label="Friday, January 8" {{306.7, 363.0}, {42.7, 38}}
+                          Other(1) {{306.7, 363.0}, {42.7, 38}}
+                            Other(1) {{306.7, 363.0}, {42.7, 38}}
+                              Other(1) {{309, 363.0}, {38, 38}}
+                              StaticText(48) label="8" {{321.8, 370.0}, {12.3, 24}}
+                        Button(9) label="Saturday, January 9" {{349.3, 363.0}, {42.7, 38}}
+                          Other(1) {{349.3, 363.0}, {42.7, 38}}
+                            Other(1) {{349.3, 363.0}, {42.7, 38}}
+                              Other(1) {{351.7, 363.0}, {38, 38}}
+                              StaticText(48) label="9" {{364.5, 370.0}, {12.3, 24}}
+                        Button(9) label="Sunday, January 10" {{93.3, 401.0}, {42.7, 38}}
+                          Other(1) {{93.3, 401.0}, {42.7, 38}}
+                            Other(1) {{93.3, 401.0}, {42.7, 38}}
+                              Other(1) {{95.7, 401.0}, {38, 38}}
+                              StaticText(48) label="10" {{104.2, 408.0}, {21, 24}}
+                        Button(9) label="Monday, January 11" {{136.0, 401.0}, {42.7, 38}}
+                          Other(1) {{136.0, 401.0}, {42.7, 38}}
+                            Other(1) {{136.0, 401.0}, {42.7, 38}}
+                              Other(1) {{138.3, 401.0}, {38, 38}}
+                              StaticText(48) label="11" {{148.5, 408.0}, {17.7, 24}}
+                        Button(9) label="Tuesday, January 12" {{178.7, 401.0}, {42.7, 38}}
+                          Other(1) {{178.7, 401.0}, {42.7, 38}}
+                            Other(1) {{178.7, 401.0}, {42.7, 38}}
+                              Other(1) {{181, 401.0}, {38, 38}}
+                              StaticText(48) label="12" {{189.8, 408.0}, {20.3, 24}}
+                        Button(9) label="Wednesday, January 13" {{221.3, 401.0}, {42.7, 38}}
+                          Other(1) {{221.3, 401.0}, {42.7, 38}}
+                            Other(1) {{221.3, 401.0}, {42.7, 38}}
+                              Other(1) {{223.7, 401.0}, {38, 38}}
+                              StaticText(48) label="13" {{232.3, 408.0}, {20.7, 24}}
+                        Button(9) label="Thursday, January 14" {{264, 401.0}, {42.7, 38}}
+                          Other(1) {{264, 401.0}, {42.7, 38}}
+                            Other(1) {{264, 401.0}, {42.7, 38}}
+                              Other(1) {{266.3, 401.0}, {38, 38}}
+                              StaticText(48) label="14" {{274.8, 408.0}, {21, 24}}
+                        Button(9) label="Friday, January 15" {{306.7, 401.0}, {42.7, 38}} [selected]
+                          Other(1) {{306.7, 401.0}, {42.7, 38}}
+                            Other(1) {{306.7, 401.0}, {42.7, 38}}
+                              Other(1) {{309, 401.0}, {38, 38}}
+                              StaticText(48) label="15" {{317.2, 408.0}, {21.7, 24}}
+                        Button(9) label="Saturday, January 16" {{349.3, 401.0}, {42.7, 38}}
+                          Other(1) {{349.3, 401.0}, {42.7, 38}}
+                            Other(1) {{349.3, 401.0}, {42.7, 38}}
+                              Other(1) {{351.7, 401.0}, {38, 38}}
+                              StaticText(48) label="16" {{360.2, 408.0}, {21, 24}}
+                        Button(9) label="Sunday, January 17" {{93.3, 439.0}, {42.7, 38}}
+                          Other(1) {{93.3, 439.0}, {42.7, 38}}
+                            Other(1) {{93.3, 439.0}, {42.7, 38}}
+                              Other(1) {{95.7, 439.0}, {38, 38}}
+                              StaticText(48) label="17" {{104.8, 446.0}, {19.7, 24}}
+                        Button(9) label="Monday, January 18" {{136.0, 439.0}, {42.7, 38}}
+                          Other(1) {{136.0, 439.0}, {42.7, 38}}
+                            Other(1) {{136.0, 439.0}, {42.7, 38}}
+                              Other(1) {{138.3, 439.0}, {38, 38}}
+                              StaticText(48) label="18" {{146.8, 446.0}, {21, 24}}
+                        Button(9) label="Tuesday, January 19" {{178.7, 439.0}, {42.7, 38}}
+                          Other(1) {{178.7, 439.0}, {42.7, 38}}
+                            Other(1) {{178.7, 439.0}, {42.7, 38}}
+                              Other(1) {{181, 439.0}, {38, 38}}
+                              StaticText(48) label="19" {{189.5, 446.0}, {21, 24}}
+                        Button(9) label="Wednesday, January 20" {{221.3, 439.0}, {42.7, 38}}
+                          Other(1) {{221.3, 439.0}, {42.7, 38}}
+                            Other(1) {{221.3, 439.0}, {42.7, 38}}
+                              Other(1) {{223.7, 439.0}, {38, 38}}
+                              StaticText(48) label="20" {{230.8, 446.0}, {23.7, 24}}
+                        Button(9) label="Thursday, January 21" {{264, 439.0}, {42.7, 38}}
+                          Other(1) {{264, 439.0}, {42.7, 38}}
+                            Other(1) {{264, 439.0}, {42.7, 38}}
+                              Other(1) {{266.3, 439.0}, {38, 38}}
+                              StaticText(48) label="21" {{275.2, 446.0}, {20.3, 24}}
+                        Button(9) label="Friday, January 22" {{306.7, 439.0}, {42.7, 38}}
+                          Other(1) {{306.7, 439.0}, {42.7, 38}}
+                            Other(1) {{306.7, 439.0}, {42.7, 38}}
+                              Other(1) {{309, 439.0}, {38, 38}}
+                              StaticText(48) label="22" {{316.5, 446.0}, {23, 24}}
+                        Button(9) label="Saturday, January 23" {{349.3, 439.0}, {42.7, 38}}
+                          Other(1) {{349.3, 439.0}, {42.7, 38}}
+                            Other(1) {{349.3, 439.0}, {42.7, 38}}
+                              Other(1) {{351.7, 439.0}, {38, 38}}
+                              StaticText(48) label="23" {{358.8, 446.0}, {23.7, 24}}
+                        Button(9) label="Sunday, January 24" {{93.3, 477.0}, {42.7, 38.0}}
+                          Other(1) {{93.3, 477.0}, {42.7, 38.0}}
+                            Other(1) {{93.3, 477.0}, {42.7, 38.0}}
+                              Other(1) {{95.7, 477.0}, {38, 38.0}}
+                              StaticText(48) label="24" {{102.8, 484.0}, {23.7, 24}}
+                        Button(9) label="Monday, January 25" {{136.0, 477.0}, {42.7, 38.0}}
+                          Other(1) {{136.0, 477.0}, {42.7, 38.0}}
+                            Other(1) {{136.0, 477.0}, {42.7, 38.0}}
+                              Other(1) {{138.3, 477.0}, {38, 38.0}}
+                              StaticText(48) label="25" {{145.7, 484.0}, {23.3, 24}}
+                        Button(9) label="Tuesday, January 26" {{178.7, 477.0}, {42.7, 38.0}}
+                          Other(1) {{178.7, 477.0}, {42.7, 38.0}}
+                            Other(1) {{178.7, 477.0}, {42.7, 38.0}}
+                              Other(1) {{181, 477.0}, {38, 38.0}}
+                              StaticText(48) label="26" {{188.2, 484.0}, {23.7, 24}}
+                        Button(9) label="Wednesday, January 27" {{221.3, 477.0}, {42.7, 38.0}}
+                          Other(1) {{221.3, 477.0}, {42.7, 38.0}}
+                            Other(1) {{221.3, 477.0}, {42.7, 38.0}}
+                              Other(1) {{223.7, 477.0}, {38, 38.0}}
+                              StaticText(48) label="27" {{231.5, 484.0}, {22.3, 24}}
+                        Button(9) label="Thursday, January 28" {{264, 477.0}, {42.7, 38.0}}
+                          Other(1) {{264, 477.0}, {42.7, 38.0}}
+                            Other(1) {{264, 477.0}, {42.7, 38.0}}
+                              Other(1) {{266.3, 477.0}, {38, 38.0}}
+                              StaticText(48) label="28" {{273.5, 484.0}, {23.7, 24}}
+                        Button(9) label="Friday, January 29" {{306.7, 477.0}, {42.7, 38.0}}
+                          Other(1) {{306.7, 477.0}, {42.7, 38.0}}
+                            Other(1) {{306.7, 477.0}, {42.7, 38.0}}
+                              Other(1) {{309, 477.0}, {38, 38.0}}
+                              StaticText(48) label="29" {{316.2, 484.0}, {23.7, 24}}
+                        Button(9) label="Saturday, January 30" {{349.3, 477.0}, {42.7, 38.0}}
+                          Other(1) {{349.3, 477.0}, {42.7, 38.0}}
+                            Other(1) {{349.3, 477.0}, {42.7, 38.0}}
+                              Other(1) {{351.7, 477.0}, {38, 38.0}}
+                              StaticText(48) label="30" {{358.7, 484.0}, {24, 24}}
+                        Button(9) label="Sunday, January 31" {{93.3, 515}, {42.7, 38}}
+                          Other(1) {{93.3, 515}, {42.7, 38}}
+                            Other(1) {{93.3, 515}, {42.7, 38}}
+                              Other(1) {{95.7, 515}, {38, 38}}
+                              StaticText(48) label="31" {{104.3, 522}, {20.7, 24}}
+        Button(9) label="dismiss popup" id=PopoverDismissRegion {{0, 0}, {440, 956}}

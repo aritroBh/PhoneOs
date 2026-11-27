@@ -1,0 +1,258 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p10-german (`probe3-p10-german-04-return-default-tree.txt`), verbatim below this line.
+Q: With returnKeyType .default: what label and identifier does the Return key carry? Where do inputView, Emoji and Dictate sit against the Keyboard node?
+capture 04 (return-default): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 4: dev.jarvis.app
+screen 440x956 pt, keyboard visible
+nodes 122, XCUITest snapshot 211 ms
+types without a core role: Other×52
+note: probe round 3 p10-german, capture 04: return-default
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Return keys {{0, 62}, {440, 106}}
+                            Button "Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText "Return keys" {{20, 119.7}, {186.7, 40.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  StaticText "Return type 1 of 12: default" id=probe3.returns.status {{16, 184}, {203.7, 20.3}}
+                                  Button "Next return type" id=probe3.returns.next {{16, 220.3}, {148, 34.3}}
+                                  Button "End editing" id=probe3.returns.end {{314.3, 220.3}, {109.7, 34.3}}
+                                  TextField placeholder="Return default" id=probe3.returns.field {{16, 270.7}, {408, 44}} [focused]
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image "sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button "Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 638}, {440, 318}}
+        Other(Other) id=inputView {{0, 638}, {440, 318}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 638}, {440, 318}}
+        Other(Other) {{0, 638}, {440, 318}}
+          Other(Other) {{0, 638}, {440, 318}}
+            Other(Other) {{0, 638}, {440, 318}}
+        Other(Other) {{0, 655}, {440, 243}}
+          Keyboard {{0, 655}, {440, 243}}
+            Other(Other) {{0, 655}, {440, 243}}
+              Other(Other) id=UIKeyboardLayoutStar Preview {{0, 655}, {440, 243}}
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "q" {{4.7, 662}, {39.3, 56}}
+                Key "w" {{44.0, 662}, {39.3, 56}}
+                Key "e" {{83.3, 662}, {39.3, 56}}
+                Key "r" {{122.7, 662}, {39.3, 56}}
+                Key "t" {{162, 662}, {39.3, 56}}
+                Key "z" {{201.3, 662}, {39.3, 56}}
+                Key "u" {{240.7, 662}, {39.3, 56}}
+                Key "i" {{280, 662}, {39.3, 56}}
+                Key "o" {{319.3, 662}, {39.3, 56}}
+                Key "p" {{358.7, 662}, {39.3, 56}}
+                Key "ü" {{398, 662}, {39.7, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "a" {{4.7, 718}, {39.3, 56}}
+                Key "s" {{44.0, 718}, {39.3, 56}}
+                Key "d" {{83.3, 718}, {39.3, 56}}
+                Key "f" {{122.7, 718}, {39.3, 56}}
+                Key "g" {{162, 718}, {39.3, 56}}
+                Key "h" {{201.3, 718}, {39.3, 56}}
+                Key "j" {{240.7, 718}, {39.3, 56}}
+                Key "k" {{280, 718}, {39.3, 56}}
+                Key "l" {{319.3, 718}, {39.3, 56}}
+                Key "ö" {{358.7, 718}, {39.3, 56}}
+                Key "ä" {{398, 718}, {39.7, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Button "Umschalt" id=shift {{4.7, 774}, {56, 56}}
+                Key "Padding-Left" {{0, 655}, {0, 0}} [hidden]
+                Key "y" {{83.3, 774}, {39.3, 56}}
+                Key "x" {{122.7, 774}, {39.3, 56}}
+                Key "c" {{162, 774}, {39.3, 56}}
+                Key "v" {{201.3, 774}, {39.3, 56}}
+                Key "b" {{240.7, 774}, {39.3, 56}}
+                Key "n" {{280, 774}, {39.3, 56}}
+                Key "m" {{319.3, 774}, {39.3, 56}}
+                Key "Padding-Right" {{0, 655}, {0, 0}} [hidden]
+                Key "Löschen" id=delete {{381.3, 774}, {56.3, 56}}
+                Key "Zahlen" id=more {{4.7, 830}, {54, 56}}
+                Button "Emoji-Symbole" id=emoji {{58.7, 830}, {54, 56}}
+                Key " " id=space {{112.7, 830}, {216.7, 56}}
+                Button "Return" id=Return {{329.3, 830}, {108.3, 56}}
+        Other(Other) {{0, 655}, {440, 301}}
+          Button "Next keyboard" value="English (US)" {{2.5, 887.7}, {80.1, 68.7}}
+            StaticText {{2.5, 887.7}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText {{357.4, 887.4}, {0, 0}} [hidden]
+          Button "Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText {{357.4, 887.4}, {0, 0}} [hidden]
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 0}, {440, 956}}
+                          NavigationBar(21) id=Return keys {{0, 62}, {440, 106}}
+                            Button(9) label="Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText(48) label="Return keys" {{20, 119.7}, {186.7, 40.7}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+                              Other(1) {{0, 0}, {440, 956}}
+                                Other(1) {{0, 0}, {440, 956}}
+                                  StaticText(48) label="Return type 1 of 12: default" id=probe3.returns.status {{16, 184}, {203.7, 20.3}}
+                                  Button(9) label="Next return type" id=probe3.returns.next {{16, 220.3}, {148, 34.3}}
+                                  Button(9) label="End editing" id=probe3.returns.end {{314.3, 220.3}, {109.7, 34.3}}
+                                  TextField(49) placeholder="Return default" id=probe3.returns.field {{16, 270.7}, {408, 44}} [focus]
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 873}, {440, 83}}
+                Other(1) {{0, 0}, {440, 956}}
+                  TabBar(22) label="Tab Bar" {{0, 873}, {440, 83}}
+                    Other(1) {{21, 873}, {398, 62}}
+                      Other(1) {{21, 873}, {89.7, 54}}
+                      Other(1) {{21, 873}, {398, 62}}
+                        Button(9) label="Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image(43) label="hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button(9) label="Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image(43) label="message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button(9) label="Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image(43) label="sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button(9) label="Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image(43) label="grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button(9) label="Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image(43) label="edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(1) {{25, 877}, {89.7, 54}}
+                        Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                                Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                Other(1) {{0, 873}, {440, 83}}
+                  Other(1) {{0, 873}, {440, 83}}
+                    Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}
+                          Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 638}, {440, 318}}
+        Other(1) id=inputView {{0, 638}, {440, 318}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 638}, {440, 318}}
+        Other(1) {{0, 638}, {440, 318}}
+          Other(1) {{0, 638}, {440, 318}}
+            Other(1) {{0, 638}, {440, 318}}
+        Other(1) {{0, 655}, {440, 243}}
+          Keyboard(19) {{0, 655}, {440, 243}}
+            Other(1) {{0, 655}, {440, 243}}
+              Other(1) id=UIKeyboardLayoutStar Preview {{0, 655}, {440, 243}}
+                Key(20) label="Padding-Left" {{0, 655}, {0, 0}}
+                Key(20) label="q" {{4.7, 662}, {39.3, 56}}
+                Key(20) label="w" {{44.0, 662}, {39.3, 56}}
+                Key(20) label="e" {{83.3, 662}, {39.3, 56}}
+                Key(20) label="r" {{122.7, 662}, {39.3, 56}}
+                Key(20) label="t" {{162, 662}, {39.3, 56}}
+                Key(20) label="z" {{201.3, 662}, {39.3, 56}}
+                Key(20) label="u" {{240.7, 662}, {39.3, 56}}
+                Key(20) label="i" {{280, 662}, {39.3, 56}}
+                Key(20) label="o" {{319.3, 662}, {39.3, 56}}
+                Key(20) label="p" {{358.7, 662}, {39.3, 56}}
+                Key(20) label="ü" {{398, 662}, {39.7, 56}}
+                Key(20) label="Padding-Right" {{0, 655}, {0, 0}}
+                Key(20) label="Padding-Left" {{0, 655}, {0, 0}}
+                Key(20) label="a" {{4.7, 718}, {39.3, 56}}
+                Key(20) label="s" {{44.0, 718}, {39.3, 56}}
+                Key(20) label="d" {{83.3, 718}, {39.3, 56}}
+                Key(20) label="f" {{122.7, 718}, {39.3, 56}}
+                Key(20) label="g" {{162, 718}, {39.3, 56}}
+                Key(20) label="h" {{201.3, 718}, {39.3, 56}}
+                Key(20) label="j" {{240.7, 718}, {39.3, 56}}
+                Key(20) label="k" {{280, 718}, {39.3, 56}}
+                Key(20) label="l" {{319.3, 718}, {39.3, 56}}
+                Key(20) label="ö" {{358.7, 718}, {39.3, 56}}
+                Key(20) label="ä" {{398, 718}, {39.7, 56}}
+                Key(20) label="Padding-Right" {{0, 655}, {0, 0}}
+                Button(9) label="Umschalt" id=shift {{4.7, 774}, {56, 56}}
+                Key(20) label="Padding-Left" {{0, 655}, {0, 0}}
+                Key(20) label="y" {{83.3, 774}, {39.3, 56}}
+                Key(20) label="x" {{122.7, 774}, {39.3, 56}}
+                Key(20) label="c" {{162, 774}, {39.3, 56}}
+                Key(20) label="v" {{201.3, 774}, {39.3, 56}}
+                Key(20) label="b" {{240.7, 774}, {39.3, 56}}
+                Key(20) label="n" {{280, 774}, {39.3, 56}}
+                Key(20) label="m" {{319.3, 774}, {39.3, 56}}
+                Key(20) label="Padding-Right" {{0, 655}, {0, 0}}
+                Key(20) label="Löschen" id=delete {{381.3, 774}, {56.3, 56}}
+                Key(20) label="Zahlen" id=more {{4.7, 830}, {54, 56}}
+                Button(9) label="Emoji-Symbole" id=emoji {{58.7, 830}, {54, 56}}
+                Key(20) label=" " id=space {{112.7, 830}, {216.7, 56}}
+                Button(9) label="Return" id=Return {{329.3, 830}, {108.3, 56}}
+        Other(1) {{0, 655}, {440, 301}}
+          Button(9) label="Next keyboard" value="English (US)" {{2.5, 887.7}, {80.1, 68.7}}
+            StaticText(48) {{2.5, 887.7}, {0, 0}}
+          Button(9) label="Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText(48) {{357.4, 887.4}, {0, 0}}
+          Button(9) label="Dictate" id=dictation {{357.4, 887.4}, {80.1, 68.7}}
+            StaticText(48) {{357.4, 887.4}, {0, 0}}

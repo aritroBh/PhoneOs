@@ -1,0 +1,18 @@
+{
+  "id": "order_headphones",
+  "task": "Order the Wireless Headphones",
+  "start_app": "shop",
+  "success": "shop.ordered == true",
+  "expect_confirm": [
+    "first_use",
+    "payment"
+  ],
+  "max_steps": 14,
+  "script": [
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Cell:Wireless Headphones\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Add to Cart\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Cart\"}",
+    "{\"thought\":\"go\",\"action\":\"tap\",\"element\":\"@Button:Place Order\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Order placed\"}"
+  ]
+}

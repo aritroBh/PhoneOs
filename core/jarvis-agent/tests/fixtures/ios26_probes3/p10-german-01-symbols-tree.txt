@@ -1,0 +1,322 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p10-german (`probe3-p10-german-01-symbols-tree.txt`), verbatim below this line.
+Q: What label, identifier and role does each symbol-only button get (the app sets no accessibilityLabel or identifier)? Where are the bars and what are their roles?
+capture 01 (symbols): the raw tree of dev.jarvis.app by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 1: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+nodes 154, XCUITest snapshot 280 ms
+types without a core role: Other×92
+note: probe round 3 p10-german, capture 01: symbols
+note: app state 4, device orientation 1
+
+== typed tree (what the core receives) ==
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          NavigationBar id=Symbols {{0, 62}, {440, 106}}
+                            Button "Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText "Symbols" {{20.0, 119.7}, {137.3, 40.7}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  ScrollView {{0, 0}, {440, 956}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                      Other(Other) {{0, 0}, {440, 170.8}}
+                                      Other(Other) {{0, 808.2}, {440, 147.8}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                    Other(Other) {{0, 168}, {440, 617.3}}
+                                      TextField placeholder="Probe symbols field" id=probe3.symbols.field {{16, 184}, {408, 34}}
+                                      StaticText "SwiftUI symbol buttons" {{16, 228}, {176.7, 20.3}}
+                                      Button "Bin" id=trash {{16, 258.3}, {44, 44}}
+                                      Button "Send" id=paperplane {{72, 258.3}, {44, 44}}
+                                      Button "Send" id=paperplane.fill {{128, 258.3}, {44, 44}}
+                                      Button "Shopping Trolley" id=cart {{184, 258.3}, {44, 44}}
+                                      Button "Card" id=creditcard {{240, 258.3}, {44, 44}}
+                                      Button "Call" id=phone {{16, 312.3}, {44, 44}}
+                                      Button "Call" id=phone.fill {{72, 312.3}, {44, 44}}
+                                      Button "Share" id=square.and.arrow.up {{128, 312.3}, {44, 44}}
+                                      Button "Close" id=xmark {{184, 312.3}, {44, 44}}
+                                      Button "Arrow Up Circle" id=arrow.up.circle.fill {{240, 312.3}, {44, 44}}
+                                      Button "Selected" id=checkmark {{16, 366.3}, {44, 44}} [selected]
+                                      Button "Add" id=plus {{72, 366.3}, {44, 44}}
+                                      Button "Remove" id=minus.circle {{128, 366.3}, {44, 44}}
+                                      Button "Shopping Bag" id=bag {{184, 366.3}, {44, 44}}
+                                      Button "Add People/Follow" id=person.crop.circle.badge.plus {{240, 366.3}, {44, 44}}
+                                      StaticText "UIKit symbol buttons" {{16, 420.3}, {158.7, 20.3}}
+                                      Other(Other) {{16, 450.7}, {408, 138}}
+                                        Other(Other) {{16, 450.7}, {408, 44.7}}
+                                          Button "trash" {{16, 450.7}, {75.3, 44.7}}
+                                          Button "send" {{99.3, 450.7}, {75.0, 44.7}}
+                                          Button "send" {{182.3, 450.7}, {75.3, 44.7}}
+                                          Button "shopping cart" {{265.7, 450.7}, {75, 44.7}}
+                                          Button "card" {{348.7, 450.7}, {75.3, 44.7}}
+                                        Other(Other) {{16, 497.3}, {408, 44.7}}
+                                          Button "Call" {{16, 497.3}, {75.3, 44.7}}
+                                          Button "Call" {{99.3, 497.3}, {75.0, 44.7}}
+                                          Button "Share" {{182.3, 497.3}, {75.3, 44.7}}
+                                          Button "Close" {{265.7, 497.3}, {75, 44.7}}
+                                          Button "Arrow Up Circle" {{348.7, 497.3}, {75.3, 44.7}}
+                                        Other(Other) {{16, 544}, {408, 44.7}}
+                                          Button "selected" {{16, 544}, {75.3, 44.7}}
+                                          Button "add" {{99.3, 544}, {75.0, 44.7}}
+                                          Button "remove" {{182.3, 544}, {75.3, 44.7}}
+                                          Button "shopping bag" {{265.7, 544}, {75, 44.7}}
+                                          Button "Add People/Follow" {{348.7, 544}, {75.3, 44.7}}
+                                      StaticText "UIKit toolbar items" {{16, 598.7}, {140.7, 20.3}}
+                                      Toolbar "Toolbar" id=Toolbar {{16, 630}, {408, 48}}
+                                        Other(Other) {{16, 630}, {408, 48}}
+                                          Other(Other) {{36, 630}, {368, 48}}
+                                            Other(Other) {{36, 630}, {368, 48}}
+                                              Other(Other) {{36, 630}, {0, 0}} [hidden]
+                                                Other(Other) {{36, 630}, {48, 48}}
+                                                  Other(Other) {{36, 630}, {48, 48}}
+                                                    Other(Other) {{41, 635}, {38, 38}}
+                                                      Other(Other) {{41, 635}, {38, 38}}
+                                                        Button "Delete" {{41, 635}, {38, 38}}
+                                                Other(Other) {{142.7, 630}, {48, 48}}
+                                                  Other(Other) {{142.7, 630}, {48, 48}}
+                                                    Other(Other) {{147.7, 635}, {38, 38}}
+                                                      Other(Other) {{147.7, 635}, {38, 38}}
+                                                        Button "Share" {{147.7, 635}, {38, 38}}
+                                                Other(Other) {{249.3, 630}, {48, 48}}
+                                                  Other(Other) {{249.3, 630}, {48, 48}}
+                                                    Other(Other) {{254.3, 635}, {38, 38}}
+                                                      Other(Other) {{254.3, 635}, {38, 38}}
+                                                        Button "Compose" {{254.3, 635}, {38, 38}}
+                                                Other(Other) {{356, 630}, {48, 48}}
+                                                  Other(Other) {{356, 630}, {48, 48}}
+                                                    Other(Other) {{361, 635}, {38, 38}}
+                                                      Other(Other) {{361, 635}, {38, 38}}
+                                                        Button "Reply" {{361, 635}, {38, 38}}
+                                      Toolbar "Toolbar" id=Toolbar {{16, 690}, {408, 48}}
+                                        Other(Other) {{16, 690}, {408, 48}}
+                                          Other(Other) {{36, 690}, {368, 48}}
+                                            Other(Other) {{36, 690}, {368, 48}}
+                                              Other(Other) {{36, 690}, {0, 0}} [hidden]
+                                                Other(Other) {{36, 690}, {48, 48}}
+                                                  Other(Other) {{36, 690}, {48, 48}}
+                                                    Other(Other) {{41, 695}, {38, 38}}
+                                                      Other(Other) {{41, 695}, {38, 38}}
+                                                        Button "Add" {{41, 695}, {38, 38}}
+                                                Other(Other) {{135.3, 690}, {48, 48}}
+                                                  Other(Other) {{135.3, 690}, {48, 48}}
+                                                    Other(Other) {{140.3, 695}, {38, 38}}
+                                                      Other(Other) {{140.3, 695}, {38, 38}}
+                                                        Button "Done" {{140.3, 695}, {38, 38}}
+                                                Other(Other) {{235, 690}, {48, 48}}
+                                                  Other(Other) {{235, 690}, {48, 48}}
+                                                    Other(Other) {{240, 695}, {38, 38}}
+                                                      Other(Other) {{240, 695}, {38, 38}}
+                                                        Button "Cancel" {{240, 695}, {38, 38}}
+                                                Other(Other) {{334.3, 690}, {69.7, 48}}
+                                                  Other(Other) {{334.3, 690}, {69.7, 48}}
+                                                    Other(Other) {{339.3, 695}, {59.7, 38}}
+                                                      Other(Other) {{339.3, 695}, {59.7, 38}}
+                                                        Button "Save" {{339.3, 695}, {59.7, 38}}
+                                      StaticText "Nothing tapped" id=probe3.symbols.status {{16, 749}, {118.7, 20.3}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0 %" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 206.7}, {3, 663.3}}
+                                    Other(Other) "Vertical scroll bar, 1 page" value="0 %" {{407, 116}, {30, 757}}
+                                      Other(Other) {{434, 206.7}, {3, 663.3}}
+                          Other(Other) {{0, 0}, {440, 956}}
+                            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 873}, {440, 83}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  TabBar "Tab Bar" {{0, 873}, {440, 83}}
+                    Other(Other) {{21, 873}, {398, 62}}
+                      Other(Other) {{21, 873}, {89.7, 54}}
+                      Other(Other) {{21, 873}, {398, 62}}
+                        Button "Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image "hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button "Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image "message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button "Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image "sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button "Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image "grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button "Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image "edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(Other) {{25, 877}, {89.7, 54}}
+                        Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                          Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                                Other(Other) {{25, 877}, {89.7, 54}}
+                              Other(Other) {{25, 877}, {89.7, 54}}
+                            Other(Other) {{25, 877}, {89.7, 54}}
+                Other(Other) {{0, 873}, {440, 83}}
+                  Other(Other) {{0, 873}, {440, 83}}
+                    Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+                          Other(Other) {{0, 873}, {440, 83}}
+                      Other(Other) {{0, 873}, {440, 83}}
+                        Other(Other) {{0, 873}, {440, 83}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Jarvis" {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+                    Other(1) {{0, 0}, {440, 956}}
+                      Other(1) {{0, 0}, {440, 956}}
+                        Other(1) {{0, 0}, {440, 956}}
+                          NavigationBar(21) id=Symbols {{0, 62}, {440, 106}}
+                            Button(9) label="Fact probes 3" id=BackButton {{20, 62}, {44, 44}}
+                            StaticText(48) label="Symbols" {{20.0, 119.7}, {137.3, 40.7}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+                              Other(1) {{0, 0}, {440, 956}}
+                                Other(1) {{0, 0}, {440, 956}}
+                                  ScrollView(46) {{0, 0}, {440, 956}}
+                                    Other(1) {{0, 0}, {440, 956}}
+                                      Other(1) {{0, 0}, {440, 170.8}}
+                                      Other(1) {{0, 808.2}, {440, 147.8}}
+                                    Other(1) {{0, 0}, {440, 956}}
+                                    Other(1) {{0, 168}, {440, 617.3}}
+                                      TextField(49) placeholder="Probe symbols field" id=probe3.symbols.field {{16, 184}, {408, 34}}
+                                      StaticText(48) label="SwiftUI symbol buttons" {{16, 228}, {176.7, 20.3}}
+                                      Button(9) label="Bin" id=trash {{16, 258.3}, {44, 44}}
+                                      Button(9) label="Send" id=paperplane {{72, 258.3}, {44, 44}}
+                                      Button(9) label="Send" id=paperplane.fill {{128, 258.3}, {44, 44}}
+                                      Button(9) label="Shopping Trolley" id=cart {{184, 258.3}, {44, 44}}
+                                      Button(9) label="Card" id=creditcard {{240, 258.3}, {44, 44}}
+                                      Button(9) label="Call" id=phone {{16, 312.3}, {44, 44}}
+                                      Button(9) label="Call" id=phone.fill {{72, 312.3}, {44, 44}}
+                                      Button(9) label="Share" id=square.and.arrow.up {{128, 312.3}, {44, 44}}
+                                      Button(9) label="Close" id=xmark {{184, 312.3}, {44, 44}}
+                                      Button(9) label="Arrow Up Circle" id=arrow.up.circle.fill {{240, 312.3}, {44, 44}}
+                                      Button(9) label="Selected" id=checkmark {{16, 366.3}, {44, 44}} [selected]
+                                      Button(9) label="Add" id=plus {{72, 366.3}, {44, 44}}
+                                      Button(9) label="Remove" id=minus.circle {{128, 366.3}, {44, 44}}
+                                      Button(9) label="Shopping Bag" id=bag {{184, 366.3}, {44, 44}}
+                                      Button(9) label="Add People/Follow" id=person.crop.circle.badge.plus {{240, 366.3}, {44, 44}}
+                                      StaticText(48) label="UIKit symbol buttons" {{16, 420.3}, {158.7, 20.3}}
+                                      Other(1) {{16, 450.7}, {408, 138}}
+                                        Other(1) {{16, 450.7}, {408, 44.7}}
+                                          Button(9) label="trash" {{16, 450.7}, {75.3, 44.7}}
+                                          Button(9) label="send" {{99.3, 450.7}, {75.0, 44.7}}
+                                          Button(9) label="send" {{182.3, 450.7}, {75.3, 44.7}}
+                                          Button(9) label="shopping cart" {{265.7, 450.7}, {75, 44.7}}
+                                          Button(9) label="card" {{348.7, 450.7}, {75.3, 44.7}}
+                                        Other(1) {{16, 497.3}, {408, 44.7}}
+                                          Button(9) label="Call" {{16, 497.3}, {75.3, 44.7}}
+                                          Button(9) label="Call" {{99.3, 497.3}, {75.0, 44.7}}
+                                          Button(9) label="Share" {{182.3, 497.3}, {75.3, 44.7}}
+                                          Button(9) label="Close" {{265.7, 497.3}, {75, 44.7}}
+                                          Button(9) label="Arrow Up Circle" {{348.7, 497.3}, {75.3, 44.7}}
+                                        Other(1) {{16, 544}, {408, 44.7}}
+                                          Button(9) label="selected" {{16, 544}, {75.3, 44.7}}
+                                          Button(9) label="add" {{99.3, 544}, {75.0, 44.7}}
+                                          Button(9) label="remove" {{182.3, 544}, {75.3, 44.7}}
+                                          Button(9) label="shopping bag" {{265.7, 544}, {75, 44.7}}
+                                          Button(9) label="Add People/Follow" {{348.7, 544}, {75.3, 44.7}}
+                                      StaticText(48) label="UIKit toolbar items" {{16, 598.7}, {140.7, 20.3}}
+                                      Toolbar(24) label="Toolbar" id=Toolbar {{16, 630}, {408, 48}}
+                                        Other(1) {{16, 630}, {408, 48}}
+                                          Other(1) {{36, 630}, {368, 48}}
+                                            Other(1) {{36, 630}, {368, 48}}
+                                              Other(1) {{36, 630}, {0, 0}}
+                                                Other(1) {{36, 630}, {48, 48}}
+                                                  Other(1) {{36, 630}, {48, 48}}
+                                                    Other(1) {{41, 635}, {38, 38}}
+                                                      Other(1) {{41, 635}, {38, 38}}
+                                                        Button(9) label="Delete" {{41, 635}, {38, 38}}
+                                                Other(1) {{142.7, 630}, {48, 48}}
+                                                  Other(1) {{142.7, 630}, {48, 48}}
+                                                    Other(1) {{147.7, 635}, {38, 38}}
+                                                      Other(1) {{147.7, 635}, {38, 38}}
+                                                        Button(9) label="Share" {{147.7, 635}, {38, 38}}
+                                                Other(1) {{249.3, 630}, {48, 48}}
+                                                  Other(1) {{249.3, 630}, {48, 48}}
+                                                    Other(1) {{254.3, 635}, {38, 38}}
+                                                      Other(1) {{254.3, 635}, {38, 38}}
+                                                        Button(9) label="Compose" {{254.3, 635}, {38, 38}}
+                                                Other(1) {{356, 630}, {48, 48}}
+                                                  Other(1) {{356, 630}, {48, 48}}
+                                                    Other(1) {{361, 635}, {38, 38}}
+                                                      Other(1) {{361, 635}, {38, 38}}
+                                                        Button(9) label="Reply" {{361, 635}, {38, 38}}
+                                      Toolbar(24) label="Toolbar" id=Toolbar {{16, 690}, {408, 48}}
+                                        Other(1) {{16, 690}, {408, 48}}
+                                          Other(1) {{36, 690}, {368, 48}}
+                                            Other(1) {{36, 690}, {368, 48}}
+                                              Other(1) {{36, 690}, {0, 0}}
+                                                Other(1) {{36, 690}, {48, 48}}
+                                                  Other(1) {{36, 690}, {48, 48}}
+                                                    Other(1) {{41, 695}, {38, 38}}
+                                                      Other(1) {{41, 695}, {38, 38}}
+                                                        Button(9) label="Add" {{41, 695}, {38, 38}}
+                                                Other(1) {{135.3, 690}, {48, 48}}
+                                                  Other(1) {{135.3, 690}, {48, 48}}
+                                                    Other(1) {{140.3, 695}, {38, 38}}
+                                                      Other(1) {{140.3, 695}, {38, 38}}
+                                                        Button(9) label="Done" {{140.3, 695}, {38, 38}}
+                                                Other(1) {{235, 690}, {48, 48}}
+                                                  Other(1) {{235, 690}, {48, 48}}
+                                                    Other(1) {{240, 695}, {38, 38}}
+                                                      Other(1) {{240, 695}, {38, 38}}
+                                                        Button(9) label="Cancel" {{240, 695}, {38, 38}}
+                                                Other(1) {{334.3, 690}, {69.7, 48}}
+                                                  Other(1) {{334.3, 690}, {69.7, 48}}
+                                                    Other(1) {{339.3, 695}, {59.7, 38}}
+                                                      Other(1) {{339.3, 695}, {59.7, 38}}
+                                                        Button(9) label="Save" {{339.3, 695}, {59.7, 38}}
+                                      StaticText(48) label="Nothing tapped" id=probe3.symbols.status {{16, 749}, {118.7, 20.3}}
+                                    Other(1) label="Vertical scroll bar, 1 page" value="0 %" {{407, 116}, {30, 757}}
+                                      Other(1) {{434, 206.7}, {3, 663.3}}
+                                    Other(1) label="Vertical scroll bar, 1 page" value="0 %" {{407, 116}, {30, 757}}
+                                      Other(1) {{434, 206.7}, {3, 663.3}}
+                          Other(1) {{0, 0}, {440, 956}}
+                            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 873}, {440, 83}}
+                Other(1) {{0, 0}, {440, 956}}
+                  TabBar(22) label="Tab Bar" {{0, 873}, {440, 83}}
+                    Other(1) {{21, 873}, {398, 62}}
+                      Other(1) {{21, 873}, {89.7, 54}}
+                      Other(1) {{21, 873}, {398, 62}}
+                        Button(9) label="Playground" id=hand.tap {{25, 877}, {89.7, 54}} [selected]
+                          Image(43) label="hand.tap.fill" id=hand.tap.fill {{57, 880.3}, {26.3, 30}}
+                        Button(9) label="Ask" id=message {{100.1, 877}, {89.7, 54}}
+                          Image(43) label="message" id=message.fill {{129.1, 883}, {30.7, 26}}
+                        Button(9) label="Skills" id=sparkles {{175.2, 877}, {89.7, 54}}
+                          Image(43) label="sparkle" id=sparkles {{207.2, 881}, {26, 30}}
+                        Button(9) label="Apps" id=square.grid.2x2 {{250.3, 877}, {89.7, 54}}
+                          Image(43) label="grid 2x2" id=square.grid.2x2.fill {{281.3, 884.3}, {27, 25}}
+                        Button(9) label="Control" id=slider.horizontal.3 {{325.3, 877}, {89.7, 54}}
+                          Image(43) label="edit" id=slider.horizontal.3 {{355.3, 884.7}, {29.3, 24}}
+                      Other(1) {{25, 877}, {89.7, 54}}
+                        Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                          Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                                Other(1) {{25, 877}, {89.7, 54}}
+                              Other(1) {{25, 877}, {89.7, 54}}
+                            Other(1) {{25, 877}, {89.7, 54}}
+                Other(1) {{0, 873}, {440, 83}}
+                  Other(1) {{0, 873}, {440, 83}}
+                    Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}
+                          Other(1) {{0, 873}, {440, 83}}
+                      Other(1) {{0, 873}, {440, 83}}
+                        Other(1) {{0, 873}, {440, 83}}

@@ -1,0 +1,17 @@
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Produced by scripts/bootstrap.sh; never committed.
+Generated/
+Generated.new/
+Frameworks/
+Sources/JarvisCore/
+
+# Produced by scripts/sim-qa.sh
+build/
+
+# XcodeGen output (generate with `xcodegen generate`).
+Jarvis.xcodeproj/
+App/Generated/

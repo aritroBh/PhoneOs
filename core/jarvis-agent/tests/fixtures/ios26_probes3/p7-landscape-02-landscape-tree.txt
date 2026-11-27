@@ -1,0 +1,174 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 139, probe round 3 p7-landscape (`probe3-p7-landscape-02-landscape-tree.txt`), verbatim below this line.
+Q: Safari in landscape: the frames XCUITest's snapshot gives the page's controls (compare with the runner's look and the query frames)
+capture 02 (landscape): the raw tree of com.apple.mobilesafari by XCUITest's snapshot (this probe's own capture, not the runner's choice of process)
+
+observation 2: com.apple.mobilesafari
+screen 956x440 pt, keyboard hidden
+nodes 80, XCUITest snapshot 148 ms
+types without a core role: Other×51
+note: probe round 3 p7-landscape, capture 02: landscape
+note: app state 4, device orientation 3
+
+== typed tree (what the core receives) ==
+Application "Safari" {{0, 0}, {956, 440}}
+  Window {{0, 0}, {956, 440}}
+    Other(Other) {{0, 0}, {956, 440}}
+      Other(Other) {{0, 0}, {956, 440}}
+        Other(Other) {{0, 0}, {956, 440}}
+          Other(Other) {{0, 0}, {956, 440}}
+            Other(Other) {{0, 0}, {956, 440}}
+              Other(Other) {{0, 0}, {956, 440}}
+                Other(Other) {{0, 0}, {956, 440}}
+                  Other(Other) {{0, 0}, {956, 440}}
+                    Other(Other) id=SafariWindow?View=Regular&BarsKeptMinimized=false&UUID=F10E5F3E-DA8E-426D-8A90-6C271C5315DF&UsingLoweredBar=false&IsSecure=false&IsTabBarAvailable=true {{0, 0}, {956, 440}}
+                      Other(Other) {{0, 0}, {956, 20}}
+                      Other(Other) {{0, 0}, {956, 440}}
+                        Other(Other) {{0, 0}, {956, 440}}
+                          ScrollView {{0, 0}, {956, 440}}
+                            Other(Other) id=TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=AD3C0E8D-431B-4EDC-90D9-DBCA7C62D121&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=61385 {{0, 0}, {956, 440}}
+                              WebView id=WebView {{0, 0}, {956, 440}}
+                                WebView {{0, 0}, {956, 440}}
+                                  WebView {{0, 0}, {956, 440}}
+                                    Other(Other) {{0, 0}, {956, 440}}
+                                      Other(Other) {{0, 0}, {956, 440}}
+                                        Other(Other) {{62, 0}, {956, 440}}
+                                          Other(Other) "Probe3 web" {{62, 0}, {832, 471}}
+                                            Other(Other) "Web probe" value="1" {{72, 10}, {812, 27}}
+                                              StaticText "Web probe" value="Web probe" {{72, 10}, {111, 27}}
+                                            Other(Other) {{72, 42}, {812, 35}}
+                                              Button "Probe tap target" {{72, 45}, {152, 29}}
+                                              StaticText "taps:0" value="taps:0" {{228, 43}, {63, 28}}
+                                            Other(Other) {{72, 82}, {812, 37}}
+                                              TextField "Probe mirror" placeholder="Probe mirror" {{72, 85}, {216, 31}}
+                                              StaticText "typed:" value="typed:" {{291, 84}, {63, 29}}
+                                            Other(Other) {{72, 123}, {812, 29}}
+                                              Link "Probe plain link" {{72, 123}, {150, 29}}
+                                                StaticText "Probe plain link" value="Probe plain link" {{72, 123}, {150, 29}}
+                                              StaticText "and" value=" and " {{221, 123}, {49, 29}}
+                                              Link "Probe external link" {{269, 123}, {183, 29}}
+                                                StaticText "Probe external link" value="Probe external link" {{269, 123}, {183, 29}}
+                                            Other(Other) "Probe frame" {{72, 156}, {302, 113}}
+                                              Other(Other) {{73, 157}, {300, 110}}
+                                                Other(Other) "Probe frame" {{73, 157}, {300, 119}}
+                                                  Other(Other) {{79, 172}, {288, 19}}
+                                                    StaticText "Probe frame text" value="Probe frame text" {{79, 172}, {115, 19}}
+                                                  Button "Probe frame button" {{79, 207}, {126, 20}}
+                                                  TextField "Probe frame field" placeholder="Probe frame field" {{209, 207}, {154, 20}}
+                                                  Other(Other) {{79, 242}, {288, 19}}
+                                                    StaticText "frame idle" value="frame idle" {{79, 242}, {69, 19}}
+                                            Other(Other) {{72, 277}, {812, 36}}
+                                              Button "Probe alert" {{72, 280}, {114, 30}}
+                                              Button "Probe confirm" {{189, 280}, {138, 30}}
+                                              Button "Probe prompt" {{330, 280}, {135, 30}}
+                                              Button "Probe dialog" {{468, 280}, {126, 30}}
+                                            Other(Other) {{72, 317}, {812, 29}}
+                                              StaticText "result:none" value="result:none" {{72, 317}, {110, 29}}
+                                            Other(Other) {{72, 350}, {812, 38}}
+                                              Other(Other) "Probe select" value="Beta" {{72, 354}, {91, 30}}
+                                              Other(Other) "Probe date" value="Nov 25, 2026" {{167, 353}, {121, 32}}
+                                            Other(Other) {{72, 392}, {812, 29}}
+                                              Button "Probe file" value="no file selected" {{72, 395}, {372, 23}}
+                                            Other(Other) "form" {{72, 425}, {812, 37}}
+                                              TextField "Probe name" placeholder="Probe name" {{72, 428}, {216, 31}}
+                                              Button "Probe submit" {{291, 429}, {131, 30}}
+                                  Other(Other) "Vertical scroll bar, 2 pages" value="78%" {{923, 62}, {30, 316}}
+                                    Other(Other) {{950, 86}, {3, 84.3}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                                    Other(Other) {{65, 434}, {826, 3}}
+                                  Other(Other) "Vertical scroll bar, 2 pages" value="78%" {{923, 62}, {30, 316}}
+                                    Other(Other) {{950, 86}, {3, 84.3}}
+                                  Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                                    Other(Other) {{65, 434}, {826, 3}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                              Other(Other) {{581, 434}, {310, 3}}
+                            Other(Other) "Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                              Other(Other) {{581, 434}, {310, 3}}
+                Other(Other) {{0, 0}, {956, 440}}
+                  Other(Other) {{0, 0}, {956, 440}}
+          Other(Other) {{0, 0}, {956, 440}}
+            Other(Other) {{0, 0}, {956, 440}}
+  Window {{0, 0}, {956, 440}}
+    Other(Other) {{0, 0}, {956, 440}}
+      Other(Other) {{0, 0}, {956, 440}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label="Safari" {{0, 0}, {956, 440}}
+  Window(4) {{0, 0}, {956, 440}}
+    Other(1) {{0, 0}, {956, 440}}
+      Other(1) {{0, 0}, {956, 440}}
+        Other(1) {{0, 0}, {956, 440}}
+          Other(1) {{0, 0}, {956, 440}}
+            Other(1) {{0, 0}, {956, 440}}
+              Other(1) {{0, 0}, {956, 440}}
+                Other(1) {{0, 0}, {956, 440}}
+                  Other(1) {{0, 0}, {956, 440}}
+                    Other(1) id=SafariWindow?View=Regular&BarsKeptMinimized=false&UUID=F10E5F3E-DA8E-426D-8A90-6C271C5315DF&UsingLoweredBar=false&IsSecure=false&IsTabBarAvailable=true {{0, 0}, {956, 440}}
+                      Other(1) {{0, 0}, {956, 20}}
+                      Other(1) {{0, 0}, {956, 440}}
+                        Other(1) {{0, 0}, {956, 440}}
+                          ScrollView(46) {{0, 0}, {956, 440}}
+                            Other(1) id=TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=AD3C0E8D-431B-4EDC-90D9-DBCA7C62D121&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=61385 {{0, 0}, {956, 440}}
+                              WebView(58) id=WebView {{0, 0}, {956, 440}}
+                                WebView(58) {{0, 0}, {956, 440}}
+                                  WebView(58) {{0, 0}, {956, 440}}
+                                    Other(1) {{0, 0}, {956, 440}}
+                                      Other(1) {{0, 0}, {956, 440}}
+                                        Other(1) value="" {{62, 0}, {956, 440}}
+                                          Other(1) label="Probe3 web" value="" {{62, 0}, {832, 471}}
+                                            Other(1) label="Web probe" value="1" {{72, 10}, {812, 27}}
+                                              StaticText(48) label="Web probe" value="Web probe" {{72, 10}, {111, 27}}
+                                            Other(1) value="" {{72, 42}, {812, 35}}
+                                              Button(9) label="Probe tap target" value="" {{72, 45}, {152, 29}}
+                                              StaticText(48) label="taps:0" value="taps:0" {{228, 43}, {63, 28}}
+                                            Other(1) value="" {{72, 82}, {812, 37}}
+                                              TextField(49) label="Probe mirror" value="Probe mirror" placeholder="Probe mirror" {{72, 85}, {216, 31}}
+                                              StaticText(48) label="typed:" value="typed:" {{291, 84}, {63, 29}}
+                                            Other(1) value="" {{72, 123}, {812, 29}}
+                                              Link(42) label="Probe plain link" value="" {{72, 123}, {150, 29}}
+                                                StaticText(48) label="Probe plain link" value="Probe plain link" {{72, 123}, {150, 29}}
+                                              StaticText(48) label="and" value=" and " {{221, 123}, {49, 29}}
+                                              Link(42) label="Probe external link" value="" {{269, 123}, {183, 29}}
+                                                StaticText(48) label="Probe external link" value="Probe external link" {{269, 123}, {183, 29}}
+                                            Other(1) label="Probe frame" value="" {{72, 156}, {302, 113}}
+                                              Other(1) value="" {{73, 157}, {300, 110}}
+                                                Other(1) label="Probe frame" value="" {{73, 157}, {300, 119}}
+                                                  Other(1) value="" {{79, 172}, {288, 19}}
+                                                    StaticText(48) label="Probe frame text" value="Probe frame text" {{79, 172}, {115, 19}}
+                                                  Button(9) label="Probe frame button" value="" {{79, 207}, {126, 20}}
+                                                  TextField(49) label="Probe frame field" value="Probe frame field" placeholder="Probe frame field" {{209, 207}, {154, 20}}
+                                                  Other(1) value="" {{79, 242}, {288, 19}}
+                                                    StaticText(48) label="frame idle" value="frame idle" {{79, 242}, {69, 19}}
+                                            Other(1) value="" {{72, 277}, {812, 36}}
+                                              Button(9) label="Probe alert" value="" {{72, 280}, {114, 30}}
+                                              Button(9) label="Probe confirm" value="" {{189, 280}, {138, 30}}
+                                              Button(9) label="Probe prompt" value="" {{330, 280}, {135, 30}}
+                                              Button(9) label="Probe dialog" value="" {{468, 280}, {126, 30}}
+                                            Other(1) value="" {{72, 317}, {812, 29}}
+                                              StaticText(48) label="result:none" value="result:none" {{72, 317}, {110, 29}}
+                                            Other(1) value="" {{72, 350}, {812, 38}}
+                                              Other(1) label="Probe select" value="Beta" {{72, 354}, {91, 30}}
+                                              Other(1) label="Probe date" value="Nov 25, 2026" {{167, 353}, {121, 32}}
+                                            Other(1) value="" {{72, 392}, {812, 29}}
+                                              Button(9) label="Probe file" value="no file selected" {{72, 395}, {372, 23}}
+                                            Other(1) label="form" value="" {{72, 425}, {812, 37}}
+                                              TextField(49) label="Probe name" value="Probe name" placeholder="Probe name" {{72, 428}, {216, 31}}
+                                              Button(9) label="Probe submit" value="" {{291, 429}, {131, 30}}
+                                  Other(1) label="Vertical scroll bar, 2 pages" value="78%" {{923, 62}, {30, 316}}
+                                    Other(1) {{950, 86}, {3, 84.3}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                                    Other(1) {{65, 434}, {826, 3}}
+                                  Other(1) label="Vertical scroll bar, 2 pages" value="78%" {{923, 62}, {30, 316}}
+                                    Other(1) {{950, 86}, {3, 84.3}}
+                                  Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                                    Other(1) {{65, 434}, {826, 3}}
+                            Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                              Other(1) {{581, 434}, {310, 3}}
+                            Other(1) label="Horizontal scroll bar, 1 page" value="0%" {{62, 407}, {832, 30}}
+                              Other(1) {{581, 434}, {310, 3}}
+                Other(1) {{0, 0}, {956, 440}}
+                  Other(1) {{0, 0}, {956, 440}}
+          Other(1) {{0, 0}, {956, 440}}
+            Other(1) {{0, 0}, {956, 440}}
+  Window(4) {{0, 0}, {956, 440}}
+    Other(1) {{0, 0}, {956, 440}}
+      Other(1) {{0, 0}, {956, 440}}

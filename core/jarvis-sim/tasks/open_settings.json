@@ -1,0 +1,16 @@
+{
+  "id": "open_settings",
+  "task": "Open Settings",
+  "start_app": "home",
+  "success": "phone.app == \"settings\"",
+  "expect_confirm_count": 0,
+  "max_steps": 6,
+  "script": [
+    "{\"thought\":\"launch it\",\"action\":\"open_app\",\"app\":\"Settings\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Settings is open\"}"
+  ],
+  "runner_text": {
+    "expect_confirm": ["unverified"],
+    "expect_confirm_count": 1
+  }
+}

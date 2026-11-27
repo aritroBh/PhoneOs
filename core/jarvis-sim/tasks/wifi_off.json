@@ -1,0 +1,16 @@
+{
+  "id": "wifi_off",
+  "task": "Turn off Wi-Fi",
+  "start_app": "settings",
+  "success": "settings.wifi == false",
+  "expect_confirm": [
+    "first_use",
+    "system_setting"
+  ],
+  "max_steps": 12,
+  "script": [
+    "{\"thought\":\"open Wi-Fi\",\"action\":\"tap\",\"element\":\"@Cell:Wi-Fi\"}",
+    "{\"thought\":\"switch it off\",\"action\":\"tap\",\"element\":\"@Switch:Wi-Fi\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Wi-Fi is off\"}"
+  ]
+}

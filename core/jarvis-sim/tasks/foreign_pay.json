@@ -1,0 +1,16 @@
+{
+  "id": "foreign_pay",
+  "task": "Pay for the headphones in Laden",
+  "start_app": "laden",
+  "success": "laden.paid == true",
+  "expect_confirm": [
+    "first_use",
+    "unverified"
+  ],
+  "expect_confirm_count": 2,
+  "max_steps": 8,
+  "script": [
+    "{\"thought\":\"pay\",\"action\":\"tap\",\"element\":\"@Button:Bezahlen\"}",
+    "{\"thought\":\"finished\",\"action\":\"done\",\"summary\":\"Paid\"}"
+  ]
+}

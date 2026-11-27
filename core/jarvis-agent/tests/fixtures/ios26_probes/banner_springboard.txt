@@ -1,0 +1,156 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 134, fact
+# probe A_BannerOverAnotherApp (`fact-a-banner.04-tree.txt`), as the runner dumps it ("typed tree"):
+# SpringBoard at the same moment: the banner `Other(Type83) id=NotificationShortLookView`.
+# note: fact probe fact-a-banner, capture 04: banner expected up: SpringBoard
+# note: app state 4, device orientation 0
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 4: com.apple.springboard
+screen 440x956 pt, keyboard hidden
+
+Application " " {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{158.3, 15.0}, {123.3, 34.7}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{158, 14.7}, {124, 35.3}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) id=jindo-container-view:1 {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{147.3, 10}, {145.3, 52}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+                Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+        Other(Other) {{237, 28}, {9, 9}}
+  Window {{0, 0}, {1320, 2868}}
+    Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+      Other(Other) {{0, 0}, {1320, 2868}}
+        Other(Other) {{0, 0}, {1320, 2868}}
+          Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+            Other(Other) {{0, 0}, {1320, 2868}}
+  Window {{0, 0}, {1320, 2868}}
+    Other(Other) {{0, 0}, {1320, 2868}}
+  Window id=SBSwitcherWindow:Main {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            ScrollView {{0, 0}, {440, 956}}
+            Other(Other) id=AppSwitcherContentView {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) "Settings" id=card:com.apple.Preferences:sceneID:com.apple.Preferences-default {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+                      Other(Other) {{0, 0}, {440, 956}}
+                        Other(Other) {{0, 0}, {440, 956}}
+                          ScrollView {{0, -478}, {440, 1434}}
+                            Other(Other) {{0, 0}, {440, 956}}
+                              Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                  Other(Other) {{0, 0}, {440, 956}}
+                                    Other(Other) {{0, 0}, {440, 956}}
+                                      Other(Other) {{0, 0}, {440, 956}}
+                                        Other(Other) {{0, 0}, {440, 956}}
+                                          Other(Other) {{0, 0}, {440, 956}}
+                                            Other(Other) {{0, 0}, {440, 956}}
+                                              Other(StatusBar) {{0, 0}, {440, 54}}
+                                                Other(Other) {{0, 0}, {440, 54}}
+                                                  Other(Other) {{0, 0}, {440, 54}}
+                                                    StaticText "7:33 AM" {{64.7, 14.3}, {38, 21.7}}
+                                                    Other(Other) "Cellular" value="No signal" {{312.3, 25.3}, {21.7, 13.7}}
+                                                    Other(Other) value="SSID, 3 of 3 Wi-Fi bars" id=3 of 3 Wi-Fi bars {{341.3, 25}, {19.7, 14}}
+                                                    Other(Other) "100% battery power" value="Not charging" {{368.3, 25}, {31.3, 14.3}}
+                                                    Button "Return to Jarvis" id=breadcrumb {{12.0, 37.3}, {44.3, 13.3}}
+                                        Other(Other) {{0, 0}, {440, 956}}
+                                          Other(Other) {{0, 0}, {440, 956}}
+                                            Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+                                Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(StatusBar) {{0, 0}, {440, 54}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+      Other(Type83) {{8, 58.7}, {424, 66}}
+        Other(Other) "Notification" {{8, 58.7}, {424, 66}}
+          Other(Other) {{8, 58.7}, {424, 66}}
+            Other(Type83) "JARVIS, now, Jarvis probe, Probe banner 4417" id=NotificationShortLookView {{8, 58.7}, {424, 66}}
+              Other(Other) id=ShortLook.Platter {{8, 58.7}, {424, 66}}
+                Other(Other) {{8, 58.7}, {424, 66}}
+                Other(Other) {{8, 58.7}, {424, 66}}
+                Other(Other) id=ShortLook.Platter.Content {{8, 58.7}, {424, 66}}
+                  Button "now, Jarvis probe, Probe banner 4417" id=ShortLook.Platter.Content.Seamless {{8, 58.7}, {424, 66}}
+                    Other(Other) id=ShortLook.Platter.Content.Seamless.CrossFade {{8, 58.7}, {424, 66}}
+                      StaticText "Jarvis probe" id=NotificationTitle {{72, 72.7}, {308, 18}}
+                      Other(Other) id=NotificationBody.TopAligned.originalMessage {{72, 90.7}, {343, 18}}
+                        StaticText "Probe banner 4417" id=TextContent.Primary {{72, 90.7}, {343, 18}}
+                  Other(Other) {{8, 58.7}, {424, 66}}
+                    Other(Other) {{8, 58.7}, {424, 66}}
+                      Other(Other) {{8, 58.7}, {424, 66}}
+                        Other(Other) {{8, 58.7}, {424, 66}}
+                          Other(Other) {{8, 58.7}, {424, 66}}
+                            Other(Other) {{8, 58.7}, {424, 66}}
+                        Other(Other) {{8, 58.7}, {424, 66}}
+                          Other(Other) {{8, 58.7}, {424, 66}}
+      Other(Other) {{8, 58.7}, {424, 66}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}

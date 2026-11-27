@@ -1,0 +1,18 @@
+{
+  "id": "home",
+  "bundle_id": "com.apple.springboard",
+  "name": "Home",
+  "start": "home",
+  "screens": {
+    "home": {
+      "elements": [
+        { "id": "icon-settings", "role": "button", "label": "Settings", "frame": [20, 120, 72, 72], "on_tap": [{ "do": "launch", "app": "settings" }] },
+        { "id": "icon-messages", "role": "button", "label": "Messages", "frame": [112, 120, 72, 72], "on_tap": [{ "do": "launch", "app": "messages" }] },
+        { "id": "icon-acme", "role": "button", "label": "Acme", "frame": [204, 120, 72, 72], "on_tap": [{ "do": "launch", "app": "acme" }] },
+        { "id": "icon-shop", "role": "button", "label": "Shop", "frame": [296, 120, 72, 72], "on_tap": [{ "do": "launch", "app": "shop" }] },
+        { "id": "icon-notes", "role": "button", "label": "Notes", "frame": [20, 230, 72, 72], "on_tap": [{ "do": "launch", "app": "notes" }] },
+        { "id": "icon-passwords", "role": "button", "label": "Passwords", "frame": [112, 230, 72, 72], "on_tap": [{ "do": "launch", "app": "passwords" }] }
+      ]
+    }
+  }
+}

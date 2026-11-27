@@ -1,0 +1,21 @@
+# Real XCUITest tree from the iPhone 17 Pro Max simulator (iOS 26.5), CI run 135, fact
+# probe B_InAppBrowserSheets (`fact-b-browser-sheets.07-tree.txt`), as the runner dumps it ("typed tree"):
+# Jarvis with an `ASWebAuthenticationSession` sheet up: 12 unlabelled nodes, the host screen gone too.
+# note: fact probe fact-b-browser-sheets, capture 07: web sign-in sheet up (Jarvis)
+# note: app state 4, device orientation 1
+# Kept out of `jarvis-observe/tests/fixtures/ios26/` so the bench inputs stay the same.
+observation 7: dev.jarvis.app
+screen 440x956 pt, keyboard hidden
+
+Application "Jarvis" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{-440, -956}, {1320, 2868}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+                    Other(Other) {{0, 0}, {0, 0}} [hidden]

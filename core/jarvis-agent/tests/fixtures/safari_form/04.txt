@@ -1,0 +1,39 @@
+# Real XCUITest tree (iOS 26.5 simulator, CI run 122, system-safari-form), observation 04,
+# the typed-tree section of the runner's dump.
+observation 4: com.apple.mobilesafari
+screen 440x956 pt, keyboard hidden
+
+Application "Safari" {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) "dismiss popup" id=PopoverDismissRegion {{0, 0}, {440, 956}}
+      Sheet {{110, 675}, {320, 199.3}}
+        Image {{-40, 525}, {620, 486.3}}
+        Other(Other) {{110, 675}, {320, 199.3}}
+          Other(Other) {{110, 675}, {320, 199.3}}
+            Other(Other) {{110, 675}, {320, 199.3}}
+              Other(Other) {{110, 675}, {320, 199.3}}
+                Other(Other) {{110, 675}, {320, 199.3}}
+                  Other(Other) {{110, 675}, {320, 199.3}}
+                    Other(Other) {{110, 675}, {0, 0}} [hidden]
+                      Other(Other) {{110.0, 675}, {320, 199.3}}
+                        Other(Other) {{110.0, 675}, {320, 199.3}}
+                          Other(Other) {{110.0, 675}, {320, 199.3}}
+                            Other(Other) {{110.0, 675}, {320, 199.3}}
+          Other(Other) {{110, 675}, {320, 199.3}}
+            Other(Other) {{110, 675}, {320, 199.3}}
+              Other(Other) {{110, 675}, {320, 199.3}}
+                Other(Other) {{110, 675}, {320, 199.3}}
+                  Other(Other) id=TipView {{110, 675.2}, {320, 199.3}}
+                    ScrollView {{110, 675}, {320, 199.3}}
+                      Other(Other) {{110, 675.3}, {320, 186}}
+                        StaticText "View Bookmarks, Share Menu, and Open Tabs" {{190, 693.2}, {184.7, 64.3}}
+                        StaticText "You can now view these items in the  menu.\nYou can change this at any time in Safari settings." {{190, 761.6}, {218, 78.0}}
+                      Other(Other) "Vertical scroll bar, 1 page" value="0%" {{397, 709}, {30, 124.2}}
+                        Other(Other) {{424, 711.8}, {3, 118.3}}
+                      Other(Other) "Vertical scroll bar, 1 page" value="0%" {{397, 709}, {30, 124.2}}
+                        Other(Other) {{424, 711.8}, {3, 118.3}}
+                    Button "Close" id=xmark.circle.fill {{389.7, 689}, {26, 26}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}

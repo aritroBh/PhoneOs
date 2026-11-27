@@ -1,0 +1,210 @@
+# Real XCUITest capture (iPhone 17 Pro Max simulator, iOS 26.5), Mac run 146, probe round 3 p15-springboard (`probe3-p15-springboard-08-folder-runner-tree.txt`), verbatim below this line.
+Q: What does Jarvis's runner (XCUITestPhoneRunner, the code the agent runs) report: SpringBoard showing an open folder (Utilities folder)? Compare with the raw captures next to it.
+capture 08: the runner's own observation 1, of com.apple.springboard (the process it chose as the top layer), 98 nodes
+
+observation 1: com.apple.springboard
+screen 440x956 pt, keyboard hidden
+nodes 98, XCUITest snapshot 108 ms
+types without a core role: Other×73, PageIndicator×1, StatusBar×1
+note: front app: private path (XCUIDevice.accessibilityInterface.activeApplications -> processIdentifier -> applicationProcessTracker -> monitoredApplicationWithProcessIdentifier: -> bundleID): active applications: com.apple.springboard (no app over SpringBoard) -> com.apple.springboard
+note: lock signals: notify(com.apple.springboard.lockstate)=false, lock screen=false, front=SpringBoard -> unlocked
+
+== typed tree (what the core receives) ==
+Application " " {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 100}}
+      Other(Other) id=Home screen icons {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              TextField value="Utilities" id=Utilities, Folder name {{45.7, 204.3}, {348.7, 63.3}}
+              Button {{0, 0}, {0, 0}} [hidden]
+                Button "Shortcuts" id=Shortcuts {{80.7, 319.7}, {76.7, 94.7}}
+                  Other(Other) {{85.3, 321.7}, {68, 82}}
+                    Other(Other) {{85.3, 321.7}, {68, 68}}
+                      Other(Other) {{85.3, 321.7}, {68, 68}}
+                        Other(Other) {{85.3, 321.7}, {68, 68}}
+                    Other(Other) id=label-view {{82.7, 392.7}, {72.7, 19.7}}
+                      Other(Other) {{82.7, 392.7}, {72.7, 19.7}}
+                        Image {{66.1, 374.1}, {106.7, 55.7}}
+                        Image {{82.7, 392.7}, {72.7, 19.7}}
+                Button "Passwords" id=Passwords {{178.7, 319.7}, {82.3, 94.7}}
+                  Other(Other) {{186, 321.7}, {68, 82}}
+                    Other(Other) {{186, 321.7}, {68, 68}}
+                      Other(Other) {{186, 321.7}, {68, 68}}
+                        Other(Other) {{186, 321.7}, {68, 68}}
+                    Other(Other) id=label-view {{180.7, 392.7}, {78.3, 19.7}}
+                      Other(Other) {{180.7, 392.7}, {78.3, 19.7}}
+                        Image {{164.1, 374.1}, {112.3, 55.7}}
+                        Image {{180.7, 392.7}, {78.3, 19.7}}
+              Other(PageIndicator) value="Page 1 of 1" id=Page control {{201.2, 636.2}, {37.7, 30.7}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{0, 0}, {440, 956}}
+            Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+                  Other(Other) {{0, 0}, {440, 956}}
+              Other(Other) {{0, 0}, {440, 956}}
+                Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{158.3, 15.0}, {123.3, 34.7}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{158, 14.7}, {124, 35.3}}
+        Other(Other) {{0, 0}, {440, 956}}
+          Other(Other) id=jindo-container-view:1 {{157.3, 14.0}, {125.3, 36.7}}
+            Other(Other) {{147.3, 10}, {145.3, 52}}
+            Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+                Other(Other) {{157.3, 14.0}, {125.3, 36.7}}
+        Other(Other) {{237, 28}, {9, 9}}
+  Window {{0, 0}, {1320, 2868}}
+  Window {{0, 0}, {1320, 2868}}
+    Other(Other) {{0, 0}, {1320, 2868}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+      Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(StatusBar) {{0, 0}, {440, 54}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+  Window {{0, 0}, {440, 956}}
+    Other(Other) {{0, 0}, {440, 956}}
+
+== raw XCUITest snapshot (type name and raw number) ==
+Application(2) label=" " {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 100}}
+      Other(1) id=Home screen icons {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              TextField(49) value="Utilities" id=Utilities, Folder name {{45.7, 204.3}, {348.7, 63.3}}
+              Icon(44) {{0, 0}, {0, 0}}
+                Icon(44) label="Shortcuts" value="" id=Shortcuts {{80.7, 319.7}, {76.7, 94.7}}
+                  Other(1) {{85.3, 321.7}, {68, 82}}
+                    Other(1) {{85.3, 321.7}, {68, 68}}
+                      Other(1) {{85.3, 321.7}, {68, 68}}
+                        Other(1) {{85.3, 321.7}, {68, 68}}
+                    Other(1) id=label-view {{82.7, 392.7}, {72.7, 19.7}}
+                      Other(1) {{82.7, 392.7}, {72.7, 19.7}}
+                        Image(43) {{66.1, 374.1}, {106.7, 55.7}}
+                        Image(43) {{82.7, 392.7}, {72.7, 19.7}}
+                Icon(44) label="Passwords" value="" id=Passwords {{178.7, 319.7}, {82.3, 94.7}}
+                  Other(1) {{186, 321.7}, {68, 82}}
+                    Other(1) {{186, 321.7}, {68, 68}}
+                      Other(1) {{186, 321.7}, {68, 68}}
+                        Other(1) {{186, 321.7}, {68, 68}}
+                    Other(1) id=label-view {{180.7, 392.7}, {78.3, 19.7}}
+                      Other(1) {{180.7, 392.7}, {78.3, 19.7}}
+                        Image(43) {{164.1, 374.1}, {112.3, 55.7}}
+                        Image(43) {{180.7, 392.7}, {78.3, 19.7}}
+              PageIndicator(34) value="Page 1 of 1" id=Page control {{201.2, 636.2}, {37.7, 30.7}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{0, 0}, {440, 956}}
+            Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+                  Other(1) {{0, 0}, {440, 956}}
+              Other(1) {{0, 0}, {440, 956}}
+                Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{158.3, 15.0}, {123.3, 34.7}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+          Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{158, 14.7}, {124, 35.3}}
+        Other(1) {{0, 0}, {440, 956}}
+          Other(1) id=jindo-container-view:1 {{157.3, 14.0}, {125.3, 36.7}}
+            Other(1) {{147.3, 10}, {145.3, 52}}
+            Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+              Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+                Other(1) {{157.3, 14.0}, {125.3, 36.7}}
+        Other(1) {{237, 28}, {9, 9}}
+  Window(4) {{0, 0}, {1320, 2868}}
+  Window(4) {{0, 0}, {1320, 2868}}
+    Other(1) {{0, 0}, {1320, 2868}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+      Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    StatusBar(25) {{0, 0}, {440, 54}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
+  Window(4) {{0, 0}, {440, 956}}
+    Other(1) {{0, 0}, {440, 956}}
