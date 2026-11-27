@@ -41,6 +41,12 @@ enum VoiceAdapters {
     }
 }
 
+enum MicrophoneError: LocalizedError {
+    case noInput
+
+    var errorDescription: String? { "no audio input" }
+}
+
 /// The one microphone tap. The recogniser and the wake word never run at once (the core
 /// never asks for both), so one engine serves both; whoever starts last owns it.
 final class Microphone: @unchecked Sendable {
@@ -53,8 +59,16 @@ final class Microphone: @unchecked Sendable {
         defer { lock.unlock() }
         self.request = request
         let input = engine.inputNode
+        // With no usable input (a simulator host without a microphone, a route that just
+        // went away) the format has no rate or channels, and installing a tap with it
+        // raises an Objective-C exception that ends the app. Fail the recognition instead.
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            self.request = nil
+            throw MicrophoneError.noInput
+        }
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1_024, format: input.outputFormat(forBus: 0)) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self] buffer, _ in
             self?.append(buffer)
         }
         if !engine.isRunning {
